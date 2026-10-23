@@ -10,6 +10,8 @@ import { Select } from "../../shared/ui/ui/Select";
 import { Dialog, DialogBody, DialogFooter, DialogPanel, DialogTitle } from "../../shared/ui/ui/Dialog";
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "../../shared/ui/ui/Tabs";
 import "./gitWorktrees.css";
+import { WorktreeDeleteDialog } from "./WorktreeDeleteDialog";
+import { invalidateWorktreeInventory } from "./worktreeInventory";
 import { BranchSessionsDialog } from "./GitEpics";
 import type { GitAssociations } from "../../../../services/local-node/modules/git-epic-contracts";
 
@@ -82,7 +84,8 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
     const next = await projectApi.listGitWorkspaces(projectId, rootId);
     if (alive.current) onUpdate(next);
   }
-  async function refreshAfterMutation() {
+  async function refreshAfterMutation(invalidate = true) {
+    if (invalidate) invalidateWorktreeInventory(projectId, rootId);
     try { await reload(); }
     catch (cause) { if (alive.current) setError(`操作结果已保留，但列表刷新失败：${message(cause)}。请刷新列表。`); }
   }
@@ -103,7 +106,6 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
   const visible = workspace.worktrees.filter(item =>
     `${title(item)} ${item.path}`.toLowerCase().includes(query.trim().toLowerCase()) &&
     (filter === "all" || filter === "dirty" && item.dirty || filter === "active" && (item.activeSessionCount ?? 0) > 0 || filter === "stale" && item.prunable));
-  const reasons = target ? cleanupReasons(target) : [];
 
   return <>
     {notice && <p className="worktree-notice" role="status">{notice}</p>}
@@ -172,17 +174,10 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
       </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setCreating(false)}>取消</Button><Button className="git-control" variant="primary" pending={busy} disabled={!path || !chosenBranch || Boolean(pathError)} type="submit">创建工作树</Button></DialogFooter></form></DialogPanel>
     </Dialog>
 
-    <Dialog open={Boolean(target)} onClose={() => setTarget(null)} dismissible={!busy}>
-      <DialogPanel className="max-w-xl worktree-dialog"><DialogTitle>{reasons.length ? "暂时无法删除工作树" : "删除工作树？"}</DialogTitle><DialogBody>
-        {target && <div className="worktree-directory-preview"><strong>{title(target)}</strong><code>{target.path}</code></div>}
-        {reasons.length ? <ul>{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul> : <p>将删除工作目录与工作树登记。分支、提交和历史会话保留。删除无法撤销。</p>}
-        {error && <p role="alert" className="worktree-error">{error}</p>}
-      </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setTarget(null)}>{reasons.length ? "返回列表" : "取消"}</Button>{!reasons.length && <Button className="git-control" variant="danger" pending={busy} onClick={() => void run(async () => {
-        if (!target) return;
-        await projectApi.removeGitWorktree(projectId, { path: target.path, rootId });
-        setTarget(null); setNotice("工作树已删除，分支和提交已保留。"); await refreshAfterMutation();
-      })}><Trash2 size={14} />删除工作树</Button>}</DialogFooter></DialogPanel>
-    </Dialog>
+    {target && <WorktreeDeleteDialog key={target.path} projectId={projectId} rootId={rootId} target={target}
+      onClose={() => setTarget(null)}
+      onBusy={value => { locked.current = value; setBusy(value); onBusy(value); }}
+      onDeleted={() => { setTarget(null); setNotice("工作树已删除，分支和提交已保留。"); void refreshAfterMutation(false); }} />}
 
     <Dialog open={Boolean(cleanup)} onClose={() => setCleanup(null)} dismissible={!busy}>
       <DialogPanel className="max-w-2xl worktree-dialog"><DialogTitle>清理可删除的工作树</DialogTitle><DialogBody>

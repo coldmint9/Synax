@@ -13,7 +13,7 @@ import {
   waitForAuthoritativeLease,
 } from "./process-ownership.js";
 import { parseWslUncPath } from "../workspace-location.js";
-import { guardProcessGroup } from "./process-guardian.js";
+import { guardProcessGroup, type ProcessGroupGuard } from "./process-guardian.js";
 import {
   findWslOwnedProcess,
   wslCommandSpec,
@@ -58,7 +58,7 @@ export function spawnOwnedProcess(
     background?: boolean;
     commandLabel?: string;
   } = {},
-): ChildProcess & { ownedProcessId: string } {
+): ChildProcess & { ownedProcessId: string; ownedProcessClosed: Promise<void> } {
   const grouped = process.platform !== "win32";
   const ticket = prepareOwnedProcess(
     options.background
@@ -131,18 +131,32 @@ export function spawnOwnedProcess(
       background: options.background === true,
     });
   };
+  let guard: ProcessGroupGuard | undefined;
+  const closed = new Promise<number | null>((resolve) => {
+    child.once("close", resolve);
+  });
+  const ownedProcessClosed = closed.then(async (code) => {
+    if (guard) {
+      // A cleanup wait may time out while the guardian is still retrying.
+      // Keep the lease until the eventual acknowledgement, even in that case.
+      void guard.closed.then(() => releaseOwnedProcess(ticket.id, completedCode ?? code)).catch(() => {});
+      await guard.release();
+    } else releaseOwnedProcess(ticket.id, completedCode ?? code);
+  });
+  // Raw ChildProcess callers can observe stream closure without awaiting the
+  // stronger tree-closure promise. Keep a failed cleanup lease for recovery.
+  void ownedProcessClosed.catch(() => {});
   try {
     recordOwnedPid(ticket.id, child.pid);
-    child.once("close", (code) =>
-      releaseOwnedProcess(ticket.id, completedCode ?? code),
-    );
-    child.once("error", () => releaseOwnedProcess(ticket.id));
+    if (direct && child.pid) guard = guardProcessGroup(child, ticket.id);
+    child.once("error", () => {
+      if (!child.pid) releaseOwnedProcess(ticket.id);
+    });
     void Promise.all([
       waitForAuthoritativeLease(ticket.id),
-      direct && child.pid ? guardProcessGroup(child) : Promise.resolve(),
+      guard?.ready,
     ]).then(sendStart).catch(() => {
       try { child.kill("SIGKILL"); } catch {}
-      releaseOwnedProcess(ticket.id);
     });
     child.once("close", () => gate?.destroy());
     if (wsl) {
@@ -166,5 +180,5 @@ export function spawnOwnedProcess(
     releaseOwnedProcess(ticket.id);
     throw error;
   }
-  return Object.assign(child, { ownedProcessId: ticket.id });
+  return Object.assign(child, { ownedProcessId: ticket.id, ownedProcessClosed });
 }

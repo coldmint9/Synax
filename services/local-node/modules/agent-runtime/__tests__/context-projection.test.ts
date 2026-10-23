@@ -677,6 +677,8 @@ describe("request-local history snapshot", () => {
     "listToolCalls",
     "listRunToolCalls",
     "listRunParts",
+    "listSessionSteps",
+    "listSessionParts",
   ] as const;
 
   function countHistoryQueries() {
@@ -706,10 +708,12 @@ describe("request-local history snapshot", () => {
     expect(calls.listMessages).toBe(1);
     expect(calls.listRuns).toBe(1);
     expect(calls.listToolCalls).toBe(1);
-    expect(calls.listRunSteps).toBe(1);
+    // One session-wide read per row category, never per step or candidate.
+    expect(calls.listSessionSteps).toBe(1);
+    expect(calls.listRunSteps ?? 0).toBe(0);
     expect(calls.listRunToolCalls ?? 0).toBe(0);
-    // One parts read per distinct step, never per candidate.
-    expect(calls.listRunParts).toBe(6);
+    expect(calls.listSessionParts).toBe(1);
+    expect(calls.listRunParts ?? 0).toBe(0);
   });
 
   it("produces byte-identical messages with a shared snapshot and without one", () => {
@@ -775,6 +779,7 @@ describe("request-local history snapshot", () => {
     // A second call reuses the reader instead of re-querying runs and steps.
     sessionContextBoundary(sessionId, reader);
     expect(calls.listRuns).toBe(1);
-    expect(calls.listRunSteps).toBe(1);
+    expect(calls.listSessionSteps).toBe(1);
+    expect(calls.listRunSteps ?? 0).toBe(0);
   });
 });

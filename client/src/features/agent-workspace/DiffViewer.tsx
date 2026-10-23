@@ -107,7 +107,7 @@ export const DiffViewer = memo(function DiffViewer({
         {loading ? (
           <div className="file-viewer-status">读取中…</div>
         ) : error ? (
-          <div className="file-viewer-status file-viewer-status--error">
+          <div role="alert" className="file-viewer-status file-viewer-status--error">
             {error}
           </div>
         ) : parsed.lines.length === 0 ? (

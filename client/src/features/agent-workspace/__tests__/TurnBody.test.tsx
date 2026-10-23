@@ -49,18 +49,43 @@ describe("TurnBody continuous process", () => {
     expect(container.querySelector(".bui-tool-details")).toBeNull();
   });
 
-  it("opens a live record by handing the window to the reader", () => {
+  it("opens a live record in place without unfolding the rest of the window", () => {
     const { container } = render(
       <TurnBody turn={{ ...emptyTurn, blocks: [tool("opened-live")] }} entryId="opened-live" isWorking />,
     );
     const viewport = container.querySelector(".session-process-window-viewport")!;
     expect(viewport).toHaveAttribute("data-windowed", "true");
     fireEvent.click(container.querySelector(".bui-tool-trigger")!);
-    // The fixed one-line window cannot hold an open body, so it stops following
-    // the newest record instead of swallowing the reader's disclosure.
-    expect(viewport).not.toHaveAttribute("data-windowed");
+    // Only the record the reader opened takes its natural height; the window
+    // keeps its row budget instead of unfolding every other record.
+    expect(viewport).toHaveAttribute("data-windowed", "true");
+    expect(container.querySelector(".session-process-window-row")).toHaveAttribute(
+      "data-row-expanded",
+      "true",
+    );
     expect(container.querySelector(".bui-tool-trigger")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".bui-tool-details")).toHaveTextContent("result-opened-live");
+  });
+
+  it("opens one live record without unfolding the other records", () => {
+    const blocks: TurnContentBlock[] = [tool("first"), tool("second"), tool("third")];
+    const { container } = render(
+      <TurnBody turn={{ ...emptyTurn, blocks }} entryId="multi" isWorking />,
+    );
+    const triggers = [...container.querySelectorAll(".bui-tool-trigger")];
+    expect(triggers).toHaveLength(3);
+
+    fireEvent.click(triggers[0]);
+
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "true");
+    expect(triggers[1]).toHaveAttribute("aria-expanded", "false");
+    expect(triggers[2]).toHaveAttribute("aria-expanded", "false");
+    // Only the clicked record mounts its details; the neighbours stay folded.
+    expect(container.querySelectorAll(".bui-tool-details")).toHaveLength(1);
+    expect(
+      [...container.querySelectorAll(".session-process-window-row")]
+        .filter((row) => row.hasAttribute("data-row-expanded")),
+    ).toHaveLength(1);
   });
 
   it("opens finished tool details on demand", () => {

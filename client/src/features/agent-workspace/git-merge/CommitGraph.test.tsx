@@ -1,4 +1,10 @@
-import { act, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CommitGraph } from "./CommitGraph";
 const commits = [
@@ -86,6 +92,36 @@ afterEach(() => {
   else delete (document as any).visibilityState;
 });
 describe("prospective merge graph motion lifecycle", () => {
+  it("virtualizes commit rows and SVG geometry while retaining cross-window edges", async () => {
+    const history = Array.from({ length: 1500 }, (_, index) => ({
+      oid: `sha-${index}`,
+      parents: index < 1499 ? [`sha-${index + 1}`] : [],
+      subject: `Commit ${index}`,
+      author: "A",
+      date: "today",
+      refs: [],
+    }));
+    const { container } = render(<CommitGraph commits={history} />);
+    expect(container.querySelectorAll("circle").length).toBeLessThanOrEqual(13);
+    expect(
+      container.querySelectorAll(".conversation-git-edge").length,
+    ).toBeLessThanOrEqual(14);
+    const viewport = screen.getByRole("region", { name: "提交列表" });
+    viewport.scrollTop = 1000 * 35;
+    fireEvent.scroll(viewport);
+    await screen.findByText("Commit 1000");
+    expect(screen.queryByText("Commit 0")).toBeNull();
+    expect(container.querySelectorAll("circle").length).toBeLessThanOrEqual(13);
+    expect(
+      container.querySelectorAll(".conversation-git-edge").length,
+    ).toBeLessThanOrEqual(14);
+    expect(
+      container
+        .querySelector(".conversation-git-tree")
+        ?.getAttribute("viewBox"),
+    ).toContain(String(997 * 35));
+  });
+
   it("draws a labelled dashed prospective merge without claiming a real commit", () => {
     const { container, unmount } = render(
       <CommitGraph commits={commits} pendingMerge={pending} />,

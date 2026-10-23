@@ -17,6 +17,15 @@ export { AppError, createOfflineError, isOfflineError } from "./appError";
 
 type ToastType = NotificationType;
 
+export function errorNotificationId(message: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < message.length; index += 1) {
+    hash ^= message.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `error-${(hash >>> 0).toString(36)}`;
+}
+
 export type ErrorLevel = "system" | "business";
 
 export type BusinessErrorCode =
@@ -178,8 +187,8 @@ function routeError(err: AppError): void {
     });
     return;
   }
-  useNotificationStore.getState().push({
-    id: `err-${Date.now().toString(36)}`,
+  useNotificationStore.getState().pushAggregated({
+    id: errorNotificationId(message),
     type: toastTypeForError(err),
     message,
     ...(err.code &&

@@ -113,6 +113,57 @@ describe("SessionMarkdown file links", () => {
     ]);
   });
 
+  it.each([
+    "../settlement/src/main/resources/mapper/RonghanSettlementMapper.xml:167",
+    "../settlement/src/main/resources/mapper/RonghanSettlementMapper.xml#L167",
+    "..%2Fsettlement%2Fsrc%2Fmain%2Fresources%2Fmapper%2FRonghanSettlementMapper.xml:167",
+  ])("opens a sibling project's relative link without losing its directory: %s", (href) => {
+    renderMarkdown(`[RonghanSettlementMapper.xml:167](${href})`, "session-1", "/repo/backend", [
+      { rootId: "backend", name: "Backend", workspacePath: "/repo/backend" },
+      { rootId: "settlement", name: "Settlement", workspacePath: "/repo/settlement" },
+    ]);
+
+    const link = screen.getByRole("link");
+    fireEvent.click(link);
+
+    expect(link).toHaveAttribute("title", "src/main/resources/mapper/RonghanSettlementMapper.xml:167");
+    expect(activeTabs("session-1")).toEqual([
+      expect.objectContaining({
+        path: "src/main/resources/mapper/RonghanSettlementMapper.xml",
+        line: 167,
+        rootId: "settlement",
+      }),
+    ]);
+  });
+
+  it.each(["../outside/a.ts:12", "file:///outside/a.ts#L12", "javascript:alert(1)"])(
+    "does not replace a rejected href with its filename label: %s",
+    (href) => {
+      const { container } = renderMarkdown(`[a.ts:12](${href})`, "session-1", "/repo/backend");
+      const link = container.querySelector("a")!;
+      expect(link).not.toHaveAttribute("data-transcript-file-link");
+      expect(activeTabs("session-1")).toEqual([]);
+    },
+  );
+
+  it("resolves the original destination when the session roots finish loading", () => {
+    const content = "[a.ts:12](../frontend/src/a.ts#L12)";
+    const { container, rerender } = renderMarkdown(content);
+    expect(container.querySelector("[data-transcript-file-link]")).toBeNull();
+
+    rerender(
+      <TranscriptSessionProvider sessionId="session-1" workspacePath="/repo/backend" roots={[
+        { rootId: "frontend", name: "Frontend", workspacePath: "/repo/frontend" },
+      ]}>
+        <SessionMarkdown content={content} />
+      </TranscriptSessionProvider>,
+    );
+    fireEvent.click(screen.getByRole("link"));
+    expect(activeTabs("session-1")).toEqual([
+      expect.objectContaining({ path: "src/a.ts", line: 12, rootId: "frontend" }),
+    ]);
+  });
+
   it("renders a file link without opening anything when there is no session scope", () => {
     renderMarkdown("[a.ts](src/a.ts)", null);
 
@@ -142,4 +193,28 @@ describe("file link boundaries", () => {
       { rootId: "frontend", name: "frontend", workspacePath: "/repo/frontend" },
     ])).toEqual({ path: "a.ts", line: 12, rootId: "frontend", rootName: "frontend" });
   });
+
+  it("normalizes parent segments before selecting a registered root", () => {
+    const roots = [
+      { rootId: "backend", name: "Backend", workspacePath: "/repo/backend" },
+      { rootId: "frontend", name: "Frontend", workspacePath: "/repo/frontend" },
+    ];
+    expect(parseFileLink("/repo/backend/../frontend/src/a.ts:12", "a.ts:12", "/repo/backend", roots))
+      .toEqual({ path: "src/a.ts", line: 12, rootId: "frontend", rootName: "Frontend" });
+    expect(parseFileLink("../frontend/../../outside/a.ts:12", "a.ts:12", "/repo/backend", roots))
+      .toBeNull();
+  });
+
+  it("cannot resolve a parent-relative link until its session workspace is known", () => {
+    expect(parseFileLink("../frontend/src/a.ts:12", "a.ts:12")).toBeNull();
+  });
+
+  it.each(["../frontend/src/a.ts#L12", "C:/repo/frontend/src/a.ts#L12"])(
+    "resolves registered Windows roots: %s",
+    (href) => {
+      expect(parseFileLink(href, undefined, "C:\\repo\\backend", [
+        { rootId: "frontend", name: "Frontend", workspacePath: "C:\\repo\\frontend" },
+      ])).toEqual({ path: "src/a.ts", line: 12, rootId: "frontend", rootName: "Frontend" });
+    },
+  );
 });

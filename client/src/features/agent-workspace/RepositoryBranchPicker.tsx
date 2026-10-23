@@ -420,7 +420,7 @@ function BranchPickerContent({
           <DialogPanel>
             <DialogTitle>{zh ? "分支切换未完成" : "Branch switch incomplete"}</DialogTitle>
             <DialogBody>
-              <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{switchError}</p>
+              <p role="alert" className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{switchError}</p>
             </DialogBody>
             <DialogFooter>
               <Button autoFocus onClick={() => setSwitchError(null)}>

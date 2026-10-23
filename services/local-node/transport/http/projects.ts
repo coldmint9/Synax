@@ -1,5 +1,6 @@
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
 import { createGitMrRoutes } from "./git-mr.js";
+import { conversationGitSliceSchema } from '../../modules/agent-runtime/conversation-git/schemas.js';
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
 import path, { basename } from "node:path";
@@ -57,6 +58,7 @@ import { resolveWorkspaceRootsFromSession } from "../../modules/agent-runtime/to
 import { projectSessionState } from "../../modules/agent-runtime/session-projection.js";
 import type { AgentSession } from "../../modules/agent-runtime/contracts.js";
 import { MAX_WORKTREE_CLEANUP_PATHS, isTerminalWorktreeSession } from "../../modules/git-worktree-management-contracts.js";
+import { resolveWorkspaceProjectLocation, type WorkspacePathResolution } from "../../modules/workspace-project-location.js";
 import {
   workspaceIndexService,
 } from "../../modules/workspace-index-service.js";
@@ -554,11 +556,7 @@ function referenceFromLocation(
 
 async function resolveRootInput(
   input: z.infer<typeof workspaceRootInputSchema>,
-): Promise<{
-  location: WorkspaceLocation;
-  name?: string;
-  existing?: ProjectRecord;
-}> {
+): Promise<WorkspacePathResolution & { existing?: ProjectRecord }> {
   if ("projectId" in input) {
     const existing = projects.get(input.projectId);
     if (!existing)
@@ -567,14 +565,25 @@ async function resolveRootInput(
       });
     const location = projectSourceLocation(existing);
     if (!location) throw new Error("Selected project has no local workspace");
-    return { location, name: existing.primaryName ?? existing.name, existing };
+    const resolved = await resolveWorkspaceProjectLocation(location);
+    return { ...resolved, name: resolved.redirected ? resolved.name : existing.primaryName ?? existing.name, existing };
   }
   const location =
     "location" in input
       ? input.location
       : { kind: "host" as const, path: input.localPath };
-  return { location, name: input.name };
+  const resolved = await resolveWorkspaceProjectLocation(location);
+  return { ...resolved, name: resolved.redirected ? resolved.name : input.name ?? resolved.name };
 }
+
+projectRoutes.post("/workspace-path", async (c) => {
+  const parsed = workspaceRootInputSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "Invalid workspace directory." }, 400);
+  try {
+    const { existing: _existing, ...resolved } = await resolveRootInput(parsed.data);
+    return c.json(resolved);
+  } catch (error) { return c.json({ error: (error as Error).message }, 400); }
+});
 
 // Validate every membership before publishing the workspace in memory or on disk.
 projectRoutes.post("/workspaces", async (c) => {
@@ -606,9 +615,17 @@ projectRoutes.post("/workspaces", async (c) => {
     createdBy: "current-user",
     importState: "ready",
   };
+  const normalizations: WorkspacePathResolution[] = [];
   try {
     for (const input of parsed.data.roots) {
       const resolved = await resolveRootInput(input);
+      const key = physicalLocationKey(resolved.location);
+      const duplicate = projectWorkspaceRoots(project).some(root => physicalLocationKey(workspaceRootLocation(root)) === key);
+      if (duplicate && (resolved.redirected || normalizations.some(item => item.redirected && physicalLocationKey(item.location) === key))) {
+        normalizations.push({ ...resolved, duplicate: true });
+        continue;
+      }
+      if (resolved.redirected) normalizations.push(resolved);
       const location = project.source
         ? await validateProjectReferenceLocation(project, resolved.location)
         : await canonicalizeWorkspaceLocation(resolved.location);
@@ -635,7 +652,7 @@ projectRoutes.post("/workspaces", async (c) => {
     throw error;
   }
   workspaceIndexService.indexProject(project.id, projectWorkspaceRoots(project));
-  return c.json({ project, roots: projectWorkspaceRoots(project) }, 201);
+  return c.json({ project, roots: projectWorkspaceRoots(project), normalizations }, 201);
 });
 
 /** The explorer and file viewer must resolve the same session worktree. */
@@ -689,13 +706,16 @@ projectRoutes.post("/:id/references", async (c) => {
     );
   const projectId = c.req.param("id");
   try {
-    const roots = await withProjectMutation(projectId, async () => {
+    const result = await withProjectMutation(projectId, async () => {
       const project = projects.get(projectId);
       if (!project)
         throw Object.assign(new Error("Project not found"), { status: 404 });
       const resolved = await resolveRootInput(parsed.data);
       // Validation occurs inside the project queue so concurrent writes see every prior membership.
       const latest = projects.get(projectId)!;
+      const currentRoots = projectWorkspaceRoots(latest);
+      if (resolved.redirected && currentRoots.some(root => physicalLocationKey(workspaceRootLocation(root)) === physicalLocationKey(resolved.location)))
+        return { roots: currentRoots, normalization: { ...resolved, duplicate: true } };
       if (projectWorkspaceRoots(latest).length >= 50)
         throw new Error("A workspace supports up to 50 projects.");
       const location = await validateProjectReferenceLocation(
@@ -717,11 +737,11 @@ projectRoutes.post("/:id/references", async (c) => {
         ),
       });
       projects.set(latest.id, updated);
-      return projectWorkspaceRoots(updated);
+      return { roots: projectWorkspaceRoots(updated), normalization: resolved.redirected ? resolved : undefined };
     });
-    workspaceIndexService.indexProject(projectId, roots);
+    workspaceIndexService.indexProject(projectId, result.roots);
     invalidateWorkspaceSessionEnvironments(projectId);
-    return c.json({ roots }, 201);
+    return c.json(result, 201);
   } catch (error) {
     const status = (error as { status?: number }).status === 404 ? 404 : 400;
     return c.json({ error: (error as Error).message }, status);
@@ -977,8 +997,19 @@ projectRoutes.get("/:id/git/state", async (c) => {
 projectRoutes.get("/:id/git/conflict", async (c) => {
   const project = projects.get(c.req.param("id"));
   if (!project) return c.json({ error: "Project not found" }, 404);
-  try { return c.json(await gitHistoryConflict(projectGitRoot(project, c.req.query("rootId")).repository, c.req.query("path") ?? "")); }
+  try { return c.json(await gitHistoryConflict(projectGitRoot(project, c.req.query("rootId")).repository, c.req.query("path") ?? "", undefined, undefined, c.req.raw.signal)); }
   catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+projectRoutes.get('/:id/git/conflict/content', async c => {
+  const project = projects.get(c.req.param('id'));
+  if (!project) return c.json({ error: 'Project not found' }, 404);
+  try {
+    const { path: filePath, rootId, ...query } = c.req.query();
+    if (!filePath) return c.json({ error: 'Conflict path is required.' }, 400);
+    const parsed = conversationGitSliceSchema.safeParse(query);
+    if (!parsed.success) return c.json({ error: 'Invalid conflict content range.' }, 400);
+    return c.json(await gitHistoryConflict(projectGitRoot(project, rootId).repository, filePath, undefined, parsed.data, c.req.raw.signal));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
 });
 projectRoutes.put("/:id/git/conflict", async (c) => {
   const project = projects.get(c.req.param("id"));
@@ -1258,6 +1289,17 @@ projectRoutes.post("/", async (c) => {
     }
   }
 
+  // Legacy project imports use the same worktree interception as workspaces.
+  let normalization: WorkspacePathResolution | undefined;
+  if ((source.kind === "localPath" && source.localPath) || (source.kind === "wsl" && source.distribution && source.path)) {
+    try {
+      normalization = await resolveWorkspaceProjectLocation(source.kind === "wsl"
+        ? { kind: "wsl", distribution: source.distribution!, path: source.path! }
+        : { kind: "host", path: source.localPath! });
+      if (normalization.location.kind === "host") source.localPath = normalization.location.path;
+      else { source.path = normalization.location.path; source.distribution = normalization.location.distribution; }
+    } catch (error) { return c.json({ error: (error as Error).message }, 400); }
+  }
   // Check duplicates for git and localPath sources
   if (source.kind !== "scratch" && !overwriteExisting) {
     const dup = checkDuplicate({
@@ -1329,7 +1371,7 @@ projectRoutes.post("/", async (c) => {
   workspaceIndexService.indexProject(id, projectWorkspaceRoots(project));
   logger.info({ projectId: id, name, kind: source.kind }, "[projects] created");
 
-  return c.json({ project }, 201);
+  return c.json({ project, normalization: normalization?.redirected ? normalization : undefined }, 201);
 });
 
 /** PATCH /:id — update project fields */

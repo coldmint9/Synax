@@ -28,7 +28,7 @@ export function SaveFooter({ saving, saved, error, onSave, saveLabel }: SaveFoot
           <Check size={13} /> {t('commonSaved')}
         </span>
       )}
-      {error && <span className="text-[11px] text-destructive">{error}</span>}
+      {error && <span role="alert" className="text-[11px] text-destructive">{error}</span>}
     </div>
   )
 }

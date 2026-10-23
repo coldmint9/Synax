@@ -18,6 +18,7 @@ export interface AgentSessionChildInit {
 }
 
 export type AgentSessionParentMessage =
+  | { type: "runtime:notify"; event: import("../../../modules/agent-runtime/runtime-bus.js").RuntimeBusEvent }
   | { type: "stream:yield-request"; requested: boolean }
   | { type: "session:initialize" }
   | {
@@ -34,7 +35,8 @@ export type AgentSessionParentMessage =
       reason: string;
     }
   | { type: "session:interrupt"; reason: string }
-  | { type: "context:compact"; requestId: string };
+  | { type: "context:compact"; requestId: string }
+  | { type: "context:cancel"; requestId: string };
 
 export type AgentSessionChildMessage =
   | { type: "stream:parked"; sessionId: string; streamId: string }
@@ -104,13 +106,14 @@ export function isAgentSessionParentMessage(
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
+    type === "runtime:notify" ||
     type === "stream:yield-request" ||
     type === "session:interrupt-subtree" ||
     type === "session:initialize" ||
     type === "stream:start" ||
     type === "stream:cancel" ||
     type === "session:interrupt" ||
-    type === "context:compact"
+    type === "context:compact" || type === "context:cancel"
   );
 }
 
@@ -135,7 +138,7 @@ export function emitSessionLive(
 ): void {
   if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
     // Stream chunks already carry completion events; forward only the start marker.
-    if (event.type === "context_compaction_started" || event.type === "conversation_git_messages")
+    if (event.type === "context_compaction_started" || event.type === "context_compaction_state" || event.type === "conversation_git_messages" || event.type === "conversation_git_state")
       sendToParent({ type: "session:live", sessionId, event });
     return;
   }

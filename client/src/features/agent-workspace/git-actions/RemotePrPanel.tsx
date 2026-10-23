@@ -12,6 +12,7 @@ import { Field, Label, Input, TextArea } from "../../../shared/ui/ui/Field";
 import { Select } from "../../../shared/ui/ui/Select";
 import { Checkbox } from "../../../shared/ui/ui/Toggle";
 import { useAgentSessionStore } from "../state/agentSessionStore";
+import { refreshWorkspace } from "../workspaceRefresh";
 export default function RemotePrPanel({
   sessionId,
   rootId,
@@ -87,6 +88,7 @@ export default function RemotePrPanel({
     setNotice("");
     try {
       await work();
+      refreshWorkspace(sessionId, rootId);
     } catch (e) {
       if (version === generation.current)
         setError(e instanceof Error ? e.message : String(e));

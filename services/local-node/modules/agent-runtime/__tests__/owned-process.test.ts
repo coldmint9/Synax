@@ -6,7 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnOwnedProcess } from "../owned-process.js";
-import { runCommand, runShellCommand } from "../tools/exec-async.js";
+import { runCommand, runShellCommand, terminateOwnedCommands } from "../tools/exec-async.js";
 
 const leases = vi.hoisted(() => ({ wait: vi.fn(async (_id: string) => {}) }));
 vi.mock("../process-ownership.js", async (original) => ({
@@ -15,6 +15,7 @@ vi.mock("../process-ownership.js", async (original) => ({
 }));
 
 const children: ChildProcess[] = [];
+const descendantPids: number[] = [];
 const directories: string[] = [];
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function directory() {
@@ -40,6 +41,9 @@ function owned(command: string, args: string[], options = {}) {
 
 beforeEach(() => leases.wait.mockResolvedValue(undefined));
 afterEach(async () => {
+  for (const pid of descendantPids.splice(0)) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
   await Promise.all(children.splice(0).map(async (child) => {
     if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
     const closed = once(child, "close");
@@ -50,6 +54,71 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("shared POSIX command supervision", () => {
+  it.each([false, true])("waits for surviving descendants before returning (detached=%s)", async (detached) => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
+    const result = await runCommand(process.execPath, ["-e", `
+      const {spawn} = require('node:child_process');
+      const child = spawn(process.execPath, [${JSON.stringify(worker)}], {
+        detached: ${detached}, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      child.once('message', () => { console.log(child.pid); process.exit(7); });
+    `]);
+    const pid = Number(result.stdout.trim());
+    descendantPids.push(pid);
+    expect(pid).toBeGreaterThan(1);
+    expect(result.status).toBe(7);
+    expect(alive(pid)).toBe(false);
+  });
+
+  it.each(["abort", "timeout", "shutdown"])("cleans up detached build children on %s without stopping another owner", async (reason) => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
+    const independent = owned(process.execPath, ["-e", "console.log('ready');setInterval(() => {}, 1000)"]);
+    await once(independent.stdout!, "data");
+    const controller = new AbortController();
+    const resultPromise = runCommand(process.execPath, ["-e", `
+      const {spawn} = require('node:child_process');
+      const child = spawn(process.execPath, [${JSON.stringify(worker)}], {
+        detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      child.once('message', () => {
+        require('node:fs').writeFileSync(${JSON.stringify(path.join(cwd, "pid"))}, String(child.pid));
+        console.log('ready');
+      });
+      setInterval(() => {}, 1000);
+    `], { signal: controller.signal, timeoutMs: reason === "timeout" ? 500 : 5000 });
+    await vi.waitFor(() => expect(fs.existsSync(path.join(cwd, "pid"))).toBe(true));
+    const pid = Number(fs.readFileSync(path.join(cwd, "pid"), "utf8"));
+    descendantPids.push(pid);
+    if (reason === "abort") controller.abort();
+    if (reason === "shutdown") await terminateOwnedCommands();
+    const result = await resultPromise;
+    expect(result.timedOut).toBe(reason === "timeout");
+    if (reason === "abort") expect(result.error?.code).toBe("ABORT_ERR");
+    expect(alive(pid)).toBe(false);
+    expect(alive(independent.pid!)).toBe(true);
+  }, 10000);
+
+  it("cleans up a detached child even when it inherits command output pipes", async () => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
+    const result = await runCommand(process.execPath, ["-e", `
+      const child = require('node:child_process').spawn(process.execPath, [${JSON.stringify(worker)}], {
+        detached: true, stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+      });
+      child.once('message', () => { console.log(child.pid); process.exit(0); });
+    `], { timeoutMs: 5000 });
+    const pid = Number(result.stdout.trim());
+    descendantPids.push(pid);
+    expect(result.timedOut).toBe(false);
+    expect(result.status).toBe(0);
+    expect(alive(pid)).toBe(false);
+  }, 10000);
+
   it("runs 24 concurrent targets with one guardian and no per-command Node launchers", async () => {
     const targets = Array.from({ length: 24 }, () => owned("/bin/sh", ["-c", "echo ready; exec sleep 30"]));
     await Promise.all(targets.map((child) => once(child.stdout!, "data")));
@@ -141,6 +210,70 @@ describe.skipIf(process.platform === "win32")("shared POSIX command supervision"
       expect(alive(targetPid)).toBe(false);
       expect(alive(guardianPid)).toBe(false);
     }, { timeout: 5000 });
+  }, 10000);
+
+  it("reaps detached descendants after the command host crashes", async () => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `
+      process.on('SIGTERM', () => {});
+      require('node:fs').writeFileSync(${JSON.stringify(path.join(cwd, "pid"))}, String(process.pid));
+      setInterval(() => {}, 1000);
+    `);
+    const script = path.join(cwd, "host.mts");
+    const module = pathToFileURL(path.resolve("services/local-node/modules/agent-runtime/owned-process.ts")).href;
+    const target = `require('node:child_process').spawn(process.execPath, [${JSON.stringify(worker)}], {detached: true, stdio: 'ignore'});setInterval(() => {}, 1000);`;
+    fs.writeFileSync(script, `import {spawnOwnedProcess} from ${JSON.stringify(module)};
+      const child = spawnOwnedProcess(process.execPath, ['-e', ${JSON.stringify(target)}]);
+      child.stdout.resume(); child.stderr.resume();
+    `);
+    const host = spawn(process.execPath, ["--import", "tsx", script], { stdio: "ignore", detached: true });
+    children.push(host);
+    await vi.waitFor(() => expect(fs.existsSync(path.join(cwd, "pid"))).toBe(true), { timeout: 5000 });
+    const pid = Number(fs.readFileSync(path.join(cwd, "pid"), "utf8"));
+    descendantPids.push(pid);
+    const guardianPid = processes().find((entry) => entry.parent === host.pid && entry.command.includes("process-guardian.cjs"))!.pid;
+    const closed = once(host, "close");
+    host.kill("SIGKILL");
+    await closed;
+    await vi.waitFor(() => {
+      expect(alive(pid)).toBe(false);
+      expect(alive(guardianPid)).toBe(false);
+    }, { timeout: 5000 });
+  }, 10000);
+
+  it("keeps a standalone command host alive until descendant cleanup is acknowledged", async () => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
+    const script = path.join(cwd, "host.mts");
+    const module = pathToFileURL(path.resolve("services/local-node/modules/agent-runtime/tools/exec-async.ts")).href;
+    const target = `
+      const child = require('node:child_process').spawn(process.execPath, [${JSON.stringify(worker)}], {
+        detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      child.once('message', () => {
+        require('node:fs').writeFileSync(${JSON.stringify(path.join(cwd, "pid"))}, String(child.pid));
+        process.exit(0);
+      });
+    `;
+    fs.writeFileSync(script, `import {runCommand} from ${JSON.stringify(module)};
+      const result = await runCommand(process.execPath, ['-e', ${JSON.stringify(target)}]);
+      console.log('completed:' + result.status);
+    `);
+    const host = spawn(process.execPath, ["--import", "tsx", script], { stdio: ["ignore", "pipe", "pipe"], detached: true });
+    children.push(host);
+    let output = "";
+    host.stdout!.on("data", (data) => { output += data; });
+    host.stderr!.resume();
+    const closed = once(host, "close");
+    await vi.waitFor(() => expect(fs.existsSync(path.join(cwd, "pid"))).toBe(true), { timeout: 5000 });
+    const pid = Number(fs.readFileSync(path.join(cwd, "pid"), "utf8"));
+    descendantPids.push(pid);
+    await closed;
+    expect(host.exitCode).toBe(0);
+    expect(output).toContain("completed:0");
+    expect(alive(pid)).toBe(false);
   }, 10000);
 
   it("fails closed if the guardian crashes and creates one replacement for later commands", async () => {

@@ -21,6 +21,7 @@ import type {
   AgentRunStreamChunk,
   AgentRuntimeMessage,
   AgentSession,
+  StreamTurnRequest,
   RuntimeEvent,
   ToolCallRecord,
 } from "../contracts.js";
@@ -1288,7 +1289,7 @@ export class RuntimeFacade {
       ).length,
     };
   }
-  async listHistoryCheckpoints(sessionId: string): Promise<
+  async listHistoryCheckpoints(sessionId: string, messageIds?: readonly string[]): Promise<
     Array<{
       id: string;
       objectId: string;
@@ -1296,7 +1297,14 @@ export class RuntimeFacade {
     }>
   > {
     const client=this.clientFactory();if(!client)throw new Error('Runtime sidecar is not configured.');
-    const items=await readHistoryList<{id?:unknown;objectId?:unknown;metadata?:unknown}>(client,sessionId,'list_checkpoints');
+    let items: Array<{id?:unknown;objectId?:unknown;metadata?:unknown}> = [];
+    if (messageIds?.length) {
+      for (let offset = 0; offset < messageIds.length; offset += 128) {
+        const page = await this.historyCommand({ sessionId, requestId: historyReadRequest("lookup-pins", sessionId),
+          operation: "lookup_checkpoints", payload: { ids: messageIds.slice(offset, offset + 128), byMessage: true } }) as { items: typeof items };
+        items.push(...page.items);
+      }
+    } else items = await readHistoryList(client,sessionId,'list_checkpoints');
     return items.flatMap((item) => {
       if (typeof item.id !== "string" || typeof item.objectId !== "string")
         return [];
@@ -1312,6 +1320,29 @@ export class RuntimeFacade {
       ];
     });
   }
+  async historyCheckpointById(sessionId: string, id: string) {
+    const result = await this.historyCommand({ sessionId, requestId: historyReadRequest("lookup-pin", sessionId),
+      operation: "lookup_checkpoints", payload: { ids: [id] } }) as { items: Array<{ id: string; objectId: string; metadata: Record<string, unknown> }> };
+    const checkpoint = result.items[0];
+    if (!checkpoint) throw new AgentRuntimeError("History checkpoint was not found.", "CHECKPOINT_NOT_FOUND", 404);
+    if (checkpoint.metadata.readOnly === true) throw new AgentRuntimeError("This history was sealed by context compaction.", "READ_ONLY_HISTORY", 409);
+    return checkpoint;
+  }
+  async previewForkAuthoritative(sessionId: string, checkpointId: string) {
+    await this.historyCheckpointById(sessionId, checkpointId);
+    const head = await this.historyHeadAuthoritative(sessionId);
+    return { checkpointId, revision: head.revision, removedMessages: 0, files: [], conflicts: [], preservedFiles: [],
+      canApply: true, exclusions: FILE_EXCLUSIONS };
+  }
+  async readOnlyMessageIds(sessionId: string, messageIds: readonly string[]): Promise<string[]> {
+    const sealed: string[] = [];
+    for (let offset = 0; offset < messageIds.length; offset += 256) {
+      const result = await this.historyCommand({ sessionId, requestId: historyReadRequest("context-permissions", sessionId),
+        operation: "context_permissions", payload: { messageIds: messageIds.slice(offset, offset + 256) } }) as { readOnlyMessageIds: string[] };
+      sealed.push(...result.readOnlyMessageIds);
+    }
+    return sealed;
+  }
   async previewHistoryAuthoritative(sessionId: string, checkpointId: string, includeFiles = true) {
     const [head, checkpoints, messages] = await Promise.all([
       this.historyHeadAuthoritative(sessionId), this.listHistoryCheckpoints(sessionId),
@@ -1319,6 +1350,7 @@ export class RuntimeFacade {
     ]);
     const checkpoint=checkpoints.find(item=>item.id===checkpointId);
     if(!checkpoint) throw new AgentRuntimeError('History checkpoint was not found.','CHECKPOINT_NOT_FOUND',404);
+    if(checkpoint.metadata.readOnly === true) throw new AgentRuntimeError('This history was sealed by context compaction.','READ_ONLY_HISTORY',409);
     const index=messages.findIndex(item=>item.id===checkpoint.metadata.messageId);
     if(index<0)throw new AgentRuntimeError('History checkpoint message was not found.','CHECKPOINT_NOT_FOUND',404);
     const files=includeFiles?await previewRuntimeFiles(sessionId,checkpointId):{files:[] as RuntimeFileChange[],conflicts:[] as RuntimeFileConflict[],preservedFiles:[] as RuntimeFileConflict[],warnings:[] as string[]};
@@ -1439,16 +1471,89 @@ export class RuntimeFacade {
     await agentRuntimeStore.hydrateSession(sessionId,true);
     return (await this.historyHeadAuthoritative(sessionId)).revision;
   }
-  async applyHistoryAuthoritative(input: {sessionId:string;checkpointId:string;revision:number;requestId:string;action:'rollback'|'edit';message?:string;includeFiles?:boolean}) {
+  async editMessageAuthoritative(input: { sessionId: string; messageId: string; message: string; requestId: string }) {
+    const session = await this.sessionSummaryAuthoritative(input.sessionId);
+    if (session.sessionMetadata?.archivedAt || session.sessionMetadata?.deletedAt)
+      throw new AgentRuntimeError('Session was not found.', 'NOT_FOUND', 404);
+    if (session.sessionMetadata?.historyRollbackEnabled === false)
+      throw new AgentRuntimeError('This conversation is append-only.', 'HISTORY_DISABLED', 409);
+    if (!input.message.trim())
+      throw new AgentRuntimeError('The edited message is empty.', 'VALIDATION_ERROR', 400);
+    const previous = session.sessionMetadata?.lastHistoryEdit as {
+      requestId: string; messageId: string; input: StreamTurnRequest;
+    } | undefined;
+    if (previous?.requestId === input.requestId) {
+      if (previous.messageId !== input.messageId || previous.input.message !== input.message)
+        throw new AgentRuntimeError('The edit request has different content.', 'REQUEST_CONFLICT', 409);
+      return { sessionId: input.sessionId, revision: (await this.historyHeadAuthoritative(input.sessionId)).revision, input: previous.input };
+    }
+    await this.assertHistoryIdle(input.sessionId);
+    await this.historyCommand({ sessionId: input.sessionId, requestId: historyReadRequest('reconcile', input.sessionId), operation: 'reconcile_stream', payload: {} });
+    const head = await this.historyHeadAuthoritative(input.sessionId);
+    const messages = await this.listMessageHistory(input.sessionId) as AgentRuntimeMessage[];
+    const initial = input.messageId === `user-input-${input.sessionId}`;
+    const original = initial
+      ? messages.find(item => item.role === 'user' && item.metadata?.source === 'session_prompt') ?? messages.find(item => item.role === 'user')
+      : messages.find(item => item.id === input.messageId);
+    if (!original)
+      throw new AgentRuntimeError('The message is no longer in this conversation. Refresh and retry.', 'MESSAGE_NOT_FOUND', 404);
+    if (original.role !== 'user')
+      throw new AgentRuntimeError('Only user messages can be edited.', 'VALIDATION_ERROR', 400);
+    const attachments = original.contentParts?.filter(part => part.type !== 'text' || part.attachmentName);
+    const replacement: StreamTurnRequest = {
+      message: input.message,
+      ...(attachments?.length ? { contentParts: [{ type: 'text' as const, text: input.message }, ...attachments] } : {}),
+    };
+    const replacesPrompt = initial || original.metadata?.source === 'session_prompt' || session.prompt === original.content;
+    const historyFields = {
+      ...(replacesPrompt ? { prompt: input.message } : {}),
+      contextSnapshotId: null,
+      sessionMetadata: {
+        nativeBackend: null, latestSystemPrompt: null, turnReferences: null,
+        ...(replacesPrompt ? { userPrompt: input.message, goalContent: input.message } : {}),
+        lastHistoryEdit: { requestId: input.requestId, messageId: input.messageId, input: replacement },
+      },
+    };
+    const requestId = `history-edit:${input.requestId}`;
+    await this.controlCommand({ sessionId: input.sessionId, requestId: `history-begin:${requestId}`, operation: 'history_begin', payload: { historyRequestId: requestId } });
+    try {
+      const restored = await this.historyCommand({
+        sessionId: input.sessionId, requestId, operation: 'truncate_message',
+        payload: { messageId: original.id, expectedRevision: head.revision, metadata: { historyFields } },
+      }) as { requestId: string; metadata: Record<string, unknown> };
+      const revision = await this.completeHistoryRestore(input.sessionId, restored);
+      return { sessionId: input.sessionId, revision, input: replacement };
+    } catch (error) {
+      await this.cancelUncommittedHistoryRestore(input.sessionId, requestId);
+      throw error;
+    }
+  }
+  private async assertHistoryIdle(sessionId: string) {
     await agentRuntimeStore.hydrateSessions();
-    const members=agentRuntimeStore.listSessionTree(input.sessionId);
+    const members=agentRuntimeStore.listSessionTree(sessionId);
     for(const member of members) {
-      const hot=await this.snapshotAuthoritative(member.id);
+      // The Rust UI snapshot is authoritative for terminal state. The local
+      // session mirror can briefly retain an old activeRunId after the runtime
+      // has already settled, which used to make rollback fail with
+      // HISTORY_SESSION_BUSY on an idle conversation.
+      const hot=await this.uiSnapshotAuthoritative(member.id);
       const control=await this.controlState(member.id) as {processLeases?:Array<{state:string;workerOwned?:boolean}>};
-      if(hot.activeRunId || ['running','queued','stopping','waiting_permission','waiting_input'].includes(member.status)
+      const activeStatuses = ['running','queued','stopping','waiting_permission','waiting_input'];
+      const activeRun = hot.run;
+      const runBusy = Boolean(activeRun && activeStatuses.includes(activeRun.status));
+      if(activeStatuses.includes(hot.session.status) || runBusy
         || control.processLeases?.some(lease=>lease.state!=='closed'&&!lease.workerOwned))
         throw new AgentRuntimeError('Stop the session and its agents before restoring history.','HISTORY_SESSION_BUSY',409);
     }
+  }
+  private async cancelUncommittedHistoryRestore(sessionId: string, requestId: string) {
+    const pending = await pendingRuntimeFiles();
+    const control = await this.controlState(sessionId) as { runtimeControl?: { historyRequestId?: string } };
+    if (!pending.restores.some(item => item.sessionId === sessionId) && control.runtimeControl?.historyRequestId === requestId)
+      await this.controlCommand({ sessionId, requestId: `history-cancel:${requestId}`, operation: 'history_cancel', payload: { historyRequestId: requestId } });
+  }
+  async applyHistoryAuthoritative(input: {sessionId:string;checkpointId:string;revision:number;requestId:string;action:'rollback'|'edit';message?:string;includeFiles?:boolean}) {
+    await this.assertHistoryIdle(input.sessionId);
     await this.historyCommand({sessionId:input.sessionId,requestId:historyReadRequest('reconcile',input.sessionId),operation:'reconcile_stream',payload:{}});
     const preview=await this.previewHistoryAuthoritative(input.sessionId,input.checkpointId,input.includeFiles??true);
     if(preview.revision!==input.revision)throw new AgentRuntimeError('Conversation changed. Refresh history.','HISTORY_STALE',409);
@@ -1463,10 +1568,7 @@ export class RuntimeFacade {
       const revision=await this.completeHistoryRestore(input.sessionId,restored);
       return {sessionId:input.sessionId,revision,...(input.action==='edit'&&input.message?{input:{message:input.message}}:{})};
     } catch(error) {
-      const pending=await pendingRuntimeFiles();
-      const control=await this.controlState(input.sessionId) as {runtimeControl?:{historyRequestId?:string}};
-      if(!pending.restores.some(item=>item.sessionId===input.sessionId) && control.runtimeControl?.historyRequestId===requestId)
-        await this.controlCommand({sessionId:input.sessionId,requestId:`history-cancel:${requestId}`,operation:'history_cancel',payload:{historyRequestId:requestId}});
+      await this.cancelUncommittedHistoryRestore(input.sessionId, requestId);
       throw error;
     }
   }
@@ -1490,156 +1592,47 @@ export class RuntimeFacade {
     checkpointId: string;
     revision: number;
     requestId: string;
-    /** Running sessions keep appending durable history while the copy is made. */
     allowSourceChanges?: boolean;
-  }): Promise<{
-    revision: number;
-    objectCount: number;
-  }> {
-    const [head, checkpoints, messages, runs, steps, parts, tools, events] =
-      await Promise.all([
-        this.historyHeadAuthoritative(input.sourceSessionId),
-        this.listHistoryCheckpoints(input.sourceSessionId),
-        this.listHistoryObjects(input.sourceSessionId, "list_messages"),
-        this.listHistoryObjects(input.sourceSessionId, "list_runs"),
-        this.listHistoryObjects(input.sourceSessionId, "list_steps"),
-        this.listHistoryObjects(input.sourceSessionId, "list_parts"),
-        this.listHistoryObjects(input.sourceSessionId, "list_tool_calls"),
-        this.listHistoryObjects(input.sourceSessionId, "list_events"),
-      ]);
-    if (!input.allowSourceChanges && head.revision !== input.revision)
-      throw new AgentRuntimeError(
-        "Conversation changed. Refresh the fork preview.",
-        "HISTORY_STALE",
-        409,
-      );
-    const checkpoint = checkpoints.find(
-      (item) => item.id === input.checkpointId,
-    );
-    if (!checkpoint)
-      throw new AgentRuntimeError(
-        "History checkpoint was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    const orderedMessages = this.orderedHistory(
-      messages as AgentRuntimeMessage[],
-    );
-    const boundary = orderedMessages.findIndex(
-      (item) => item.id === checkpoint.metadata.messageId,
-    );
-    if (boundary < 0)
-      throw new AgentRuntimeError(
-        "History checkpoint message was not found.",
-        "CHECKPOINT_NOT_FOUND",
-        404,
-      );
-    const keepMessages = orderedMessages.slice(0, boundary + 1);
-    const runIds = new Set(
-      keepMessages
-        .map((item) => item.runId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const keepRuns = (runs as AgentRun[]).filter((run) => runIds.has(run.id));
-    const keepSteps = (steps as AgentRunStep[]).filter((step) =>
-      runIds.has(step.runId),
-    );
-    const stepIds = new Set(keepSteps.map((step) => step.id));
-    const keepParts = (
-      parts as Array<{
-        stepId?: string;
-      }>
-    ).filter((part) => part.stepId && stepIds.has(part.stepId));
-    const keepTools = (
-      tools as Array<{
-        stepId?: string;
-      }>
-    ).filter((tool) => tool.stepId && stepIds.has(tool.stepId));
-    const keepEvents = (
-      events as Array<{
-        runId?: string;
-      }>
-    ).filter((event) => !event.runId || runIds.has(event.runId));
-    const hashId = (kind: string, id: string) =>
-      `fork_${createHash("sha256").update(`${input.requestId}:${kind}:${id}`).digest("hex").slice(0, 24)}`;
-    const maps = new Map<string, string>();
-    const remap = (kind: string, id: unknown): unknown => {
-      if (typeof id !== "string") return id;
-      const key = `${kind}:${id}`;
-      const existing = maps.get(key);
-      if (existing) return existing;
-      const mapped = hashId(kind, id);
-      maps.set(key, mapped);
-      return mapped;
-    };
-    const transform = (kind: string, value: unknown): unknown => {
-      const copy = JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-      if (typeof copy.id === "string") copy.id = remap(kind, copy.id);
-      if ("sessionId" in copy) copy.sessionId = input.targetSessionId;
-      if ("runId" in copy) copy.runId = remap("run", copy.runId);
-      if ("stepId" in copy) copy.stepId = remap("step", copy.stepId);
-      if ("toolCallId" in copy)
-        copy.toolCallId = remap("tool", copy.toolCallId);
-      if ("triggerMessageId" in copy)
-        copy.triggerMessageId = remap("message", copy.triggerMessageId);
-      if (copy.payload && typeof copy.payload === "object") {
-        const payload = copy.payload as Record<string, unknown>;
-        if (typeof payload.sessionId === "string")
-          payload.sessionId = input.targetSessionId;
-        if (typeof payload.runId === "string")
-          payload.runId = remap("run", payload.runId);
-      }
-      return copy;
-    };
-    const objects: Array<{
-      kind: string;
-      value: unknown;
-    }> = [
-      ...keepMessages.map((value) => ({
-        kind: "runtime.message",
-        value: transform("message", value),
-      })),
-      ...keepRuns.map((value) => ({
-        kind: "runtime.run",
-        value: transform("run", value),
-      })),
-      ...keepSteps.map((value) => ({
-        kind: "runtime.step",
-        value: transform("step", value),
-      })),
-      ...keepParts.map((value) => ({
-        kind: "runtime.part",
-        value: transform("part", value),
-      })),
-      ...keepTools.map((value) => ({
-        kind: "runtime.tool_call",
-        value: transform("tool", value),
-      })),
-      ...keepEvents.map((value) => ({
-        kind: "runtime.event",
-        value: transform("event", value),
-      })),
-    ];
-    const root = await this.writeHistoryRoot(
-      input.targetSessionId,
-      objects,
-      `history-fork:${input.requestId}`,
-    );
-    const targetHead = await this.historyHeadAuthoritative(
-      input.targetSessionId,
-    );
-    const switched = (await this.historyCommand({
+    sessionMetadata?: Record<string, unknown>;
+  }): Promise<{ revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> }> {
+    // Bind before source bytes are copied. This pins immutable media assets
+    // against source deletion while the fork is in flight.
+    const attemptId = randomUUID();
+    await this.historyCommandGlobal({ scopeId: "assets", requestId: `fork-assets:${input.targetSessionId}:${attemptId}`,
+      operation: "asset_copy_bindings", payload: { sourceSessionId: input.sourceSessionId, targetSessionId: input.targetSessionId } });
+    // Rust captures a committed source extent and copies it with a bounded
+    // serialization buffer. Node never materializes a full transcript here.
+    try {
+    const result = await this.historyCommand({
       sessionId: input.targetSessionId,
-      requestId: `history-fork-head:${input.requestId}`,
-      operation: "head_switch",
-      payload: { objectId: root, expectedRevision: targetHead.revision },
-    })) as {
-      revision?: number;
-    };
-    return {
-      revision: Number(switched.revision ?? targetHead.revision + 1),
-      objectCount: objects.length,
-    };
+      requestId: `history-fork-copy:${input.requestId}`,
+      operation: "fork_copy",
+      payload: { sourceSessionId: input.sourceSessionId, checkpointId: input.checkpointId,
+        expectedRevision: input.revision, allowSourceChanges: input.allowSourceChanges ?? false,
+        sessionMetadata: input.sessionMetadata ?? {} },
+    }) as { revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> };
+    return result;
+    } catch (error) {
+      // A receipt for different input is a real conflict, not a lost reply.
+      // It may own the target assets; neither accept nor clean it up here.
+      if (error instanceof RuntimeSidecarError && error.code === "REQUEST_CONFLICT") throw error;
+      // The copy can commit before its acknowledgement is lost. A failed
+      // status read is uncertainty, never permission to release its assets.
+      const committed = await this.forkCopyResult(input.targetSessionId, input.requestId);
+      if (committed) return committed;
+      await this.releaseForkAssets(input.targetSessionId);
+      throw error;
+    }
+  }
+  async forkCopyResult(sessionId: string, requestId: string) {
+    const status = await this.historyCommand({ sessionId, requestId: historyReadRequest("fork-status", sessionId),
+      operation: "fork_status", payload: { requestId: `history-fork-copy:${requestId}` } }) as {
+        result: { revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> } | null };
+    return status.result;
+  }
+  async releaseForkAssets(sessionId: string): Promise<void> {
+    await this.historyCommandGlobal({ scopeId: "assets", requestId: `fork-assets-release:${sessionId}:${randomUUID()}`,
+      operation: "asset_release_bindings", payload: { sessionId } });
   }
   async historyHeadAuthoritative(sessionId: string): Promise<{
     revision: number;

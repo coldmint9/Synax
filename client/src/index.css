@@ -847,14 +847,10 @@
     background: var(--background);
   }
 
-  /* Window controls occupy the right-hand safe area of the global toolbar. */
+  /* Window controls share the toolbar's first row and reserve their own column. */
   .window-chrome {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 1000;
+    align-self: stretch;
     width: 114px;
-    height: var(--window-toolbar-height);
     pointer-events: none;
     user-select: none;
   }
@@ -871,6 +867,7 @@
 
   .window-chrome__button {
     display: inline-flex;
+    flex: 0 0 34px;
     width: 34px;
     height: 30px;
     align-items: center;

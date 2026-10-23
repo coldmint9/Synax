@@ -20,7 +20,10 @@ import { hydrateRuntimeAssets } from "../../local-node/modules/agent-runtime/med
 import { AgentNotFoundError } from "../../local-node/modules/agent-runtime/runtime-errors.js";
 import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/sidecar/sidecar-client.js";
 
+import { runtimeBus } from "../../local-node/modules/agent-runtime/runtime-bus.js";
+
 const activeStreams = new Map<string, AbortController>();
+const activeCompactions = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
 let yieldWorkerRequested = false;
 
@@ -34,8 +37,11 @@ function pickGenerator(
 }
 
 async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
+  const controller = new AbortController();
+  activeCompactions.set(requestId, controller);
   try {
-    const result = await compactSessionContextWithLlm(sessionId);
+    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
+    const result = await compactSessionContextWithLlm(sessionId, controller.signal, requestId);
     sendAgentSessionToParent({
       type: "context:compact:done",
       sessionId,
@@ -49,6 +55,8 @@ async function runContextCompaction(sessionId: string, requestId: string): Promi
       requestId,
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    activeCompactions.delete(requestId);
   }
 }
 
@@ -61,7 +69,7 @@ async function runStream(
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
-    await agentRuntimeStore.hydrateSession(sessionId, true);
+    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
     for await (const chunk of withinExecutionContext(
@@ -132,7 +140,7 @@ function main(): void {
       logger.info("[agent-session-runner] runtime projection is not hydrated during bootstrap");
     }
     try {
-      await agentRuntimeStore.hydrateSession(init.sessionId);
+      await agentRuntimeStore.hydrateExecutionSession(init.sessionId);
     } catch (error) {
       // A worker can be started for a session that was archived or removed
       // after the parent admitted the process. Keep the IPC worker alive so
@@ -165,6 +173,8 @@ function main(): void {
       stopping = true;
       for (const controller of activeStreams.values())
         if (!controller.signal.aborted) controller.abort(new Error(reason));
+      for (const controller of activeCompactions.values())
+        if (!controller.signal.aborted) controller.abort(new Error(reason));
     },
     cleanup: (reason) => [
       Promise.resolve().then(() => terminateOwnedCommands()),
@@ -192,7 +202,12 @@ function main(): void {
       return;
     }
     if (!initialized) return;
+    if (message.type === "runtime:notify") { runtimeBus.emit(message.event); return; }
     if (message.type === "stream:yield-request") { yieldWorkerRequested = message.requested; return; }
+    if (message.type === "context:cancel") {
+      activeCompactions.get(message.requestId)?.abort(new Error("Context compaction cancelled by parent."));
+      return;
+    }
     if (message.type === "context:compact") {
       const task = runContextCompaction(init.sessionId, message.requestId);
       runningTasks.add(task);

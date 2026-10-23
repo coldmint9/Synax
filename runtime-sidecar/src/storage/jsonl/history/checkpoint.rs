@@ -16,12 +16,18 @@ use std::{
 
 const FILE: &str = "history-index.bin";
 
+fn should_save(offset: u64, previous: u64, force: bool) -> bool {
+    offset != previous && (force || offset.saturating_sub(previous) >= previous.max(8 * 1024 * 1024))
+}
+
 #[derive(Serialize, Deserialize)]
 struct IndexData<O> {
     head: HistoryHead,
     current_head_revision: u64,
     order: BTreeMap<String, String>,
     identity: HashMap<String, String>,
+    first_revision: HashMap<String, u64>,
+    birth_order: Vec<((String, u64, String), String)>,
     objects: O,
     generation: u64,
     index_generation: u64,
@@ -74,18 +80,21 @@ pub(super) fn read(directory: &Path, id: &str) -> Option<(SessionIndex, u64)> {
         SessionIndex {
             head: data.head,
             current_head_revision: data.current_head_revision,
-            order,
-            identity: data.identity,
-            objects,
+            step_text: order.values().filter_map(|object| super::step_text_key(object).map(|key| (key, object.clone()))).collect(),
+            order: order.into_iter().collect(),
+            identity: data.identity.into_iter().collect(),
+            first_revision: data.first_revision.into_iter().collect(),
+            birth_order: data.birth_order.into_iter().collect(),
+            objects: objects.into_iter().collect(),
             generation: data.generation,
             index_generation: data.index_generation,
             index_root: data.index_root,
             changes: data.changes.into_iter().collect(),
-            aux: data.aux,
-            blobs: data.blobs,
+            aux: data.aux.into_iter().collect(),
+            blobs: data.blobs.into_iter().collect(),
             metadata_scope: data.metadata_scope,
             metadata_generation: data.metadata_generation,
-            receipts: data.receipts,
+            receipts: data.receipts.into_iter().collect(),
         },
         saved.position.offset,
     ))
@@ -93,9 +102,9 @@ pub(super) fn read(directory: &Path, id: &str) -> Option<(SessionIndex, u64)> {
 
 pub(super) fn save(state: &mut SessionState, force: bool) -> JsonlResult<()> {
     let offset = state.file.len();
-    if offset == state.checkpoint_offset
-        || (!force && offset.saturating_sub(state.checkpoint_offset) < 8 * 1024 * 1024)
-    {
+    // Full index snapshots grow with history. Geometric spacing bounds total
+    // snapshot serialization/write volume over the lifetime of a hot session.
+    if !should_save(offset, state.checkpoint_offset, force) {
         return Ok(());
     }
     let directory = state.file.path().parent().expect("history directory");
@@ -121,7 +130,9 @@ pub(super) fn save(state: &mut SessionState, force: bool) -> JsonlResult<()> {
                 .iter()
                 .map(|(key, object)| (key.clone(), object.object_id.clone()))
                 .collect(),
-            identity: index.identity.clone(),
+            identity: index.identity.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            first_revision: index.first_revision.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            birth_order: index.birth_order.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             objects: index
                 .objects
                 .iter()
@@ -135,14 +146,36 @@ pub(super) fn save(state: &mut SessionState, force: bool) -> JsonlResult<()> {
                 .iter()
                 .map(|(key, change)| (*key, change.clone()))
                 .collect(),
-            aux: index.aux.clone(),
-            blobs: index.blobs.clone(),
+            aux: index.aux.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            blobs: index.blobs.iter().cloned().collect(),
             metadata_scope: index.metadata_scope.clone(),
             metadata_generation: index.metadata_generation,
-            receipts: index.receipts.clone(),
+            receipts: index.receipts.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         },
     };
     checkpoint::write(&directory.join(FILE), &saved)?;
     state.checkpoint_offset = offset;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_save;
+
+    #[test]
+    fn automatic_snapshot_writes_are_amortized_linear() {
+        let unit = 1024 * 1024;
+        let mut previous = 0;
+        let mut total = 0;
+        for offset in (1..=1024).map(|n| n * unit) {
+            if should_save(offset, previous, false) {
+                total += offset;
+                previous = offset;
+            }
+        }
+        // Full snapshots at 8, 16, 32, ... MiB; not every additional 8 MiB.
+        assert!(total < 2 * 1024 * unit);
+        assert!(!should_save(previous, previous, true));
+        assert!(should_save(previous + 1, previous, true));
+    }
 }

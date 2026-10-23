@@ -28,7 +28,7 @@ export type RustAgentLoopProviderRequest = {
   /** Legacy wire compatibility only; Rust does not enforce step budgets. */
   maxSteps?: number;
   runtimeBinding?: { sessionId: string; runId: string };
-  contextPolicy?: { contextLimit: number; outputReserve: number; keepRecentMessages?: number };
+  contextPolicy?: { contextLimit: number; inputLimit?: number; outputReserve: number; keepRecentMessages?: number };
   executionContext?: RuntimeExecutionContext;
 };
 
@@ -45,6 +45,8 @@ export type RustAgentLoopEvent = {
   maxRetries?: number;
   retry?: import("../../infrastructure/llm-runtime/retry-state.js").LlmRetryState;
   contextId?: string;
+  inputBudget?: number;
+  contextCorrection?: string;
   requestId?: string;
   startedAt?: string;
   composition?: import("./context-composition.js").ContextComposition;
@@ -256,10 +258,11 @@ export function rustLoopMessageId(): string {
 
 export async function sendRustStepContext(input: {
   loopId: string; contextId: string; systemPrompt: string; tools: unknown[];
+  prompt?: unknown[];
   executionContext?: RuntimeExecutionContext;
 }, signal?: AbortSignal): Promise<void> {
   const response = await bridgeRequest("/agent-loop/context", {
-    method: "POST", headers: authHeaders(), body: JSON.stringify(input),
+    method: "POST", headers: authHeaders(), body: stringifyRustRequest(input),
   }, signal);
   if (!response.ok) throw await bridgeError(response, "Rust step context rejected");
 }

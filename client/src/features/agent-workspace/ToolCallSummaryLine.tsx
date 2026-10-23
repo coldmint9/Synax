@@ -9,7 +9,11 @@ import type { ToolFileLinks } from "./fileLink";
 import { activityPreview } from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
 import { ExecutionProgressLabel } from "./ExecutionProgressLabel";
-import { useActivityWindowTakeOver, useCompactActivityRow } from "./ActivityRowScope";
+import {
+  useActivityRowActive,
+  useActivityRowExpansion,
+  useCompactActivityRow,
+} from "./ActivityRowScope";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 
 interface Props {
@@ -25,19 +29,26 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({
   fileLinks,
 }: Props) {
   const { t, locale } = useLocale();
-  const [open, toggle] = useActivityDisclosure(rememberKey ? `${rememberKey}:tool:${call.id}` : undefined);
+  const [open, toggle, setOpen] = useActivityDisclosure(rememberKey ? `${rememberKey}:tool:${call.id}` : undefined);
   const detailsId = useId();
   const presentation = useMemo(() => conversationToolPresentation(call, locale), [call, locale]);
   const Icon = presentation.icon;
   const hasDetails = Boolean(call.inputSummary || call.outputSummary);
-  // A live window keeps one line per record. Opening a record therefore hands
-  // the window to the reader instead of silently dropping its disclosure.
+  // A live window keeps one line per record. Opening a record expands only
+  // this row, so the window stays virtualized for every other record.
   const compact = useCompactActivityRow();
-  const takeOverWindow = useActivityWindowTakeOver();
+  const active = useActivityRowActive();
+  const expandRow = useActivityRowExpansion();
   const expandable = hasDetails;
-  const expanded = expandable && open;
+  const expanded = expandable && open && (!compact || active);
   const reveal = () => {
-    if (compact) takeOverWindow?.();
+    // Inside the live window only one record is open at a time. Claiming that
+    // slot must show this record, not toggle a body that is already open.
+    if (compact && !active) {
+      expandRow?.();
+      if (!open) setOpen(true);
+      return;
+    }
     toggle();
   };
   const failed = call.status === "failed" || call.status === "denied";

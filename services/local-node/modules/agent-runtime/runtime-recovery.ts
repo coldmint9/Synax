@@ -28,7 +28,8 @@ export function currentRuntimeHostId(): string {
 
 /** Completed summaries with no live lease/fence can stay cold at startup. */
 export function needsRuntimeRecovery(session: AgentSession): boolean {
-  return session.runtimeRecoveryRequired !== false || Boolean(session.activeRunId) ||
+  return session.runtimeRecoveryRequired !== false || Boolean(session.activeRunId) || Boolean(session.sessionMetadata?.runtimeControl) ||
+    Boolean(session.sessionMetadata?.forkPreparing) ||
     ["running", "stopping", "queued"].includes(session.status);
 }
 
@@ -177,6 +178,30 @@ export async function recoverRuntimeSession(
     runtimeClient().snapshot(sessionId),
   ]);
   const unchanged = { reviewed: 0, resumable: [] as string[] };
+  if (snapshot.session.sessionMetadata?.forkPreparing) {
+    const metadata = snapshot.session.sessionMetadata;
+    if (!includeCurrentHost && metadata.forkHostId === hostId) return unchanged;
+    if (typeof metadata.forkRequestId !== "string")
+      throw new Error("Interrupted fork has no recoverable request identity.");
+    const copied = await runtimeFacade.forkCopyResult(sessionId, metadata.forkRequestId);
+    if (!copied) await runtimeFacade.releaseForkAssets(sessionId);
+    await runtimeFacade.sessionPatch(sessionId, `fork-recover:${metadata.forkRequestId}`, {
+      status: copied ? "completed" : "interrupted", activeRunId: null, pendingResumeToken: null,
+      sessionMetadata: { ...(copied?.sessionMetadata ?? {}), forkPreparing: false, forkCopyComplete: Boolean(copied),
+        forkInterrupted: copied ? null : true, deletedAt: copied ? null : nowIso() },
+    });
+    await agentRuntimeStore.hydrateSessionSummary(sessionId, true);
+    return { reviewed: 1, resumable: [] };
+  }
+  const compactionLock = control.runtimeControl as { state?: string; ownerId?: string; hostId?: string } | undefined;
+  if (compactionLock?.state === "compacting") {
+    if (!includeCurrentHost && compactionLock.hostId === hostId) return unchanged;
+    await runtimeFacade.controlCommand({ sessionId, requestId: `recover-compaction:${compactionLock.ownerId}`,
+      operation: "compaction_unlock", payload: { ownerId: compactionLock.ownerId } });
+    await (await import("./checkpoint-service.js")).recoverCheckpointHead(sessionId);
+    await agentRuntimeStore.hydrateSessionSummary(sessionId, true);
+    return { reviewed: 1, resumable: [] };
+  }
   // A pre-fix session can retain an open lease for a different (finished) run.
   // Check this before the same-host shortcut: these orphans arise without a
   // restart. The conditional Rust transaction cannot touch a new valid owner.
@@ -288,6 +313,7 @@ export async function recoverRuntimeSession(
     const lease = control.executionLease;
     if (lease && !lease.closed) await runtimeFacade.controlCommand({ sessionId: session.id,
       requestId: `restart-close:${active.id}:${lease.epoch}`, operation: "execution_close", payload: lease });
+    await (await import("./checkpoint-service.js")).recoverCheckpointHead(session.id);
     if (local) {
       interruptContextCompaction(session.id, "运行进程已重启，上下文压缩已中断。");
       interactionService.cancel(session.id);

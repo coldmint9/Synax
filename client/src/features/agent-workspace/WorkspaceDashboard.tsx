@@ -1,21 +1,15 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import {
-  Check,
   ChevronRight,
   FileDiff,
   Folder,
   FolderOpen,
   FolderTree,
-  Layers2,
-  Pin,
-  GitBranch,
   GitCommit,
   List,
   RefreshCw,
@@ -39,7 +33,6 @@ import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
 import { ChangedFilesViewport } from "./ChangedFilesViewport";
 import { SessionTodoPanel } from "./SessionTodoPanel";
 import { useAgentSessionStore } from "./state/agentSessionStore";
-import { useWorkspaceCopy } from "../workspace/workspaceCopy";
 import "../workspace/workspaceProjects.css";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useContextMenu } from "../../shared/ui/context-menu/ContextMenuProvider";
@@ -58,6 +51,7 @@ import {
 } from "./state/sessionWorkspaceStore";
 import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
+import { WorkspaceProjectSwitcher } from "./WorkspaceProjectSwitcher";
 import { SessionCommitDialog } from "./SessionCommitDialog";
 import { getProjectThemeColor } from "./projectThemeColor";
 import { useShellStore } from "../../shared/state/shellStore";
@@ -239,7 +233,7 @@ function RepositoryProjectCard({
           loading={loading}
           reload={reload}
           embedded
-          branchInSwitcher={(environment.repositories?.length ?? 0) > 2}
+          branchInSwitcher={false}
         />
       }
     >
@@ -420,7 +414,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
     state.selectedSessionId === sessionId ? state.sessionTodos : EMPTY_TODOS,
   );
   const projectId = useShellStore((state) => state.currentProjectId);
-  const c = useWorkspaceCopy();
   // Both layers (workspace Git + session cards) are owned by the environment
   // provider; a standalone render only paints what it was handed.
   const environment = providedEnvironment ?? null;
@@ -435,6 +428,9 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   const selectRepository = useSessionWorkspaceStore(
     (state) => state.selectRepository,
   );
+  const onSelectRepository = useCallback((rootId: string) => {
+    if (sessionId) selectRepository(sessionId, rootId);
+  }, [sessionId, selectRepository]);
   const repositories = environment?.repositories ?? [];
   const repository =
     repositories.find((root) => root.rootId === selectedRootId) ??
@@ -497,13 +493,16 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   );
   const stagedFiles = changedFiles.filter((file) => file.staged).length;
 
-  if (sessionId && environment && repositories.length > 0 && repositories.length <= 2) {
+  if (sessionId && environment && repositories.length === 1) {
     return (
       <WorkspaceDashboardLayout
         key={environment.projectId}
         scope={environment.projectId}
       >
-        {repositories.map((root) => (
+        <WorkspaceProjectSwitcher key={sessionId} sessionId={sessionId} projectId={environment.projectId}
+          repositories={repositories} selectedRootId={repository!.rootId}
+          onSelect={onSelectRepository} reload={reload} />
+        {[repository!].map((root) => (
           <DashboardPanel
             key={root.rootId}
             id={`repository:${root.rootId}`}
@@ -537,8 +536,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             label={locale === "zh" ? "任务进度" : "Progress"}
           >
             {todos.length > 0 ? <SessionTodoPanel key={sessionId} items={todos} /> : (
-              <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"}>
-                <div className="ws-empty">{locale === "zh" ? "暂无任务" : "No tasks yet"}</div>
+              <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"} dormant summary={locale === "zh" ? "暂无任务" : "No tasks yet"}>
+                {null}
               </WorkspaceCard>
             )}
           </DashboardPanel>
@@ -568,87 +567,10 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
         <div className="ws-placeholder">{t("workspaceSelectSession")}</div>
       ) : environment && repositoryEnvironment ? (
         <>
-          {repositories.length > 1 && (
-            <section className="ws-project-switcher" aria-label={c.members}>
-              <div className="workspace-section-label">
-                <span className="flex items-center gap-1.5">
-                  <Layers2 size={12} />
-                  {c.members}
-                </span>
-                <span className="ws-project-switcher-actions">
-                  <span className="workspace-count">{repositories.length}</span>
-                  <button
-                    type="button"
-                    className="ws-project-refresh-all"
-                    aria-label={locale === "zh" ? "刷新全部项目" : "Refresh all projects"}
-                    title={locale === "zh" ? "刷新全部项目" : "Refresh all projects"}
-                    disabled={loading}
-                    onClick={() => void reload()}
-                  >
-                    <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-                  </button>
-                </span>
-              </div>
-              <div
-                className="ws-project-options"
-                role="group"
-                aria-label={t("workspaceRepositorySelect")}
-              >
-                {repositories.map((root) => (
-                  <div
-                    key={root.rootId}
-                    className="ws-project-option"
-                    data-selected={
-                      repository?.rootId === root.rootId || undefined
-                    }
-                  >
-                    <button
-                      type="button"
-                      className="ws-project-option-select"
-                      aria-pressed={repository?.rootId === root.rootId}
-                      aria-label={`${root.name} · ${root.branch}`}
-                      onClick={() => selectRepository(sessionId, root.rootId)}
-                    >
-                      <span
-                        className="ws-project-option-top"
-                        data-project-color={getProjectThemeColor(root.rootId)}
-                      >
-                        <Folder size={13} />
-                        <strong title={root.name}>{root.name}</strong>
-                        {root.role === "primary" && (
-                          <Pin size={10} aria-label={c.primary} />
-                        )}
-                        <span
-                          className="ws-project-change-count"
-                          data-dirty={root.changedFiles.length > 0 || undefined}
-                          aria-label={t("workspaceCommitChangedFiles", {
-                            count: root.changedFiles.length,
-                          })}
-                          title={t("workspaceCommitChangedFiles", {
-                            count: root.changedFiles.length,
-                          })}
-                        >
-                          {root.status !== "ready" ? (
-                            "!"
-                          ) : root.changedFiles.length > 0 ? (
-                            `+${root.changedFiles.length}`
-                          ) : (
-                            <Check size={10} />
-                          )}
-                        </span>
-                      </span>
-                    </button>
-                    <RepositoryRowActions
-                      sessionId={sessionId}
-                      environment={environment}
-                      repository={root}
-                      loading={loading}
-                      reload={reload}
-                    />
-                  </div>
-                ))}
-              </div>
-            </section>
+          {repositories.length > 1 && repository && (
+            <WorkspaceProjectSwitcher key={sessionId} sessionId={sessionId} projectId={environment.projectId}
+              repositories={repositories} selectedRootId={repository.rootId}
+              onSelect={onSelectRepository} reload={reload} />
           )}
           {(!repository || repository.status !== "ready") && (
             <DashboardPanel
@@ -665,14 +587,15 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
             </DashboardPanel>
           )}
           {(!repository || repository.status === "ready") &&
-            changedFiles.length > 0 && (
+            (repositories.length > 1 || changedFiles.length > 0) && (
               <DashboardPanel id="changes" label={t("workspaceCardGitChanges")}>
                 <WorkspaceCard
                   icon={<FileDiff size={13} />}
                   title={t("workspaceCardGitChanges")}
                   collapsible={false}
+                  dormant={repositories.length === 1 && changedFiles.length === 0}
                   actions={
-                    <div
+                    changedFiles.length > 0 ? <div
                       className="ws-view-toggle"
                       role="group"
                       aria-label={t("workspaceChangeView")}
@@ -695,17 +618,18 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                       >
                         <List size={11} />
                       </button>
-                    </div>
+                    </div> : null
                   }
                   summary={
-                    stagedFiles > 0
+                    changedFiles.length === 0 ? t("workspaceNoChanges") : stagedFiles > 0
                       ? t("workspaceStagedCount", { count: stagedFiles })
                       : null
                   }
                 >
                   {changedFiles.length === 0 ? (
                     <div className="ws-empty">{t("workspaceNoChanges")}</div>
-                  ) : changedFilesView === "tree" ? (
+                  ) : <ChangedFilesViewport ariaLabel={t("workspaceCardGitChanges")}>
+                  {changedFilesView === "tree" ? (
                     <ChangedFileTree
                       key={repository?.rootId}
                       directory={changedFileTree}
@@ -736,6 +660,7 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
                       />
                     ))
                   )}
+                  </ChangedFilesViewport>}
                 </WorkspaceCard>
               </DashboardPanel>
             )}
@@ -763,8 +688,8 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
               label={locale === "zh" ? "任务进度" : "Progress"}
             >
               {todos.length > 0 ? <SessionTodoPanel items={todos} /> : (
-                <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"}>
-                  <div className="ws-empty">{locale === "zh" ? "暂无任务" : "No tasks yet"}</div>
+                <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"} dormant summary={locale === "zh" ? "暂无任务" : "No tasks yet"}>
+                  {null}
                 </WorkspaceCard>
               )}
             </DashboardPanel>
@@ -868,75 +793,6 @@ function ChangedFileFolder({
         />
       )}
     </div>
-  );
-}
-
-/** Branch switching and commit for one project inside the aggregated switcher
- * row. The row's own button only changes the selected repository. */
-function RepositoryRowActions({
-  sessionId,
-  environment,
-  repository,
-  loading,
-  reload,
-}: {
-  sessionId: string;
-  environment: WorkspaceEnvironmentView;
-  repository: WorkspaceEnvironmentRepository;
-  loading: boolean;
-  reload: () => void | Promise<void>;
-}) {
-  const { t } = useLocale();
-  const [commitOpen, setCommitOpen] = useState(false);
-  const unavailable = repository.status !== "ready";
-  const changedCount = repository.changedFiles.length;
-  return (
-    <span className="ws-project-option-actions">
-      {unavailable ? (
-        <span className="ws-project-option-state text-warning">
-          {t(
-            repository.status === "missing"
-              ? "workspaceRepositoryMissing"
-              : repository.status === "not_repository"
-                ? "workspaceRepositoryNotGit"
-                : "workspaceRepositoryError",
-          )}
-        </span>
-      ) : (
-        <RepositoryBranchPicker
-          sessionId={sessionId}
-          rootId={repository.rootId}
-          branch={repository.branch}
-          onSwitched={() => void reload()}
-        />
-      )}
-      <button
-        type="button"
-        className="ws-project-option-commit"
-        onClick={() => setCommitOpen(true)}
-        disabled={loading || unavailable || changedCount === 0}
-        title={t("workspaceCommitPush")}
-        aria-label={`${t("workspaceCommitPush")} · ${repository.name}`}
-      >
-        <GitCommit size={10} />
-      </button>
-      {commitOpen && (
-        <SessionCommitDialog
-          isOpen
-          sessionId={environment.sessionId}
-          projectId={environment.projectId}
-          rootId={repository.rootId}
-          rootName={repository.name}
-          branch={repository.branch}
-          changedFiles={changedCount}
-          onClose={() => {
-            setCommitOpen(false);
-            void reload();
-          }}
-          onCommitted={() => void reload()}
-        />
-      )}
-    </span>
   );
 }
 

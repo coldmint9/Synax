@@ -80,7 +80,7 @@ export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
           <summary className="cursor-pointer">
             {zh ? "错误详情" : "Error details"}
           </summary>
-          <p className="mt-1 whitespace-pre-wrap break-words">{retry.error}</p>
+          <p role="alert" className="mt-1 whitespace-pre-wrap break-words">{retry.error}</p>
         </details>
       </div>
     </div>

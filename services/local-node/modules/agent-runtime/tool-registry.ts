@@ -31,6 +31,7 @@ import { controlTools } from "./control-tools.js";
 import { delegateArgsSchema, delegateSubagent } from "./subagent-delegation.js";
 import { assertSubagentToolAllowed } from "./subagent-profile.js";
 import { subagentLifecycleTools } from "./subagent-tools.js";
+import { readSubagentControl } from "./subagent-control-broker.js";
 import { controlToolError } from "./control-policy.js";
 import { presentationTool } from "./presentation-runtime.js";
 import { interactionService } from "./interaction-service.js";
@@ -281,7 +282,7 @@ export class ToolRegistry {
         (options.includeGated
           ? isToolMountedForSession(session, t)
           : !controlToolError(session, t)) &&
-        (!["specialist", "subagent"].includes(session.profileId) ||
+        (!["specialist", "subagent", "git-merge-worker"].includes(session.profileId) ||
           profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),
     );
@@ -364,12 +365,14 @@ export class ToolRegistry {
     }
 
     this.capabilities.noteUse(sessionId, toolId);
+    const strictSubagentProfile = session.profileId === "git-merge-worker";
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
       ? "Tool is no longer approved for Code Mode."
       : controlToolError(session, tool, args);
     if (
       controlError ||
-      (!profileCanUseTool(profile, tool) &&
+      (strictSubagentProfile && !profileCanUseTool(profile, tool) && tool.id !== INVALID_TOOL_ID) ||
+      (!strictSubagentProfile && !profileCanUseTool(profile, tool) &&
         tool.category !== "skill" &&
         tool.category !== "mcp" &&
         tool.id !== INVALID_TOOL_ID &&
@@ -693,7 +696,11 @@ export class ToolRegistry {
           throw new AgentValidationError(
             "Parent no longer grants this write operation.",
           );
-        if (freshSession.parentSessionId && root.status !== "running")
+        const childControl = readSubagentControl(freshSession);
+        const releasedChild = childControl?.joinMode === "async" && !childControl.terminal &&
+          childControl.parentSessionId === root.id && childControl.childSessionId === freshSession.id &&
+          root.status === "completed" && !root.sessionMetadata?.manualStop && !root.sessionMetadata?.runtimeControl;
+        if (freshSession.parentSessionId && root.status !== "running" && !releasedChild)
           throw new AgentValidationError(
             "Parent is not running; child writes are suspended.",
           );

@@ -12,8 +12,7 @@ export function useActivityDisclosure(rememberKey?: string, defaultExpanded = fa
   // Their choice still survives both completion and virtualization remounts.
   const expanded = selection && selection.key === rememberKey ? selection.expanded : read();
 
-  const toggle = () => {
-    const next = !expanded;
+  const set = (next: boolean) => {
     if (rememberKey) {
       expandedRows.delete(rememberKey);
       expandedRows.set(rememberKey, next);
@@ -23,5 +22,6 @@ export function useActivityDisclosure(rememberKey?: string, defaultExpanded = fa
     }
     setSelection({ key: rememberKey, expanded: next });
   };
-  return [expanded, toggle] as const;
+  const toggle = () => set(!expanded);
+  return [expanded, toggle, set] as const;
 }

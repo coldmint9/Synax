@@ -1,172 +1,120 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
-
-const getSessionEnvironmentFile = vi.fn();
-const getSessionEnvironmentFileMedia = vi.fn();
-const getSessionInputSource = vi.fn();
-const saveSessionEnvironmentFile = vi.fn();
-const highlightCode = vi.fn();
-
+const api = vi.hoisted(() => ({
+  getSessionEnvironmentFile: vi.fn(),
+  getSessionEnvironmentFileMedia: vi.fn(),
+  getSessionInputSource: vi.fn(),
+  saveSessionEnvironmentFile: vi.fn(),
+}));
+const holder = vi.hoisted(() => ({ harness: null as any }));
+const media = vi.hoisted(() => ({ blob: vi.fn() }));
 vi.mock("../../../adapters/transport/agentRuntime", () => ({
-  agentRuntimeApi: {
-    getSessionEnvironmentFile: (...args: unknown[]) =>
-      getSessionEnvironmentFile(...args),
-    getSessionEnvironmentFileMedia: (...args: unknown[]) =>
-      getSessionEnvironmentFileMedia(...args),
-    getSessionInputSource: (...args: unknown[]) =>
-      getSessionInputSource(...args),
-    saveSessionEnvironmentFile: (...args: unknown[]) =>
-      saveSessionEnvironmentFile(...args),
-  },
+  agentRuntimeApi: api,
 }));
-
+vi.mock("../../../adapters/transport/runtimeMedia", () => ({
+  runtimeMedia: media,
+}));
+vi.mock("../../../shared/ui/file-viewer/monacoRuntime", async () => {
+  const { createMonacoHarness } =
+    await import("../../../shared/ui/file-viewer/__tests__/monacoTestHarness");
+  holder.harness = createMonacoHarness();
+  return {
+    monaco: holder.harness.monaco,
+    languageForPath: async () => "typescript",
+  };
+});
 vi.mock("../codeHighlight", () => ({
-  highlightCode: (...args: unknown[]) => highlightCode(...args),
   languageForPath: (path: string) =>
-    path.endsWith(".html")
-      ? "html"
-      : path.endsWith(".tsx")
-        ? "tsx"
-        : "typescript",
+    path.endsWith(".html") ? "html" : "typescript",
 }));
-
 const { CodeViewer } = await import("../CodeViewer");
-const { clearWorkspaceDraft } = await import("../state/sessionWorkspaceStore");
-
-function markup(content: string) {
-  const escaped = content
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  return `<pre class="shiki"><code><span style="color:var(--synax-code-token-keyword)">${escaped}</span></code></pre>`;
-}
-
+const {
+  clearWorkspaceDraft,
+  useSessionWorkspaceStore,
+  getWorkspaceDraft,
+  saveWorkspaceTab,
+} = await import("../state/sessionWorkspaceStore");
+const SOURCE = "const a = 1\nconst b = 2\n";
+const fileView = (content: string) => ({
+  sessionId: "sess-1",
+  path: "src/app.ts",
+  kind: "input",
+  content,
+  truncated: false,
+});
 async function renderEditor(path = "src/app.ts") {
-  const utils = render(
+  const view = render(
     <CodeViewer sessionId="sess-1" path={path} tabId={`file:${path}`} />,
   );
-  const editor = await screen.findByRole("textbox", {
-    name: `编辑文件 ${path}`,
-  });
-  return { ...utils, editor };
-}
-
-const SOURCE = "const a = 1\nconst b = 2\n";
-
-function fileView(content: string) {
   return {
-    sessionId: "sess-1",
-    path: "src/app.ts",
-    kind: "input",
-    content,
-    truncated: false,
+    ...view,
+    editor: await screen.findByRole("textbox", { name: `编辑文件 ${path}` }),
   };
 }
+beforeEach(() => {
+  vi.clearAllMocks();
+  holder.harness?.reset();
+  for (const path of [
+    "src/app.ts",
+    "src/page.html",
+    "src/icon.svg",
+    "docs/guide.md",
+  ])
+    clearWorkspaceDraft("sess-1", `file:${path}`);
+  api.getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
+  api.saveSessionEnvironmentFile.mockResolvedValue({ bytes: SOURCE.length });
+  vi.spyOn(URL, "createObjectURL").mockReturnValue(
+    "blob:https://synax.test/preview",
+  );
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+});
+afterEach(() => cleanup());
 
-async function renderViewer() {
-  const utils = render(<CodeViewer sessionId="sess-1" path="src/app.ts" />);
-  await act(async () => {
-    await Promise.resolve();
-  });
-  return utils;
-}
-
-describe("CodeViewer", () => {
-  beforeEach(() => {
-    clearWorkspaceDraft("file:src/app.ts");
-    clearWorkspaceDraft("file:src/page.html");
-    clearWorkspaceDraft("file:src/icon.svg");
-    getSessionEnvironmentFile.mockReset();
-    getSessionEnvironmentFileMedia.mockReset();
-    getSessionInputSource.mockReset();
-    saveSessionEnvironmentFile.mockReset();
-    saveSessionEnvironmentFile.mockResolvedValue({
-      sessionId: "sess-1",
-      path: "src/app.ts",
-      bytes: SOURCE.length,
-    });
-    highlightCode.mockReset();
-    vi.spyOn(URL, "createObjectURL").mockImplementation(
-      () => "blob:https://synax.test/preview",
+describe("global Monaco file viewer", () => {
+  it("retains rendered Markdown attachments instead of decoding them into an empty preview", async () => {
+    media.blob.mockResolvedValue(
+      new Blob(["# Attached guide"], { type: "text/plain" }),
     );
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
-    highlightCode.mockResolvedValue(
-      '<pre class="shiki synax-code" style="color:var(--synax-code-foreground)">' +
-        '<code><span class="line"><span style="color:var(--synax-code-token-keyword)">const</span> a = 1</span>' +
-        '\n<span class="line">const b = 2</span></code></pre>',
-    );
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("renders the highlighted markup and a gutter that matches the file", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
-    const { container } = await renderViewer();
-
-    await waitFor(() => {
-      expect(
-        container.querySelector(".code-viewer-content .shiki"),
-      ).not.toBeNull();
-    });
-    expect(highlightCode).toHaveBeenCalledWith(SOURCE, "src/app.ts");
-    expect(
-      container.querySelector(".code-viewer-content .shiki span span")
-        ?.textContent,
-    ).toBe("const");
-
-    const numbers = container.querySelectorAll(
-      ".code-viewer-line-numbers > div",
-    );
-    expect(Array.from(numbers, (node) => node.textContent)).toEqual([
-      "1",
-      "2",
-      "3",
-    ]);
-    expect(container.querySelector(".code-viewer-gutter")).not.toBeNull();
-  });
-
-  it("shows the detected language in the header", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
-    const { container } = await renderViewer();
-
-    expect(screen.getByText("typescript")).toBeTruthy();
-    expect(
-      container.querySelector('[data-file-type-icon="app.ts"]'),
-    ).not.toBeNull();
-  });
-
-  it("surfaces read failures", async () => {
-    getSessionEnvironmentFile.mockRejectedValue(new Error("missing file"));
-    await renderViewer();
-
-    expect(screen.getByText("missing file")).toBeTruthy();
-  });
-
-  it("edits a file and saves it with Command+S", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
     render(
       <CodeViewer
         sessionId="sess-1"
-        path="src/app.ts"
-        tabId="file:src/app.ts"
+        path="attachment.txt"
+        inputSource={
+          { kind: "file", label: "guide.md", assetId: "asset-md" } as any
+        }
       />,
     );
+    expect(
+      await screen.findByRole("heading", { name: "Attached guide" }),
+    ).toBeVisible();
+    expect(api.getSessionEnvironmentFile).not.toHaveBeenCalled();
+  });
+  it("uses one read-only Monaco model with its own viewport", async () => {
+    const view = render(<CodeViewer sessionId="sess-1" path="src/app.ts" />);
     const editor = await screen.findByRole("textbox", {
-      name: "编辑文件 src/app.ts",
+      name: "查看文件 src/app.ts",
     });
-    fireEvent.change(editor, { target: { value: "const changed = true\n" } });
+    expect(editor).toHaveValue(SOURCE);
+    expect(editor).toHaveAttribute("readonly");
+    expect(view.container.querySelector(".code-viewer-body")).toHaveClass(
+      "overflow-hidden",
+    );
+    expect(view.container.querySelector(".code-viewer-gutter")).toBeNull();
+    expect(holder.harness.models).toHaveLength(1);
+  });
+  it("edits and immediately flushes the debounce buffer before Command+S", async () => {
+    const { editor } = await renderEditor();
+    fireEvent.input(editor, { target: { value: "const changed = true\n" } });
     fireEvent.keyDown(window, { key: "s", metaKey: true });
-
     await waitFor(() =>
-      expect(saveSessionEnvironmentFile).toHaveBeenCalledWith(
+      expect(api.saveSessionEnvironmentFile).toHaveBeenCalledWith(
         "sess-1",
         "src/app.ts",
         "const changed = true\n",
@@ -174,262 +122,338 @@ describe("CodeViewer", () => {
       ),
     );
   });
-
-  it("keeps syntax colors and live line numbers while editing", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
-    highlightCode.mockImplementation(async (text: string) => markup(text));
-    const { container, editor } = await renderEditor();
-    await waitFor(() =>
-      expect(
-        container.querySelector(".highlighted-code-editor-paint .shiki"),
-      ).not.toBeNull(),
-    );
-    expect(editor).toHaveValue(SOURCE);
-    expect(
-      container.querySelector(".highlighted-code-editor-paint span"),
-    ).toHaveAttribute("style", "color:var(--synax-code-token-keyword)");
-    const next = 'const message = "你好";\n\tconsole.log(message);\n\n';
-    fireEvent.change(editor, { target: { value: next } });
-    await waitFor(() =>
-      expect(
-        container.querySelector(".highlighted-code-editor-paint code")
-          ?.textContent,
-      ).toBe(next),
-    );
-    expect(highlightCode).toHaveBeenLastCalledWith(next, "src/app.ts");
-    expect(
-      container.querySelectorAll(".code-viewer-line-numbers > div"),
-    ).toHaveLength(4);
-    fireEvent.scroll(editor, { target: { scrollTop: 24, scrollLeft: 80 } });
-    expect(
-      container.querySelector(".highlighted-code-editor-paint"),
-    ).toHaveStyle({ transform: "translate(-80px, -24px)" });
-    expect(
-      container.querySelector(".highlighted-code-editor-numbers"),
-    ).toHaveStyle({ transform: "translateY(-24px)" });
+  it("does not replace the model or reset undo history for input echoes", async () => {
+    const { editor } = await renderEditor();
+    fireEvent.input(editor, { target: { value: "new value" } });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+    expect(holder.harness.models).toHaveLength(1);
+    expect(editor).toHaveValue("new value");
   });
-
-  it("ignores stale highlight results and shows the newest draft while waiting", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(SOURCE));
-    highlightCode.mockImplementation(async (text: string) => markup(text));
-    const { container, editor } = await renderEditor();
-    let finishOld!: (html: string) => void;
-    let finishNew!: (html: string) => void;
-    highlightCode.mockImplementationOnce(
+  it("keeps edits that arrive while a save is in flight dirty", async () => {
+    let finish!: () => void;
+    api.saveSessionEnvironmentFile.mockImplementationOnce(
       () =>
-        new Promise<string>((resolve) => {
-          finishOld = resolve;
+        new Promise((resolve) => {
+          finish = () => resolve({});
         }),
     );
-    fireEvent.change(editor, { target: { value: "const old = 1;" } });
-    highlightCode.mockImplementationOnce(
-      () =>
-        new Promise<string>((resolve) => {
-          finishNew = resolve;
-        }),
-    );
-    fireEvent.change(editor, { target: { value: "const latest = 2;" } });
-    expect(
-      container.querySelector(".highlighted-code-editor-paint")?.textContent,
-    ).toBe("const latest = 2;");
-    await act(async () => {
-      finishNew(markup("const latest = 2;"));
-    });
-    await act(async () => {
-      finishOld(markup("const old = 1;"));
-    });
-    expect(
-      container.querySelector(".highlighted-code-editor-paint code")
-        ?.textContent,
-    ).toBe("const latest = 2;");
-    expect(editor).toHaveValue("const latest = 2;");
-  });
-
-  it("falls back to escaped text if highlighting fails without blocking edits or saving", async () => {
-    const content = '<script>alert("not executed")</script>';
-    getSessionEnvironmentFile.mockResolvedValue(fileView(content));
-    highlightCode.mockRejectedValue(new Error("Highlighter unavailable"));
-    const { container, editor } = await renderEditor();
-    await waitFor(() => expect(highlightCode).toHaveBeenCalled());
-    expect(
-      container.querySelector(".highlighted-code-editor-paint")?.textContent,
-    ).toBe(content);
-    expect(
-      container.querySelector(".highlighted-code-editor-paint script"),
-    ).toBeNull();
-    fireEvent.change(editor, { target: { value: "recovered" } });
-    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    const { editor } = await renderEditor();
+    fireEvent.input(editor, { target: { value: "first" } });
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
     await waitFor(() =>
-      expect(saveSessionEnvironmentFile).toHaveBeenCalledWith(
-        "sess-1",
-        "src/app.ts",
-        "recovered",
-        undefined,
-      ),
+      expect(api.saveSessionEnvironmentFile).toHaveBeenCalledOnce(),
     );
+    fireEvent.input(editor, { target: { value: "second" } });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 200)));
+    await act(async () => finish());
+    expect(screen.getByRole("button", { name: "保存文件" })).toBeEnabled();
   });
-
-  it("can edit an empty file with a first line number", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(""));
-    const { container, editor } = await renderEditor();
-    expect(editor).toHaveValue("");
+  it("does not save the previous file buffer while a reused viewer is reading a new path", async () => {
+    let finishB!: (value: any) => void;
+    api.getSessionEnvironmentFile
+      .mockResolvedValueOnce(fileView("file A"))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishB = resolve;
+          }),
+      );
+    const view = render(
+      <CodeViewer sessionId="sess-1" path="a.ts" tabId="file:a.ts" />,
+    );
+    const oldEditor = await screen.findByRole("textbox", {
+      name: "编辑文件 a.ts",
+    });
+    fireEvent.input(oldEditor, { target: { value: "old A draft" } });
+    view.rerender(
+      <CodeViewer sessionId="sess-1" path="b.ts" tabId="file:b.ts" />,
+    );
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    expect(api.saveSessionEnvironmentFile).not.toHaveBeenCalled();
+    await act(async () => finishB(fileView("file B")));
     expect(
-      container.querySelector(".code-viewer-line-numbers")?.textContent,
-    ).toBe("1");
+      await screen.findByRole("textbox", { name: "编辑文件 b.ts" }),
+    ).toHaveValue("file B");
+    expect(api.saveSessionEnvironmentFile).not.toHaveBeenCalled();
   });
-
-  it("keeps truncated files read-only and highlighted", async () => {
-    getSessionEnvironmentFile.mockResolvedValue({
+  it("saves an inactive file using its captured session/path and preserves the active file", async () => {
+    api.getSessionEnvironmentFile.mockImplementation(
+      async (_: string, path: string) => fileView(`disk ${path}`),
+    );
+    const view = render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="inactive.ts"
+        tabId="file:inactive.ts"
+      />,
+    );
+    fireEvent.input(
+      await screen.findByRole("textbox", { name: "编辑文件 inactive.ts" }),
+      { target: { value: "inactive draft" } },
+    );
+    view.rerender(
+      <CodeViewer sessionId="sess-1" path="active.ts" tabId="file:active.ts" />,
+    );
+    expect(
+      await screen.findByRole("textbox", { name: "编辑文件 active.ts" }),
+    ).toHaveValue("disk active.ts");
+    await act(async () => {
+      expect(await saveWorkspaceTab("sess-1", "file:inactive.ts")).toBe(true);
+    });
+    expect(api.saveSessionEnvironmentFile).toHaveBeenCalledWith(
+      "sess-1",
+      "inactive.ts",
+      "inactive draft",
+      undefined,
+    );
+    expect(
+      screen.getByRole("textbox", { name: "编辑文件 active.ts" }),
+    ).toHaveValue("disk active.ts");
+  });
+  it("does not resurrect a discarded draft during Monaco unmount or a late save receipt", async () => {
+    const view = render(
+      <CodeViewer
+        sessionId="discard-session"
+        path="discard.ts"
+        tabId="file:discard.ts"
+      />,
+    );
+    fireEvent.input(
+      await screen.findByRole("textbox", { name: "编辑文件 discard.ts" }),
+      { target: { value: "discard this" } },
+    );
+    act(() =>
+      useSessionWorkspaceStore
+        .getState()
+        .closeTab("discard-session", "file:discard.ts"),
+    );
+    view.unmount();
+    expect(
+      getWorkspaceDraft("discard-session", "file:discard.ts"),
+    ).toBeUndefined();
+    const reopened = render(
+      <CodeViewer
+        sessionId="discard-session"
+        path="discard.ts"
+        tabId="file:discard.ts"
+      />,
+    );
+    expect(
+      await screen.findByRole("textbox", { name: "编辑文件 discard.ts" }),
+    ).toHaveValue(SOURCE);
+    reopened.unmount();
+  });
+  it("uses Monaco for empty files and truncated read-only sources", async () => {
+    api.getSessionEnvironmentFile.mockResolvedValue(fileView(""));
+    const view = await renderEditor();
+    expect(view.editor).toHaveValue("");
+    view.unmount();
+    api.getSessionEnvironmentFile.mockResolvedValue({
       ...fileView(SOURCE),
       truncated: true,
     });
-    const { container } = render(
+    render(
       <CodeViewer
         sessionId="sess-1"
         path="src/app.ts"
         tabId="file:src/app.ts"
       />,
     );
-    await waitFor(() =>
-      expect(
-        container.querySelector(".code-viewer-content .shiki"),
-      ).not.toBeNull(),
-    );
-    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(
+      await screen.findByRole("textbox", { name: "查看文件 src/app.ts" }),
+    ).toHaveAttribute("readonly");
     expect(screen.queryByRole("button", { name: "保存文件" })).toBeNull();
   });
-
-  it("loads raster images as authenticated blobs without decoding them as text", async () => {
-    const blob = new Blob([new Uint8Array([137, 80, 78, 71])], {
-      type: "image/png",
-    });
-    getSessionEnvironmentFileMedia.mockResolvedValue(blob);
-    render(
+  it("preserves dirty drafts when a text tab unmounts before debounce", async () => {
+    const view = await renderEditor();
+    fireEvent.input(view.editor, { target: { value: "unsaved local" } });
+    view.unmount();
+    const reopened = await renderEditor();
+    expect(reopened.editor).toHaveValue("unsaved local");
+  });
+  it("does not restore a saved cache over a newer file written by another actor", async () => {
+    const view = await renderEditor();
+    fireEvent.input(view.editor, { target: { value: "my saved file" } });
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    await waitFor(() =>
+      expect(api.saveSessionEnvironmentFile).toHaveBeenCalledOnce(),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "保存文件" })).toBeDisabled(),
+    );
+    expect(getWorkspaceDraft("sess-1", "file:src/app.ts")).toBeUndefined();
+    view.unmount();
+    api.getSessionEnvironmentFile.mockResolvedValue(
+      fileView("new agent version"),
+    );
+    const reopened = await renderEditor();
+    expect(reopened.editor).toHaveValue("new agent version");
+  });
+  it("shows language metadata and read errors", async () => {
+    const view = await renderEditor();
+    expect(screen.getByText("typescript")).toBeVisible();
+    view.unmount();
+    api.getSessionEnvironmentFile.mockRejectedValue(new Error("missing file"));
+    render(<CodeViewer sessionId="sess-1" path="missing.ts" />);
+    expect(await screen.findByText("missing file")).toBeVisible();
+  });
+  it("keeps raster images as authenticated blobs and releases the URL", async () => {
+    api.getSessionEnvironmentFileMedia.mockResolvedValue(
+      new Blob(["png"], { type: "image/png" }),
+    );
+    const view = render(
       <CodeViewer
         sessionId="sess-1"
         path="assets/logo.png"
         tabId="file:assets/logo.png"
       />,
     );
-
-    const image = await screen.findByRole("img", { name: "logo.png" });
-    expect(image).toHaveAttribute("src", "blob:https://synax.test/preview");
-    expect(getSessionEnvironmentFileMedia).toHaveBeenCalledWith(
-      "sess-1",
-      "assets/logo.png",
-      undefined,
-    );
-    expect(getSessionEnvironmentFile).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("img", { name: "logo.png" }),
+    ).toHaveAttribute("src", "blob:https://synax.test/preview");
+    expect(api.getSessionEnvironmentFile).not.toHaveBeenCalled();
     expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: "保存文件" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "源码" })).toBeNull();
-  });
-
-  it("loads Markdown images through the authenticated media API relative to the document", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView("![配置](../images/my%20screen.png)"));
-    getSessionEnvironmentFileMedia.mockResolvedValue(new Blob(["image"], { type: "image/png" }));
-    render(<CodeViewer sessionId="sess-1" path="docs/guide.md" rootId="reference" />);
-    expect(await screen.findByRole("img", { name: "配置" })).toHaveAttribute("src", "blob:https://synax.test/preview");
-    expect(getSessionEnvironmentFileMedia).toHaveBeenCalledWith("sess-1", "images/my screen.png", "reference");
-  });
-
-  it("previews SVG as an inert image while retaining editable source", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(
-      fileView(
-        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10" /></svg>',
-      ),
+    view.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(
+      "blob:https://synax.test/preview",
     );
-    const { unmount } = render(
+  });
+  it("previews audio and video files with native controls and keeps them read-only", async () => {
+    api.getSessionEnvironmentFileMedia.mockImplementation(
+      async (_session: string, path: string) =>
+        new Blob([path], {
+          type: path.endsWith(".mp3") ? "audio/mpeg" : "video/mp4",
+        }),
+    );
+    const audio = render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="media/voice.mp3"
+        tabId="file:media/voice.mp3"
+      />,
+    );
+    expect(
+      await screen.findByTitle("音频预览：media/voice.mp3"),
+    ).toHaveAttribute("controls");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    audio.unmount();
+    render(
+      <CodeViewer
+        sessionId="sess-1"
+        path="media/demo.mp4"
+        tabId="file:media/demo.mp4"
+      />,
+    );
+    expect(
+      await screen.findByTitle("视频预览：media/demo.mp4"),
+    ).toHaveAttribute("controls");
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("keeps PDF as a media preview", async () => {
+    api.getSessionEnvironmentFileMedia.mockResolvedValue(
+      new Blob(["pdf"], { type: "application/pdf" }),
+    );
+    render(<CodeViewer sessionId="sess-1" path="docs/spec.pdf" />);
+    expect(await screen.findByTitle("PDF 预览：docs/spec.pdf")).toHaveAttribute(
+      "src",
+      "blob:https://synax.test/preview",
+    );
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+  it("keeps SVG inert while making its source editable in Monaco", async () => {
+    api.getSessionEnvironmentFile.mockResolvedValue(
+      fileView('<svg xmlns="http://www.w3.org/2000/svg"><rect /></svg>'),
+    );
+    render(
       <CodeViewer
         sessionId="sess-1"
         path="src/icon.svg"
         tabId="file:src/icon.svg"
       />,
     );
-
     expect(
       await screen.findByRole("img", { name: "icon.svg" }),
     ).toHaveAttribute("src", "blob:https://synax.test/preview");
     fireEvent.click(screen.getByRole("button", { name: "源码" }));
     expect(
       await screen.findByRole("textbox", { name: "编辑文件 src/icon.svg" }),
-    ).toBeTruthy();
-    unmount();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith(
-      "blob:https://synax.test/preview",
-    );
+    ).not.toHaveAttribute("readonly");
   });
-
-  it.each([undefined, "file:docs/guide.md"])(
-    "gives Markdown preview its own scrollable body (tab: %s)",
-    async (tabId) => {
-      const content =
-        "## Long guide\n\n" + "A paragraph of content.\n\n".repeat(100);
-      getSessionEnvironmentFile.mockResolvedValue(fileView(content));
-      const { container } = render(
-        <CodeViewer sessionId="sess-1" path="docs/guide.md" tabId={tabId} />,
-      );
-      await screen.findByRole("heading", { name: "Long guide" });
-      const body = container.querySelector(".code-viewer-body");
-      expect(body).toHaveClass("min-h-0", "flex-1", "overflow-auto");
-      expect(body).not.toHaveClass("overflow-hidden");
-      expect(body).toContainElement(
-        container.querySelector(".file-viewer-markdown"),
-      );
-      fireEvent.click(screen.getByRole("button", { name: "源码" }));
-      if (tabId) {
-        expect(body).toHaveClass("overflow-hidden");
-        expect(
-          screen.getByRole("textbox", { name: "编辑文件 docs/guide.md" }),
-        ).toHaveValue(content);
-      } else {
-        expect(body).toHaveClass("overflow-auto");
-      }
-      fireEvent.click(screen.getByRole("button", { name: "预览" }));
-      expect(body).toHaveClass("overflow-auto");
-      expect(body).not.toHaveClass("overflow-hidden");
-      expect(screen.getByRole("heading", { name: "Long guide" })).toBeVisible();
-    },
-  );
-
-  it("retains HTML preview and highlights the editable source", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView("<h1>Hello</h1>"));
-    highlightCode.mockImplementation(async (text: string) => markup(text));
-    const { container } = render(
+  it("keeps HTML sandbox preview and flushes edited source before switching back", async () => {
+    api.getSessionEnvironmentFile.mockResolvedValue(fileView("<h1>Hello</h1>"));
+    render(
       <CodeViewer
         sessionId="sess-1"
         path="src/page.html"
         tabId="file:src/page.html"
       />,
     );
-    const preview = await screen.findByTitle("HTML 预览：src/page.html");
-    expect(preview).toHaveAttribute("sandbox", "allow-scripts");
-    expect(container.querySelector(".code-viewer-body")).toHaveClass(
-      "overflow-hidden",
-    );
-    expect(preview).toHaveClass("min-h-0", "flex-1");
-    expect(preview).not.toHaveAttribute(
-      "allow",
-      expect.stringContaining("same-origin"),
-    );
+    expect(
+      await screen.findByTitle("HTML 预览：src/page.html"),
+    ).toHaveAttribute("sandbox", "allow-scripts");
     fireEvent.click(screen.getByRole("button", { name: "源码" }));
-    const editor = screen.getByRole("textbox");
-    fireEvent.change(editor, { target: { value: "<h1>Edited</h1>" } });
-    await waitFor(() =>
-      expect(
-        container.querySelector(".highlighted-code-editor-paint code")
-          ?.textContent,
-      ).toBe("<h1>Edited</h1>"),
-    );
+    const editor = await screen.findByRole("textbox", {
+      name: "编辑文件 src/page.html",
+    });
+    fireEvent.input(editor, { target: { value: "<h1>Edited</h1>" } });
     fireEvent.click(screen.getByRole("button", { name: "预览" }));
-    expect(screen.getByTitle("HTML 预览：src/page.html")).toHaveAttribute(
-      "srcdoc",
-      "<h1>Edited</h1>",
+    await waitFor(() =>
+      expect(screen.getByTitle("HTML 预览：src/page.html")).toHaveAttribute(
+        "srcdoc",
+        "<h1>Edited</h1>",
+      ),
     );
   });
-
-  it("opens recorded input results in the file viewer without reading a fake file path", async () => {
-    getSessionInputSource.mockResolvedValue({
+  it.each([undefined, "file:docs/guide.md"])(
+    "keeps Markdown rendering and source navigation (tab %s)",
+    async (tabId) => {
+      const text = "# Long guide\n\n" + "Paragraph\n\n".repeat(50);
+      api.getSessionEnvironmentFile.mockResolvedValue(fileView(text));
+      const { container } = render(
+        <CodeViewer sessionId="sess-1" path="docs/guide.md" tabId={tabId} />,
+      );
+      await screen.findByRole("heading", { name: "Long guide" });
+      expect(container.querySelector(".code-viewer-body")).toHaveClass(
+        "overflow-auto",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "源码" }));
+      expect(
+        await screen.findByRole("textbox", {
+          name: `${tabId ? "编辑" : "查看"}文件 docs/guide.md`,
+        }),
+      ).toHaveValue(text);
+      expect(container.querySelector(".code-viewer-body")).toHaveClass(
+        "overflow-hidden",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "预览" }));
+      expect(
+        await screen.findByRole("heading", { name: "Long guide" }),
+      ).toBeVisible();
+    },
+  );
+  it("loads Markdown images using authenticated workspace-relative URLs", async () => {
+    api.getSessionEnvironmentFile.mockResolvedValue(
+      fileView("![配置](../images/my%20screen.png)"),
+    );
+    api.getSessionEnvironmentFileMedia.mockResolvedValue(
+      new Blob(["image"], { type: "image/png" }),
+    );
+    render(
+      <CodeViewer sessionId="sess-1" path="docs/guide.md" rootId="reference" />,
+    );
+    expect(await screen.findByRole("img", { name: "配置" })).toHaveAttribute(
+      "src",
+      "blob:https://synax.test/preview",
+    );
+    expect(api.getSessionEnvironmentFileMedia).toHaveBeenCalledWith(
+      "sess-1",
+      "images/my screen.png",
+      "reference",
+    );
+  });
+  it("opens recorded tool input in a read-only Monaco model without reading a fake path", async () => {
+    api.getSessionInputSource.mockResolvedValue({
       content: "src/main.ts: matched",
       truncated: false,
     });
@@ -444,14 +468,10 @@ describe("CodeViewer", () => {
         }}
       />,
     );
-    await waitFor(() =>
-      expect(highlightCode).toHaveBeenCalledWith(
-        "src/main.ts: matched",
-        "search.txt",
-      ),
-    );
-    expect(getSessionInputSource).toHaveBeenCalledWith("sess-1", "read-1");
-    expect(getSessionEnvironmentFile).not.toHaveBeenCalled();
-    expect(screen.getByText("Search main")).toBeVisible();
+    expect(
+      await screen.findByRole("textbox", { name: "查看文件 search.txt" }),
+    ).toHaveValue("src/main.ts: matched");
+    expect(api.getSessionInputSource).toHaveBeenCalledWith("sess-1", "read-1");
+    expect(api.getSessionEnvironmentFile).not.toHaveBeenCalled();
   });
 });

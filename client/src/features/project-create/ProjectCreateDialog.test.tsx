@@ -27,7 +27,7 @@ const { navigate, nativePicker, runtime } = vi.hoisted(() => ({
 }));
 vi.mock("react-router-dom", () => ({ useNavigate: () => navigate }));
 vi.mock("../../adapters/transport/project", () => ({
-  projectApi: { listProjects: vi.fn(), createWorkspace: vi.fn() },
+  projectApi: { listProjects: vi.fn(), createWorkspace: vi.fn(), resolveWorkspacePath: vi.fn() },
 }));
 vi.mock("../../adapters/transport/fs", () => ({
   listRemoteDirectories: vi.fn(),
@@ -80,7 +80,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 async function addNative(name: string, path = `/repos/${name}`) {
-  nativePicker.mockResolvedValueOnce({ path, name });
+  nativePicker.mockResolvedValueOnce([{ path, name }]);
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: /选择文件夹|添加项目/ }));
@@ -100,8 +100,11 @@ const desktopWindow = window as Window & { electronAPI?: { platform: string } };
 beforeEach(() => {
   clearStaleResourceCache();
   vi.clearAllMocks();
+  vi.mocked(projectApi.resolveWorkspacePath).mockImplementation(async location => ({
+    inputLocation: location, location, name: location.path.split('/').filter(Boolean).pop()!, redirected: false,
+  }));
   runtime.electron = true;
-  nativePicker.mockReset().mockResolvedValue(null);
+  nativePicker.mockReset().mockResolvedValue([]);
   vi.mocked(projectApi.createWorkspace)
     .mockReset()
     .mockResolvedValue({ project: project() });
@@ -211,6 +214,26 @@ describe("ProjectCreateDialog", () => {
     expect(navigate).toHaveBeenCalledWith(resolveSessionsEntryPath("created"));
   });
 
+  it("adds all directories returned by the native picker in one selection", async () => {
+    nativePicker.mockResolvedValueOnce([
+      { path: "/repos/api", name: "api" },
+      { path: "/repos/web", name: "web" },
+    ]);
+    render(<ProjectCreateDialog open onClose={vi.fn()} />);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "选择文件夹" }));
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("listitem")).toHaveLength(2),
+    );
+    expect(nativePicker).toHaveBeenCalledWith({ multiple: true });
+    expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue(
+      "api",
+    );
+  });
+
   it("preserves a user name, including an intentionally cleared name", async () => {
     render(<ProjectCreateDialog open onClose={vi.fn()} />);
     const input = screen.getByRole("textbox", { name: "工作区名称" });
@@ -299,7 +322,7 @@ describe("ProjectCreateDialog", () => {
   });
 
   it("ignores an old native picker result after close and reopen", async () => {
-    const pending = deferred<{ path: string; name: string } | null>();
+    const pending = deferred<{ path: string; name: string }[]>();
     nativePicker.mockReturnValueOnce(pending.promise);
     function Harness() {
       const [open, setOpen] = useState(true);
@@ -317,7 +340,7 @@ describe("ProjectCreateDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
     await act(async () =>
-      pending.resolve({ path: "/repos/stale", name: "stale" }),
+      pending.resolve([{ path: "/repos/stale", name: "stale" }]),
     );
     expect(screen.queryByRole("listitem")).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "工作区名称" })).toHaveValue("");
@@ -433,4 +456,17 @@ describe("ProjectCreateDialog", () => {
     );
     expect(row("api")).toHaveAttribute("data-primary", "true");
   });
+});
+
+it("replaces a selected worktree with its main project and explains the conversion", async () => {
+  vi.mocked(projectApi.resolveWorkspacePath).mockResolvedValueOnce({
+    inputLocation: { kind: "host", path: "/trees/api-task" }, location: { kind: "host", path: "/repos/api" }, name: "api", redirected: true,
+  });
+  render(<ProjectCreateDialog open onClose={vi.fn()} />);
+  nativePicker.mockResolvedValueOnce([{ name: "api-task", path: "/trees/api-task" }]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "选择文件夹" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("已识别影子工作树，自动使用主目录：/repos/api");
+  expect(row("api")).toHaveTextContent("/repos/api");
+  await userEvent.setup().click(screen.getByRole("button", { name: "创建工作区" }));
+  await waitFor(() => expect(projectApi.createWorkspace).toHaveBeenCalledWith({ name: "api", roots: [{ localPath: "/repos/api", name: "api" }] }));
 });

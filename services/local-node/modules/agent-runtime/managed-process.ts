@@ -22,11 +22,12 @@ export function spawnManagedProcess(command: string, args: string[], options: {
   cwd?: string; env?: NodeJS.ProcessEnv; inheritEnv?: boolean; graceMs?: number; stopTimeoutMs?: number;
 } = {}): ManagedProcess {
   const grouped = process.platform !== 'win32';
-  const child = spawnOwnedProcess(command, args, { cwd: options.cwd, env: options.env, inheritEnv: options.inheritEnv }) as ChildProcessWithoutNullStreams;
+  const owned = spawnOwnedProcess(command, args, { cwd: options.cwd, env: options.env, inheritEnv: options.inheritEnv });
+  const child = owned as ChildProcessWithoutNullStreams;
   let ended = false;
   let released = false;
   let stopOnExit = () => {};
-  const closed = new Promise<void>(resolve => {
+  const streamClosed = new Promise<void>(resolve => {
     const done = () => {
       if (ended) return;
       ended = true; resolve();
@@ -35,6 +36,8 @@ export function spawnManagedProcess(command: string, args: string[], options: {
     };
     child.once('close', done); child.once('error', done);
   });
+  const closed = streamClosed.then(() => owned.ownedProcessClosed);
+  void closed.catch(() => {});
   let stopping: Promise<void> | undefined;
   const signal = (kind: NodeJS.Signals) => {
     if (!child.pid) return;
@@ -50,7 +53,7 @@ export function spawnManagedProcess(command: string, args: string[], options: {
   const managed: ManagedProcess = { child, closed, stop() {
     if (stopping) return stopping;
     // Natural exit also releases surviving descendants before the PID can be forgotten.
-    if (released) return Promise.resolve();
+    if (released) return closed;
     stopping = (async () => {
       if (!child.pid) { await closed; return; }
       if (!grouped) {

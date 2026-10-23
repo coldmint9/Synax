@@ -49,6 +49,14 @@ export interface ProjectWorkspaceRoot {
 
 export interface ProjectWorkspace {
   roots: ProjectWorkspaceRoot[];
+  normalization?: WorkspacePathResolution;
+}
+export interface WorkspacePathResolution {
+  inputLocation: WorkspaceLocation;
+  location: WorkspaceLocation;
+  name: string;
+  redirected: boolean;
+  duplicate?: boolean;
 }
 
 export interface WorkspaceTreeEntry {
@@ -140,6 +148,11 @@ async function projectRequest<T>(url: string, init?: ApiFetchInit): Promise<T> {
 }
 
 export const projectApi = {
+  resolveWorkspacePath(location: WorkspaceLocation): Promise<WorkspacePathResolution> {
+    return projectRequest(`${API_BASE}/workspace-path`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location }),
+    });
+  },
   previewGitWorktree(id: string, branch: string, rootId?: string): Promise<{ path: string }> {
     const query = new URLSearchParams({ branch });
     if (rootId) query.set("rootId", rootId);
@@ -263,6 +276,10 @@ export const projectApi = {
   gitConflict(id: string, path: string, rootId?: string): Promise<import("../../../../services/local-node/modules/git-mr/contracts").MergeFile> {
     const query = new URLSearchParams({ path, ...(rootId ? { rootId } : {}) });
     return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/conflict?${query}`);
+  },
+  gitConflictSlice(id: string, path: string, input: import("../../../../services/local-node/modules/git-mr/contracts").MergeFileSliceInput, rootId?: string, signal?: AbortSignal): Promise<import("../../../../services/local-node/modules/git-mr/contracts").MergeFileSlice> {
+    const query = new URLSearchParams({ path, side: input.side, byteOffset: String(input.byteOffset), maxBytes: String(input.maxBytes), expectedRevision: input.expectedRevision, ...(rootId ? { rootId } : {}) });
+    return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/conflict/content?${query}`, { signal });
   },
   saveGitConflict(id: string, path: string, input: import("../../../../services/local-node/modules/git-mr/contracts").MergeFileSave, rootId?: string): Promise<import("../../../../services/local-node/modules/git-mr/contracts").MergeFile> {
     return projectRequest(`/api/projects/${encodeURIComponent(id)}/git/conflict`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...input, path, rootId }) });

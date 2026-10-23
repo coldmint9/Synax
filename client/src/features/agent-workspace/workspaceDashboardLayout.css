@@ -180,6 +180,14 @@
 .workspace-dashboard--custom[data-arranging="true"] {
   user-select: none;
 }
+/* A short window must remain navigable. Never compress every widget to a title. */
+.workspace-dashboard--custom[data-overflow="true"] {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.workspace-dashboard--custom[data-overflow="true"] > .dashboard-panel {
+  flex-shrink: 0;
+}
 /* A component with no data leaves no card, handle or gap in the layout. */
 .dashboard-panel:has(> .dashboard-panel-content:empty) {
   display: none;

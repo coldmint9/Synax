@@ -675,6 +675,7 @@ export function buildConversationTimeline(
   // original position, including task anchors that have no surviving step.
   messages = [...new Map(messages.map((message) => [message.id, message])).values()];
   const excludedStepIds = new Set(options?.excludeStepIds ?? []);
+  for (const step of steps) if (step.metadata?.kind === "context-compaction") excludedStepIds.add(step.id);
   if (options?.excludeStepId) excludedStepIds.add(options.excludeStepId);
   const excludedRunIds = new Set(options?.excludeRunIds ?? []);
   const filteredSteps = excludedStepIds.size
@@ -713,7 +714,7 @@ export function buildConversationTimeline(
       | undefined;
     if (!state) continue;
     items.push({
-      timestamp: toTimestamp(message.createdAt),
+      timestamp: toTimestamp(state.status === "completed" && state.compacted && state.boundaryAt ? state.boundaryAt : message.createdAt),
       entry: {
         id: message.id,
         kind: "compaction",
@@ -804,6 +805,27 @@ export function buildConversationTimeline(
     });
   }
   items.sort((a, b) => a.timestamp - b.timestamp);
+  // Failed runs and inline interactions used to be inserted one at a time with
+  // `findIndex` + `splice`, which is O(insertions × rows) and also shifts the
+  // whole array per insertion. Resolve every insertion point once, then merge.
+  const timestamps = items.map((item) => item.timestamp);
+  const firstAfter = (value: number) => {
+    let low = 0;
+    let high = timestamps.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (timestamps[mid]! <= value) low = mid + 1;
+      else high = mid;
+    }
+    return low;
+  };
+  const stepRowIndex = new Map<string, number>();
+  items.forEach((item, index) => {
+    if (item.entry.kind !== "agent") return;
+    const stepId = item.entry.turn.stepId;
+    if (!stepRowIndex.has(stepId)) stepRowIndex.set(stepId, index);
+  });
+  const insertions: Array<{ at: number; order: number; row: TimelineItem }> = [];
   // A failed run has no assistant reply in storage. Keep its error as a durable,
   // unfolded row, independent of the session's status after a later successful run.
   for (const run of runs) {
@@ -814,30 +836,28 @@ export function buildConversationTimeline(
       continue;
     const createdAt = run.completedAt ?? run.startedAt;
     const message = run.stopReason?.trim() || "Request failed";
-    const row: TimelineItem = {
-      timestamp: toTimestamp(createdAt),
-      entry: {
-        id: `run-error-${run.id}`,
-        kind: "error",
-        createdAt,
-        label: message,
-        message,
-        model: run.model,
+    insertions.push({
+      at: firstAfter(toTimestamp(createdAt)),
+      order: insertions.length,
+      row: {
+        timestamp: toTimestamp(createdAt),
+        entry: {
+          id: `run-error-${run.id}`,
+          kind: "error",
+          createdAt,
+          label: message,
+          message,
+          model: run.model,
+        },
       },
-    };
-    const next = items.findIndex((item) => item.timestamp > row.timestamp);
-    items.splice(next < 0 ? items.length : next, 0, row);
+    });
   }
   // Interactions are first-class transcript rows, so folding can never hide a question
   // or separate its eventual answer from the original request.
   for (const interaction of options?.interactions ?? []) {
     if (options?.session && interaction.sessionId !== options.session.id)
       continue;
-    const anchor = items.findIndex(
-      (item) =>
-        item.entry.kind === "agent" &&
-        item.entry.turn.stepId === interaction.stepId,
-    );
+    const anchor = stepRowIndex.get(interaction.stepId);
     const row: TimelineItem = {
       timestamp: toTimestamp(interaction.createdAt),
       entry: {
@@ -849,12 +869,25 @@ export function buildConversationTimeline(
         disabled: options?.session?.status === "cancelled",
       },
     };
-    if (anchor >= 0) items.splice(anchor + 1, 0, row);
-    else {
-      const next = items.findIndex((item) => item.timestamp > row.timestamp);
-      items.splice(next < 0 ? items.length : next, 0, row);
-    }
+    insertions.push({
+      at: anchor === undefined ? firstAfter(row.timestamp) : anchor + 1,
+      order: insertions.length,
+      row,
+    });
   }
+  if (insertions.length) {
+    insertions.sort((a, b) => a.at - b.at || a.order - b.order);
+    const merged: TimelineItem[] = [];
+    let cursor = 0;
+    for (const { at, row } of insertions) {
+      while (cursor < at) merged.push(items[cursor++]!);
+      merged.push(row);
+    }
+    while (cursor < items.length) merged.push(items[cursor++]!);
+    items.length = 0;
+    for (const row of merged) items.push(row);
+  }
+
   const stepById = new Map(filteredSteps.map((step) => [step.id, step]));
   const runStatusById = new Map(runs.map((run) => [run.id, run.status]));
   const runStatusByStepId = new Map(

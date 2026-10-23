@@ -1,0 +1,7 @@
+.worktree-delete-target { display:grid; gap:6px; padding:12px; border-radius:10px; background:var(--ui-canvas, var(--muted)); }
+.worktree-delete-target strong { font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.worktree-delete-target code { font:11px/1.6 var(--font-mono,monospace); color:var(--muted-foreground); overflow-wrap:anywhere; }
+.worktree-delete-status { display:flex; align-items:center; gap:8px; margin-top:16px; color:var(--muted-foreground); font-size:12px; }
+.worktree-delete-explanation { margin-top:16px; line-height:1.65; font-size:12px; }
+.worktree-delete-reasons { padding-left:18px; margin-top:16px; font-size:12px; line-height:1.8; }
+.worktree-delete-error { margin-top:12px; color:var(--destructive); font-size:12px; overflow-wrap:anywhere; }

@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ensureGitMrProfileRegistered = vi.fn();
+const ensureConversationMergeWorkerRegistered = vi.fn();
 const ensureLegacyGoalProfileRegistered = vi.fn();
 const tryGetSession = vi.fn();
 
 vi.mock('../git/profile.js', () => ({
   ensureGitMrProfileRegistered: (...args: unknown[]) =>
     ensureGitMrProfileRegistered(...args),
+}));
+vi.mock('../conversation-git/worker.js', () => ({
+  ensureConversationMergeWorkerRegistered: (...args: unknown[]) => ensureConversationMergeWorkerRegistered(...args),
 }));
 
 vi.mock('../session-store.js', () => ({
@@ -38,6 +42,14 @@ describe('bootstrapAgentChildForSession', () => {
     bootstrapAgentChildForSession('git_session');
 
     expect(ensureGitMrProfileRegistered).toHaveBeenCalledOnce();
+    expect(ensureLegacyGoalProfileRegistered).not.toHaveBeenCalled();
+  });
+
+  it('registers the bound merge child provider on worker restart', () => {
+    tryGetSession.mockReturnValue({ id: 'merge-child', profileId: 'git-merge-worker', parentSessionId: 'parent', projectId: 'p1' });
+    bootstrapAgentChildForSession('merge-child');
+    expect(ensureConversationMergeWorkerRegistered).toHaveBeenCalledOnce();
+    expect(ensureGitMrProfileRegistered).not.toHaveBeenCalled();
     expect(ensureLegacyGoalProfileRegistered).not.toHaveBeenCalled();
   });
 

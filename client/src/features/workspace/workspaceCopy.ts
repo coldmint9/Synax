@@ -1,6 +1,8 @@
 import { useLocale } from "../../shared/hooks/useLocale";
 
 const zh = {
+  worktreeRedirected: "已识别影子工作树，自动使用主目录：",
+  worktreeAlreadyAdded: "主项目已在工作区中，未重复添加。",
   title: "新建工作区",
   createWorkspace: "创建工作区",
   manageWorkspace: "管理工作区",
@@ -93,6 +95,8 @@ const zh = {
   existingHint: "仅加入所选工作区的默认项目。",
 };
 const en: Record<keyof typeof zh, string> = {
+  worktreeRedirected: "Linked worktree detected. Using the main directory: ",
+  worktreeAlreadyAdded: "The main project is already in this workspace; no duplicate was added.",
   title: "Create workspace",
   createWorkspace: "Create workspace",
   manageWorkspace: "Manage workspace",

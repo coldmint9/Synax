@@ -49,14 +49,32 @@ function fragmentLine(fragment: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function normalizePath(value: string): string | null {
+  const path = value.replace(/\\/g, "/");
+  const prefix = DRIVE_PATH.test(path)
+    ? path.slice(0, 3)
+    : path.startsWith("/") ? "/" : "";
+  const segments: string[] = [];
+  for (const segment of path.slice(prefix.length).split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      if (!segments.length || segments[segments.length - 1] === "..") {
+        if (prefix) return null;
+        segments.push(segment);
+      } else segments.pop();
+    } else segments.push(segment);
+  }
+  return prefix + segments.join("/");
+}
+
 /** Map an absolute path into the session workspace; anything outside is unreadable. */
 function toWorkspaceRelative(
   value: string,
   workspacePath?: string | null,
 ): string | null {
-  if (!value.startsWith("/")) return DRIVE_PATH.test(value) ? null : value;
+  if (!value.startsWith("/") && !DRIVE_PATH.test(value)) return value;
   const root = workspacePath
-    ? workspacePath.replace(/\\/g, "/").replace(/\/+$/, "")
+    ? normalizePath(workspacePath)?.replace(/\/+$/, "")
     : "";
   if (!root || value === root) return null;
   return value.startsWith(`${root}/`) ? value.slice(root.length + 1) : null;
@@ -73,7 +91,11 @@ function parseCandidate(
   if (/^file:/i.test(value)) {
     // `file:///abs/path` and `file:/abs/path` both denote a local absolute path.
     value = value.replace(/^file:\/\/+/i, "/").replace(/^file:/i, "");
-  } else if (SCHEME.test(value) && !TRAILING_LINE.test(value)) {
+  } else if (
+    SCHEME.test(value) &&
+    !/^[a-zA-Z]:[\\/]/.test(value) &&
+    !TRAILING_LINE.test(value)
+  ) {
     return null;
   }
 
@@ -95,13 +117,26 @@ function parseCandidate(
   // allow that colon after removing the numeric suffix, never a real URL.
   if (SCHEME.test(pathPart) && !DRIVE_PATH.test(pathPart)) return null;
 
+  // Agents can cite reference projects relative to the primary checkout (for
+  // example ../settlement/src/Mapper.xml). Resolve dot segments first, then
+  // check membership against every registered root instead of losing the path.
+  const absolute = pathPart.startsWith("/") || DRIVE_PATH.test(pathPart);
+  const hasParentSegments = pathPart.split("/").includes("..");
+  if (!absolute && hasParentSegments && !workspacePath) return null;
+  const resolved = normalizePath(
+    !absolute && hasParentSegments ? `${workspacePath}/${pathPart}` : pathPart,
+  );
+  if (!resolved) return null;
   const root = [...roots]
     .sort((a, b) => b.workspacePath.length - a.workspacePath.length)
     .find((entry) => {
-      const base = entry.workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
-      return pathPart.startsWith(`${base}/`);
+      const base = normalizePath(entry.workspacePath)?.replace(/\/+$/, "");
+      return base && resolved.startsWith(`${base}/`);
     });
-  const relative = toWorkspaceRelative(pathPart, root?.workspacePath ?? workspacePath);
+  const relative = toWorkspaceRelative(
+    resolved,
+    root?.workspacePath ?? workspacePath,
+  );
   if (!relative) return null;
 
   const segments = relative.split("/");
@@ -133,11 +168,8 @@ export function parseFileLink(
   roots: readonly FileLinkRoot[] = [],
 ): FileLinkTarget | null {
   const raw = (href ?? "").trim();
-  if (raw) {
-    const target = parseCandidate(raw, workspacePath, roots);
-    if (target) return target;
-    // A real URL (or a scheme we cannot read) is never re-interpreted as a path.
-    if (SCHEME.test(raw) && !/^file:/i.test(raw)) return null;
-  }
+  // An explicit destination is authoritative. Falling back to its shortened
+  // display label silently turns a rejected path into a different file.
+  if (raw) return parseCandidate(raw, workspacePath, roots);
   return parseCandidate((label ?? "").trim(), workspacePath, roots);
 }

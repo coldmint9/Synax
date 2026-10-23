@@ -13,6 +13,7 @@ import { completeGoalCheckpoint } from './goal-completion.js';
 import { getGoalState, mergeGoalEvidence } from './goal-control.js';
 import { digest } from './work-fingerprint.js';
 import { nowIso } from './runtime-ids.js';
+import { subagentBlocksParent, listOwnedSubagentSessions } from './subagent-control-broker.js';
 import {
   evidenceInventory, evidenceRemedy, isSuccessfulProofCall, normalizeEvidence, planBoundaryOf, receiptReport, workOwnedCalls,
 } from './evidence-inventory.js';
@@ -290,8 +291,7 @@ class WorkRuntime {
    *  already travelled back to the parent as the delegate tool result; waiting children with a
    *  live interaction are the user's to answer, not acceptance blockers. */
   pendingChildren(work: WorkRecord): number {
-    return store.listSessionTree(work.sessionId).filter(s => s.id !== work.sessionId &&
-      ['queued', 'running'].includes(s.status) &&
+    return listOwnedSubagentSessions(work.sessionId, store).filter(s => subagentBlocksParent(s) &&
       (!workStore.current(s.id) || !TERMINAL.has(workStore.current(s.id)!.status))).length;
   }
 

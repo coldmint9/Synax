@@ -4,6 +4,7 @@ import type { LlmRetryState } from "../../../../services/local-node/infrastructu
 export type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
+import type { ConversationGitStateEvent } from '../../../../services/local-node/modules/agent-runtime/conversation-git/contracts';
 import {
   RuntimeStreamProjector,
   type RuntimeSnapshotEvent,
@@ -22,6 +23,8 @@ import type {
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | ConversationGitStateEvent
+  | { type: 'domain_reconnected'; sessionId: string }
   | { type: "conversation_git_messages"; messages: AgentRuntimeMessage[] }
   | { type: "execution_status"; sessionId: string; runId: string; execution: import("./agentRuntime").ToolExecutionProgress }
   | { type: "message"; message: AgentRuntimeMessage }
@@ -101,7 +104,8 @@ export function sessionLiveStream(
       // These events belong to non-agent domains until their own storage migration.
       if (!auxiliary) {
         auxiliary = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream?auxiliary=1`);
-        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job', 'conversation_git_messages']) {
+        auxiliary.onopen = () => onEvent({ type: 'domain_reconnected', sessionId });
+        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job', 'conversation_git_messages', 'conversation_git_state']) {
           auxiliary.addEventListener(type, event => {
             try { onEvent(JSON.parse(event.data) as SessionLiveEvent); }
             catch (error) { console.error(`Invalid ${type} event`, error); }
@@ -138,6 +142,7 @@ function nodeSessionLiveStream(
   const es = new AuthenticatedEventSource(
     `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream`,
   );
+  es.onopen = () => onEvent({ type: 'domain_reconnected', sessionId });
   es.addEventListener("snapshot", (event: MessageEvent) => {
     try {
       useApiConnectivityStore.getState().markSuccess();
@@ -166,6 +171,7 @@ function nodeSessionLiveStream(
     "context_compaction_state",
     "media_job",
     "conversation_git_messages",
+    "conversation_git_state",
   ] as const) {
     es.addEventListener(type, (event: MessageEvent) => {
       try {

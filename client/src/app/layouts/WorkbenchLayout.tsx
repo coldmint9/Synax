@@ -23,9 +23,9 @@ import {
 } from "../../features/workspace/lastOpenedWorkspace";
 import type { ActivityPanel } from "./ActivityBar";
 import { WorkbenchHeader, type ChromeMode } from "./WorkbenchHeader";
+import { SessionToolbarProvider } from "../../features/agent-workspace/SessionToolbarPortal";
 import { GitToolbarProvider } from "../../features/git/GitToolbarPortal";
 import { ProjectCreateDialog } from "../../features/project-create/ProjectCreateDialog";
-import { ToastContainer } from "../../shared/ui/ToastContainer";
 import { CachedWorkbenchPage, PageLoading } from "./CachedWorkbenchPage";
 import {
   forgetProjectSessionCache,
@@ -37,7 +37,9 @@ import { SessionEnvironmentProvider } from "../../features/agent-workspace/Sessi
 export default function WorkbenchLayout() {
   return (
     <GitToolbarProvider>
-      <WorkbenchLayoutContent />
+      <SessionToolbarProvider>
+        <WorkbenchLayoutContent />
+      </SessionToolbarProvider>
     </GitToolbarProvider>
   );
 }
@@ -313,7 +315,6 @@ function WorkbenchLayoutContent() {
           open={createDialogOpen}
           onClose={() => setCreateDialogOpen(false)}
         />
-        <ToastContainer />
       </div>
     </SessionEnvironmentProvider>
   );

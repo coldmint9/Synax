@@ -169,3 +169,45 @@ html.dark .idea-merge-dialog { --merge-code-keyword: #ff9aa2; --merge-code-comme
     font-size: 11px;
   }
 }
+
+/* Monaco owns all document scrolling and virtualization. */
+.synax-monaco-dialog { display: block !important; }
+.synax-monaco-merge-workbench { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--ui-text); background: var(--ui-panel); }
+.synax-monaco-merge-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--ui-line); }
+.synax-monaco-merge-title { flex: 1; min-width: 0; }
+.synax-monaco-merge-title h2 { margin: 0 0 5px; overflow-wrap: anywhere; font-size: 13px; }
+.synax-monaco-merge-title > span { color: var(--ui-subtle); font-size: 12px; }
+.synax-monaco-merge-toolbar { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--ui-line); font-size: 12px; }
+.synax-monaco-merge-hint { margin-left: auto; color: var(--ui-subtle); }
+.synax-monaco-merge-columns { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr); min-height: 0; overflow: hidden; }
+.synax-monaco-merge-columns > section { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--ui-line); }
+.synax-monaco-merge-columns > section:last-child { border-right: 0; }
+.synax-monaco-merge-columns > section > header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--ui-line); background: var(--ui-surface); min-width: 0; }
+.synax-monaco-merge-columns > section > header > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-subtle); }
+.synax-monaco-merge-columns > section > div { flex: 1; min-height: 0; overflow: hidden; }
+.synax-monaco-merge-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 48px; flex-shrink: 0; padding: 8px 14px; border-top: 1px solid var(--ui-line); font-size: 12px; }
+.synax-monaco-merge-footer > span { display: flex; align-items: center; gap: 8px; color: var(--ui-subtle); }
+.synax-monaco-base { display: flex; flex-direction: column; flex: 0 0 24vh; min-height: 70px; overflow: hidden; padding: 10px 12px; border-bottom: 1px solid var(--ui-line); font-size: 12px; }
+.synax-monaco-base-document { flex: 1; min-height: 0; margin-top: 6px; }
+.synax-monaco-compact-tabs { display: none; }
+.synax-monaco-base pre { font: 12px/1.6 "Liberation Mono", monospace; }
+.synax-monaco-merge-error { margin: 0; padding: 8px 14px; color: var(--danger, #b64435); border-top: 1px solid var(--ui-line); font-size: 12px; }
+.synax-monaco-structural { flex: 1; padding: 24px; }
+.synax-merge-conflict-line { background: rgba(197, 138, 48, .12); }
+@media (max-width: 900px) {
+  .synax-monaco-compact-tabs { display: flex; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--ui-line); }
+  .synax-monaco-compact-tabs [aria-selected="true"] { background: var(--ui-accent-soft); color: var(--ui-text); }
+  .synax-monaco-merge-columns { grid-template-columns: minmax(0, 1fr); }
+  .synax-monaco-merge-columns > section { display: none; }
+  .synax-monaco-merge-columns[data-compact-side="target"] > [data-side="target"],
+  .synax-monaco-merge-columns[data-compact-side="result"] > [data-side="result"],
+  .synax-monaco-merge-columns[data-compact-side="source"] > [data-side="source"] { display: flex; }
+  .synax-monaco-merge-hint { display: none; }
+}
+.synax-monaco-text-container { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; width: 100%; height: 100%; overflow: hidden; }
+.synax-monaco-text-container > p { padding: 12px; color: var(--danger); }
+.synax-monaco-text-editor { flex: 1; min-height: 120px; min-width: 0; width: 100%; height: 100%; overflow: hidden; }
+.synax-monaco-range-toolbar { flex-wrap: wrap; }
+.synax-monaco-range-toolbar label { display: inline-flex; align-items: center; gap: 6px; }
+.synax-monaco-range-toolbar input, .synax-monaco-range-toolbar select { min-height: 28px; max-width: 150px; padding: 3px 6px; border: 1px solid var(--ui-line); border-radius: 4px; color: var(--ui-text); background: var(--ui-surface); }
+.synax-monaco-range-content { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }

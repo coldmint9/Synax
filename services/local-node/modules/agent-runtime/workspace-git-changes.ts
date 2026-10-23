@@ -58,6 +58,7 @@ export interface WorkspaceRepositoryGit {
   workspacePath: string;
   branch: string;
   headCommitSha: string;
+  unpushedCommitCount: number;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -83,6 +84,7 @@ interface RepositoryGitFacts {
   status: WorkspaceRepositoryStatus;
   branch: string;
   headCommitSha: string;
+  unpushedCommitCount: number;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -165,11 +167,32 @@ function parseStatus(output: string): Array<{ xy: string; path: string }> {
   const records = output.split("\0");
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];
-    if (record.length < 4) continue;
-    const xy = record.slice(0, 2);
-    entries.push({ xy, path: record.slice(3) });
-    // Porcelain -z puts the destination first, followed by the original path.
-    if (xy.includes("R") || xy.includes("C")) index += 1;
+    if (record.startsWith("## ")) continue;
+    if (record.startsWith("1 ")) {
+      const match = record.match(/^1 (\S{2}) (?:\S+ ){6}(.+)$/s);
+      if (match) entries.push({ xy: match[1], path: match[2] });
+      continue;
+    }
+    if (record.startsWith("2 ")) {
+      const match = record.match(/^2 (\S{2}) (?:\S+ ){7}(.+)$/s);
+      if (match) entries.push({ xy: match[1], path: match[2] });
+      index += 1;
+      continue;
+    }
+    if (record.startsWith("u ")) {
+      const match = record.match(/^u (\S{2}) (?:\S+ ){9}(.+)$/s);
+      if (match) entries.push({ xy: match[1], path: match[2] });
+      continue;
+    }
+    if (record.startsWith("? "))
+      entries.push({ xy: "??", path: record.slice(2) });
+    // Existing probes use porcelain v1; retain v2 support for cached/alternate
+    // producers. In NUL mode a rename has a separate original-path record.
+    else if (/^[ MADRCU?!T]{2} /.test(record)) {
+      const xy = record.slice(0, 2);
+      entries.push({ xy, path: record.slice(3) });
+      if (xy.includes('R') || xy.includes('C')) index += 1;
+    }
   }
   return entries;
 }
@@ -226,6 +249,7 @@ function hashFacts(facts: RepositoryGitFacts): string {
         facts.status,
         facts.branch,
         facts.headCommitSha,
+        facts.unpushedCommitCount,
         facts.changedFiles.map((file) => [
           file.path,
           file.status,
@@ -244,6 +268,7 @@ const EMPTY_FACTS: RepositoryGitFacts = {
   status: "ready",
   branch: "",
   headCommitSha: "",
+  unpushedCommitCount: 0,
   dirty: false,
   additions: 0,
   deletions: 0,
@@ -274,7 +299,13 @@ async function computeRepositoryFacts(
   const [branchRaw, headCommitShaRaw, statusRaw, numstatRaw] = await Promise.all([
     readWorkspaceGit(workspacePath, ["branch", "--show-current"]),
     readWorkspaceGit(workspacePath, ["rev-parse", "--verify", "HEAD"]),
-    readWorkspaceGit(workspacePath, ["status", "--porcelain=v1", "-uall", "-z"]),
+    readWorkspaceGit(workspacePath, [
+      "status",
+      "--porcelain=v1",
+      "--branch",
+      "-uall",
+      "-z",
+    ]),
     readWorkspaceGit(workspacePath, ["diff", "HEAD", "--numstat", "-z"]),
   ]);
 
@@ -336,10 +367,40 @@ async function computeRepositoryFacts(
     });
   }
 
+  let unpushedCommitCount = Number(
+    statusRaw.match(
+      /(?:^|\0)## [^\0]*\[ahead (\d+)(?:, behind \d+)?\]/,
+    )?.[1] ?? 0,
+  );
+  if (
+    branchRaw.trim() &&
+    headCommitShaRaw &&
+    !/(?:^|\0)## [^\0]*\[ahead /.test(statusRaw) &&
+      (await readWorkspaceGit(workspacePath, ["remote"])).trim()
+  ) {
+    const fallback = Number(
+      (
+        await readWorkspaceGit(workspacePath, [
+          "rev-list",
+          "--count",
+          "HEAD",
+          "--not",
+          "--remotes",
+        ])
+      ).trim(),
+    );
+    unpushedCommitCount =
+      Number.isSafeInteger(fallback) && fallback > 0 ? fallback : 0;
+  }
+
   return {
     status: "ready",
     branch: branchRaw.trim() || "HEAD",
     headCommitSha: headCommitShaRaw.trim(),
+    unpushedCommitCount:
+      Number.isSafeInteger(unpushedCommitCount) && unpushedCommitCount > 0
+        ? unpushedCommitCount
+        : 0,
     dirty: changedFiles.length > 0,
     additions: changedFiles.reduce((sum, file) => sum + file.additions, 0),
     deletions: changedFiles.reduce((sum, file) => sum + file.deletions, 0),
@@ -395,7 +456,7 @@ function resolveWorkspaceGitRoots(
 function workspaceRevision(repositories: WorkspaceRepositoryGit[]): string {
   const signature = [...repositories]
     .sort((a, b) => a.rootId.localeCompare(b.rootId))
-    .map((repository) => `${repository.rootId}:${repository.revision}`)
+    .map((repository) => JSON.stringify([repository.rootId, repository.workspacePath, repository.revision]))
     .join("|");
   return createHash("sha1").update(signature).digest("hex").slice(0, 12);
 }
@@ -438,6 +499,7 @@ export async function getWorkspaceGitChanges({
           workspacePath: root.path ?? "",
           branch: "",
           headCommitSha: "",
+          unpushedCommitCount: 0,
           dirty: false,
           additions: 0,
           deletions: 0,
@@ -455,6 +517,7 @@ export async function getWorkspaceGitChanges({
           workspacePath,
           branch: "",
           headCommitSha: "",
+          unpushedCommitCount: 0,
           dirty: false,
           additions: 0,
           deletions: 0,

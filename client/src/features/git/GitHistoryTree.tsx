@@ -897,6 +897,7 @@ export default function GitHistoryTree({
         <MergeFileViewer
           key={conflictFile.id}
           file={conflictFile}
+          readSlice={(side, byteOffset, maxBytes, expectedRevision, signal) => projectApi.gitConflictSlice(projectId, conflictFile.path, { side, byteOffset, maxBytes, expectedRevision }, rootId, signal)}
           onClose={() => {
             setConflictFile(null);
             refreshState();

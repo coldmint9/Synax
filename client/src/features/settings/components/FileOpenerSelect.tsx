@@ -87,6 +87,7 @@ export function FileOpenerSelect() {
       {error && (
         <button
           type="button"
+          role="alert"
           className="settings-opener-status"
           onClick={() => setRetry((value) => value + 1)}
         >

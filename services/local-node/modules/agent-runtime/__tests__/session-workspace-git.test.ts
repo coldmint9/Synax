@@ -191,6 +191,14 @@ describe('session workspace Git roots', () => {
     ).rejects.toMatchObject({ code: 'VALIDATION_ERROR' })
   })
 
+  it.each([
+    ['sample.wav', Buffer.from('RIFF0000WAVEdata'), 'audio/wav'],
+    ['sample.mp4', Buffer.from('0000ftypisom0000'), 'video/mp4'],
+  ] as const)('preserves native media preview bytes for %s', async (filename, bytes, mediaType) => {
+    fs.writeFileSync(path.join(primary.path, filename), bytes);
+    await expect(getSessionEnvironmentFileMedia(sessionId, filename, primary.id)).resolves.toMatchObject({ mediaType, bytes });
+  });
+
   it('rejects an empty message without staging or generating', async () => {
     const before = [primary, reference].map(repositoryState)
     await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: '  ', push: false }))

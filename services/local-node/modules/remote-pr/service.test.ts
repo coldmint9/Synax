@@ -208,7 +208,18 @@ describe(
         code: "DIRTY_WORKTREE",
       });
     });
-    it("pushes the explicitly reviewed current HEAD without force", async () => {
+    it("syncs the target branch after a remote merge without switching the user's branch", async () => {
+    const task = await attach();
+    git('push', bare, 'feature/auth:refs/heads/main');
+    pr.state = 'merged'; pr.baseSha = pr.headSha;
+    git('checkout', 'main');
+    const fresh = await service.get('s', task.task.id);
+    const result = await act(fresh, 'sync_local');
+    expect(git('branch', '--show-current')).toBe('main');
+    expect(git('rev-parse', 'HEAD')).toBe(pr.baseSha);
+    expect(result.messages.at(-1)?.content).toContain('main');
+  });
+  it("pushes the explicitly reviewed current HEAD without force", async () => {
       const state = await service.discover("s", "root");
       fs.writeFileSync(path.join(repo, "new.txt"), "new");
       git("add", ".");

@@ -19,7 +19,7 @@ import { emitRuntimeBusEvent } from "./runtime-bus-bridge.js";
 import { AgentNotFoundError } from "./runtime-errors.js";
 import { nowIso } from "./runtime-ids.js";
 import { sessionLiveBus } from "./session-live-bus.js";
-import { readHistoryList, sessionPages } from './sidecar/history-pages.js';
+import { hydrateHistoryValues, readHistoryList, sessionPages } from './sidecar/history-pages.js';
 import { projectSessionState } from "./session-projection.js";
 import {
   decode,
@@ -75,6 +75,19 @@ const collections = {
 } as const;
 const copy = <T,>(value: T): T => structuredClone(value);
 
+/**
+ * Upper bound for sessions whose full execution working set stays resident in
+ * this process. Opening many long conversations used to keep every transcript
+ * in Node for the lifetime of the app; history reads go through the
+ * authoritative Rust index, so an idle terminal session can be dropped and
+ * re-hydrated on its next send. Active or writing sessions are never evicted.
+ */
+const WORKING_SET_LIMIT = Math.max(
+  1,
+  Number(process.env.SYNAX_RUNTIME_WORKING_SET ?? 12),
+);
+const EVICTABLE_SESSION_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
 /** A failed page must not release the session's loading slot while sibling
  * reads are still opening files or publishing caches. */
 async function readAll<T extends readonly unknown[]>(reads: { [K in keyof T]: Promise<T[K]> }): Promise<T> {
@@ -92,6 +105,11 @@ export class AgentRuntimeStore {
   private tails = new Map<string, Promise<void>>();
   private failures = new Map<string, unknown>();
   private loaded = new Set<string>();
+  private historyCursors = new Map<string, { revision: number; generation: number }>();
+  private executionBoundaries = new Map<string, number>();
+  private messageSequences = new Map<string, number>();
+  /** Least-recently-hydrated first; drives working-set eviction. */
+  private loadedAt = new Map<string, number>();
   private loading = new Map<string, Promise<void>>();
   private listing?: Promise<void>;
   private staged?: { writes: Array<() => void>; undo: Array<() => void> };
@@ -203,9 +221,18 @@ export class AgentRuntimeStore {
     })().finally(() => { this.listing = undefined; });
     return this.listing;
   }
-  async hydrateSession(sessionId: string, refresh = false): Promise<void> {
+  async hydrateSession(
+    sessionId: string,
+    refresh = false,
+    options: { include?: readonly (keyof typeof collections)[]; execution?: boolean } = {},
+  ): Promise<void> {
     this.summaryLeases.delete(sessionId);
-    if (this.loaded.has(sessionId) && !refresh) {
+    const kinds = options.include?.length
+      ? [...new Set(options.include)].filter(kind => kind in collections)
+      : null;
+    // A full working set already covers any subset request; only an explicit
+    // refresh reads the collections again.
+    if (this.loaded.has(sessionId) && !refresh && (options.execution || !this.executionBoundaries.has(sessionId))) {
       await this.flushSession(sessionId);
       return;
     }
@@ -213,23 +240,53 @@ export class AgentRuntimeStore {
     if (existing) return existing;
     const load = (async () => {
       await this.flushSession(sessionId);
+      const head = decode<{ revision: number; generation: number; messageSequence?: number; checkpoint?: { throughRevision: number } }>(await runtimeClient().historyCommandGlobal({
+        sessionId, requestId: `working-head:${sessionId}:${Date.now()}`, operation: "context_current", payload: {},
+      }));
+      const boundary = options.execution ? head.checkpoint?.throughRevision : undefined;
+      const previousCursor = this.historyCursors.get(sessionId);
+      if (!kinds && this.loaded.has(sessionId) && this.executionBoundaries.get(sessionId) === boundary && previousCursor?.generation === head.generation && previousCursor.revision <= head.revision) {
+        await this.refreshSessionChanges(sessionId, previousCursor.revision, head);
+        this.touchLoaded(sessionId);
+        return;
+      }
       await runtimeClient().historyCommand({ sessionId, requestId: `hydrate-history:${sessionId}:${Date.now()}`,
         operation: 'reconcile_stream', payload: {} });
       const previousSession = this.sessions.get(sessionId);
-      const previous = new Map(Object.keys(collections).map(kind => [kind,
+      const loadingKinds = kinds ?? (Object.keys(collections) as (keyof typeof collections)[]);
+      const previous = new Map(loadingKinds.map(kind => [kind,
         new Map([...this.collection(kind)].filter(([, record]) => record.sessionId === sessionId)),
       ]));
       const [snapshotBytes, entries, control] = await readAll([
         runtimeClient().uiSnapshot(sessionId),
-        readAll(Object.entries(collections).map(async ([kind, operation]) =>
-          [kind, await readHistoryList<Entity>(runtimeClient(), sessionId, operation)] as const)),
+        readAll(loadingKinds.map(async kind => [kind, boundary === undefined
+          ? await readHistoryList<Entity>(runtimeClient(), sessionId, collections[kind])
+          : await this.readExecutionEntities(sessionId, kind, boundary, head)] as const)),
         patchRuntime(sessionId, "read", {}),
       ]);
       const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(snapshotBytes);
       const incoming = new Map(entries.map(([kind, records]) => [kind, new Map(records.map(record => [record.id, record]))]));
-      if (snapshot.run) incoming.get("run")!.set(snapshot.run.id, snapshot.run);
-      for (const permission of control.permissions as PermissionDecision[]) incoming.get("permission")!.set(permission.id, permission);
-      for (const interaction of control.interactions as Entity[]) incoming.get("interaction")!.set(interaction.id, interaction);
+      if (boundary !== undefined) {
+        const refs: Array<{ kind: string; id: string }> = [];
+        if (snapshot.session.contextSnapshotId) refs.push({ kind: "context", id: snapshot.session.contextSnapshotId });
+        const activeWorkId = snapshot.session.sessionMetadata?.activeWorkId;
+        if (typeof activeWorkId === "string") refs.push({ kind: "work", id: activeWorkId });
+        const plan = snapshot.session.sessionMetadata?.plan as { id?: string } | undefined;
+        if (plan?.id) refs.push({ kind: "plan", id: plan.id });
+        await this.readExecutionRefs(sessionId, refs, incoming, true);
+        const work = typeof activeWorkId === "string" ? incoming.get("work")?.get(activeWorkId) as WorkRecord | undefined : undefined;
+        const evidence = new Map<string, { kind: string; id: string }>();
+        for (const entry of work?.evidence ?? []) {
+          for (const id of entry.toolCallIds ?? []) evidence.set(`tool:${id}`, { kind: "tool", id });
+          for (const id of entry.artifactIds ?? []) evidence.set(`artifact:${id}`, { kind: "artifact", id });
+        }
+        for (const record of work?.verifications ?? []) evidence.set(`tool:${record.toolCallId}`, { kind: "tool", id: record.toolCallId });
+        const all = [...evidence.values()];
+        for (let offset = 0; offset < all.length; offset += 128) await this.readExecutionRefs(sessionId, all.slice(offset, offset + 128), incoming);
+      }
+      if (snapshot.run) incoming.get("run")?.set(snapshot.run.id, snapshot.run);
+      for (const permission of control.permissions as PermissionDecision[]) incoming.get("permission")?.set(permission.id, permission);
+      for (const interaction of control.interactions as Entity[]) incoming.get("interaction")?.set(interaction.id, interaction);
       await (await import("./media-assets.js")).hydrateSessionAssets(sessionId);
       // Publish after every read succeeds. Readers must never see an empty
       // collection between deletion and an awaited history page. A local
@@ -247,8 +304,19 @@ export class AgentRuntimeStore {
         }
         for (const [id, value] of map) if (value.sessionId === sessionId) map.delete(id);
         for (const [id, value] of records) map.set(id, value);
+        if (kind === "message") {
+          let sequence = head.messageSequence ?? 0;
+          for (const value of records.values()) sequence = Math.max(sequence, Number((value as { sequence?: number }).sequence) || 0);
+          this.messageSequences.set(sessionId, sequence);
+        }
       }
-      this.loaded.add(sessionId);
+      if (!kinds) {
+        this.historyCursors.set(sessionId, head);
+        if (boundary === undefined) this.executionBoundaries.delete(sessionId); else this.executionBoundaries.set(sessionId, boundary);
+        this.loaded.add(sessionId);
+        this.touchLoaded(sessionId);
+        this.evictWorkingSet(sessionId);
+      }
     })();
     this.loading.set(sessionId, load);
     try {
@@ -257,10 +325,110 @@ export class AgentRuntimeStore {
       this.loading.delete(sessionId);
     }
   }
+  private touchLoaded(sessionId: string): void {
+    this.loadedAt.delete(sessionId);
+    this.loadedAt.set(sessionId, Date.now());
+  }
+  async hydrateExecutionSession(sessionId: string, refresh = false): Promise<void> {
+    return this.hydrateSession(sessionId, refresh, { execution: true });
+  }
+  private async readExecutionEntities(sessionId: string, kind: string, fromRevision: number, head: { revision: number; generation: number }): Promise<Entity[]> {
+    const collection = kind === "tool_call" ? "tool" : kind === "aux_usage" ? "aux" : kind;
+    let cursor: unknown = null;
+    const items: Entity[] = [];
+    do {
+      const page = decode<{ items: Entity[]; cursor: unknown }>(await runtimeClient().historyCommandGlobal({
+        sessionId, requestId: `working-tail:${sessionId}:${kind}:${Date.now()}`, operation: "execution_entities",
+        payload: { collection, fromRevision, throughRevision: head.revision, generation: head.generation, cursor },
+      }));
+      items.push(...await hydrateHistoryValues(runtimeClient(), sessionId, page.items, true));
+      if (page.cursor && JSON.stringify(page.cursor) === JSON.stringify(cursor)) throw new Error("Execution cursor did not advance.");
+      cursor = page.cursor;
+    } while (cursor);
+    return items;
+  }
+  private async readExecutionRefs(sessionId: string, refs: Array<{ kind: string; id: string }>, incoming: Map<string, Map<string, Entity>>, includeHints = false): Promise<void> {
+    const page = decode<{ items: Array<{ kind: string; value: Entity }> }>(await runtimeClient().historyCommandGlobal({
+      sessionId, requestId: `working-refs:${sessionId}:${Date.now()}`, operation: "execution_refs", payload: { refs, includeHints },
+    }));
+    const values = await hydrateHistoryValues(runtimeClient(), sessionId, page.items.map(item => item.value), true);
+    page.items.forEach((item, index) => {
+      const kind = item.kind === "tool" ? "tool_call" : item.kind;
+      incoming.get(kind)?.set(values[index].id, values[index]);
+    });
+  }
+  private async refreshSessionChanges(sessionId: string, afterRevision: number, head: { revision: number; generation: number }): Promise<void> {
+    let cursor: unknown = null;
+    const updates = new Map<string, { kind: string; id: string; deleted: boolean; value: Entity; before?: Entity }>();
+    do {
+      const page = decode<{ items: Array<{ kind: string; id: string; deleted: boolean; value: Entity }>; cursor: unknown }>(
+        await runtimeClient().historyCommandGlobal({ sessionId, requestId: `working-delta:${sessionId}:${Date.now()}`, operation: "history_updates",
+          payload: { afterRevision, throughRevision: head.revision, generation: head.generation, cursor } }));
+      const before = page.items.map(item => {
+        const kind = item.kind === "tool" ? "tool_call" : item.kind === "aux" ? "aux_usage" : item.kind;
+        return this.collection(kind).get(item.id);
+      });
+      const values = await hydrateHistoryValues(runtimeClient(), sessionId, page.items.map(item => item.value), true);
+      page.items.forEach((item, index) => {
+        const kind = item.kind === "tool" ? "tool_call" : item.kind === "aux" ? "aux_usage" : item.kind;
+        const key = `${kind}\0${item.id}`;
+        updates.set(key, { ...item, kind, value: values[index], before: updates.get(key)?.before ?? before[index] });
+      });
+      if (page.cursor && JSON.stringify(page.cursor) === JSON.stringify(cursor)) throw new Error("History updates cursor did not advance.");
+      cursor = page.cursor;
+    } while (cursor);
+    const previousSession = this.sessions.get(sessionId);
+    const [snapshotBytes, control] = await readAll([runtimeClient().uiSnapshot(sessionId), patchRuntime(sessionId, "read", {})]);
+    const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(snapshotBytes);
+    for (const item of updates.values()) {
+      const collection = this.collection(item.kind);
+      if (collection.get(item.id) !== item.before) continue;
+      if (item.deleted) collection.delete(item.id); else {
+        collection.set(item.id, item.value);
+        if (item.kind === "message") this.messageSequences.set(sessionId,
+          Math.max(this.messageSequences.get(sessionId) ?? 0, Number((item.value as { sequence?: number }).sequence) || 0));
+      }
+    }
+    if (this.sessions.get(sessionId) === previousSession) this.sessions.set(sessionId, snapshot.session);
+    if (snapshot.run) this.collection("run").set(snapshot.run.id, snapshot.run);
+    for (const permission of control.permissions as PermissionDecision[]) this.collection("permission").set(permission.id, permission);
+    for (const interaction of control.interactions as Entity[]) this.collection("interaction").set(interaction.id, interaction);
+    this.historyCursors.set(sessionId, head);
+  }
+  /**
+   * Drop the least recently hydrated idle session once the working set exceeds
+   * its budget. Every execution path hydrates before reading, so a dropped
+   * session is reloaded on its next send; history reads never use this cache.
+   */
+  private evictWorkingSet(keep: string): void {
+    while (this.loaded.size > WORKING_SET_LIMIT) {
+      const candidate = [...this.loaded]
+        .filter(id => id !== keep)
+        .filter(id => !this.loading.has(id) && !this.tails.has(id) && !this.failures.has(id))
+        .filter(id => {
+          const status = this.sessions.get(id)?.status;
+          return !!status && EVICTABLE_SESSION_STATUSES.has(status);
+        })
+        .sort((a, b) => (this.loadedAt.get(a) ?? 0) - (this.loadedAt.get(b) ?? 0))[0];
+      if (!candidate) return;
+      this.dropWorkingSet(candidate);
+    }
+  }
+  private dropWorkingSet(sessionId: string): void {
+    for (const records of this.entities.values())
+      for (const [recordId, record] of records)
+        if (record.sessionId === sessionId) records.delete(recordId);
+    this.loaded.delete(sessionId);
+    this.historyCursors.delete(sessionId);
+    this.executionBoundaries.delete(sessionId);
+    this.messageSequences.delete(sessionId);
+    this.loadedAt.delete(sessionId);
+    this.summaryLeases.delete(sessionId);
+  }
   /** Refresh the small projection at request boundaries without loading history. */
-  async hydrateSessionSummary(sessionId: string): Promise<void> {
+  async hydrateSessionSummary(sessionId: string, force = false): Promise<void> {
     const lease = this.summaryLeases.get(sessionId);
-    if (lease && Date.now() - lease.at < AgentRuntimeStore.SUMMARY_LEASE_MS)
+    if (!force && lease && Date.now() - lease.at < AgentRuntimeStore.SUMMARY_LEASE_MS)
       return lease.task;
     const task = this.readSessionSummary(sessionId);
     this.summaryLeases.set(sessionId, { at: Date.now(), task });
@@ -322,6 +490,7 @@ export class AgentRuntimeStore {
       if (!alreadyLoaded) this.loaded.delete(session.id);
     });
     this.loaded.add(session.id);
+    this.touchLoaded(session.id);
     const snapshot = copy(session);
     this.queue(session.id, () => seedSession(snapshot));
     if (session.parentSessionId) {
@@ -366,9 +535,16 @@ export class AgentRuntimeStore {
     patch: Record<string, unknown>,
   ): AgentSession {
     const current = this.getSession(id);
-    return this.updateSession(id, {
-      sessionMetadata: { ...current.sessionMetadata, ...patch },
-    });
+    const next = { ...current, sessionMetadata: { ...current.sessionMetadata, ...copy(patch) } };
+    this.set(this.sessions, id, next);
+    const storedPatch = copy(patch);
+    // Rust merges metadata keys. Sending a full cached metadata object from a
+    // worker could overwrite a concurrent control/mailbox update from the API.
+    this.queue(id, () => patchRuntime(id, "session_patch", { patch: { sessionMetadata: storedPatch } }).then(() => undefined));
+    const notify = () => emitRuntimeBusEvent({ type: "session_changed", sessionId: id,
+      patch: { sessionMetadata: storedPatch } });
+    if (this.staged) this.staged.writes.push(notify); else notify();
+    return copy(next);
   }
   /** Incremental runtime stats persisted on the session projection.
    * Step/run/tool hooks fold one record at a time; readers never rescan. */
@@ -435,11 +611,12 @@ export class AgentRuntimeStore {
       nodeId?: string;
       status?: string;
       limit?: number;
+      includePreparing?: boolean;
     } = {},
   ): AgentSession[] {
     return [...this.sessions.values()]
       .filter(
-        (s) => !s.sessionMetadata?.archivedAt && !s.sessionMetadata?.deletedAt,
+        (s) => !s.sessionMetadata?.archivedAt && !s.sessionMetadata?.deletedAt && (filter.includePreparing || !s.sessionMetadata?.forkPreparing),
       )
       .filter(
         (s) =>
@@ -617,25 +794,30 @@ export class AgentRuntimeStore {
     for (const sessionId of deletedIds) {
       this.sessions.delete(sessionId);
       this.loaded.delete(sessionId);
+      this.historyCursors.delete(sessionId);
+      this.executionBoundaries.delete(sessionId);
+      this.messageSequences.delete(sessionId);
+      this.loadedAt.delete(sessionId);
       this.tails.delete(sessionId);
       this.failures.delete(sessionId);
     }
     return items.map((s) => s.id);
+  }
+  /** Accept an already-committed message returned by a scoped Rust command. */
+  acceptMessageProjection(message: AgentRuntimeMessage & { sequence?: number }): void {
+    const prior = this.getRecord<AgentRuntimeMessage>("message", message.id);
+    if (message.metadata.source === "subagent_summary" &&
+        Number(prior?.metadata.eventSeq ?? 0) > Number(message.metadata.eventSeq ?? 0)) return;
+    this.collection("message").set(message.id, copy(message));
+    this.messageSequences.set(message.sessionId, Math.max(this.messageSequences.get(message.sessionId) ?? 0, message.sequence ?? 0));
   }
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
     const prior = this.getRecord<AgentRuntimeMessage & { sequence?: number }>(
       "message",
       message.id,
     );
-    const sequence =
-      prior?.sequence ??
-      Math.max(
-        0,
-        ...this.listRecords<AgentRuntimeMessage & { sequence?: number }>(
-          "message",
-          message.sessionId,
-        ).map((m) => m.sequence ?? 0),
-      ) + 1;
+    const sequence = prior?.sequence ?? (this.messageSequences.get(message.sessionId) ?? 0) + 1;
+    this.messageSequences.set(message.sessionId, Math.max(sequence, this.messageSequences.get(message.sessionId) ?? 0));
     return this.saveRecord("message", { ...message, sequence });
   }
   getMessage(sessionId: string, id: string): AgentRuntimeMessage | undefined {
@@ -756,8 +938,8 @@ export class AgentRuntimeStore {
   }
   listRunSteps(id: string) {
     return [...this.collection("step").values()]
+      .filter((s) => (s as AgentRunStep).runId === id)
       .map((v) => copy(v as AgentRunStep))
-      .filter((s) => s.runId === id)
       .sort((a, b) => a.index - b.index);
   }
   listSessionSteps(id: string) {
@@ -770,9 +952,15 @@ export class AgentRuntimeStore {
   }
   listRunParts(id: string) {
     return [...this.collection("part").values()]
+      .filter((p) => (p as AgentRunPart).stepId === id)
       .map((v) => copy(v as AgentRunPart))
-      .filter((p) => p.stepId === id)
       .sort((a, b) => a.sequence - b.sequence);
+  }
+  /** Whole-session snapshot for callers that would otherwise scan per step. */
+  listSessionParts(sessionId: string) {
+    return this.listRecords<AgentRunPart>("part", sessionId).sort(
+      (a, b) => a.sequence - b.sequence,
+    );
   }
   nextRunPartSequence(id: string) {
     return Math.max(0, ...this.listRunParts(id).map((p) => p.sequence)) + 1;
@@ -972,6 +1160,10 @@ export class AgentRuntimeStore {
     this.sessions.clear();
     this.entities.clear();
     this.loaded.clear();
+    this.historyCursors.clear();
+    this.executionBoundaries.clear();
+    this.messageSequences.clear();
+    this.loadedAt.clear();
     this.failures.clear();
     this.tails.clear();
   }

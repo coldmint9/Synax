@@ -63,6 +63,8 @@ const LEASE_MUTATING_CONTROL_OPERATIONS = new Set([
   "stop_begin",
   "stop_cancel",
   "session_patch",
+  "compaction_lock",
+  "compaction_unlock",
 ]);
 
 

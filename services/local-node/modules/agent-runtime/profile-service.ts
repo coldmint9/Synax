@@ -213,7 +213,7 @@ export class ProfileService {
 
   list(): AgentProfile[] {
     return [...this.profiles.values()].filter(
-      (profile) => profile.status === "active" && !["specialist", "explorer", "reviewer"].includes(profile.id),
+      (profile) => profile.status === "active" && !["specialist", "explorer", "reviewer", "git-merge-worker"].includes(profile.id),
     );
   }
 

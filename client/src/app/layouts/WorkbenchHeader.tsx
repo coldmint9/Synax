@@ -10,6 +10,7 @@ import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import { IslandPopoverPanel } from "./IslandOverlays";
 import { IslandSelection } from "./IslandSelection";
+import { SessionToolbarTarget } from "../../features/agent-workspace/SessionToolbarPortal";
 import { Button } from "@/shared/ui/ui/Button";
 import {
   GitMerge,
@@ -30,6 +31,8 @@ import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
+import { useMacWindowButtons } from "../../adapters/electron/useMacWindowButtons";
+import { WindowChrome } from "./WindowChrome";
 
 export type ChromeMode =
   | "global"
@@ -221,6 +224,7 @@ export function WorkbenchHeader({
   onCreateProject,
   onRemoveProject,
 }: WorkbenchHeaderProps) {
+  const leadingRef = useMacWindowButtons();
   const { t, locale } = useLocale();
   const location = useLocation();
   const terminalOpen = useTerminalStore((state) => state.open);
@@ -266,18 +270,21 @@ export function WorkbenchHeader({
   return (
     <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
       <div className="workbench-header__bar">
-        <div className="project-switcher-anchor workbench-header__workspace">
-          <ProjectSwitcher
-            hasProject={hasProject}
-            projectName={projectName}
-            currentProjectId={currentProjectId}
-            projects={projects}
-            onProjectSwitch={onProjectSwitch}
-            onCreateProject={onCreateProject}
-            onRemoveRequest={handleRemoveClick}
-            onOpen={() => setProjectSwitcherUsed(true)}
-          />
-          <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
+        <div className="workbench-header__leading" ref={leadingRef}>
+          <div className="project-switcher-anchor workbench-header__workspace">
+            <ProjectSwitcher
+              hasProject={hasProject}
+              projectName={projectName}
+              currentProjectId={currentProjectId}
+              projects={projects}
+              onProjectSwitch={onProjectSwitch}
+              onCreateProject={onCreateProject}
+              onRemoveRequest={handleRemoveClick}
+              onOpen={() => setProjectSwitcherUsed(true)}
+            />
+            <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
+          </div>
+          {activePanel === "sessions" && hasProject ? <SessionToolbarTarget /> : null}
         </div>
         <div className="workbench-header__navigation">
           <MainNavTabs activePanel={activePanel} hasProject={hasProject} onPanelToggle={onPanelToggle} />
@@ -305,6 +312,7 @@ export function WorkbenchHeader({
           </Tooltip>
           <ThemeToggle />
         </div>
+        <WindowChrome />
       </div>
       <WorkspaceRemoveDialog workspace={deleteTarget} currentProjectId={currentProjectId}
         onRemove={onRemoveProject} onClose={() => setDeleteTarget(null)} />

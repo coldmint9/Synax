@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AgentSession } from "../contracts.js";
+import type { AgentProfile, AgentSession } from "../contracts.js";
 import {
   isPlanningReadTool,
   isToolMountedForSession,
+  modelCanUseTool,
+  profileCanUseTool,
 } from "../tool-mount-policy.js";
 
 function sessionWithMode(
@@ -18,6 +20,19 @@ function sessionWithMode(
 }
 
 describe("tool mount policy", () => {
+  it('does not give a scoped merge worker native, MCP, skill or mountAllTools escapes', () => {
+    const profile = { id: 'git-merge-worker', allowedCapabilities: ['git.merge.worker.read'], mountAllTools: true } as AgentProfile;
+    expect(modelCanUseTool(profile, { id: 'git.merge.worker.read', category: 'read' })).toBe(true);
+    for (const tool of [
+      { id: 'agent.execute', category: 'task' }, { id: 'agent.discover', category: 'read' },
+      { id: 'bash', category: 'shell' }, { id: 'file.write', category: 'write' },
+      { id: 'unbound.mcp', category: 'mcp' }, { id: 'skill.load', category: 'skill' },
+      { id: 'work.checkpoint', category: 'task' }, { id: 'presentation.select', category: 'task' },
+    ]) {
+      expect(modelCanUseTool(profile, tool), tool.id).toBe(false);
+      expect(profileCanUseTool(profile, tool), tool.id).toBe(false);
+    }
+  });
   it("keeps webSearch mounted in plan mode so explicitly requested research can run", () => {
     expect(isPlanningReadTool("webSearch")).toBe(true);
     expect(isPlanningReadTool("design.write")).toBe(true);

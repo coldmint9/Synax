@@ -18,4 +18,14 @@ describe('emitRuntimeBusEvent', () => {
     expect(events).toEqual([{ type: 'session_created', sessionId: 'sess-1' }]);
     unsubscribe();
   });
+
+  it('also wakes in-process subscribers inside an agent worker', () => {
+    process.env.SYNAX_AGENT_SESSION_CHILD = '1';
+    const events: string[] = [];
+    const unsubscribe = runtimeBus.subscribe(event => events.push(event.sessionId));
+    try {
+      emitRuntimeBusEvent({ type: 'session_changed', sessionId: 'child-session' });
+      expect(events).toEqual(['child-session']);
+    } finally { unsubscribe(); }
+  });
 });

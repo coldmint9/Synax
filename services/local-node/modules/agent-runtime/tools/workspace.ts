@@ -199,6 +199,23 @@ function withSessionPrimary(
   return [normalized, ...roots.filter((item) => item.role !== "primary")];
 }
 
+/** Keep member identity stable while each session chooses its own checkout. */
+function withRootWorktrees(roots: ProjectWorkspaceRoot[], binding: unknown): ProjectWorkspaceRoot[] {
+  const overrides = (binding as { rootWorktrees?: Record<string, WorkspaceLocation> } | undefined)?.rootWorktrees;
+  if (!overrides) return roots;
+  return roots.map(root => {
+    // Primary execution is resolved through workDir/workspaceLocation, including
+    // explicit child-session overrides. Reference roots use their own selection.
+    const location = root.role === 'primary' ? undefined : overrides[root.id];
+    if (!location) return root;
+    let status: ProjectWorkspaceRoot['status'] = 'available';
+    try { canonicalizeWorkspaceLocationSync(location); } catch { status = 'missing'; }
+    const next = { ...root, path: location.path, location, status };
+    delete next.hostPath;
+    return next;
+  });
+}
+
 /** Resolve persisted Rust session metadata without looking up a SQLite mirror. */
 export function resolveWorkspaceRootsFromSession(
   session: AgentSession,
@@ -214,11 +231,11 @@ export function resolveWorkspaceRootsFromSession(
     ?? resolveProjectWorkspaceLocation(session.projectId);
   if (!location) throw new Error("The session has no registered workspace. Select an existing working directory before executing.");
   const project = readWorkspaceProject(session.projectId);
-  return withSessionPrimary(
+  return withRootWorktrees(withSessionPrimary(
     binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []),
     location,
     session.projectId,
-  );
+  ), binding);
 }
 
 /** A persisted membership snapshot also works in session worker processes. */
@@ -232,9 +249,9 @@ export function resolveSessionWorkspaceRoots(
     ?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
   const project = readWorkspaceProject(projectId);
   const roots = binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []);
-  const resolved = withSessionPrimary(
+  const resolved = withRootWorktrees(withSessionPrimary(
     roots, resolveSessionWorkspaceLocation(sessionId, projectId), projectId,
-  );
+  ), binding);
   if (membershipCache.size >= MAX_MEMBERSHIP_CACHE && !cached)
     membershipCache.delete(membershipCache.keys().next().value!);
   membershipCache.set(sessionId, { projectId, roots: resolved });
@@ -249,6 +266,7 @@ export function bindSessionWorkDir(sessionId: string): string {
         workDir?: string | null;
         workspaceLocation?: WorkspaceLocation;
         workspaceRoots?: ProjectWorkspaceRoot[];
+        rootWorktrees?: Record<string, WorkspaceLocation>;
       }
     | undefined;
   const location = canonicalizeWorkspaceLocationSync(
@@ -257,20 +275,20 @@ export function bindSessionWorkDir(sessionId: string): string {
   const root = workspaceLocationHostPath(location);
   const previous = binding?.workspaceRoots;
   const project = readWorkspaceProject(session.projectId);
-  const roots = withSessionPrimary(
+  const roots = withRootWorktrees(withSessionPrimary(
     (session.activeRunId || session.parentSessionId) && previous
       ? previous
       : project ? projectWorkspaceRoots(project) : [],
     location,
     session.projectId,
-  );
+  ), binding);
   const workspaceRoots = roots.map((item): ProjectWorkspaceRoot => {
     const itemLocation = item.location ?? { kind: "host" as const, path: item.path };
     let canonical: WorkspaceLocation;
     try {
       canonical = canonicalizeWorkspaceLocationSync(itemLocation);
     } catch (error) {
-      if (item.role === "primary") throw error;
+      if (item.role === "primary" || binding?.rootWorktrees?.[item.id]) throw error;
       // Keep the missing member visible, but never grant it sandbox access.
       return { ...item, status: "missing" };
     }

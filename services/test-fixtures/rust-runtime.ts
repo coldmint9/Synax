@@ -20,6 +20,14 @@ export function ensureTestRuntime():Promise<void> {
     await businessStore.refresh();
   })();
 }
+/** Preserve the test store while replacing the process, for recovery contracts. */
+export async function restartTestRuntime():Promise<void> {
+  await ensureTestRuntime();
+  if (!supervisor || !root) throw new Error('Test runtime is unavailable.');
+  await supervisor.stop();
+  supervisor = new RustRuntimeSupervisor({dataRoot:root});
+  await supervisor.start();
+}
 export async function clearBusinessTestData():Promise<void> {
   await ensureTestRuntime();await businessStore.flush();
   await runtimeClient().resetTestRuntime();

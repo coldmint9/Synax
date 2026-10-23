@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { addSessionLiveListener } from "../../adapters/transport/sessionLiveClient";
 import { Link } from "react-router-dom";
 import {
   Combobox,
@@ -133,6 +134,19 @@ function ContextPickerContent({
   const compactRequest = useRef(0);
   const compactPending = useRef(false);
   useEffect(() => {
+    if (compactionNotice?.status === "completed" || compactionNotice?.status === "failed")
+      setCompactSubmitting(false);
+  }, [compactionNotice?.status]);
+  useEffect(() => {
+    if (!sessionId || !compacting) return;
+    // Settled sessions deliberately have no permanent stream subscription.
+    // Manual compaction is a new run and needs its own bounded observation.
+    return addSessionLiveListener(sessionId, event => {
+      if (["context_compaction_state", "context_compacted", "context_compaction_failed"].includes(event.type))
+        useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
+    });
+  }, [sessionId, compacting]);
+  useEffect(() => {
     compactRequest.current += 1;
     compactPending.current = false;
     setCompactSubmitting(false);
@@ -179,18 +193,19 @@ function ContextPickerContent({
       if (
         request === compactRequest.current &&
         useAgentSessionStore.getState().selectedSessionId === sessionId &&
-        useAgentSessionStore.getState().contextCompactionNotice?.status ===
-          "running"
+        !["completed", "failed"].includes(
+          useAgentSessionStore.getState().contextCompactionNotice?.status ?? "",
+        )
       ) {
         const message = err instanceof Error ? err.message : String(err);
         useAgentSessionStore.setState({
           contextCompactionNotice: { status: "failed", error: message },
         });
       }
+      if (request === compactRequest.current) setCompactSubmitting(false);
     } finally {
       if (request === compactRequest.current) {
         compactPending.current = false;
-        setCompactSubmitting(false);
       }
     }
   };

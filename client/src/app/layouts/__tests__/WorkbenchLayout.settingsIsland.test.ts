@@ -25,7 +25,9 @@ describe('canonical command deck', () => {
     expect(headerSource).not.toContain('<WorkbenchIsland');
   });
   it('leaves platform control clearance in the top row and keeps actions clickable', () => {
-    expect(declaration('.electron-windows .workbench-header__bar', 'padding-right')).toBe('126px');
+    expect(declaration('.electron-windows .workbench-header__bar', 'padding-right')).toBe('0');
+    expect(declaration('.window-chrome', 'position')).toBeUndefined();
+    expect(headerSource).toContain('<WindowChrome />');
     expect(declaration('.electron-macos .workbench-header__bar', 'padding-left')).toContain('88px');
     expect(declaration('.workbench-header__bar', '-webkit-app-region')).toBe('drag');
     expect(declaration('.wh-btn', '-webkit-app-region')).toBe('no-drag');

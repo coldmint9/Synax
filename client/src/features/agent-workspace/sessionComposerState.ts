@@ -7,7 +7,14 @@ export function patchAgentSession(
   session: AgentSession,
   patch: Partial<AgentSession>,
 ): AgentSession {
-  const merged = { ...session, ...patch };
+  const merged = {
+    ...session, ...patch,
+    // Runtime events carry partial metadata updates (for example advertised
+    // tools). Keep the session identity/mode and compaction state they omit.
+    ...(patch.sessionMetadata ? {
+      sessionMetadata: { ...session.sessionMetadata, ...patch.sessionMetadata },
+    } : {}),
+  };
   const legacyStatus = (merged as { status: string }).status;
   const next: AgentSession =
     legacyStatus === "blocked"

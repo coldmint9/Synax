@@ -11,8 +11,8 @@ import {
 import { decodeWslOutput, wslCommandSpec, wslHomeDirectory } from "../infrastructure/wsl/wsl.js";
 import type { GitHistoryRef, GitHistoryPage, GitCommitDetail } from "./git-history-contracts.js";
 import type { GitActionInput, GitActionResult } from "./git-history-contracts.js";
-import type { MergeRequest, MergeFileSave } from "./git-mr/contracts.js";
-import { readFile as readMergeFile, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
+import type { MergeRequest, MergeFile, MergeFileSave, MergeFileSlice, MergeFileSliceInput } from "./git-mr/contracts.js";
+import { readFile as readMergeFile, readFileSlice as readMergeFileSlice, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
 import { GitMrStore } from "./git-mr/store.js";
 import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, type GitWorktreeSummary, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
 export type { GitWorktreeSummary } from "./git-worktree-management-contracts.js";
@@ -155,22 +155,34 @@ export async function gitHistoryState(repository: RepositoryInput): Promise<GitA
 }
 
 /** Reuse the merge file service's stage parsing, path checks and revision guard. */
-export async function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave) {
+export function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave, slice?: undefined, signal?: AbortSignal): Promise<MergeFile>;
+export function gitHistoryConflict(repository: RepositoryInput, filename: string, save: undefined, slice: MergeFileSliceInput, signal?: AbortSignal): Promise<MergeFileSlice>;
+export async function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave, slice?: MergeFileSliceInput, signal?: AbortSignal) {
   const context = await assertRepository(repository);
   return withRepositoryLock(context, async () => {
-    const state = await gitHistoryState(repository);
-    if (!state.operation || !state.conflicts.includes(filename)) throw new GitWorkspaceError("Active conflict not found.", 404);
     const run = (args: string[]) => git(context.location, context.root, args);
+    const [head, branch, operation, unmerged] = await Promise.all([
+      run(['rev-parse', '--verify', 'HEAD']), run(['branch', '--show-current']), historyOperation(context),
+      run(['--literal-pathspecs', 'ls-files', '--unmerged', '-z', '--', filename]),
+    ]);
+    const state = { head: head.stdout.trim(), branch: branch.stdout.trim(), operation };
+    if (!state.operation || !unmerged.stdout) throw new GitWorkspaceError('Active conflict not found.', 404);
     const source = (await run(["rev-parse", state.operation === "merge" ? "MERGE_HEAD" : state.operation === "rebase" ? "REBASE_HEAD" : "CHERRY_PICK_HEAD"])).stdout.trim().split("\n")[0];
     const id = createHash("sha256").update(JSON.stringify(context)).update(state.head).update(source).update(filename).digest("hex");
-    const mr: MergeRequest = { id, projectId: "git-workbench", title: "Working tree conflict", target: state.branch || "HEAD", targetOid: state.head, strategy: "merge_commit", steps: [{ branch: "incoming", oid: source, status: "conflicted" }], status: "conflicted", version: 1, currentStep: 0, worktree: context.root, location: context.location, repository: context.root, commonDir: context.root, autoFinalize: false, allowCheckedOutTarget: true, checks: [], checkResults: [], events: [], createdAt: "", updatedAt: "" };
+    const manifestId = createHash('sha256').update(JSON.stringify(context)).update(state.head).update(source).digest('hex');
+    const mr: MergeRequest = { id: manifestId, projectId: "git-workbench", title: "Working tree conflict", target: state.branch || "HEAD", targetOid: state.head, strategy: "merge_commit", steps: [{ branch: "incoming", oid: source, status: "conflicted" }], status: "conflicted", version: 1, currentStep: 0, worktree: context.root, location: context.location, repository: context.root, commonDir: context.root, autoFinalize: false, allowCheckedOutTarget: true, checks: [], checkResults: [], events: [], createdAt: "", updatedAt: "" };
     const store = new GitMrStore();
     try {
+      if (slice) {
+        const result = await readMergeFileSlice(mr, fileId(filename), slice, signal);
+        if (result.revision !== slice.expectedRevision) throw new GitWorkspaceError('Conflict file changed. Reload before reading another page.', 409);
+        return result;
+      }
       if (save) {
         const previous = await writeMergeFile(mr, fileId(filename), save);
         if (save.resolve) return { ...previous, conflicted: false, result: save.content ?? (save.choice === "target" ? previous.target : save.choice === "source" ? previous.source : "") };
       }
-      const result = await readMergeFile(mr, fileId(filename));
+      const result = await readMergeFile(mr, fileId(filename), false, signal);
       result.targetLabel = state.operation === "rebase" ? "当前基底 · stage 2" : `${state.branch || "HEAD"} · 本地`;
       result.sourceLabel = state.operation === "rebase" ? "重放提交 · stage 3" : `${source.slice(0, 8)} · 来源`;
       if (save?.resolutionState) await store.write("history-drafts", { id, projectId: "git-workbench", revision: result.revision, resolutionState: save.resolutionState });

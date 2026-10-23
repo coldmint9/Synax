@@ -35,7 +35,7 @@ export class AgentSessionRuntime {
     private readonly events: AgentEventService = agentEventService,
   ) {}
 
-  create(input: CreateSessionRequest): AgentSession {
+  create(input: CreateSessionRequest, options?: { id?: string; forkPreparing?: boolean }): AgentSession {
     const started = Date.now();
     logger.info(
       {
@@ -116,6 +116,8 @@ export class AgentSessionRuntime {
           workDir?: string | null;
           workspaceLocation?: WorkspaceLocation;
           workspaceRoots?: ProjectWorkspaceRoot[];
+          rootWorktrees?: Record<string, WorkspaceLocation>;
+          workspaceBindingRevision?: number;
         }
       | undefined;
     const requestedWorkDir = input.workDir ?? parentBackend?.workDir ?? null;
@@ -138,6 +140,8 @@ export class AgentSessionRuntime {
         | undefined) ??
       (input.workDir ? undefined : parentBackend?.workspaceLocation);
     if (requestedLocation) backend.workspaceLocation = requestedLocation;
+    if (parentBackend?.rootWorktrees) backend.rootWorktrees = { ...parentBackend.rootWorktrees };
+    if (parentBackend?.workspaceBindingRevision !== undefined) backend.workspaceBindingRevision = parentBackend.workspaceBindingRevision;
     if (parentBackend?.workspaceRoots) {
       backend.workspaceRoots = parentBackend.workspaceRoots.map((root) => ({
         ...root,
@@ -153,6 +157,7 @@ export class AgentSessionRuntime {
     }
     sessionMetadata.backend = backend;
     if (
+      !options?.forkPreparing &&
       !parent &&
       (input.profileId === "synax" || input.profileId === "goal")
     ) {
@@ -167,13 +172,13 @@ export class AgentSessionRuntime {
         );
     }
     const sessionDraft: AgentSession = {
-      id: makeRuntimeId("ars"),
+      id: options?.id ?? makeRuntimeId("ars"),
       projectId: input.projectId,
       parentSessionId: input.parentSessionId ?? null,
       childSessionIds: [],
       nodeId: input.nodeId ?? null,
       profileId: profile.id,
-      status: "running",
+      status: options?.forkPreparing ? "completed" : "running",
       title: resolveInitialSessionTitle({
         sessionMetadata,
         prompt: input.prompt,
@@ -202,6 +207,7 @@ export class AgentSessionRuntime {
       ),
     };
     const saved = this.store.createSession(session);
+    if (options?.forkPreparing) return saved;
     const bundle = agentContextBuilder.build(input.projectId, {
       nodeId: input.nodeId ?? undefined,
       profileId: profile.id,

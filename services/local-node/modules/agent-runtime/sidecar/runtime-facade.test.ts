@@ -6,6 +6,17 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 const snapshot = { session: { id: 's', status: 'completed' }, run: null, cursor: 1400, liveChunks: [], completedStepIds: ['step'] };
 const remote = (overrides: object) => overrides as unknown as RuntimeSidecarClient;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+it('does not reconcile a conflicting fork request against a different committed receipt', async () => {
+  const conflict = new RuntimeSidecarError({ type: 'error', code: 'REQUEST_CONFLICT', message: 'changed input' });
+  const client = remote({ historyCommandGlobal: vi.fn(async () => encode({ copied: 1 })) });
+  const facade = new RuntimeFacade(() => client);
+  vi.spyOn(facade, 'historyCommandGlobal').mockResolvedValue({ copied: 1 });
+  vi.spyOn(facade, 'historyCommand').mockRejectedValue(conflict);
+  const status = vi.spyOn(facade, 'forkCopyResult');
+  const release = vi.spyOn(facade, 'releaseForkAssets');
+  await expect(facade.cloneHistoryAuthoritative({ sourceSessionId: 's', targetSessionId: 'copy', checkpointId: 'p', revision: 1, requestId: 'request' })).rejects.toBe(conflict);
+  expect(status).not.toHaveBeenCalled(); expect(release).not.toHaveBeenCalled();
+});
 it('reads a persisted projection without touching legacy session storage', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });
   const client = remote({ uiSnapshot: vi.fn(async () => encode(snapshot)), seedUi: vi.fn() });

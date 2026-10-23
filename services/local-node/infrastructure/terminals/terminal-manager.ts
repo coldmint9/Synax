@@ -21,6 +21,8 @@ import {
   type OwnedProcessRecord,
 } from "../../modules/agent-runtime/process-ownership.js";
 import { AgentRuntimeError } from "../../modules/agent-runtime/runtime-errors.js";
+import { guardOwnedProcessGroup, type ProcessGroupGuard } from "../../modules/agent-runtime/process-guardian.js";
+import { withDeadline } from "../../modules/agent-runtime/managed-process.js";
 import { parseWslUncPath } from "../../modules/workspace-location.js";
 import {
   findWslOwnedProcess,
@@ -84,6 +86,7 @@ interface LiveTerminal {
   finish: () => void;
   closed: boolean;
   identityReady: Promise<void>;
+  processGuard?: ProcessGroupGuard;
   authoritativePersisting?: Promise<void>;
   authoritativeFlushQueued: boolean;
 }
@@ -296,6 +299,7 @@ class TerminalManager {
       entry.authoritativePersisting = undefined;
       if (
         entry.closed &&
+        entry.info.state === "closed" &&
         !entry.dirty &&
         this.live.get(entry.info.id) === entry
       ) {
@@ -478,6 +482,8 @@ class TerminalManager {
       };
       this.live.set(ticket.id, entry);
       recordOwnedPid(ticket.id, pty.pid);
+      if (process.platform !== "win32" && !wsl)
+        entry.processGuard = guardOwnedProcessGroup(pty.pid, ticket.id);
       if (wsl) {
         void (async () => {
           for (let attempt = 0; attempt < 20 && !entry.closed; attempt += 1) {
@@ -522,17 +528,24 @@ class TerminalManager {
         }),
       );
       pty.onExit(({ exitCode, signal }) =>
-        withoutExecutionContext(() => {
+        withoutExecutionContext(async () => {
           entry.closed = true;
-          entry.info.state = "closed";
+          entry.info.state = "stopping";
+          try {
+            void entry.processGuard?.release().catch(() => {});
+            await entry.processGuard?.closed;
+            entry.info.state = "closed";
+          } catch {
+            // Retain the lease and record: a dead PTY is not proof that its
+            // service children have exited.
+            entry.info.state = "unconfirmed";
+          }
           entry.info.exitCode = entry.stopping || signal ? null : exitCode;
           entry.info.endedAt = new Date().toISOString();
           entry.dirty = true;
           this.authoritativeOutput.set(ticket.id, { sequence: entry.sequence, data: entry.frames.map((frame) => frame.data).join("") });
-          releaseOwnedProcess(
-            ticket.id,
-            entry.stopping || signal ? null : exitCode,
-          );
+          if (entry.info.state === "closed")
+            releaseOwnedProcess(ticket.id, entry.stopping || signal ? null : exitCode);
           this.flush(ticket.id, entry);
           this.authoritativeHistory.set(ticket.id, { ...entry.info });
           const terminal = this.has(ticket.id) ? this.get(ticket.id) : { ...entry.info };
@@ -550,6 +563,7 @@ class TerminalManager {
       // read for ownership validation; if unavailable, do not invent an identity.
       const tty = (pty as IPty & { _pty?: unknown })._pty;
       try {
+        await entry.processGuard?.ready;
         if (typeof tty === "string" && tty.startsWith("/dev/")) {
           // posix_spawn can return before the child acquires its controlling TTY.
           for (let attempt = 0; attempt < 25 && !entry.closed; attempt++) {
@@ -724,13 +738,11 @@ class TerminalManager {
       entry.stopping = true;
       await entry.identityReady;
     }
-    if (process.env.SYNAX_RUNTIME_SIDECAR_STREAM === "authoritative" && entry && !entry.closed) {
-      entry.pty.kill();
-      const exited = await Promise.race([
-        entry.exited.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
-      ]);
-      if (!exited) {
+    if (entry?.processGuard) {
+      try {
+        await entry.processGuard.release();
+        await withDeadline(entry.exited, 5000, "Terminal exit could not be confirmed.");
+      } catch {
         entry.stopping = false;
         failure("Unable to confirm terminal shutdown. Retry before deleting the record.");
       }
