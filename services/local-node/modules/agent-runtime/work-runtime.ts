@@ -6,6 +6,7 @@ import type { AgentRun, ToolCallRecord, ToolExecutionInput, ToolExecutionResult 
 import { agentRuntimeStore as store } from './session-store.js';
 import { workStore, type WorkRecord, type WorkEvidence } from './work-store.js';
 import { TaskStore } from './tools/task-tools.js';
+import { discardedGitSubcommands } from './tools/bash-command-policy.js';
 import { interactionService } from './interaction-service.js';
 import { inputQueueRuntime as inputQueueService } from './input-queue-runtime.js';
 import { AgentValidationError } from './runtime-errors.js';
@@ -168,9 +169,17 @@ class WorkRuntime {
     const work = workStore.current(sessionId);
     if (!work) return null;
     const command = (args as { command?: string } | undefined)?.command;
-    if (toolId === 'bash' && command && /\bgit\s+(?:stash|reset|clean|restore)\b/i.test(command) &&
-      !work.requirements.some(r => /\bgit\s+(?:stash|reset|clean|restore)\b/i.test(r.text)))
-      return 'Do not stash/reset/restore user changes for automatic baseline comparisons. An explicit user instruction is required.';
+    // Only commands that can discard uncommitted work are gated; read-only forms
+    // (`git stash list`, `git status`) stay available for diagnosis. An
+    // instruction unlocks the exact subcommand it names, never the others.
+    if (toolId === 'bash' && command) {
+      const blocked = discardedGitSubcommands(command);
+      if (blocked.size) {
+        const allowed = new Set(work.requirements.flatMap(r => [...discardedGitSubcommands(r.text)]));
+        if ([...blocked].some(sub => !allowed.has(sub)))
+          return 'Do not discard user changes for automatic baseline comparisons. An explicit user instruction is required. Read-only git queries (for example `git stash list`) remain allowed.';
+      }
+    }
     if (TERMINAL.has(work.status)) return `Work ${work.id} is ${work.status}; do not perform more operations.`;
     return null;
   }

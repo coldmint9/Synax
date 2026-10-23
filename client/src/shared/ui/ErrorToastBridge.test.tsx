@@ -49,3 +49,22 @@ it("promotes class-marked error content without duplicating nested nodes", async
   });
   expect(useNotificationStore.getState().notifications[0].message).toBe("读取 diff 失败");
 });
+
+it("never promotes a failed or denied tool call, even when its row is error-marked", async () => {
+  render(
+    <>
+      <ErrorToastBridge />
+      <div className="bui-tool" data-tool-status="denied">
+        <span className="bui-tool-result" data-tool-failure="true">
+          Do not discard user changes for automatic baseline comparisons.
+        </span>
+      </div>
+      <div className="bui-tool" data-tool-status="failed">
+        <span className="bui-tool-error">Command failed with exit code 1</span>
+      </div>
+    </>,
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(useNotificationStore.getState().notifications).toHaveLength(0);
+});

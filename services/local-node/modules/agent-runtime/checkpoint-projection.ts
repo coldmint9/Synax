@@ -4,6 +4,7 @@ import { readCheckpointHead, recoverCheckpointHead, runSessionCheckpoint, type C
 import { runtimeClient, decode } from "./sidecar/runtime-repository.js";
 import { hydrateHistoryValues } from "./sidecar/history-pages.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
+import { measureContextPrompt } from "./context-measure.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 
 export interface CheckpointProjection {
@@ -33,23 +34,13 @@ export function checkpointMessages(checkpoint: ContextCheckpoint | null): unknow
   }] }] : [];
 }
 
-async function measure(input: Input, prompt: unknown[]): Promise<number> {
-  input.signal?.throwIfAborted();
-  const result = await command<{ total: number }>(input.sessionId, "context_measure", {
-    prompt: [{ role: "system", content: input.systemPrompt }, ...prompt.map(accountingProjection)], tools: input.tools,
+/** A near-budget prompt is larger than one IPC frame, so measurement is split
+ * into wire-bounded groups instead of failing on the transport limit. */
+function measure(input: Input, prompt: unknown[]): Promise<number> {
+  return measureContextPrompt({
+    sessionId: input.sessionId, systemPrompt: input.systemPrompt, tools: input.tools,
+    prompt, signal: input.signal,
   });
-  input.signal?.throwIfAborted();
-  return result.total;
-}
-
-const MEDIA_TYPES = new Set(["image", "file", "document", "audio", "video", "attachment", "image_url", "input_image", "output_image", "input_file", "input_audio", "image-data", "file-data", "file-url"]);
-/** Same text-accounting projection as Rust. Never send a Uint8Array payload
- * through history IPC just to count the surrounding text. */
-function accountingProjection(value: unknown): unknown {
-  if (!value || typeof value !== "object") return value;
-  if ("type" in value && MEDIA_TYPES.has(String(value.type))) return { type: "retained-attachment" };
-  if (Array.isArray(value)) return value.map(accountingProjection);
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, accountingProjection(item)]));
 }
 
 async function readTail(input: Input, head: CheckpointHead, fromRevision: number, remaining: number): Promise<{ prompt: unknown[]; overflow: boolean }> {

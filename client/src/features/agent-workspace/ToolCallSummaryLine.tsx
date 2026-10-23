@@ -54,6 +54,9 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({
   const failed = call.status === "failed" || call.status === "denied";
   // Pending is in-flight work, not an outcome: the label already reads "正在…".
   const exceptional = !["completed", "running", "pending"].includes(call.status);
+  // A failed or denied call is transcript content the model must act on, never
+  // an application error: the row states it inline and deliberately avoids the
+  // error markers the toast bridge promotes.
   const failure = failed ? activityPreview(call.outputSummary, 180) : "";
   // The viewer can only open one file, so a multi-file patch or a glob keeps
   // reading as plain text instead of promising a link it cannot honour.
@@ -90,7 +93,11 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({
       {(presentation.additions > 0 || presentation.deletions > 0) && (
         <span className="bui-tool-diff">+{presentation.additions} -{presentation.deletions}</span>
       )}
-      {failure && <span className="bui-tool-result" data-error title={failure}>{failure}</span>}
+      {failure && (
+        <span className="bui-tool-result" data-tool-failure title={failure}>
+          {failure}
+        </span>
+      )}
     </span>
   );
   const meta =

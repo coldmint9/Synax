@@ -22,6 +22,14 @@ const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_SUBJECT_LEN = 200;
 const MAX_COMMIT_MESSAGE_LEN = 2_000;
 const FENCE_RE = /^\s*(?:```|~~~)/;
+/**
+ * macOS Finder metadata must never be staged. The `glob` magic is required:
+ * a literal `:(exclude).DS_Store` pathspec makes `git add` report the ignored
+ * file and abort ("The following paths are ignored ... Use -f"), even though
+ * that pathspec excludes it, while a non-glob double-star exclusion misses the
+ * repository-root copy. `glob` makes one pattern cover root and nested files.
+ */
+const DS_STORE_EXCLUDE = ":(exclude,glob)**/.DS_Store";
 
 export interface SessionGitCommitInput {
   rootId?: string;
@@ -283,10 +291,30 @@ export async function commitSessionWorkspace(
     }
   }
 
-  await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u", "--", ".", ":(exclude)**/.DS_Store", ":(exclude).DS_Store"]);
-  const staged = (await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])).stdout.split("\0");
+  await runGit(workspacePath, [
+    "add",
+    includeUntracked ? "-A" : "-u",
+    "--",
+    ".",
+    DS_STORE_EXCLUDE,
+  ]);
+  const stagedOutput = (
+    await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])
+  ).stdout;
+  const staged = stagedOutput
+    .split("\0")
+    .map((file) => file.trim())
+    .filter(Boolean);
   if (staged.some(file => file.split("/").at(-1) === ".DS_Store"))
     throw new AgentValidationError(".DS_Store must never be committed. Unstage it before committing.");
+  // Only excluded metadata (`status` still lists it) leaves an empty index.
+  if (staged.length === 0) {
+    throw new AgentRuntimeError(
+      "There is nothing to commit.",
+      "GIT_NOTHING_TO_COMMIT",
+      409,
+    );
+  }
 
   const commit = await runGit(workspacePath, ["commit", "-m", message], true);
   if (!commit.ok) {
@@ -342,7 +370,7 @@ export async function commitSessionWorkspace(
       branch,
       commitSha,
       messageGenerated: false,
-      files: eligibleFiles.length,
+      files: staged.length,
       pushed,
     },
     shouldPush
@@ -358,6 +386,7 @@ export async function commitSessionWorkspace(
     messageGenerated: false,
     pushed,
     upstream,
-    committedFiles: eligibleFiles.length,
+    // Count what the commit actually contains, not every dirty status entry.
+    committedFiles: staged.length,
   };
 }

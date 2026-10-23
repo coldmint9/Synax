@@ -226,6 +226,37 @@ describe('session workspace Git roots', () => {
     expect(session).toMatchObject({ status: 'running', activeRunId: 'active-run' })
   })
 
+  it('commits while ignored .DS_Store files exist instead of failing the staging step', async () => {
+    // Mirrors a macOS checkout: the repository ignores Finder metadata and both
+    // the root and a nested copy exist, so `git add` must skip them silently.
+    fs.writeFileSync(path.join(primary.path, '.gitignore'), '.DS_Store\n')
+    fs.writeFileSync(path.join(primary.path, '.DS_Store'), 'metadata')
+    fs.mkdirSync(path.join(primary.path, 'nested'), { recursive: true })
+    fs.writeFileSync(path.join(primary.path, 'nested', '.DS_Store'), 'metadata')
+
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id, message: 'test: commit with .DS_Store present', push: false,
+    })
+
+    expect(result.committedFiles).toBe(2) // relativePath plus the new .gitignore
+    expect(git(primary, 'ls-files')).not.toContain('.DS_Store')
+    expect(git(primary, 'status', '--porcelain=v1', '-uall')).toBe('')
+  })
+
+  it('never stages an untracked .DS_Store that Git does not ignore', async () => {
+    fs.writeFileSync(path.join(reference.path, '.DS_Store'), 'metadata')
+    fs.mkdirSync(path.join(reference.path, 'nested'), { recursive: true })
+    fs.writeFileSync(path.join(reference.path, 'nested', '.DS_Store'), 'metadata')
+
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: reference.id, message: 'test: skip untracked .DS_Store', push: false,
+    })
+
+    expect(result.committedFiles).toBe(1)
+    expect(git(reference, 'ls-files')).not.toContain('.DS_Store')
+    expect(git(reference, 'status', '--porcelain=v1', '-uall')).toBe('?? .DS_Store\n?? nested/.DS_Store\n')
+  })
+
   it('commits the selected root only, then lets the other dirty root commit independently', async () => {
     // Keep cached Git facts so each successful commit must also refresh its repository status.
     await readWorkspace()

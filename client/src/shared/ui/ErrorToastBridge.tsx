@@ -4,6 +4,8 @@ import { errorNotificationId } from "../lib/errors";
 
 const ERROR_SELECTOR = '[role="alert"], [data-error], [class*="error"], [class*="Error"]';
 const TOAST_SOURCE_ATTRIBUTE = "data-synax-error-toast-source";
+/** Tool rows state their own outcome inline, including failures and denials. */
+const TOOL_ROW_ATTRIBUTE = "[data-tool-status]";
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -35,6 +37,9 @@ function promote(element: HTMLElement, processed: WeakMap<HTMLElement, string>):
   if (
     element.hasAttribute(TOAST_SOURCE_ATTRIBUTE) ||
     element.closest("[data-synax-toast]") ||
+    // A failed or denied tool call is transcript content the model works with,
+    // not an application error, so a tool row never becomes a toast.
+    element.closest(TOOL_ROW_ATTRIBUTE) ||
     element.parentElement?.closest(ERROR_SELECTOR)
   ) {
     return;
