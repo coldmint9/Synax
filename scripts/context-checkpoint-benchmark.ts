@@ -131,7 +131,7 @@ try {
   await writeFile(".tmp/checkpoint-performance/report.json", JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
-  client!?.close();
+  client?.close();
   await supervisor.stop();
   await rm(root, { recursive: true, force: true });
 }
