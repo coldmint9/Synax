@@ -6,6 +6,7 @@ import { Button } from "../../shared/ui/ui/Button";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { useWorkspaceRefresh } from './workspaceRefresh';
 
 const keyOf = (rootId: string, path: string) => JSON.stringify([rootId, path]);
 interface Level { page?: WorkspaceTreeListing; loading?: boolean; error?: string }
@@ -14,7 +15,10 @@ export function WorkspaceDirectoryTree({ projectId }: { projectId: string }) {
   const sessionId = useAgentSessionStore((s) =>
     s.sessions.find((session) => session.id === s.selectedSessionId && session.projectId === projectId)?.id);
   // Switching sessions can switch the physical worktree. Never retain old root requests.
-  return <DirectoryTree key={`${projectId}:${sessionId ?? ""}`} projectId={projectId} sessionId={sessionId} />;
+  const [bindingVersion, setBindingVersion] = useState(0);
+  const reset = useCallback(() => setBindingVersion(value => value + 1), []);
+  useWorkspaceRefresh(sessionId ?? null, reset);
+  return <DirectoryTree key={`${projectId}:${sessionId ?? ""}:${bindingVersion}`} projectId={projectId} sessionId={sessionId} />;
 }
 
 function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?: string }) {

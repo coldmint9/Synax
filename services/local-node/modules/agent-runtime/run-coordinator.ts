@@ -472,7 +472,7 @@ export class RunCoordinator {
       ))
         await record(chunk);
       await flush();
-      await agentRuntimeStore.hydrateSession(sessionId, true);
+      await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
       if (run.status === "queued" || run.status === "running") {
         throw new Error("Backend ended without settling its Run.");
@@ -495,7 +495,7 @@ export class RunCoordinator {
             requestId: `execution-fail-start:${owner.runId}:${owner.context?.epoch}`,
             operation: "execution_fail_start",
             payload: { executionLease: owner.context, reason: message } });
-          await agentRuntimeStore.hydrateSession(sessionId, true);
+          await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
         } catch (repairError) {
           if (!isExecutionSuperseded(repairError)) throw repairError;
         }
@@ -503,7 +503,7 @@ export class RunCoordinator {
       }
       if (!this.ownsLease(owner)) return;
       await flush();
-      await agentRuntimeStore.hydrateSession(sessionId, true);
+      await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
       const run = agentRuntimeStore.getRun(owner.runId);
       if (!["completed", "cancelled", "interrupted", "failed", "blocked"].includes(run.status)) {
         const failed = agentRuntimeStore.updateRun(run.id, {
@@ -543,7 +543,7 @@ export class RunCoordinator {
           }
           if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
             // Include any final partial message written after the stream drained.
-            await agentRuntimeStore.hydrateSession(sessionId, true);
+            await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
             // All backends settle here, including Rust and external sessions
             // that never enter the legacy loop's checkpoint finalizer.
             try {

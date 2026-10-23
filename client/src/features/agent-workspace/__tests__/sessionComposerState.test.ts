@@ -61,6 +61,15 @@ function makePermission(
 }
 
 describe("sessionComposerState", () => {
+  it("retains workspace identity and compaction state on partial metadata events", () => {
+    const session = makeSession({ sessionMetadata: {
+      source: "session-page", mode: "chat",
+      contextCompaction: { id: "cmp", status: "running", startedAt: "", requestId: null },
+    } });
+    const patched = patchAgentSession(session, { sessionMetadata: { advertisedCapabilities: { owner: session.id } } });
+    expect(patched.sessionMetadata).toMatchObject({ source: "session-page", mode: "chat", contextCompaction: { status: "running" } });
+    expect(patchAgentSession(patched, { sessionMetadata: { contextCompaction: null } }).sessionMetadata?.contextCompaction).toBeNull();
+  });
   it("locks while submitting", () => {
     expect(isSessionComposerLocked(makeSession(), { submitting: true })).toBe(
       true,

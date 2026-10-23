@@ -156,8 +156,8 @@ async function readCard<T>(
   if (cached && Date.now() < cached.expiresAt) return cached.value;
   const pending = inFlight.get(sessionId);
   if (pending) return pending;
-  const task = compute()
-    .then((value) => setCard(cache, sessionId, value, ttlMs))
+  const task: Promise<T> = compute()
+    .then((value) => inFlight.get(sessionId) === task ? setCard(cache, sessionId, value, ttlMs) : value)
     .finally(() => {
       if (inFlight.get(sessionId) === task) inFlight.delete(sessionId);
     });
@@ -202,24 +202,14 @@ export async function getSessionEnvironmentRoots(
     const repositories: SessionRootSummary[] = [];
     for (const root of resolved) {
       const workspacePath = canonicalPath(root);
-      if (!workspacePath) continue;
       repositories.push({
         rootId: root.id,
         name: root.name,
         role: root.role,
-        status: "ready",
-        workspacePath,
+        status: workspacePath ? "ready" : "missing",
+        workspacePath: workspacePath ?? workspaceRootHostPath(root),
       });
     }
-    const missing = resolved.find((root) => !canonicalPath(root));
-    if (missing)
-      repositories.push({
-        rootId: missing.id,
-        name: missing.name,
-        role: missing.role,
-        status: "missing",
-        workspacePath: missing.path,
-      });
     const primary =
       repositories.find((root) => root.role === "primary") ?? repositories[0];
     if (!primary)

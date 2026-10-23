@@ -13,10 +13,9 @@ export { canFinalize, isRunning, isTerminal };
 export function taskPresentation(snapshot: ConversationGitSnapshot) {
   const { mr, files, stale } = snapshot;
   const conflicts = files.filter((file) => file.conflicted).length;
+  const latestResults = new Map(mr.checkResults.map(result => [result.id, result]));
   const results = mr.checks.map((check) => {
-    const result = [...mr.checkResults]
-      .reverse()
-      .find((item) => item.id === check.id);
+    const result = latestResults.get(check.id);
     return {
       check,
       result,

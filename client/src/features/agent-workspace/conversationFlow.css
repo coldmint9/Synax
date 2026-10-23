@@ -109,8 +109,12 @@
   scrollbar-color: color-mix(in srgb, var(--flow-muted) 25%, transparent) transparent;
 }
 .session-process-window-row { display: block; min-width: 0; min-height: var(--process-row-h, 25px); }
-.session-process-window-viewport[data-windowed] .session-process-window-row { height: var(--process-row-h, 25px); overflow: hidden; }
-.session-process-window-viewport[data-windowed] .session-activity-reveal { display: none; }
+/* Collapsed records share one fixed row height. The single record the reader
+   opened takes its natural height; every other row keeps the row budget, so
+   opening one record never unfolds the rest of the window. */
+.session-process-window-viewport[data-windowed] .session-process-window-row:not([data-row-expanded]) { height: var(--process-row-h, 25px); overflow: hidden; }
+.session-process-window-viewport[data-windowed] .session-process-window-row[data-row-expanded] { height: auto; overflow: visible; }
+.session-process-window-viewport[data-windowed] .session-process-window-row:not([data-row-expanded]) .session-activity-reveal { display: none; }
 /* Mask the offscreen edge only; the transcript canvas stays transparent. */
 .session-process-window-frame[data-fade-top] { mask-image: linear-gradient(to bottom, transparent, #000 24px); }
 .session-process-window-frame[data-fade-bottom] { mask-image: linear-gradient(to top, transparent, #000 24px); }

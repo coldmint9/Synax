@@ -31,11 +31,8 @@ import {
 } from "../../infrastructure/runtime/env.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
-import { makeRuntimeId, nowIso } from "./runtime-ids.js";
-import {
-  saveContextCompaction,
-  type ContextCompactionState,
-} from "./context-compaction-state.js";
+import { nowIso } from "./runtime-ids.js";
+import { patchRuntime } from "./sidecar/runtime-repository.js";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { agentRuntimeStore } from "./session-store.js";
@@ -45,7 +42,8 @@ import {
   type ContextCompactionResult,
 } from "./manual-context-compaction.js";
 import { sessionLiveBus } from "./session-live-bus.js";
-import { runtimeBus } from "./runtime-bus.js";
+import { runtimeBus, type RuntimeBusEvent } from "./runtime-bus.js";
+import { setRuntimeWorkerNotifier } from "./runtime-bus-bridge.js";
 import { finalizeStoppedSessions } from "./stopped-session-cleanup.js";
 import {
   ensureSessionTitleGenerated,
@@ -201,6 +199,17 @@ export class SessionProcessManager {
   private readonly terminatingChildren = new Map<ChildProcess, string>();
   private readonly idleChildren = new WeakSet<ChildProcess>();
   private readonly pendingCompactions = new Set<string>();
+  private readonly compactionControllers = new Map<string, AbortController>();
+
+  notifyRuntimeEvent(event: RuntimeBusEvent): void {
+    if (event.type !== "subagent_state_changed") return;
+    const child = this.children.get(event.sessionId)?.child;
+    if (!child?.connected) return;
+    // A notification is only a wake-up hint. Readers rehydrate durable state.
+    child.send({ type: "runtime:notify", event }, error => {
+      if (error) logger.warn({ sessionId: event.sessionId, error }, "Subagent wake-up transport closed");
+    });
+  }
 
   isSessionStreaming(sessionId: string): boolean {
     return this.activeMainStreams.has(sessionId);
@@ -309,7 +318,7 @@ export class SessionProcessManager {
           this.releaseChild(sessionId, "Yielding this worker at a completed step.", { idle: true });
           this.activeMainStreams.add(sessionId);
           this.pendingStarts.push(sessionId);
-          await agentRuntimeStore.hydrateSession(sessionId, true);
+          await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
           const runId = input.acceptedRunId ?? agentRuntimeStore.getSession(sessionId).activeRunId;
           if (!runId) throw new AgentRuntimeError("Parked execution no longer exists.", "EXECUTION_SUPERSEDED", 409);
           const parked = agentRuntimeStore.updateRun(runId, { execution: { phase: "queued_resources", resource: "worker", queuedAt: nowIso() } });
@@ -334,7 +343,7 @@ export class SessionProcessManager {
         // The worker flushes its checkpoint before stream:done. Refresh the
         // host cache before idle release so exit cleanup preserves a waiting
         // run instead of interrupting the stale running projection.
-        await agentRuntimeStore.hydrateSession(sessionId, true);
+        await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
         break;
       }
     } finally {
@@ -361,155 +370,80 @@ export class SessionProcessManager {
     }
   }
 
-  beginContextCompaction(sessionId: string): {
-    accepted: true;
-    status: "compacting";
-  } {
-    if (this.activeMainStreams.has(sessionId)) {
-      throw new AgentRuntimeError(
-        "Wait for the current run to finish before compacting context.",
-        "SESSION_BUSY",
-        409,
-      );
-    }
+  async beginContextCompaction(sessionId: string): Promise<{ accepted: true; status: "compacting" }> {
+    if (this.activeMainStreams.has(sessionId))
+      throw new AgentRuntimeError("Wait for the current run to finish before compacting context.", "SESSION_BUSY", 409);
     assertSessionCanCompact(sessionId);
-    if (this.pendingCompactions.has(sessionId)) {
-      throw new AgentRuntimeError(
-        "Context compaction is already running.",
-        "COMPACTION_BUSY",
-        409,
-      );
-    }
-    this.assertCanSpawnChild(sessionId);
-    const compaction: ContextCompactionState = {
-      id: makeRuntimeId("cmp"),
-      status: "running",
-      startedAt: nowIso(),
-      requestId: agentRuntimeStore.getSessionStats(sessionId).context.requestId,
-    };
-    saveContextCompaction(sessionId, compaction);
+    if (this.pendingCompactions.has(sessionId))
+      throw new AgentRuntimeError("Context compaction is already running.", "COMPACTION_BUSY", 409);
+    const ownerId = randomUUID();
     this.pendingCompactions.add(sessionId);
-    logger.info({ sessionId }, "[context-compaction] started");
-    // An in-process session has no worker to receive `context:compact`.
-    void (agentSessionsRunInProcess()
-      ? this.runInProcessContextCompaction(sessionId, compaction)
-      : this.runContextCompaction(sessionId, compaction));
+    try {
+      // A completed run can still be releasing its worker. Wait for that
+      // teardown instead of reporting a misleading capacity error to the UI.
+      const teardownDeadline = Date.now() + 10_000;
+      while (!this.pendingStartEligible(sessionId)) {
+        if (Date.now() >= teardownDeadline)
+          throw new AgentRuntimeError("The previous worker is still releasing resources.", "SESSION_BUSY", 409);
+        await delay(50);
+      }
+      this.assertCanSpawnChild(sessionId);
+      await agentRuntimeStore.flushSession(sessionId);
+      await patchRuntime(sessionId, "compaction_lock", { ownerId, hostId: process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}` }, `compaction-lock:${ownerId}`);
+    } catch (error) {
+      this.pendingCompactions.delete(sessionId);
+      throw error;
+    }
+    const controller = new AbortController();
+    this.compactionControllers.set(sessionId, controller);
+    void this.executeContextCompaction(sessionId, ownerId, controller).catch(error => {
+      logger.error({ sessionId, error: String(error) }, "Context compaction cleanup requires recovery");
+    });
     return { accepted: true, status: "compacting" };
   }
 
-  /** Compact in the host process; only forked sessions have a worker to ask. */
-  private async runInProcessContextCompaction(
-    sessionId: string,
-    compaction: ContextCompactionState,
-  ): Promise<void> {
-    try {
-      const result = await compactSessionContextWithLlm(sessionId);
-      logger.info(
-        {
-          sessionId,
-          originalTokens: result.originalTokens,
-          compressedTokens: result.tokens,
-        },
-        "[context-compaction] completed",
-      );
-      saveContextCompaction(sessionId, {
-        ...compaction,
-        status: "completed",
-        completedAt: nowIso(),
-        compacted: result.compacted,
-        originalTokens: result.originalTokens,
-        compressedTokens: result.tokens,
-        messageCount: result.messageCount,
-      });
-    } catch (error) {
-      logger.error({ err: error, sessionId }, "[context-compaction] failed");
-      if (agentRuntimeStore.tryGetSession(sessionId)) {
-        saveContextCompaction(sessionId, {
-          ...compaction,
-          status: "failed",
-          completedAt: nowIso(),
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    } finally {
-      this.pendingCompactions.delete(sessionId);
-    }
-  }
-
-  private async runContextCompaction(
-    sessionId: string,
-    compaction: ContextCompactionState,
-  ): Promise<void> {
+  private async executeContextCompaction(sessionId: string, ownerId: string, controller: AbortController): Promise<void> {
     let request: ContextCompactionRequest | undefined;
+    const timer = setTimeout(() => controller.abort(new Error("Context compaction timed out.")), CONTEXT_COMPACTION_TIMEOUT_MS);
+    const cancel = () => {
+      this.children.get(sessionId)?.child.send?.({ type: "context:cancel", requestId: ownerId });
+      request?.reject(controller.signal.reason instanceof Error ? controller.signal.reason : new Error("Context compaction cancelled."));
+    };
+    controller.signal.addEventListener("abort", cancel, { once: true });
     try {
-      const state = await this.ensureChild(sessionId);
-      const requestId = randomUUID();
-      const result = await new Promise<ContextCompactionResult>(
-        (resolve, reject) => {
-          const timer = setTimeout(
-            () =>
-              reject(
-                new AgentRuntimeError(
-                  "Context compaction timed out.",
-                  "COMPACTION_TIMEOUT",
-                  504,
-                ),
-              ),
-            CONTEXT_COMPACTION_TIMEOUT_MS,
-          );
-          request = { requestId, resolve, reject, timer };
-          state.compactions.set(requestId, request);
-          state.child.send?.(
-            { type: "context:compact", requestId },
-            (error) => {
-              if (error) reject(error);
-            },
-          );
-        },
-      );
-      logger.info(
-        {
-          sessionId,
-          originalTokens: result.originalTokens,
-          compressedTokens: result.tokens,
-        },
-        "[context-compaction] completed",
-      );
-      saveContextCompaction(sessionId, {
-        ...compaction,
-        status: "completed",
-        completedAt: nowIso(),
-        compacted: result.compacted,
-        originalTokens: result.originalTokens,
-        compressedTokens: result.tokens,
-        messageCount: result.messageCount,
-      });
-    } catch (error) {
-      logger.error({ err: error, sessionId }, "[context-compaction] failed");
-      if (agentRuntimeStore.tryGetSession(sessionId)) {
-        saveContextCompaction(sessionId, {
-          ...compaction,
-          status: "failed",
-          completedAt: nowIso(),
-          error: error instanceof Error ? error.message : String(error),
+      let result: ContextCompactionResult;
+      if (agentSessionsRunInProcess()) {
+        result = await compactSessionContextWithLlm(sessionId, controller.signal, ownerId);
+      } else {
+        const state = await this.ensureChild(sessionId);
+        controller.signal.throwIfAborted();
+        result = await new Promise<ContextCompactionResult>((resolve, reject) => {
+          request = { requestId: ownerId, resolve, reject, timer };
+          state.compactions.set(ownerId, request);
+          state.child.send?.({ type: "context:compact", requestId: ownerId }, error => { if (error) reject(error); });
         });
       }
+      // No eligible completed step means no special run was needed. Still
+      // settle the accepted UI operation instead of leaving its spinner live.
+      if (!result.compacted) sessionLiveBus.emit(sessionId, { type: "context_compacted", stepId: "",
+        originalTokens: result.originalTokens, compressedTokens: result.tokens, messageCount: result.messageCount });
+    } catch (error) {
+      logger.error({ sessionId, error: String(error) }, "[context-compaction] failed");
+      sessionLiveBus.emit(sessionId, { type: "context_compaction_failed", error: error instanceof Error ? error.message : String(error) });
     } finally {
-      if (request) {
-        clearTimeout(request.timer);
-        const state = this.children.get(sessionId);
-        state?.compactions.delete(request.requestId);
-      }
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", cancel);
+      // The durable owner is revoked before another run can be admitted.
+      // A late worker result will fail its owner check in context_commit.
+      await patchRuntime(sessionId, "compaction_unlock", { ownerId }, `compaction-unlock:${ownerId}`);
+      await (await import("./checkpoint-service.js")).recoverCheckpointHead(sessionId);
       this.pendingCompactions.delete(sessionId);
+      this.compactionControllers.delete(sessionId);
       const state = this.children.get(sessionId);
-      if (
-        state &&
-        state.streams.size === 0 &&
-        state.compactions.size === 0 &&
-        !(await hasBackgroundProcesses(sessionId, true))
-      ) {
+      state?.compactions.delete(ownerId);
+      if (state && state.streams.size === 0 && state.compactions.size === 0 && !(await hasBackgroundProcesses(sessionId, true)))
         this.releaseChild(sessionId, "Context compaction finished.", { idle: true });
-      }
+      await agentRuntimeStore.hydrateSessionSummary(sessionId, true);
     }
   }
 
@@ -518,6 +452,7 @@ export class SessionProcessManager {
     reason = "Agent runtime session deleted by user.",
   ): void {
     for (const sessionId of sessionIds) {
+      this.compactionControllers.get(sessionId)?.abort(new Error(reason));
       this.streamControllers.get(sessionId)?.abort(new Error(reason));
       for (const [child, id] of this.terminatingChildren) {
         if (id === sessionId) this.idleChildren.delete(child);
@@ -799,7 +734,7 @@ export class SessionProcessManager {
           // cleanup so a stale running cache cannot overwrite a failed run.
           // Keep replacements waiting until these writes have also settled.
           const refreshed = await Promise.allSettled(
-            ids.map((id) => agentRuntimeStore.hydrateSession(id, true)),
+            ids.map((id) => agentRuntimeStore.hydrateExecutionSession(id, true)),
           );
           const failure = refreshed.find((result) => result.status === "rejected");
           if (failure?.status === "rejected") throw failure.reason;
@@ -931,6 +866,7 @@ export class SessionProcessManager {
 
     if (message.type === "runtime:event") {
       runtimeBus.emit(message.event);
+      this.notifyRuntimeEvent(message.event);
       const owner = this.children.get(sessionId);
       if (
         message.event.type === "session_process_changed" &&
@@ -995,3 +931,4 @@ export class SessionProcessManager {
 }
 
 export const sessionProcessManager = new SessionProcessManager();
+setRuntimeWorkerNotifier(event => sessionProcessManager.notifyRuntimeEvent(event));

@@ -532,6 +532,7 @@ export function MergeRequestDetail({
                 locked || mr.status !== "conflicted" || !file.conflicted
               }
               onClose={() => setFile(null)}
+              readSlice={(side, byteOffset, maxBytes, expectedRevision, signal) => gitMrApi.fileSlice(projectId, mr.id, file.id, { side, byteOffset, maxBytes, expectedRevision }, signal)}
               onSave={async (input) => {
                 const updated = await gitMrApi.saveFile(
                   projectId,

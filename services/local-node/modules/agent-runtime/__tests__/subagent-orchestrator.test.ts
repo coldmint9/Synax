@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { currentExecutionContext, runWithExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
 import { runCoordinator } from '../run-coordinator.js';
 import { runtimeFacade } from '../sidecar/runtime-facade.js';
+import { runtimeBus } from '../runtime-bus.js';
 import {
   getSubagentLiveness,
   SUBAGENT_PROGRESS_TIMEOUT_MS,
@@ -46,7 +47,7 @@ function makeDeps(behaviors: Record<string, {
   /** if set, the stream rejects after durationMs. */
   throwError?: string;
 }>) {
-  const sessions = new Map<string, { id: string; status: string; resultSummary: string | null; blockedReason: string | null; sessionMetadata?: Record<string, unknown> }>();
+  const sessions = new Map<string, { id: string; status: string; resultSummary: string | null; blockedReason: string | null; sessionMetadata?: Record<string, unknown>; childSessionIds?: string[] }>();
   let counter = 0;
 
   const store = {
@@ -59,7 +60,7 @@ function makeDeps(behaviors: Record<string, {
     getSession: (id: string) => {
       const s = sessions.get(id);
       if (!s) throw new Error(`no session ${id}`);
-      return { id, projectId: 'p', status: s.status } as never;
+      return { ...s, id, projectId: 'p' } as never;
     },
     tryGetSession: (id: string) => {
       const s = sessions.get(id);
@@ -69,7 +70,9 @@ function makeDeps(behaviors: Record<string, {
       const s = sessions.get(id);
       if (!s) throw new Error(`no session ${id}`);
       Object.assign(s, patch);
-      return { id, projectId: 'p', status: s.status } as never;
+      // Match the real store's event contract so waiters never need polling.
+      runtimeBus.emit({ type: 'session_changed', sessionId: id });
+      return { ...s, id, projectId: 'p' } as never;
     },
     listRuns: (id: string) => [{
       status: behaviors[id]?.runStatus ?? 'completed',
@@ -81,6 +84,7 @@ function makeDeps(behaviors: Record<string, {
     create: (input: { profileId: string }) => {
       const id = `child-${++counter}`;
       sessions.set(id, { id, status: 'running', resultSummary: null, blockedReason: null });
+      sessions.get('parent')!.childSessionIds!.push(id);
       return { id, profileId: input.profileId } as never;
     },
   };
@@ -108,7 +112,7 @@ function makeDeps(behaviors: Record<string, {
   };
 
   // Seed a parent session.
-  sessions.set('parent', { id: 'parent', status: 'running', resultSummary: null, blockedReason: null });
+  sessions.set('parent', { id: 'parent', status: 'running', resultSummary: null, blockedReason: null, childSessionIds: [] });
   return { loop: loop as never, sessions: sessionsRuntime as never, store: store as never, rawStore: store, createSession: sessionsRuntime.create };
 }
 
@@ -215,7 +219,7 @@ describe('subagent-orchestrator', () => {
       const pending = runChildToCompletion('child-1', spec('hung'), { progressTimeoutMs: 10_000 }, { ...deps, loop: loop as never });
       await vi.advanceTimersByTimeAsync(5_000);
       const first = deps.rawStore.tryGetSession('child-1') as unknown as { sessionMetadata: { subagentTask: { lastProgressAt: string; lastHeartbeatAt: string } } };
-      expect(Date.parse(first.sessionMetadata.subagentTask.lastHeartbeatAt) - Date.parse(first.sessionMetadata.subagentTask.lastProgressAt)).toBe(5_000);
+      expect(Date.parse(first.sessionMetadata.subagentTask.lastHeartbeatAt) - Date.parse(first.sessionMetadata.subagentTask.lastProgressAt)).toBe(0);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(await pending).toMatchObject({ status: 'timeout' });
       expect(deps.rawStore.tryGetSession('child-1')).toMatchObject({ status: 'failed', activeRunId: null });
@@ -255,9 +259,11 @@ describe('subagent-orchestrator', () => {
       const pending = waitForChildSessions('parent', new AbortController().signal, undefined, deps).then(result => { settled = true; return result; });
       await vi.advanceTimersByTimeAsync(1_000);
       expect(settled).toBe(false);
+      expect(vi.getTimerCount()).toBe(1); // One lease deadline, no polling timer.
       deps.rawStore.updateSession('child-1', { status: 'completed' });
       await vi.advanceTimersByTimeAsync(100);
       expect(await pending).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
       deps.createSession({ profileId: 'explorer' });
       const orphan = waitForChildSessions('parent', new AbortController().signal, undefined, deps);
       await vi.advanceTimersByTimeAsync(100);

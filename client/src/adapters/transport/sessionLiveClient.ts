@@ -15,7 +15,10 @@ function connect(sessionId: string, connection: LiveConnection): void {
   connection.live = true
   connection.close = sessionLiveStream(sessionId, event => {
     if (connection.generation !== generation) return
-    for (const handler of connection.handlers) handler(event)
+    for (const handler of connection.handlers) {
+      try { handler(event) }
+      catch (error) { console.error('Session observer failed', error) }
+    }
   }, () => {
     if (connection.generation !== generation || connections.get(sessionId) !== connection) return
     connection.live = false

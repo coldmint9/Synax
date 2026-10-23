@@ -10,6 +10,7 @@ import { toolRegistry } from '../tool-registry.js';
 import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resetAgentRuntimeFixtures } from '../__tests__/agent-runtime-fixtures.js';
 import { conversationGitTools } from './tools.js';
+import { conversationGitService } from './service.js';
 
 let root: string;
 let repo: string;
@@ -72,7 +73,7 @@ afterEach(() => {
 });
 
 describe('registered conversation Git tools in the native runtime', { timeout: 60_000 }, () => {
-  it('runs create → analyze → read → propose through the real tool registry and emits one anchor', async () => {
+  it('renders a durable domain task and reads/proposes through the real tool registry', async () => {
     const visible = toolRegistry.listForSession(sessionId).map(tool => tool.id);
     expect(visible).toEqual(expect.arrayContaining(conversationGitTools.map(tool => tool.id)));
     expect(visible).toContain('git.merge.create');
@@ -85,32 +86,23 @@ describe('registered conversation Git tools in the native runtime', { timeout: 6
       if (event.type === 'conversation_git_messages') live.push(event);
     });
     try {
-      const created = await call('git.merge.create', {
+      const created = await conversationGitService.create(sessionId, {
+        requestId: 'domain-integration-create',
         rootId: 'project-alpha',
         title: 'Conversation conflict',
         target: 'integration',
         sources: ['feature/a', 'feature/b'],
         strategy: 'merge_commit',
       });
-      expect(created.record.status, JSON.stringify(created)).toBe('completed');
-      expect(created.record.category).toBe('task');
-      expect(created.toolResult?.result).toMatchObject({ mr: { status: 'draft' } });
-      const createdResult = created.toolResult!.result as { objectId: string; taskRevision: number; mr: { version: number } };
-      const taskId = createdResult.objectId;
+      expect(created.mr.status).toBe('draft');
+      const taskId = created.task.id;
       const createMessage = store.listMessages(sessionId).filter(message => message.metadata.source === 'git_merge_task');
       expect(createMessage).toHaveLength(1);
       expect(createMessage[0].content).toContain(taskId);
       expect(createMessage[0].metadata.gitMergeTask).toMatchObject({ objectId: taskId, sessionId });
 
-      const analyzed = await call('git.merge.analyze', {
-        objectId: taskId,
-        expectedVersion: createdResult.mr.version,
-        expectedTaskRevision: createdResult.taskRevision,
-      });
-      expect(analyzed.record.status).toBe('completed');
-      expect(analyzed.record.mutability).toBe('write');
-      expect(analyzed.permission?.action ?? 'allow').toBe('allow');
-      const analysis = analyzed.toolResult!.result as { mr: { status: string; version: number }; taskRevision: number; files: Array<{ id: string; conflicted: boolean }> };
+      const analysis = await conversationGitService.action(sessionId, taskId, { action: 'prepare', requestId: 'domain-integration-prepare',
+        expectedVersion: created.mr.version, expectedTaskRevision: created.task.revision });
       expect(analysis.mr.status).toBe('conflicted');
       expect(analysis.files.filter(file => file.conflicted)).toHaveLength(1);
 
@@ -139,7 +131,7 @@ describe('registered conversation Git tools in the native runtime', { timeout: 6
       expect(live).toHaveLength(2);
       expect(live.every(event => (event as { messages: unknown[] }).messages.length <= 2)).toBe(true);
       expect(store.listToolCalls(sessionId).map(call => call.toolId)).toEqual([
-        'git.merge.create', 'git.merge.analyze', 'git.merge.read', 'git.merge.read', 'git.merge.propose',
+        'git.merge.read', 'git.merge.read', 'git.merge.propose',
       ]);
     } finally {
       unsubscribe();

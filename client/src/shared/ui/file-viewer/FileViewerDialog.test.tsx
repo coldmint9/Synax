@@ -1,104 +1,256 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { FileViewerDialog } from "./FileViewerDialog";
-import { createMergeModel, decideRows, serializeMergeResolutionState } from "./mergeModel";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeFile } from "../../../../../services/local-node/modules/git-mr/contracts";
-vi.mock("../../lib/shiki-highlighter", () => ({ highlightCode: async () => "" }));
-
-const editorText = (element: HTMLElement) => (element as HTMLTextAreaElement).value;
-function editEditor(element: HTMLElement, value: string) {
-  fireEvent.change(element, { target: { value } });
-}
-
+const holder = vi.hoisted(() => ({ harness: null as any }));
+vi.mock("./monacoRuntime", async () => {
+  const { createMonacoHarness } = await import("./__tests__/monacoTestHarness");
+  holder.harness = createMonacoHarness();
+  return {
+    monaco: holder.harness.monaco,
+    languageForPath: async () => "typescript",
+  };
+});
+import MonacoMergeWorkbench from "./MonacoMergeWorkbench";
+const harness = new Proxy({} as any, { get: (_, key) => holder.harness[key] });
 const file: MergeFile = {
-  id: "f", path: "file.ts", status: "UU", conflicted: true, kind: "text",
-  base: "old\nold2\n", target: "A\nB\n", source: "a\nb\n",
-  result: "<<<<<<< HEAD\nA\nB\n||||||| base\nold\nold2\n=======\na\nb\n>>>>>>> source\n",
-  revision: "rev1", baseExists: true, targetExists: true, sourceExists: true,
+  id: "f",
+  path: "file.ts",
+  status: "UU",
+  conflicted: true,
+  kind: "text",
+  base: "old\n",
+  target: "left\n",
+  source: "right\n",
+  result: "<<<<<<< HEAD\nleft\n=======\nright\n>>>>>>> source\n",
+  revision: "rev1",
+  baseExists: true,
+  targetExists: true,
+  sourceExists: true,
 };
-const editor = () => screen.getByRole("textbox", { name: "编辑合并结果 file.ts" });
-const resolve = () => screen.getByRole("button", { name: "标记文件已解决" });
-afterEach(cleanup);
-describe("shared FileViewerDialog", () => {
-  it("gates unresolved blocks, supports manual mixed results, undo/redo and expected revision", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined), onClose = vi.fn();
-    render(<FileViewerDialog file={file} onSave={onSave} onClose={onClose} />);
-    expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "采用右侧" }));
-    expect(editorText(editor())).toBe("a\nb\n");
-    editEditor(editor(), "a\nB\n");
-    expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "确认当前结果" }));
-    expect(resolve()).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "撤销" })); expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "重做" })); fireEvent.click(resolve());
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ expectedRevision: "rev1", content: "a\nB\n", resolutionState: expect.objectContaining({ schemaVersion: 1 }), resolve: true }));
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+const editor = () =>
+  screen.getByRole("textbox", { name: "编辑合并结果 file.ts" });
+const edit = (value: string) =>
+  fireEvent.input(editor(), { target: { value } });
+let workers: Array<{ terminate: ReturnType<typeof vi.fn> }>;
+beforeEach(() => {
+  harness.reset();
+  workers = [];
+  vi.stubGlobal(
+    "Worker",
+    class {
+      onmessage: unknown;
+      onerror: unknown;
+      terminate = vi.fn();
+      postMessage = vi.fn();
+      constructor() {
+        workers.push(this);
+      }
+    },
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe("Monaco merge workbench lifecycle", () => {
+  it("mounts three independent models and disposes every model/editor/worker on close", async () => {
+    const view = render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    expect(harness.models).toHaveLength(3);
+    expect(harness.editors).toHaveLength(3);
+    expect(workers).toHaveLength(1);
+    view.unmount();
+    for (const model of harness.models)
+      expect(model.dispose).toHaveBeenCalledOnce();
+    for (const item of harness.editors)
+      expect(item.dispose).toHaveBeenCalledOnce();
+    expect(workers[0].terminate).toHaveBeenCalledOnce();
   });
-  it("keeps a failed draft save and its edited buffer", async () => {
-    const onSave = vi.fn().mockRejectedValue(new Error("409 文件版本已过期"));
-    render(<FileViewerDialog file={file} onSave={onSave} onClose={vi.fn()} />);
-    editEditor(editor(), "manual\nB\n");
-    fireEvent.click(screen.getByRole("button", { name: "保存草稿" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("409"));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: "rev1", content: "manual\nB\n", resolve: false }));
-    expect(editorText(editor())).toBe("manual\nB\n"); expect(resolve()).toBeDisabled();
+  it("keeps running results read-only and does not expose manual merge actions", async () => {
+    render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        readOnly
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" }),
+    ).toHaveAttribute("readonly");
+    expect(screen.queryByRole("button", { name: "确认当前结果" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "采用左侧" })).toBeNull();
   });
-  it("requires explicit confirmation after keeping both complete blocks", () => {
-    render(<FileViewerDialog file={file} onSave={vi.fn()} onClose={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "保留双方" }));
-    expect(editorText(editor())).toBe("A\nB\na\nb\n"); expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "确认当前结果" })); expect(resolve()).toBeEnabled();
+  it("autosaves a complete manual buffer as draft and retains the model across checkpoint acknowledgements", async () => {
+    const onSave = vi.fn().mockResolvedValue({ revision: "rev2" });
+    const view = render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    edit("combined\n");
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        content: "combined\n",
+        expectedRevision: "rev1",
+        resolve: false,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("草稿已保存"),
+    );
+    view.rerender(
+      <MonacoMergeWorkbench
+        file={{ ...file, revision: "rev2", result: "combined\n" }}
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(harness.models).toHaveLength(3);
+    expect(editor()).toHaveValue("combined\n");
+    edit("combined again\n");
+    await waitFor(() =>
+      expect(onSave).toHaveBeenLastCalledWith({
+        content: "combined again\n",
+        expectedRevision: "rev2",
+        resolve: false,
+      }),
+    );
   });
-  it("does not close dirty buffers with Escape and restores trigger focus", async () => {
-    const user = userEvent.setup(); const trigger = document.createElement("button"); document.body.append(trigger); trigger.focus();
-    const onClose = vi.fn(); const view = render(<FileViewerDialog file={file} onSave={vi.fn()} onClose={onClose} />);
-    editEditor(editor(), "edited"); editor().focus();
-    await user.keyboard("{Escape}");
-    expect(onClose).not.toHaveBeenCalled(); expect(await screen.findByRole("button", { name: "继续编辑" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "继续编辑" })); view.unmount();
-    await waitFor(() => expect(document.activeElement).toBe(trigger)); trigger.remove();
+  it("does not overwrite dirty drafts when an external revision arrives", async () => {
+    const onSave = vi.fn();
+    const view = render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    edit("local draft\n");
+    view.rerender(
+      <MonacoMergeWorkbench
+        file={{ ...file, result: "remote\n", revision: "rev2" }}
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(editor()).toHaveValue("local draft\n");
+    expect(editor()).toHaveAttribute("readonly");
+    expect(screen.getByRole("alert")).toHaveTextContent("本地草稿已保留");
   });
-  it("retains local edits and blocks writes when an external revision arrives", () => {
-    const onSave = vi.fn(); const view = render(<FileViewerDialog file={file} onSave={onSave} onClose={vi.fn()} />);
-    editEditor(editor(), "local\nB\n");
-    view.rerender(<FileViewerDialog file={{ ...file, revision: "other", result: "remote\n" }} onSave={onSave} onClose={vi.fn()} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("版本已更新"); expect(editorText(editor())).toBe("local\nB\n");
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled(); expect(onSave).not.toHaveBeenCalled();
+  it("flushes latest edits after an inflight save and never overlaps writes", async () => {
+    let finish!: (result: { revision: string }) => void;
+    const onSave = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue({ revision: "rev3" });
+    let flush: (() => Promise<boolean>) | null = null;
+    render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+        registerDraftFlush={(fn) => {
+          flush = fn;
+        }}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    edit("first\n");
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    edit("second\n");
+    let done!: Promise<boolean>;
+    act(() => {
+      done = flush!();
+    });
+    await act(async () => {
+      finish({ revision: "rev2" });
+      await done;
+    });
+    expect(onSave).toHaveBeenCalledTimes(2);
+    expect(onSave).toHaveBeenLastCalledWith({
+      expectedRevision: "rev2",
+      content: "second\n",
+      resolve: false,
+    });
   });
-  it("disables mutations in read-only mode", () => {
-    render(<FileViewerDialog file={file} onSave={vi.fn()} onClose={vi.fn()} readOnly />);
-    expect(screen.getByRole("button", { name: "采用右侧" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled(); expect(editor()).toHaveAttribute("aria-readonly", "true");
+  it("preserves the buffer after save failure and leaves close confirmation actionable", async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error("409 文件版本过期"));
+    const onClose = vi.fn();
+    render(
+      <MonacoMergeWorkbench
+        file={file}
+        managed
+        onSave={onSave}
+        onClose={onClose}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    edit("manual\n");
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("409"),
+    );
+    expect(editor()).toHaveValue("manual\n");
+    fireEvent.click(screen.getByRole("button", { name: "关闭合并编辑器" }));
+    expect(
+      screen.getByRole("heading", { name: "保留当前草稿？" }),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
-  it("restores old per-row decisions into the continuous editor without losing text", async () => {
-    const original = decideRows(createMergeModel(file), ["1:0"], "source");
-    const resolutionState = await serializeMergeResolutionState(original, file);
-    render(<FileViewerDialog file={{ ...file, result: original.text, resolutionState }} onSave={vi.fn()} onClose={vi.fn()} />);
-    await waitFor(() => expect(editorText(editor())).toBe("a\nB\n"));
-    expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "确认当前结果" })); expect(resolve()).toBeEnabled();
-  });
-  it("gates editing while restoring saved state, then allows a new local edit", async () => {
-    const original = decideRows(createMergeModel(file), ["1:0"], "source");
-    const resolutionState = await serializeMergeResolutionState(original, file);
-    render(<FileViewerDialog file={{ ...file, result: original.text, resolutionState }} onSave={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeDisabled();
-    await waitFor(() => expect(editorText(editor())).toBe("a\nB\n"));
-    editEditor(editor(), "new local edit\n");
-    await waitFor(() => expect(editorText(editor())).toBe("new local edit\n")); expect(resolve()).toBeDisabled();
-  });
-  it("shows actual version labels and Base without losing the result", () => {
-    render(<FileViewerDialog file={{ ...file, targetLabel: "main@abc123", sourceLabel: "feature/work@def456", baseLabel: "Base：base@789abc" }} onSave={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getAllByText(/main@abc123/).length).toBeGreaterThan(0); expect(screen.getAllByText(/feature\/work@def456/).length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole("button", { name: "查看 Base" })); expect(screen.getByText("Base：base@789abc")).toBeInTheDocument(); expect(editorText(editor())).toBe("A\nB\n");
-  });
-  it("requires a whole-file decision for structural conflicts and disallows absent sides", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(<FileViewerDialog file={{ ...file, kind: "structural", sourceExists: false }} onSave={onSave} onClose={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "采用来源完整文件" })).toBeDisabled(); expect(resolve()).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "删除文件" })); fireEvent.click(resolve());
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ expectedRevision: "rev1", choice: "delete", resolve: true }));
+  it("updates checkpoint bodies without marking programmatic changes as dirty", async () => {
+    const onSave = vi.fn();
+    const view = render(
+      <MonacoMergeWorkbench
+        file={file}
+        readOnly
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("textbox", { name: "编辑合并结果 file.ts" });
+    view.rerender(
+      <MonacoMergeWorkbench
+        file={{ ...file, result: "resolved\n", revision: "rev2" }}
+        readOnly
+        managed
+        onSave={onSave}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(editor()).toHaveValue("resolved\n");
+    expect(screen.getByRole("status")).toHaveTextContent("检查点");
+    expect(onSave).not.toHaveBeenCalled();
   });
 });

@@ -40,7 +40,7 @@ export function useWorkspaceEnvironment(
 ): SessionWorkspaceEnvironmentValue {
   const shellProjectId = useShellStore((state) => state.currentProjectId);
   const gitScope = projectId ?? shellProjectId ?? null;
-  const git = useWorkspaceGit(sessionId ? gitScope : null);
+  const git = useWorkspaceGit(sessionId ? gitScope : null, sessionId ?? undefined);
   const roots = useSessionEnvironmentRoots(sessionId);
   const subagents = useSessionEnvironmentSubagents(sessionId);
   const inputs = useSessionEnvironmentInputs(sessionId);

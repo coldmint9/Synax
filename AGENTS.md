@@ -10,16 +10,3 @@
 - 版本号采用 `主版本号.次版本号.补丁版本号` 格式；主版本号用于不兼容的超大版本变更，次版本号用于向下兼容的功能更新，补丁版本号用于向下兼容的问题修复。
 - `package.json` 不支持环境变量动态插值，因此它的版本号必须由脚本写入合法的静态 SemVer。
 
-## 前端技术架构
-
-- 前端位于 `client/`，使用 React 19、TypeScript、Vite 和 Tailwind CSS 4。
-- 页面按 feature 组织在 `client/src/features/`；传输 API、共享状态和 hooks 分别位于 `client/src/adapters/transport/`、`client/src/shared/state/` 和 `client/src/shared/hooks/`；应用装配位于 `client/src/app/`。
-- 路由使用 `react-router-dom`，全局工作区状态使用 Zustand；后端请求通过领域 API 封装，组件不直接拼接底层请求。
-- 测试使用 Vitest、Testing Library 和 `happy-dom`/`jsdom`，Electron 能力通过 `window.electronAPI` 与 lib adapter 隔离。
-
-## UI 架构
-
-- 交互控件优先使用 `@headlessui/react` 原语，由 `client/src/shared/ui/ui/` 的 `Dialog`、`Field`、`Select`、`Tabs` 和 `Button` 封装统一语义、键盘交互与样式契约。
-- 弹窗使用 Headless UI `Dialog`、`DialogBackdrop`、`DialogPanel` 和 `DialogTitle`；业务表单不自建模态层或焦点陷阱。
-- 样式以 Tailwind utilities、主题 token 和 feature CSS 为主，使用 `clsx` 组合状态类。
-- 新建工作区表单使用 Headless UI Dialog、Tabs、Field、Input、Listbox 和 Button；目录选择由独立目录浏览器返回路径，表单不提供手输路径入口。

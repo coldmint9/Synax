@@ -5,9 +5,9 @@
 }
 
 .workspace-hill-anchor {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 24px;
+  /* Reserve a row so Git actions above the composer cannot overlap it. */
+  margin: 0 24px 4px;
+  min-width: 0;
   max-width: calc(100% - 48px);
 }
 

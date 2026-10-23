@@ -23,7 +23,7 @@ mod tests;
 pub use ops::HistoryOps;
 pub use wire::HistoryError;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use im::{HashMap, HashSet, OrdMap as BTreeMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -108,6 +108,9 @@ pub struct ChangeEntry {
 #[serde(rename_all = "camelCase")]
 pub enum AuxRecord {
     Head(HistoryHead),
+    /// A copied log preserves all historical records, but exposes only the
+    /// source's committed visible head after its one-pass replay.
+    RebuildHead(HistoryHead),
     Generation(u64),
     /// The visible-index generation, used as the `history_sync` epoch.
     IndexGeneration(u64),
@@ -143,6 +146,11 @@ pub struct SessionIndex {
     pub order: BTreeMap<String, Arc<HistoryObject>>,
     /// Identity key (`collection \0 owner \0 id`) -> order key.
     pub identity: HashMap<String, String>,
+    /// First append revision of each entity; never duplicated in checkpoints.
+    pub first_revision: HashMap<String, u64>,
+    pub birth_order: BTreeMap<(String, u64, String), String>,
+    /// Derived lookup for archived assistant text; never stored in a checkpoint.
+    pub step_text: BTreeMap<(String, String), Arc<HistoryObject>>,
     /// Every object this session wrote, by id.
     pub objects: HashMap<String, Arc<HistoryObject>>,
     /// The idempotency/liveness generation (pins, files, metadata).
@@ -170,6 +178,9 @@ impl SessionIndex {
             current_head_revision: 0,
             order: BTreeMap::new(),
             identity: HashMap::new(),
+            first_revision: HashMap::new(),
+            birth_order: BTreeMap::new(),
+            step_text: BTreeMap::new(),
             objects: HashMap::new(),
             generation: 0,
             index_generation: 0,
@@ -183,13 +194,17 @@ impl SessionIndex {
         }
     }
 
-    /// A private copy for a command that stages writes before committing.
+    /// O(1) structurally shared snapshot; mutations copy only the changed tree
+    /// paths. Never clone all historical entities on every append.
     fn clone_index(index: &SessionIndex) -> SessionIndex {
         SessionIndex {
             head: index.head.clone(),
             current_head_revision: index.current_head_revision,
             order: index.order.clone(),
             identity: index.identity.clone(),
+            first_revision: index.first_revision.clone(),
+            birth_order: index.birth_order.clone(),
+            step_text: index.step_text.clone(),
             objects: index.objects.clone(),
             generation: index.generation,
             index_generation: index.index_generation,
@@ -256,6 +271,20 @@ impl SessionIndex {
                         .cloned()
                         .or_else(|| lookup(&change.object_id))
                     {
+                        if object.kind == "runtime.step"
+                            && object.value["metadata"]["kind"] != "context-compaction"
+                            && matches!(object.value["status"].as_str(), Some("completed" | "failed" | "cancelled" | "interrupted"))
+                        {
+                            let id = object.value["id"].as_str().unwrap_or_default();
+                            let born = self.first_revision.get(&identity_key("step", &entities.session_id, id)).copied().unwrap_or(entities.revision);
+                            let key = "context\0latest-boundary";
+                            let boundary = serde_json::json!({"throughStepId":id,
+                                "throughRevision":entities.revision,"rootId":entities.next_root,"firstRevision":born});
+                            self.aux.insert(format!("context\0step-boundary\0{id}"), Some(boundary.clone()));
+                            if self.aux_value(key).and_then(|v| v["firstRevision"].as_u64()).is_none_or(|old| born >= old) {
+                                self.aux.insert(key.into(), Some(boundary));
+                            }
+                        }
                         self.changes.insert(
                             (entities.revision, offset),
                             ChangeEntry {
@@ -287,9 +316,25 @@ impl SessionIndex {
                     self.index_root = head.object_id.clone();
                     self.head = head;
                 }
+                AuxRecord::RebuildHead(head) => {
+                    if let Some(root) = head.object_id.as_deref() {
+                        let objects = self.objects.clone();
+                        self.rebuild(root, &mut |id| objects.get(id).cloned())?;
+                    }
+                    self.head = head;
+                }
                 AuxRecord::Generation(generation) => self.generation = generation,
                 AuxRecord::IndexGeneration(generation) => self.index_generation = generation,
                 AuxRecord::Set(key, value) => {
+                    if let Some(pin) = key.strip_prefix("pin\0") {
+                        if let Some(old) = self.aux_value(&key).and_then(|v| v["metadata"]["messageId"].as_str()).map(str::to_owned) {
+                            let query = format!("pin-query\0{old}");
+                            if self.aux_value(&query).and_then(serde_json::Value::as_str) == Some(pin) { self.aux.remove(&query); }
+                        }
+                        if let Some(message) = value.as_ref().and_then(|v| v["metadata"]["messageId"].as_str()) {
+                            self.aux.insert(format!("pin-query\0{message}"), Some(serde_json::json!(pin)));
+                        }
+                    }
                     self.aux.insert(key, value);
                 }
                 AuxRecord::Receipt(receipt) => {
@@ -299,8 +344,9 @@ impl SessionIndex {
                     for object_id in object_ids {
                         self.objects.remove(&object_id);
                     }
-                    self.order
-                        .retain(|_, object| self.objects.contains_key(&object.object_id));
+                    self.order = self.order.iter()
+                        .filter(|(_, object)| self.objects.contains_key(&object.object_id))
+                        .map(|(key, object)| (key.clone(), object.clone())).collect();
                     self.identity.retain(|_, key| self.order.contains_key(key));
                 }
                 AuxRecord::Unknown => {}
@@ -353,15 +399,40 @@ impl SessionIndex {
         let Some(id) = object.value["id"].as_str() else {
             return;
         };
+        if kind == "message" {
+            if let Some(sequence) = object.value["sequence"].as_u64() {
+                let key = "context\0message-sequence";
+                if sequence > self.aux_value(key).and_then(serde_json::Value::as_u64).unwrap_or(0) {
+                    self.aux.insert(key.into(), Some(serde_json::json!(sequence)));
+                }
+            }
+            if let Some(source) = object.value["metadata"]["source"].as_str().filter(|s|
+                matches!(*s, "git_merge_task" | "git_merge_receipt" | "subagent_summary")) {
+                let key = format!("context\0hint\0{source}");
+                let mut hints = self.aux_value(&key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                hints.retain(|entry| entry["id"] != id);
+                hints.push(serde_json::json!({"id":id,"objectId":object.object_id}));
+                if hints.len() > 16 { hints.remove(0); }
+                self.aux.insert(key, Some(serde_json::json!(hints)));
+            }
+        }
         let identity = identity_key(kind, owner, id);
+        if !self.first_revision.contains_key(&identity) {
+            let revision = self.current_head_revision + 1;
+            self.first_revision.insert(identity.clone(), revision);
+            self.birth_order.insert((kind.into(), revision, order_key(kind, &object.value, id, owner)), identity.clone());
+        }
         if let Some(previous) = self.identity.remove(&identity) {
-            self.order.remove(&previous);
+            if let Some(old) = self.order.remove(&previous) {
+                if let Some(key) = step_text_key(&old) { self.step_text.remove(&key); }
+            }
         }
         if object.kind == "runtime.tombstone" {
             return;
         }
         let key = order_key(kind, &object.value, id, owner);
         self.identity.insert(identity, key.clone());
+        if let Some(key) = step_text_key(&object) { self.step_text.insert(key, object.clone()); }
         self.order.insert(key, object);
     }
 
@@ -374,10 +445,11 @@ impl SessionIndex {
     ) -> Result<(), HistoryError> {
         self.order.clear();
         self.identity.clear();
+        self.step_text.clear();
         let mut visited = HashSet::new();
         let mut pending = vec![root.to_owned()];
         while let Some(id) = pending.pop() {
-            if !visited.insert(id.clone()) {
+            if visited.insert(id.clone()).is_some() {
                 continue;
             }
             let Some(object) = lookup(&id) else {
@@ -401,9 +473,19 @@ impl SessionIndex {
             }
             let key = order_key(kind, &object.value, entity_id, owner);
             self.identity.insert(identity, key.clone());
+            if let Some(key) = step_text_key(&object) { self.step_text.insert(key, object.clone()); }
             self.order.insert(key, object);
         }
         self.index_root = Some(root.to_owned());
+        // Explicit head changes already rebuild the visible history. Restore
+        // its completed-step boundary once here, not by rescanning on every
+        // subsequent model request.
+        let boundary = self.entity_keys_rev("step")
+            .find(|(_, value)| value.value["metadata"]["kind"] != "context-compaction"
+                && matches!(value.value["status"].as_str(), Some("completed" | "failed" | "interrupted" | "cancelled")))
+            .and_then(|(_, value)| value.value["id"].as_str())
+            .and_then(|id| self.aux_value(&format!("context\0step-boundary\0{id}"))).cloned();
+        self.aux.insert("context\0latest-boundary".into(), boundary);
         Ok(())
     }
 
@@ -447,6 +529,9 @@ pub struct SessionState {
     pub index: SessionIndex,
     pub published: Arc<ArcSwap<SessionIndex>>,
     checkpoint_offset: u64,
+    /// Bounded transfer cache. Two concurrent readers can page large immutable
+    /// records without serializing every earlier byte again for each chunk.
+    encoded_values: std::collections::VecDeque<(String, Arc<String>)>,
 }
 
 pub struct HistorySession {
@@ -458,6 +543,18 @@ pub struct HistorySession {
 impl HistorySession {
     pub fn open(root: &Path, session_id: &str) -> Result<Self, HistoryError> {
         let dir = layout::history_dir(&layout::session_dir(root, session_id).map_err(convert_io)?);
+        // Opening is serialized by SessionCache. A process-local copy cannot
+        // still own one of these unpublished directories after a cold reopen.
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries {
+                let entry = entry?;
+                if entry.file_name().to_string_lossy().starts_with(".fork-") {
+                    let kind = entry.file_type()?;
+                    if kind.is_dir() { std::fs::remove_dir_all(entry.path())?; }
+                    else { std::fs::remove_file(entry.path())?; }
+                }
+            }
+        }
         let restored = checkpoint::read(&dir, session_id);
         let (mut index, start) = restored.unwrap_or_else(|| (SessionIndex::empty(session_id), 0));
         if start == 0 {
@@ -472,6 +569,7 @@ impl HistorySession {
             lock: Mutex::new(SessionState {
                 failed: false,
                 checkpoint_offset: start,
+                encoded_values: std::collections::VecDeque::new(),
                 file,
                 index,
                 published: published.clone(),
@@ -579,6 +677,13 @@ fn change_collection(kind: &str, value: &serde_json::Value) -> Option<&'static s
 
 fn identity_key(kind: &str, owner: &str, id: &str) -> String {
     format!("{kind}\0{owner}\0{id}")
+}
+
+fn step_text_key(object: &HistoryObject) -> Option<(String, String)> {
+    if indexed_kind(&object.kind, &object.value) != Some("part") || object.value["kind"] != "text"
+        || object.kind == "runtime.tombstone" { return None; }
+    Some((object.value["stepId"].as_str()?.to_owned(),
+        format!("{:020}/{}", object.value["sequence"].as_u64().unwrap_or(0), object.value["id"].as_str()?)))
 }
 
 fn entity_order(kind: &str, value: &serde_json::Value) -> String {

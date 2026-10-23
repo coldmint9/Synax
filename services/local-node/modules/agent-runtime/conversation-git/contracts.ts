@@ -1,5 +1,33 @@
 /** Persisted conversation references and native renderer data; no runtime dependencies. */
-import type { MergeRequest, MergeRequestInput, MergeFileSummary, MergeProposal, MergeFileSave } from '../../git-mr/contracts.js';
+import type { MergeRequest, MergeRequestInput, MergeFileSummary, MergeProposal, MergeFileSave, MergeStatus } from '../../git-mr/contracts.js';
+export type ConversationMergeExecutionStatus = 'queued' | 'running' | 'pausing' | 'paused' | 'waiting_user' | 'cancelling' | 'cancelled' | 'cancelled_cleanup_pending' | 'completed' | 'failed' | 'recovery_required';
+export interface ConversationMergeExecution {
+  status: ConversationMergeExecutionStatus;
+  phase: 'preparing' | 'resolving' | 'checking' | 'applying' | 'settled';
+  childSessionId?: string;
+  joinMode: 'blocking' | 'async';
+  revision: number;
+  epoch: number;
+  summary?: string;
+  error?: string;
+  updatedAt: string;
+}
+/** Small invalidation/projection event. File bodies and child transcripts never travel here. */
+export interface ConversationGitStateEvent {
+  type: 'conversation_git_state';
+  taskId: string;
+  taskRevision: number;
+  mrVersion: number;
+  status: MergeStatus;
+  execution?: ConversationMergeExecution;
+  files?: MergeFileSummary[];
+  changedFileIds?: string[];
+  changedFiles?: MergeFileSummary[];
+  filesRevision?: number;
+  summary?: string;
+  eventSeq: number;
+}
+export type ConversationGitState = Omit<ConversationGitStateEvent, 'type'>;
 export interface ConversationGitMessage {
   id: string;
   sessionId: string;
@@ -52,9 +80,10 @@ export interface ConversationGitSnapshot {
   staleReason?: string;
   /** Persisted anchor / receipts, returned for Rust-backed clients to upsert immediately. */
   messages: ConversationGitMessage[];
+  execution?: ConversationMergeExecution;
 }
 export type ConversationGitCreate = Omit<MergeRequestInput, 'autoFinalize'> & { requestId: string };
-export type ConversationGitActionName = 'prepare' | 'continue' | 'checks' | 'finalize' | 'cancel' | 'resume' | 'replan';
+export type ConversationGitActionName = 'prepare' | 'continue' | 'checks' | 'finalize' | 'cancel' | 'pause' | 'resume' | 'replan';
 export interface ConversationGitAction {
   action: ConversationGitActionName;
   /** Explicit human decision; valid only with finalize. */

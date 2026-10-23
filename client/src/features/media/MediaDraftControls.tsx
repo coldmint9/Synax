@@ -63,7 +63,7 @@ export function MediaDraftPreview({ media }: { media: MediaDraft }) {
             <span className="min-w-0 flex-1 truncate" title={item.file.name}>
               {item.file.name}
             </span>
-            <span className="text-danger">{item.error}</span>
+            <span role="alert" className="text-danger">{item.error}</span>
             <button
               type="button"
               aria-label={`重试 ${item.file.name}`}

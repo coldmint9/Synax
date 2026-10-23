@@ -18,6 +18,7 @@ beforeEach(() => {
   vi.spyOn(runtimeFacade, 'sessionSummaryAuthoritative').mockResolvedValue({ id: 's', status: 'running' } as never);
   vi.spyOn(runtimeFacade, 'historyHeadAuthoritative').mockResolvedValue({ revision: 42 });
   vi.spyOn(runtimeFacade, 'listHistoryCheckpoints').mockResolvedValue(checkpoints);
+  vi.spyOn(runtimeFacade, 'readOnlyMessageIds').mockResolvedValue([]);
   vi.spyOn(runtimeFacade, 'listMessageHistory').mockRejectedValue(new Error('must not drain all messages'));
   vi.spyOn(runtimeFacade, 'messageHistoryBoundsAuthoritative').mockResolvedValue({ firstMessageId: 'm0', lastMessageId: 'm64' });
   vi.spyOn(runtimeFacade, 'controlState').mockResolvedValue({ runtimeControl: { historyRequestId: 'recovery' } });
@@ -54,6 +55,16 @@ it('reads checkpoint metadata without loading the execution working set', async 
   expect(runtimeFacade.listMessageHistory).not.toHaveBeenCalled();
 });
 
+it('marks sealed boundaries unavailable without hiding their history metadata', async () => {
+  vi.mocked(runtimeFacade.listHistoryCheckpoints).mockResolvedValue([
+    { ...checkpoints[0], metadata: { ...checkpoints[0].metadata, readOnly: true } }, checkpoints[2],
+  ]);
+  expect(await (await request()).json()).toMatchObject({ checkpoints: [
+    { id: 'first', available: false, canRollback: false, reason: expect.stringContaining('READ_ONLY_HISTORY') },
+    { id: 'latest', available: true },
+  ] });
+});
+
 it.each([null, {}, [1], [''], ['x'.repeat(257)]].map(ids => ({ ids })))('rejects invalid message IDs with 400: $ids', async ({ ids }) => {
   expect((await request(ids)).status).toBe(400);
   expect(runtimeFacade.listHistoryCheckpoints).not.toHaveBeenCalled();
@@ -65,8 +76,8 @@ it('rejects malformed query JSON with 400', async () => {
   expect(runtimeFacade.listHistoryCheckpoints).not.toHaveBeenCalled();
 });
 
-it('preserves empty and unfiltered query semantics', async () => {
-  expect((await (await request([])).json()).checkpoints).toEqual([]);
+it('treats an empty message filter as an unfiltered query while the transcript loads', async () => {
+  expect((await (await request([])).json()).checkpoints).toHaveLength(3);
   expect((await (await request()).json()).checkpoints).toHaveLength(3);
 });
 

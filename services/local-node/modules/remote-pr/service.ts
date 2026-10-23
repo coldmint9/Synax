@@ -521,9 +521,11 @@ export class RemotePrService {
               );
             await this.store.exclusive(repo.commonDir, async () => {
               const local = await this.local(repo);
-              if (local.branch !== pr.head)
+              const syncedBranch = local.branch;
+              const expectedSha = syncedBranch === pr.base ? pr.baseSha : pr.headSha;
+              if (![pr.head, pr.base].includes(local.branch))
                 throw new GitMrError(
-                  `请先切换到本地 ${pr.head} 分支。`,
+                  `请先切换到本地 ${pr.head} 或 ${pr.base} 分支。`,
                   "PR_BRANCH_MISMATCH",
                   409,
                 );
@@ -533,20 +535,20 @@ export class RemotePrService {
                 "--no-tags",
                 "--",
                 task.repository.remote,
-                `refs/heads/${pr.head}`,
+                `refs/heads/${syncedBranch}`,
               ]);
               const fetched = (
                 await this.runGit(repo, ["rev-parse", "FETCH_HEAD"])
               ).stdout.trim();
-              if (fetched !== pr.headSha)
+              if (fetched !== expectedSha)
                 throw new GitMrError(
                   "远程分支在同步期间发生变化，请刷新。",
                   "STALE_VERSION",
                   409,
                 );
-              await this.runGit(repo, ["merge", "--ff-only", pr.headSha]);
+              await this.runGit(repo, ["merge", "--ff-only", expectedSha]);
+              summary = `已快进同步本地 ${syncedBranch}，保留本地提交历史。`;
             });
-            summary = `已快进同步本地 ${pr.head}，保留本地提交历史。`;
             invalidateSessionEnvironment(sessionId);
           } else if (input.action === "resolve_conflicts") {
             if (!pr.sameRepository)

@@ -18,7 +18,6 @@ import { WorkspaceWidgetDock } from "../../features/agent-workspace/WorkspaceWid
 import { SubagentConversationPanel } from "../../features/agent-workspace/SubagentConversationPanel";
 import { SessionListPanel } from "../../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../../features/agent-workspace/SessionComposer";
-import { SessionPanelCollapseButton } from "../../features/agent-workspace/SessionPanelCollapseButton";
 import { useSessionRouteSync } from "../../features/agent-workspace/useSessionRouteSync";
 import {
   isNewSessionPath,
@@ -274,15 +273,6 @@ export default memo(function SessionsPage() {
           data-resizing={leftPanel.resizing ? "true" : undefined}
           style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
         >
-          {/* While the panel is open the control lives next to the SynaxCode
-                title; the edge tab only exists to bring a collapsed panel back,
-                so it carries the Synax brand mark instead of a bare chevron. */}
-          {leftPanel.collapsed ? (
-            <SessionPanelCollapseButton
-              collapsed
-              onToggle={() => leftPanel.setCollapsed((value) => !value)}
-            />
-          ) : null}
           <div
             className="h-full"
             inert={leftPanel.collapsed}
@@ -292,9 +282,15 @@ export default memo(function SessionsPage() {
             <SessionListPanel
               listView={listView}
               projectId={projectId}
-              onCollapsePanel={() => leftPanel.setCollapsed(true)}
+              onTogglePanel={() => leftPanel.setCollapsed((value) => !value)}
+              collapsed={leftPanel.collapsed}
+              toolbarVisible={!workspaceFullscreen && !subagentFullscreen}
               sidebarView={sidebarView}
-              onSidebarViewChange={setSidebarView}
+              onSidebarViewChange={(view) => {
+                setSidebarView(view);
+                leftPanel.setCollapsed(false);
+              }}
+              hideHeaderActions
             />
             <div
               className="session-panel-resizer session-panel-resizer--left"

@@ -140,6 +140,8 @@ export const useNotificationStore = create<NotificationState>((set) => ({
                 read: false,
                 visible: !rest.silent,
                 duration,
+                action: rest.action,
+                actions: rest.actions,
               }
             : n,
         ),

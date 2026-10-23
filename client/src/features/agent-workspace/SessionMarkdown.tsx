@@ -32,11 +32,12 @@ function useMarkdownComponents(): Components {
 
   return useMemo(
     () => ({
-      a({ href, children, ...props }) {
-        const label = typeof children === "string" ? children : undefined;
+      a({ href, children, node: _node, ...props }) {
         // A file link still renders as a file link without a session scope; it
         // simply keeps its href so nothing looks broken in isolated previews.
-        const target = parseFileLink(href, label, workspacePath, roots);
+        // urlTransform may clear a rejected URI. Its label must not become a
+        // replacement destination (often only a basename in another project).
+        const target = parseFileLink(href, undefined, workspacePath, roots);
 
         if (!target) {
           return (

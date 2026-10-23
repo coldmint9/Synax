@@ -66,9 +66,11 @@ describe("tool record file targets", () => {
 
     expect(container.querySelector(".bui-tool-disclosure")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".bui-tool-details")).toHaveTextContent("done");
-    // Opening the record hands the live window back to the reader.
+    // Opening the record expands only this row; the window keeps its budget.
     expect(container.querySelector(".session-process-window-viewport"))
-      .not.toHaveAttribute("data-windowed");
+      .toHaveAttribute("data-windowed", "true");
+    expect(container.querySelector(".session-process-window-row"))
+      .toHaveAttribute("data-row-expanded", "true");
   });
 
   it("leaves a multi-file patch unlinked", () => {

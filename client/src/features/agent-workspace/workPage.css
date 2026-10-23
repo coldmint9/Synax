@@ -158,6 +158,9 @@
   background: transparent;
   border-bottom: 1px solid var(--work-line);
 }
+.work-page .session-list-header[data-header-actions-hidden="true"] .session-list-titlebar-row {
+  display: none;
+}
 /* Local sidebar actions share one baseline below the global toolbar. */
 .work-page .session-list-titlebar-row { min-height: 30px; }
 .work-page .session-list-header input {

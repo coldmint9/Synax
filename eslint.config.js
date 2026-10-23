@@ -2,20 +2,33 @@ import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 const nodeGlobals = {
+  AbortController: "readonly",
+  AbortSignal: "readonly",
+  Blob: "readonly",
   Buffer: "readonly",
+  FormData: "readonly",
+  Headers: "readonly",
+  Request: "readonly",
+  Response: "readonly",
   __dirname: "readonly",
   __filename: "readonly",
   clearImmediate: "readonly",
   clearInterval: "readonly",
   clearTimeout: "readonly",
   console: "readonly",
+  fetch: "readonly",
   module: "readonly",
+  performance: "readonly",
   process: "readonly",
   queueMicrotask: "readonly",
   require: "readonly",
   setImmediate: "readonly",
   setInterval: "readonly",
   setTimeout: "readonly",
+  structuredClone: "readonly",
+  URL: "readonly",
+  URLSearchParams: "readonly",
+  WebSocket: "readonly",
 };
 
 export default tseslint.config(

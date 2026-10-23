@@ -1437,6 +1437,7 @@ fn history_error_to_wire(
 ) -> wire_envelope::Body {
     use crate::storage::jsonl::history::HistoryError;
     match error {
+        HistoryError::ReadOnlyHistory => wire_error("READ_ONLY_HISTORY", &error.to_string()),
         HistoryError::StaleCursor => {
             wire_error("HISTORY_STALE", "Conversation changed. Refresh history.")
         }

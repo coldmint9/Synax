@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -676,4 +677,30 @@ it('returns inventory without querying any session usage or scanning worktree st
   expect(response.status).toBe(200);
   expect(isolation.listSessions).not.toHaveBeenCalled();
   expect(isolation.listGitWorkspaces).toHaveBeenCalledWith(mainPath, 'main', undefined, undefined, { includeHistory: false, inspectStatus: false });
+});
+
+function linkedFixture() {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: mainPath, stdio: 'pipe' });
+  git('init', '-b', 'main');
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'initial');
+  const linked = path.join(tempDir, 'external-worktree');
+  git('worktree', 'add', '-b', 'feature/task', linked);
+  return linked;
+}
+it('normalizes a worktree before registration and avoids adding the existing primary twice', async () => {
+  const linked = linkedFixture();
+  const response = await postReference({ localPath: linked });
+  expect(response.status).toBe(201);
+  const result = await response.json() as { roots: ProjectWorkspaceRoot[]; normalization: { redirected: boolean; duplicate: boolean; location: { path: string } } };
+  expect(result.roots).toHaveLength(1);
+  expect(result.normalization).toMatchObject({ redirected: true, duplicate: true, location: { path: mainPath } });
+  expect(diskProject().source?.localPath).toBe(mainPath);
+});
+it('creates one main project when a worktree and its main directory are both selected', async () => {
+  const linked = linkedFixture();
+  const response = await routes.request('/workspaces', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Shadow workspace', roots: [{ localPath: linked }, { localPath: mainPath }] }) });
+  expect(response.status).toBe(201);
+  const result = await response.json() as { roots: ProjectWorkspaceRoot[]; project: ProjectRecord };
+  expect(result.roots).toHaveLength(1);
+  expect(result.project.source?.localPath).toBe(mainPath);
 });

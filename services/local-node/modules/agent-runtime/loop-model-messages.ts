@@ -18,6 +18,7 @@ import type {
 import { toModelToolName, type LoopToolSet } from "./loop-ai-tools.js";
 import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
+import { subagentContextMessage } from "./subagent-context.js";
 import { conversationGitContextMessage } from "./conversation-git/context.js";
 
 const MAX_TOOL_OUTPUT_TEXT = 4_000;
@@ -50,6 +51,8 @@ export function createLoopHistoryReader(
   let callsByRun: Map<string, ToolCallRecord[]> | undefined;
   const stepsByRun = new Map<string, AgentRunStep[]>();
   const partsByStep = new Map<string, AgentRunPart[]>();
+  let allSteps: Map<string, AgentRunStep[]> | undefined;
+  let allParts: Map<string, AgentRunPart[]> | undefined;
   const memoized = new Map<string, unknown>();
   const memo = <T>(key: string, compute: () => T): T => {
     if (memoized.has(key)) return memoized.get(key) as T;
@@ -63,7 +66,17 @@ export function createLoopHistoryReader(
     listRunSteps: (runId) => {
       const cached = stepsByRun.get(runId);
       if (cached) return cached;
-      const steps = store.listRunSteps(runId);
+      // Group once from the session snapshot: the store's per-run read scans
+      // (and used to clone) every step of every loaded session.
+      if (!allSteps) {
+        allSteps = new Map();
+        for (const step of store.listSessionSteps(sessionId)) {
+          const bucket = allSteps.get(step.runId);
+          if (bucket) bucket.push(step);
+          else allSteps.set(step.runId, [step]);
+        }
+      }
+      const steps = allSteps.get(runId) ?? [];
       stepsByRun.set(runId, steps);
       return steps;
     },
@@ -89,7 +102,15 @@ export function createLoopHistoryReader(
     listRunParts: (stepId) => {
       const cached = partsByStep.get(stepId);
       if (cached) return cached;
-      const parts = store.listRunParts(stepId);
+      if (!allParts) {
+        allParts = new Map();
+        for (const part of store.listSessionParts(sessionId)) {
+          const bucket = allParts.get(part.stepId);
+          if (bucket) bucket.push(part);
+          else allParts.set(part.stepId, [part]);
+        }
+      }
+      const parts = allParts.get(stepId) ?? [];
       partsByStep.set(stepId, parts);
       return parts;
     },
@@ -200,11 +221,23 @@ export function buildLoopModelMessages(
     ));
   }
 
+  const childContext = subagentContextMessage(history.listMessages(), sessionId);
+  if (childContext) messages.push(systemMessage(childContext, options.systemMessageContents));
+
   const injected = new Set(
     userMessages
       .filter((m) => m.metadata?.source === "input_queue" && m.runId)
       .map((m) => m.id),
   );
+  // Injected prompts are looked up per run inside the loop below; grouping once
+  // keeps the projection linear in the number of messages instead of O(U²).
+  const injectedByRun = new Map<string, AgentRuntimeMessage[]>();
+  for (const message of userMessages) {
+    if (!message.runId || !injected.has(message.id)) continue;
+    const bucket = injectedByRun.get(message.runId);
+    if (bucket) bucket.push(message);
+    else injectedByRun.set(message.runId, [message]);
+  }
   for (const userMessage of userMessages) {
     if (injected.has(userMessage.id)) continue;
     const run = runsByTrigger.get(userMessage.id);
@@ -226,9 +259,7 @@ export function buildLoopModelMessages(
     ) {
       const retained = [
         userMessage,
-        ...userMessages.filter(
-          (m) => m.runId === run!.id && injected.has(m.id),
-        ),
+        ...(injectedByRun.get(run!.id) ?? []),
       ].flatMap((m) => m.contentParts?.filter((p) => p.type !== "text") ?? []);
       retained.push(
         ...steps.flatMap((step) =>
@@ -279,7 +310,7 @@ export function buildLoopModelMessages(
         toolSet,
         clearSet,
         options.excludedStepIds,
-        userMessages.filter((m) => m.runId === run.id && injected.has(m.id)),
+        injectedByRun.get(run.id) ?? [],
         options.currentStepId,
         options.summarizedInputIds,
         options.systemMessageContents,

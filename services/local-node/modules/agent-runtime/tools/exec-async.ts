@@ -254,14 +254,21 @@ export function runCommand(
       });
     });
 
-    child.on("close", (code, signal) => {
+    child.on("close", async (code, exitSignal) => {
       if (timedOut || aborted || stoppedEarly) killTree("SIGKILL");
-      cleanup();
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
+      try {
+        await child.ownedProcessClosed;
+      } catch (error) {
+        spawnError ??= Object.assign(new Error("Command process cleanup could not be confirmed.", { cause: error }), {
+          code: "PROCESS_CLEANUP_FAILED",
+        });
+      }
+      cleanup();
       resolve({
-        status: code ?? (signal ? null : 0),
+        status: code ?? (exitSignal ? null : 0),
         stdout: captureText(stdout),
         stderr: captureText(stderr),
         error: aborted ? abortError() : spawnError,

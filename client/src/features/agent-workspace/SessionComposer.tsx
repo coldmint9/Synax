@@ -842,26 +842,16 @@ export function SessionComposer({
 
   const goalMode = backendId === "native" && mode === "goal";
 
-  const gitActions = <ComposerGitActions
+  const gitActions = session ? <ComposerGitActions
     session={session}
     projectId={projectId}
     disabled={readingHistory || submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
-    ensureSession={async () => {
-      if (session) return session;
-      if (createdDraftRef.current) return createdDraftRef.current;
-      const created = await submitSessionDraft(projectId, {
-        message: "处理本地 Git 与远程 PR", prompt: "处理本地 Git 与远程 PR", backendId,
-        permissionTier: cliBackend ? undefined : permissionTier,
-        mode: "chat", gitWorkspace,
-      });
-      createdDraftRef.current = created;
-      return created;
-    }}
+    ensureSession={async () => session}
     onOpenConversation={(id) => {
       void refreshSessions();
       navigate(sessionPath(projectId, id));
     }}
-  />;
+  /> : null;
 
   const composerShell = (
     <div

@@ -23,7 +23,7 @@ function ProjectIntegrations({ projectId }: { projectId: string }) {
   if (error || !settings) {
     return (
       <SettingsCard title={t('settingsProjectIntegrationsTitle')} description={t('settingsProjectIntegrationsDesc')}>
-        <div className="py-4 text-xs text-destructive">{error ?? t('settingsProjectIntegrationsLoadFailed')}</div>
+        <div role="alert" className="py-4 text-xs text-destructive">{error ?? t('settingsProjectIntegrationsLoadFailed')}</div>
       </SettingsCard>
     )
   }

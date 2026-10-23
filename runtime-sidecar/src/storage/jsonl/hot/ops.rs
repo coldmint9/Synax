@@ -212,6 +212,15 @@ impl SessionActor {
             .projection
             .clone()
             .ok_or(RuntimeError::ProjectionMissing)?;
+        if let Some(expected) = run_document.as_ref()
+            .and_then(|run| run["metadata"]["runtime"]["workspaceBindingRevision"].as_u64())
+        {
+            let metadata = projection.session.get("sessionMetadata")
+                .map(PValue::to_json).unwrap_or(Value::Null);
+            if metadata["backend"]["workspaceBindingRevision"].as_u64().unwrap_or(0) != expected {
+                return Err(RuntimeError::InvalidCommand("workspace binding changed while preparing the run; retry".into()));
+            }
+        }
         // A settled session can still carry a run pointer: completion is
         // published by a session patch while the clearing `finish` batch may
         // never commit. Reclaim that pointer instead of rejecting every later

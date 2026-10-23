@@ -8,6 +8,7 @@ import {
 } from "./synax/synax-session-mode.js";
 import { isToolMountedForSession, isPlanningReadTool } from "./tool-mount-policy.js";
 import { getStoredPlan } from './plan-execution.js';
+import { readSubagentControl } from './subagent-control-broker.js';
 
 export const CONTROL_TOOLS = new Set([
   "human.ask",
@@ -41,11 +42,15 @@ export function controlToolError(
   if (session.parentSessionId && CONTROL_TOOLS.has(tool.id) && tool.id !== "work.checkpoint")
     return "Return questions or blockers to the primary agent instead.";
   const mode = inferSynaxSessionMode(root);
+  const childControl = readSubagentControl(session);
+  const releasedChild = Boolean(session.parentSessionId && childControl?.joinMode === 'async' &&
+    !childControl.terminal && childControl.parentSessionId === root.id && childControl.childSessionId === session.id &&
+    root.status === 'completed' && !root.sessionMetadata?.manualStop && !root.sessionMetadata?.runtimeControl);
   if (
     (session.parentSessionId ||
       mode === "plan" ||
       (mode === "goal" && root.sessionMetadata?.goal)) &&
-    root.status !== "running"
+    root.status !== "running" && !releasedChild
   )
     return "The controlling session is not running; execution is suspended.";
   const plan = getStoredPlan(root.id);

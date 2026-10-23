@@ -18,7 +18,6 @@ import { DesktopUpdateProvider } from "../features/updates/DesktopUpdateProvider
 import { DesktopUpdatePanel } from "../features/updates/DesktopUpdateStatus";
 import { configApi } from "../adapters/transport/config";
 import { applyMacWindowAppearance, DEFAULT_MAC_WINDOW_APPEARANCE } from "../adapters/electron/mac-window-appearance";
-import { WindowChrome } from "./layouts/WindowChrome";
 import "../features/settings/components/appearance.css";
 
 export default function App() {
@@ -51,7 +50,6 @@ export default function App() {
       <GlobalSessionSearch />
       <DesktopUpdatePanel />
       <div className="app-viewport flex flex-col overflow-hidden bg-background text-foreground">
-        <WindowChrome />
         <div className="min-h-0 flex-1">
           <Routes>
             <Route element={<WorkbenchLayout />}>

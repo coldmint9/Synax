@@ -24,6 +24,7 @@ import { startSidecar, stopSidecarGracefully, setSidecarCuaConnection } from "./
 import { CuaRuntimeManager } from "./lib/cua-runtime.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
+import { alignMacWindowButtons, DEFAULT_TRAFFIC_LIGHT_POSITION } from "./lib/window-controls.js";
 import {
   buildAppMenu,
   setUiUpdateAction,
@@ -131,7 +132,7 @@ function createWindow(): BrowserWindow {
     ...(process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 25 },
+          trafficLightPosition: DEFAULT_TRAFFIC_LIGHT_POSITION,
         }
       : {}),
     show: false,
@@ -343,6 +344,10 @@ function registerIPC(): void {
     if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
       return { maximized: false };
     return { maximized: mainWindow.isMaximized() };
+  });
+  ipcMain.handle("window:align-buttons", (event, centerY: unknown) => {
+    if (!trustedNotificationSender(event) || !mainWindow) return false;
+    return alignMacWindowButtons(mainWindow, centerY);
   });
   ipcMain.handle("window:mac-appearance:get", (event) => {
     if (!trustedNotificationSender(event)) throw new Error("Untrusted window appearance request");

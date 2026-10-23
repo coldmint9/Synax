@@ -4,7 +4,11 @@ import { AgentRuntimeError, AgentValidationError } from "./runtime-errors.js";
 import { projectWorkContext } from "./context-projection.js";
 import { buildLoopToolSet } from "./loop-ai-tools.js";
 import { toolRegistry } from "./tool-registry.js";
-import { maybeLlmCompactContext } from "./llm-context-compaction.js";
+import { prepareCheckpointContext } from "./checkpoint-projection.js";
+import { buildNativeStepContext } from "./native-step-context.js";
+import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
+import { resolveMediaMessages } from "./media-capabilities.js";
+import { modelContentParts } from "./media-assets.js";
 import { nativeCapabilitiesEnabled } from "./native-capabilities/policy.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 
@@ -76,27 +80,31 @@ export function compactSessionContext(
 /** Manual compaction variant used by the API worker, including the configured LLM summary. */
 export async function compactSessionContextWithLlm(
   sessionId: string,
+  signal?: AbortSignal,
+  ownerId?: string,
 ): Promise<ContextCompactionResult> {
   assertSessionCanCompact(sessionId);
   const session = store.getSession(sessionId);
-  const stats = store.getSessionStats(sessionId);
-  const result = await maybeLlmCompactContext({
-    sessionId,
-    canRetainSkill: (skillId) => skillAgentBridge.canRetainForContext(sessionId, skillId),
-    projectId: session.projectId,
-    runId: null,
-    toolSet: buildLoopToolSet(toolRegistry.listForSession(sessionId), undefined, { stableNames: nativeCapabilitiesEnabled(session) }),
-    contextLimit: stats.contextLimit,
-    outputReserve: Math.min(8192, Math.floor(stats.contextLimit / 4)),
-    systemTokens: 0,
-    model: resolveSessionBackend(sessionId).model ?? undefined,
-    force: true,
+  const model = resolveSessionBackend(sessionId).model ?? undefined;
+  const selection = await resolveGatewaySelection({ projectId: session.projectId, purpose: "context-compaction", model });
+  const prepared = buildNativeStepContext(sessionId, { model }, session.prompt, 1);
+  await store.flushSession(sessionId);
+  const result = await prepareCheckpointContext({
+    sessionId, projectId: session.projectId, model: selection.modelId, ...prepared, force: true, signal, ownerId,
+    budget: { contextLimit: selection.modelDef.contextLimit ?? 200_000, inputLimit: selection.modelDef.inputLimit,
+      outputReserve: selection.modelDef.maxTokens ?? 8192 },
+    resolve: async message => {
+      if (message.metadata?.rustMessage) return [message.metadata.rustMessage];
+      if (message.contentParts?.length && (message.role === "user" || message.role === "assistant"))
+        return resolveMediaMessages([{ role: message.role, content: modelContentParts(message.contentParts) }], selection, session.projectId);
+      return [{ role: message.role, content: [{ type: "text", text: message.content }] }];
+    },
   });
   return {
-    compacted: result.didCompact,
-    originalTokens: result.projection.originalTokens,
-    tokens: result.projection.tokens,
-    messageCount: result.projection.messages.length,
-    reason: result.projection.compaction?.reason ?? "no-compressible-history",
+    compacted: result.compacted,
+    originalTokens: result.originalTokens,
+    tokens: result.tokens,
+    messageCount: result.prompt.length,
+    reason: result.compacted ? "checkpoint-committed" : "no-beneficial-checkpoint",
   };
 }

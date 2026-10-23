@@ -7,6 +7,7 @@ import type {
   ConversationGitSnapshot,
 } from "../../../../services/local-node/modules/agent-runtime/conversation-git/contracts";
 import type { MergeFile } from "./gitMr";
+import type { MergeFileSlice, MergeFileSliceInput } from "../../../../services/local-node/modules/git-mr/contracts";
 
 export type {
   ConversationGitReference,
@@ -57,6 +58,10 @@ export const conversationGitApi = {
       `${item(sessionId, objectId)}/files/${encodeURIComponent(fileId)}`,
       { silent: true, signal },
     ),
+  fileSlice: (sessionId: string, objectId: string, fileId: string, input: MergeFileSliceInput, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ side: input.side, byteOffset: String(input.byteOffset), maxBytes: String(input.maxBytes), expectedRevision: input.expectedRevision });
+    return apiRequest<MergeFileSlice>(`${item(sessionId, objectId)}/files/${encodeURIComponent(fileId)}/content?${query}`, { silent: true, signal });
+  },
   action: (sessionId: string, objectId: string, input: ConversationGitAction) =>
     apiRequest<ConversationGitSnapshot>(
       `${item(sessionId, objectId)}/actions`,

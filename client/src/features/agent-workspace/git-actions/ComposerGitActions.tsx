@@ -5,7 +5,12 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { Button } from "../../../shared/ui/ui/Button";
-import type { AgentSession } from "../../../adapters/transport/agentRuntime";
+import type {
+  AgentSession,
+  WorkspaceRepositoryGit,
+} from "../../../adapters/transport/agentRuntime";
+import { useWorkspaceGit } from "../workspaceGitStore";
+import { SessionCommitDialog } from "../SessionCommitDialog";
 import "./gitActions.css";
 const GitActionDialog = lazy(() => import("./GitActionDialog"));
 export default function ComposerGitActions({
@@ -21,15 +26,31 @@ export default function ComposerGitActions({
   ensureSession: () => Promise<AgentSession>;
   onOpenConversation: (sessionId: string) => void;
 }) {
-  const [intent, setIntent] = useState<"commit" | "pr" | null>(null);
+  const { repositories, reload } = useWorkspaceGit(projectId, session?.id);
+  const dirtyRepositories = repositories.filter(
+    (repository) => repository.status === "ready" && repository.dirty,
+  );
+  const showCommit = dirtyRepositories.length > 0;
+  const showPr = repositories.some(
+    (repository) =>
+      repository.status === "ready" &&
+      (repository.unpushedCommitCount ?? 0) > 0,
+  );
+  const [intent, setIntent] = useState<"pr" | null>(null);
   const [owner, setOwner] = useState<AgentSession | null>(null);
+  const [commitTarget, setCommitTarget] = useState<WorkspaceRepositoryGit | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [commitOpen, setCommitOpen] = useState(false);
   const generation = useRef(0);
   const creating = useRef<Promise<AgentSession> | null>(null);
   useEffect(() => {
     generation.current++;
     setIntent(null);
+    setCommitOpen(false);
+    setCommitTarget(null);
     setOwner(null);
     setLoading(false);
     setError("");
@@ -47,7 +68,16 @@ export default function ComposerGitActions({
       const next = session ?? (await (creating.current ??= ensureSession()));
       if (version !== generation.current) return;
       setOwner(next);
-      setIntent(mode);
+      if (mode === "commit") {
+        const target =
+          dirtyRepositories.find((repository) => repository.role === "primary") ??
+          dirtyRepositories[0];
+        if (!target) return;
+        setCommitTarget(target);
+        setCommitOpen(true);
+      } else {
+        setIntent(mode);
+      }
     } catch (e) {
       if (version === generation.current) {
         setError(e instanceof Error ? e.message : String(e));
@@ -57,37 +87,49 @@ export default function ComposerGitActions({
       if (version === generation.current) setLoading(false);
     }
   };
+  if (!showCommit && !showPr && !intent && !commitOpen && !loading && !error)
+    return null;
   return (
     <div className="composer-git-actions-wrap">
-      <div className="composer-git-actions" role="group" aria-label="Git 操作">
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled || loading}
-          onClick={() => void open("commit")}
-          title="本地提交与分支处理"
+      {(showCommit || showPr || loading) && (
+        <div
+          className="composer-git-actions"
+          role="group"
+          aria-label="Git 操作"
         >
-          <GitCommitHorizontal size={14} />
-          <span>Commit</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled || loading}
-          onClick={() => void open("pr")}
-          title="GitHub PR / GitLab MR 与远程同步"
-        >
-          <GitPullRequest size={14} />
-          <span>PR</span>
-        </Button>
-        {loading && (
-          <LoaderCircle
-            size={13}
-            className="git-actions-spin"
-            aria-label="正在打开 Git 工作区"
-          />
-        )}
-      </div>
+          {showCommit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled || loading}
+              onClick={() => void open("commit")}
+              title="本地提交与分支处理"
+            >
+              <GitCommitHorizontal size={14} />
+              <span>Commit</span>
+            </Button>
+          )}
+          {showPr && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled || loading}
+              onClick={() => void open("pr")}
+              title="GitHub PR / GitLab MR 与远程同步"
+            >
+              <GitPullRequest size={14} />
+              <span>PR</span>
+            </Button>
+          )}
+          {loading && (
+            <LoaderCircle
+              size={13}
+              className="git-actions-spin"
+              aria-label="正在打开 Git 工作区"
+            />
+          )}
+        </div>
+      )}
       {error && (
         <p className="git-actions-error" role="alert">
           {error}
@@ -112,6 +154,22 @@ export default function ComposerGitActions({
             }}
           />
         </Suspense>
+      )}
+      {commitOpen && owner && commitTarget && (
+        <SessionCommitDialog
+          isOpen
+          sessionId={owner.id}
+          projectId={projectId}
+          rootId={commitTarget.rootId}
+          rootName={commitTarget.name}
+          branch={commitTarget.branch}
+          changedFiles={commitTarget.changedFiles?.length ?? 0}
+          onClose={() => {
+            setCommitOpen(false);
+            setCommitTarget(null);
+          }}
+          onCommitted={() => void reload?.()}
+        />
       )}
     </div>
   );

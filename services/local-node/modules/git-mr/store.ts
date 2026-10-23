@@ -58,6 +58,7 @@ export class GitMrStore {
     record.version++;
     record.updatedAt = new Date().toISOString();
     if (message) record.events.push({ at: record.updatedAt, message });
+    if (record.events.length > 128) record.events = record.events.slice(-128);
     await this.write("requests", record);
     return record;
   }

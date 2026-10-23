@@ -68,7 +68,9 @@ export function buildWorkspaceEnvironmentView({
     (git?.repositories ?? []).map((facts) => [facts.rootId, facts]),
   );
   const repositories: WorkspaceEnvironmentRepository[] = rootList.map((root) => {
-    const facts = factsByRoot.get(root.rootId);
+    const candidate = factsByRoot.get(root.rootId);
+    // An old Git request must never repaint a newly bound checkout.
+    const facts = candidate?.workspacePath === root.workspacePath ? candidate : undefined;
     const edited = new Set(outputs?.editedPathsByRoot[root.rootId] ?? []);
     const changedFiles = facts?.changedFiles ?? [];
     return {

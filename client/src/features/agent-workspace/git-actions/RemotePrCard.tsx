@@ -24,6 +24,7 @@ import {
   DialogBody,
   DialogFooter,
 } from "../../../shared/ui/ui/Dialog";
+import { VirtualList } from "../git-merge/VirtualList";
 import { Select } from "../../../shared/ui/ui/Select";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useTranscriptSession } from "../SessionTranscriptContext";
@@ -55,7 +56,8 @@ export default function RemotePrCard({
   const readController = useRef<AbortController | null>(null);
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      if (readController.current && !readController.current.signal.aborted) return;
+      if (readController.current && !readController.current.signal.aborted)
+        return;
       const controller = new AbortController();
       readController.current = controller;
       const abort = () => controller.abort();
@@ -63,10 +65,22 @@ export default function RemotePrCard({
       if (signal?.aborted) abort();
       const version = ++generation.current;
       try {
-        const result = await remotePrApi.get(reference.sessionId, reference.objectId, controller.signal);
-        if (result.task.id !== reference.objectId || result.task.sessionId !== reference.sessionId || result.task.projectId !== reference.projectId)
+        const result = await remotePrApi.get(
+          reference.sessionId,
+          reference.objectId,
+          controller.signal,
+        );
+        if (
+          result.task.id !== reference.objectId ||
+          result.task.sessionId !== reference.sessionId ||
+          result.task.projectId !== reference.projectId
+        )
           throw new Error("远程任务响应与当前会话不匹配。");
-        if (mounted.current && version === generation.current && !controller.signal.aborted) {
+        if (
+          mounted.current &&
+          version === generation.current &&
+          !controller.signal.aborted
+        ) {
           setSnapshot(result);
           setError("");
         }
@@ -74,7 +88,8 @@ export default function RemotePrCard({
         if (!controller.signal.aborted) throw error;
       } finally {
         signal?.removeEventListener("abort", abort);
-        if (readController.current === controller) readController.current = null;
+        if (readController.current === controller)
+          readController.current = null;
       }
     },
     [reference.objectId, reference.sessionId, generation],
@@ -97,7 +112,9 @@ export default function RemotePrCard({
     if (!snapshot || snapshot.pr.state !== "open" || readOnly || busy) return;
     const timer = setInterval(() => {
       if (document.visibilityState !== "hidden")
-        void load().catch((e) => { if(mounted.current) setError(e.message); });
+        void load().catch((e) => {
+          if (mounted.current) setError(e.message);
+        });
     }, 15000);
     return () => clearInterval(timer);
   }, [snapshot?.pr.state, load, readOnly, busy]);
@@ -136,9 +153,8 @@ export default function RemotePrCard({
       refreshWorkspace(reference.sessionId, reference.rootId);
       if (mounted.current) setPending(null);
       if (result.resolutionReference) {
-        const { conversationGitApi } = await import(
-          "../../../adapters/transport/conversationGit"
-        );
+        const { conversationGitApi } =
+          await import("../../../adapters/transport/conversationGit");
         const local = await conversationGitApi.get(
           reference.sessionId,
           result.resolutionReference.objectId,
@@ -193,7 +209,7 @@ export default function RemotePrCard({
   return (
     <>
       <section
-        className="conversation-git-card"
+        className="conversation-git-card conversation-git-card--window"
         aria-label={`${platform} #${pr.number}`}
         data-object-id={reference.objectId}
       >
@@ -233,104 +249,125 @@ export default function RemotePrCard({
               disabled={busy}
               onClick={() => {
                 setError("");
-                void load().catch((e) => { if(mounted.current) setError(e.message); });
+                void load().catch((e) => {
+                  if (mounted.current) setError(e.message);
+                });
               }}
             >
               <RefreshCw size={14} />
             </Button>
           </div>
         </header>
-        <div className="remote-pr-meta">
-          <span>
-            {platform} · {task.repository.host}/{task.repository.path}
-          </span>
-          {pr.url && (
-            <a href={pr.url} target="_blank" rel="noreferrer">
-              在平台打开
-              <ArrowUpRight size={12} />
-            </a>
-          )}
-        </div>
-        <div className="remote-pr-summary">
-          <div>
-            <span>来源提交</span>
-            <code>{pr.headSha.slice(0, 12)}</code>
-          </div>
-          <div>
-            <span>目标提交</span>
-            <code>{pr.baseSha.slice(0, 12)}</code>
-          </div>
-          <div>
-            <span>合并条件</span>
-            <strong>{pr.mergeStatus}</strong>
-          </div>
-        </div>
-        {pr.body && (
-          <details className="remote-pr-description">
-            <summary>请求说明</summary>
-            <p>{pr.body}</p>
-          </details>
-        )}
-        <section className="conversation-git-checks">
-          <div className="conversation-git-section-heading">
-            <strong>远程 CI / 检查</strong>
+        <div
+          className="conversation-git-body"
+          role="region"
+          aria-label="远程请求内容"
+          tabIndex={0}
+        >
+          <div className="remote-pr-meta">
             <span>
-              {pr.checks.filter((check) => check.status === "passed").length}/
-              {pr.checks.length} 通过
+              {platform} · {task.repository.host}/{task.repository.path}
             </span>
+            {pr.url && (
+              <a href={pr.url} target="_blank" rel="noreferrer">
+                在平台打开
+                <ArrowUpRight size={12} />
+              </a>
+            )}
           </div>
-          {pr.checksError ? (
-            <p className="git-actions-error">{pr.checksError}</p>
-          ) : !pr.checks.length ? (
-            <p className="git-actions-description">
-              平台未返回检查记录。最终合并仍受远程仓库规则约束。
-            </p>
-          ) : (
-            pr.checks.map((check, index) => (
-              <div className="remote-pr-check" key={`${check.name}:${index}`}>
-                {check.status === "passed" ? (
-                  <Check size={13} />
-                ) : check.status === "pending" ? (
-                  <LoaderCircle size={13} />
-                ) : (
-                  <CircleAlert size={13} />
-                )}
-                <span>{check.name}</span>
-                <small>
-                  {
-                    {
-                      passed: "通过",
-                      failed: "失败",
-                      pending: "等待中",
-                      unknown: "未知",
-                    }[check.status]
-                  }
-                </small>
-              </div>
-            ))
+          <div className="remote-pr-summary">
+            <div>
+              <span>来源提交</span>
+              <code>{pr.headSha.slice(0, 12)}</code>
+            </div>
+            <div>
+              <span>目标提交</span>
+              <code>{pr.baseSha.slice(0, 12)}</code>
+            </div>
+            <div>
+              <span>合并条件</span>
+              <strong>{pr.mergeStatus}</strong>
+            </div>
+          </div>
+          {pr.body && (
+            <details className="remote-pr-description">
+              <summary>请求说明</summary>
+              <p>{pr.body}</p>
+            </details>
           )}
-        </section>
-        {pr.draft && (
-          <p className="remote-pr-notice">
-            这是草稿，请先在 {platform.split(" ")[0]}{" "}
-            标记为可审核，再执行同步或合并。
-          </p>
-        )}
-        {pr.mergeable === false && (
-          <p className="remote-pr-notice">
-            远程分支存在冲突。可以创建隔离冲突任务，审阅解决结果后再推送到来源分支。
-          </p>
-        )}
-        {task.resolution && (
-          <p className="remote-pr-notice">
-            已关联本地冲突任务。先在对应任务卡确认候选，再推送解决结果。
-          </p>
-        )}
-        {!pr.sameRepository && (
-          <p className="remote-pr-notice">
-            这是 Fork 请求；本地同步和冲突推送需在来源仓库处理。
-          </p>
-        )}
+          <section className="conversation-git-checks">
+            <div className="conversation-git-section-heading">
+              <strong>远程 CI / 检查</strong>
+              <span>
+                {pr.checks.filter((check) => check.status === "passed").length}/
+                {pr.checks.length} 通过
+              </span>
+            </div>
+            {pr.checksError ? (
+              <p className="git-actions-error">{pr.checksError}</p>
+            ) : !pr.checks.length ? (
+              <p className="git-actions-description">
+                平台未返回检查记录。最终合并仍受远程仓库规则约束。
+              </p>
+            ) : (
+              <VirtualList
+                items={pr.checks}
+                label="远程检查列表"
+                rowHeight={34}
+                maxHeight={238}
+                getKey={(check, index) => `${check.name}:${index}`}
+                renderRow={(check) => (
+                  <div className="remote-pr-check" title={check.name}>
+                    {check.status === "passed" ? (
+                      <Check size={13} />
+                    ) : check.status === "pending" ? (
+                      <LoaderCircle size={13} />
+                    ) : (
+                      <CircleAlert size={13} />
+                    )}
+                    <span>{check.name}</span>
+                    <small>
+                      {
+                        {
+                          passed: "通过",
+                          failed: "失败",
+                          pending: "等待中",
+                          unknown: "未知",
+                        }[check.status]
+                      }
+                    </small>
+                  </div>
+                )}
+              />
+            )}
+          </section>
+          {pr.draft && (
+            <p className="remote-pr-notice">
+              这是草稿，请先在 {platform.split(" ")[0]}{" "}
+              标记为可审核，再执行同步或合并。
+            </p>
+          )}
+          {pr.mergeable === false && (
+            <p className="remote-pr-notice">
+              远程分支存在冲突。可以创建隔离冲突任务，审阅解决结果后再推送到来源分支。
+            </p>
+          )}
+          {task.resolution && (
+            <p className="remote-pr-notice">
+              已关联本地冲突任务。先在对应任务卡确认候选，再推送解决结果。
+            </p>
+          )}
+          {!pr.sameRepository && (
+            <p className="remote-pr-notice">
+              这是 Fork 请求；本地同步和冲突推送需在来源仓库处理。
+            </p>
+          )}
+          {error && (
+            <p role="alert" className="git-actions-error px-4 pb-3">
+              {error}
+            </p>
+          )}
+        </div>
         <footer className="conversation-git-footer">
           <span className="conversation-git-footer-status">
             {busy ? (
@@ -381,7 +418,7 @@ export default function RemotePrCard({
                 !writable ||
                 !pr.sameRepository ||
                 local.dirty ||
-                local.branch !== pr.head
+                ![pr.head, pr.base].includes(local.branch)
               }
               onClick={() => setPending("sync_local")}
             >
@@ -400,11 +437,7 @@ export default function RemotePrCard({
             )}
           </div>
         </footer>
-        {error && (
-          <p role="alert" className="git-actions-error px-4 pb-3">
-            {error}
-          </p>
-        )}
+
         <div className="conversation-git-caption">
           <span>远程状态 · 单一任务持续更新</span>
           <span>{readOnly ? "历史只读" : "远程请求"}</span>
@@ -430,7 +463,7 @@ export default function RemotePrCard({
                         ? `把 ${pr.base} 合入远程 ${pr.head}，会更新来源分支并重新运行检查。`
                         : `请求 GitLab 将 ${pr.head} rebase 到 ${pr.base}；可能重写来源分支提交。`
                       : pending === "sync_local"
-                        ? `仅快进当前本地 ${pr.head} 到远程版本，存在分叉时停止。`
+                        ? `仅快进当前本地 ${local.branch} 到远程版本，存在分叉时停止。`
                         : pending === "resolve_conflicts"
                           ? "拉取远程来源和目标的快照，在隔离工作树中生成冲突任务。当前工作区不切换分支。"
                           : "把已确认的隔离解决提交普通推送到 PR 来源分支。远程基线发生变化时会拒绝执行。"}

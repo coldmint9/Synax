@@ -166,7 +166,9 @@ export function WorkspaceManagementContent({
       });
       if (!active.current) return;
       setWorkspace(result);
-      setNotice(c.added);
+      setNotice(result.normalization?.redirected
+        ? `${c.worktreeRedirected}${result.normalization.location.path}${result.normalization.duplicate ? ` · ${c.worktreeAlreadyAdded}` : ""}`
+        : c.added);
       focusAfter.current = "add";
     });
   };
@@ -368,6 +370,7 @@ export function WorkspaceManagementContent({
               {filtered.map((root) => (
                 <div key={root.id} className="workspace-manager-member">
                   <WorkspaceProjectRow
+                    projectId={root.id}
                     name={root.name}
                     path={
                       root.location?.kind === "wsl"

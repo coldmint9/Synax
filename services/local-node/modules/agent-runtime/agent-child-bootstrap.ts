@@ -1,4 +1,5 @@
 import { ensureGitMrProfileRegistered } from './git/profile.js';
+import { ensureConversationMergeWorkerRegistered } from './conversation-git/worker.js';
 import { agentRuntimeStore } from './session-store.js';
 import {
   ensureLegacyGoalProfileRegistered,
@@ -12,6 +13,7 @@ export function bootstrapAgentChildForSession(sessionId: string): void {
 
   const { profileId } = session;
   if (profileId === 'git-manager') ensureGitMrProfileRegistered();
+  if (profileId === 'git-merge-worker') ensureConversationMergeWorkerRegistered();
   if (isSynaxProfile(profileId)) {
     ensureLegacyGoalProfileRegistered();
   }

@@ -113,6 +113,7 @@ function loadCard<T>(
   const request = card
     .load(sessionId)
     .then((value) => {
+      if (card.pending.get(sessionId) !== request) return value;
       card.entries.delete(sessionId);
       card.entries.set(sessionId, { value, checkedAt: Date.now() });
       while (card.entries.size > CARD_LIMIT)

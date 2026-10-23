@@ -51,6 +51,26 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 describe("local merge requests (real git)", { timeout: 60000 }, () => {
+  it('checks a worker fence inside the mutation lock before preparing or publishing', async () => {
+    let mr = await create();
+    await expect(service.prepare('project', mr.id, mr.version, async () => { throw new Error('worker stopped'); })).rejects.toThrow('worker stopped');
+    expect((await latest(mr)).worktree).toBeUndefined();
+    mr = await service.prepare('project', mr.id, mr.version);
+    const target = git('rev-parse', 'integration');
+    await expect(service.finalize('project', mr.id, mr.version, { guard: async () => { throw new Error('worker stopped'); } })).rejects.toThrow('worker stopped');
+    expect(git('rev-parse', 'integration')).toBe(target);
+  });
+  it('discards only a cancelled isolated candidate and leaves the target unchanged', async () => {
+    let mr = await create(); mr = await service.prepare('project', mr.id, mr.version);
+    const candidate = mr.worktree!, target = git('rev-parse', 'integration');
+    mr = await service.cancel('project', mr.id, mr.version);
+    mr = await service.discard('project', mr.id);
+    expect(mr.status).toBe('cancelled'); expect(mr.worktree).toBeUndefined();
+    expect(fs.existsSync(candidate)).toBe(false);
+    expect(git('rev-parse', 'integration')).toBe(target);
+    expect(git('for-each-ref', `refs/synax/mr/${mr.id}/candidate`)).toBe('');
+    await expect(service.discard('project', mr.id)).resolves.toMatchObject({ status: 'cancelled' });
+  });
   it("prepares a merge without changing target or source and publishes with two parents", async () => {
     const target = git("rev-parse", "integration"),
       source = git("rev-parse", "feature/a");

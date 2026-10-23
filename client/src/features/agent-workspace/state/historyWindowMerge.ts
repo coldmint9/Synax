@@ -31,14 +31,22 @@ function applyChanges(previous: SessionDetailCacheEntry, latest: SessionDetailCa
         String(right.createdAt ?? right.startedAt ?? right.timestamp ?? ""));
     });
   }
+  // A tombstone list can be as long as the transcript; `includes` per row made
+  // every merge O(rows × tombstones).
+  const removed = {
+    messages: new Set(deleted.messages ?? []),
+    runs: new Set(deleted.runs ?? []),
+    steps: new Set(deleted.steps ?? []),
+    toolCalls: new Set(deleted.toolCalls ?? []),
+  };
   return {
     ...previous, ...latest, ...combined,
     historyDeleted: deleted,
     historyPagesLoaded: previous.historyPagesLoaded,
-    timelineMessages: byId(previous.timelineMessages ?? [], latest.messages.map(previewTimelineMessage)).filter(item => !deleted.messages?.includes(item.id)),
-    timelineRuns: byId(previous.timelineRuns ?? [], latest.runs).filter(item => !deleted.runs?.includes(item.id)),
-    timelineSteps: byId(previous.timelineSteps ?? [], latest.steps).filter(item => !deleted.steps?.includes(item.id)),
-    timelineToolCalls: byId(previous.timelineToolCalls ?? [], latest.toolCalls).filter(item => !deleted.toolCalls?.includes(item.id)),
+    timelineMessages: byId(previous.timelineMessages ?? [], latest.messages.map(previewTimelineMessage)).filter(item => !removed.messages.has(item.id)),
+    timelineRuns: byId(previous.timelineRuns ?? [], latest.runs).filter(item => !removed.runs.has(item.id)),
+    timelineSteps: byId(previous.timelineSteps ?? [], latest.steps).filter(item => !removed.steps.has(item.id)),
+    timelineToolCalls: byId(previous.timelineToolCalls ?? [], latest.toolCalls).filter(item => !removed.toolCalls.has(item.id)),
     timelineIndexLoaded: previous.timelineIndexLoaded, timelineIndexError: previous.timelineIndexError,
     historyWindow: {
       ...previous.historyWindow!, ...latest.historyWindow!,
@@ -137,19 +145,25 @@ export function prependHistory(
     const deleted = new Set(current.historyDeleted?.[name] ?? []);
     (combined[name] as Array<{ id: string }>) = combined[name].filter(item => !deleted.has(item.id));
   }
+  const tombstones = {
+    messages: new Set(current.historyDeleted?.messages ?? []),
+    runs: new Set(current.historyDeleted?.runs ?? []),
+    steps: new Set(current.historyDeleted?.steps ?? []),
+    toolCalls: new Set(current.historyDeleted?.toolCalls ?? []),
+  };
   return {
     ...current,
     ...combined,
     timelineMessages: byId(
       older.messages.map(previewTimelineMessage),
       current.timelineMessages ?? current.messages.map(previewTimelineMessage),
-    ).filter(item => !current.historyDeleted?.messages?.includes(item.id)),
-    timelineRuns: byId(older.runs, current.timelineRuns ?? current.runs).filter(item => !current.historyDeleted?.runs?.includes(item.id)),
-    timelineSteps: byId(older.steps, current.timelineSteps ?? current.steps).filter(item => !current.historyDeleted?.steps?.includes(item.id)),
+    ).filter(item => !tombstones.messages.has(item.id)),
+    timelineRuns: byId(older.runs, current.timelineRuns ?? current.runs).filter(item => !tombstones.runs.has(item.id)),
+    timelineSteps: byId(older.steps, current.timelineSteps ?? current.steps).filter(item => !tombstones.steps.has(item.id)),
     timelineToolCalls: byId(
       older.toolCalls,
       current.timelineToolCalls ?? current.toolCalls,
-    ).filter(item => !current.historyDeleted?.toolCalls?.includes(item.id)),
+    ).filter(item => !tombstones.toolCalls.has(item.id)),
     timelineIndexLoaded: current.timelineIndexLoaded,
     timelineIndexError: current.timelineIndexError,
     events: older.historyWindow.generation === undefined ? current.events : combined.events,

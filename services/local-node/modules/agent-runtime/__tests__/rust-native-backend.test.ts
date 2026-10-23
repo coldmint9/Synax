@@ -40,7 +40,8 @@ let requests: Array<Record<string, unknown>>;
 let sessionId: string;
 let multiple = false;
 let askHuman = false;
-let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" = "normal";
+let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" | "overflow" | "active-compact" = "normal";
+let rejectedContextRequests = 0;
 let mediaAssetId: string;
 let longToolRounds = 34;
 
@@ -143,26 +144,40 @@ beforeEach(async () => {
   multiple = false;
   askHuman = false;
   scenario = "normal"; longToolRounds = 34;
+  rejectedContextRequests = 0;
   coordinator = new RunCoordinator();
   provider = http.createServer(async (request, response) => {
     debug("provider request", String(request.url) + " auth=" + String(request.headers.authorization).slice(0, 12) + " keys=" + Object.keys(request.headers).join(","));
     let body = "";
     for await (const chunk of request) body += chunk;
     requests.push(JSON.parse(body));
+    if (scenario === "overflow" && !body.includes("Maintain a structured conversation checkpoint") && rejectedContextRequests++ === 0) {
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { code: "context_length_exceeded", message: "maximum context length exceeded" } }));
+      return;
+    }
     const afterTools = requests.length > 1;
     const base = { id: "fixture", object: "chat.completion.chunk", model: "fixture", created: 0 };
     const chunk = (delta: object, finish_reason: string | null = null) => response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
     response.writeHead(200, { "content-type": "text/event-stream" });
     const call = (index: number, name: string, args: unknown) => chunk({ tool_calls: [{ index, id: `provider-call-${requests.length}-${index}`, type: "function", function: { name: name.replaceAll(".", "_"), arguments: JSON.stringify(args) } }] });
-    if (scenario === "long" && requests.length <= longToolRounds) {
+    if (scenario === "active-compact" && !body.includes("Maintain a structured conversation checkpoint")) {
+      const mainRequests = requests.filter(item => !JSON.stringify(item).includes("Maintain a structured conversation checkpoint"));
+      if (mainRequests.length <= 3) {
+        chunk({ content: "Historical observation USER_INVARIANT. ".repeat(6000) });
+        call(0, "file.list", { path: "." }); chunk({}, "tool_calls");
+      } else { chunk({ content: "Final response." }); chunk({}, "stop"); }
+    } else if (scenario === "long" && requests.length <= longToolRounds) {
       call(0, "file.list", { path: "." }); chunk({}, "tool_calls");
     } else if (scenario === "media" && requests.length === 1) {
       call(0, "agent.discover", { ids: ["media.read"] }); chunk({}, "tool_calls");
     } else if (scenario === "media" && requests.length === 2) {
       call(0, "media.read", { assetId: mediaAssetId }); chunk({}, "tool_calls");
-    } else if (scenario === "compact") {
-      chunk({ content: body.includes("You maintain a conversation checkpoint.")
-        ? "Earlier inspected history, evidence and unresolved work are recorded." : "Final response." });
+    } else if (scenario === "compact" || scenario === "overflow" || scenario === "active-compact") {
+      chunk({ content: body.includes("Maintain a structured conversation checkpoint")
+        ? JSON.stringify({ summary: { goal: ["Continue the work"], constraints: ["Keep USER_INVARIANT exactly."],
+            completedWork: ["Earlier inspected history"], evidence: [], decisions: [], failures: [], openQuestions: [], nextActions: ["Continue"] }, sourceRefs: [] })
+        : "Final response." });
       chunk({}, "stop");
     } else if (scenario === "restart" && !afterTools) {
       chunk({ content: "Partial before restart" });
@@ -436,7 +451,7 @@ it("keeps an acknowledged step context in memory and immutable across retries", 
   expect(requests).toHaveLength(1);
 });
 
-it("delivers user images and tool-returned images through the Rust loop", async () => {
+it.each([false, true])("delivers user images and tool-returned images through the Rust loop (large=%s)", async (large) => {
   scenario = "media";
   const gateway = await import("../../../infrastructure/llm-runtime/gateway.js");
   const actual = gateway.resolveGatewaySelection;
@@ -445,7 +460,8 @@ it("delivers user images and tool-returned images through the Rust loop", async 
     return { ...resolved, modelDef: { ...resolved.modelDef, inputModalities: ["text", "image"] } };
   });
   try {
-    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=", "base64");
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=", "base64");
+    const bytes = large ? Buffer.concat([png, Buffer.alloc(600 * 1024, 65)]) : png;
     const asset = await createAsset("project-alpha", "fixture.png", bytes, "image/png");
     mediaAssetId = asset.id;
     const accepted = await coordinator.submitAsync(sessionId, { message: "Inspect this image and read it with the media tool", contentParts: [
@@ -461,7 +477,7 @@ it("delivers user images and tool-returned images through the Rust loop", async 
       (message.role === "tool" || second.indexOf(message) > second.findIndex(item => item.role === "assistant")))).toBe(true);
     expect(store.listToolCalls(sessionId).find(call => call.toolId === "media.read")?.status).toBe("completed");
   } finally { selection.mockRestore(); }
-});
+}, 30_000);
 
 it("interrupts an active run after Rust is killed and starts a new run only on user input", async () => {
   scenario = "restart";
@@ -499,13 +515,21 @@ it("persists Rust compaction checkpoints and accounts for auxiliary requests onc
     store.appendMessage({ id: "pinned-request", sessionId, runId: null, stepId: null, role: "user", content: "Keep USER_INVARIANT exactly.", metadata: {}, createdAt: new Date().toISOString() });
     for (let index = 0; index < 8; index++) store.appendMessage({ id: `old-history-${index}`, sessionId, runId: null, stepId: null,
       role: "assistant", content: `Observation ${index}: ` + "historical detail ".repeat(index < 5 ? 6000 : 1), metadata: {}, createdAt: new Date().toISOString() });
+    const at = new Date().toISOString();
+    store.appendRun({ id: "old-complete-run", sessionId, status: "completed", startedAt: at, completedAt: at,
+      triggerMessageId: "pinned-request", currentStep: 1, stopReason: "stop", model: "fixture", metadata: {} });
+    store.appendRunStep({ id: "old-complete-step", sessionId, runId: "old-complete-run", index: 1, status: "completed",
+      model: "fixture", startedAt: at, completedAt: at, finishReason: "stop", metadata: {} });
     const accepted = await coordinator.submitAsync(sessionId, { message: "Summarize the remaining work", maxTokens: 256 }, "context-native");
     await coordinator.waitForIdle();
     expect(store.getRun(accepted.run.id).status, JSON.stringify(store.getRun(accepted.run.id))).toBe("completed");
-    const compacted = store.getLatestCompactionRecord(sessionId)!;
-    expect(compacted.summaryText).toContain("Earlier inspected history");
-    expect(compacted.compressedTokenCount).toBeLessThan(compacted.originalTokenCount);
-    const summaryRequests = requests.filter(body => JSON.stringify(body).includes("You maintain a conversation checkpoint."));
+    await store.hydrateSession(sessionId, true);
+    const { readCheckpointHead } = await import("../checkpoint-service.js");
+    const compacted = (await readCheckpointHead(sessionId)).checkpoint!;
+    expect(compacted.summary.completedWork).toContain("Earlier inspected history");
+    expect(compacted.throughStepId).toBe("old-complete-step");
+    expect(store.getRun(compacted.compactionRunId).metadata.kind).toBe("context-compaction");
+    const summaryRequests = requests.filter(body => JSON.stringify(body).includes("Maintain a structured conversation checkpoint"));
     const aux = store.listRecords<{ id: string; purpose: string; completedAt: string | null; usage: unknown }>("aux_usage", sessionId)
       .filter(item => item.purpose === "context-compaction");
     expect(aux).toHaveLength(summaryRequests.length);
@@ -518,6 +542,97 @@ it("persists Rust compaction checkpoints and accounts for auxiliary requests onc
     expect(JSON.stringify(requests.at(-1))).toContain("USER_INVARIANT");
   } finally { selection.mockRestore(); }
 }, 20_000);
+
+it("compacts repeatedly inside an active run and closes its execution lease", async () => {
+  scenario = "active-compact";
+  const gateway = await import("../../../infrastructure/llm-runtime/gateway.js");
+  const actual = gateway.resolveGatewaySelection;
+  const selection = vi.spyOn(gateway, "resolveGatewaySelection").mockImplementation(async (...args) => {
+    const resolved = await actual(...args);
+    return { ...resolved, modelDef: { ...resolved.modelDef, contextLimit: 30_000, maxTokens: 256 } };
+  });
+  try {
+    const accepted = await coordinator.submitAsync(sessionId, { message: "Keep USER_INVARIANT and inspect files", maxTokens: 256 }, "active-compaction");
+    await coordinator.waitForIdle();
+    const { readCheckpointHead } = await import("../checkpoint-service.js");
+    const head = await readCheckpointHead(sessionId);
+    expect(head.checkpoint).not.toBeNull();
+    await store.hydrateSession(sessionId, true);
+    const run = store.getRun(accepted.run.id);
+    expect(run.status, JSON.stringify(run)).toBe("completed");
+    expect(store.listRuns(sessionId).filter(item => item.metadata.kind === "context-compaction" && item.status === "completed").length).toBeGreaterThanOrEqual(2);
+    expect(store.getRunStep(head.checkpoint!.throughStepId).runId).toBe(run.id);
+    expect(store.listRunSteps(run.id)).toHaveLength(4);
+    expect(store.listToolCalls(sessionId).filter(call => call.toolId === "file.list" && call.status === "completed")).toHaveLength(3);
+    expect((await _rfProbe.controlState(sessionId) as { executionLease?: { closed?: boolean } }).executionLease?.closed).toBe(true);
+    const next = await coordinator.submitAsync(sessionId, { message: "Continue using the same tools", maxTokens: 256 }, "after-active-compaction");
+    await coordinator.waitForIdle();
+    expect(store.getRun(next.run.id).status).toBe("completed");
+    expect(JSON.stringify(requests.at(-1))).toContain("USER_INVARIANT");
+  } finally { selection.mockRestore(); }
+}, 60_000);
+
+it("settles an accepted manual compaction when there is no completed history", async () => {
+  store.updateSession(sessionId, { status: "completed", activeRunId: null });
+  const { sessionLiveBus } = await import("../session-live-bus.js");
+  const events: string[] = [];
+  const release = sessionLiveBus.subscribe(sessionId, event => events.push(event.type));
+  const cleanup = (sessionProcessManager as unknown as { resourceCleanup: Map<string, string[]> }).resourceCleanup;
+  cleanup.set("previous-worker", [sessionId]);
+  const cleanupTimer = setTimeout(() => cleanup.delete("previous-worker"), 100);
+  try {
+    await sessionProcessManager.beginContextCompaction(sessionId);
+    await vi.waitFor(async () => {
+      expect(events).toContain("context_compacted");
+      expect((await _rfProbe.controlState(sessionId) as { runtimeControl?: unknown }).runtimeControl).toBeNull();
+    }, { timeout: 10000 });
+    expect(requests).toHaveLength(0);
+  } finally { release(); clearTimeout(cleanupTimer); cleanup.delete("previous-worker"); }
+}, 15_000);
+
+it("runs manual compaction inside the original session and releases its durable admission lock", async () => {
+  scenario = "compact";
+  const at = new Date().toISOString();
+  store.updateSession(sessionId, { status: "completed", activeRunId: null });
+  store.appendMessage({ id: "manual-history", sessionId, runId: "manual-old-run", stepId: "manual-old-step", role: "assistant",
+    content: "Historical evidence with USER_INVARIANT. ".repeat(1200), metadata: {}, createdAt: at });
+  store.appendRun({ id: "manual-old-run", sessionId, status: "completed", startedAt: at, completedAt: at,
+    triggerMessageId: null, currentStep: 1, stopReason: "stop", model: "fixture", metadata: {} });
+  store.appendRunStep({ id: "manual-old-step", sessionId, runId: "manual-old-run", index: 1, status: "completed",
+    model: "fixture", startedAt: at, completedAt: at, finishReason: "stop", metadata: {} });
+  const { readCheckpointHead } = await import("../checkpoint-service.js");
+  const { runtimeFacade } = await import("../sidecar/runtime-facade.js");
+  expect(await sessionProcessManager.beginContextCompaction(sessionId)).toMatchObject({ accepted: true });
+  await vi.waitFor(async () => {
+    const head = await readCheckpointHead(sessionId);
+    expect(head.active?.status).toBe("completed");
+    expect(head.checkpoint?.throughStepId).toBe("manual-old-step");
+    const control = await runtimeFacade.controlState(sessionId) as { runtimeControl?: unknown };
+    expect(control.runtimeControl).toBeNull();
+  }, { timeout: 15_000, interval: 50 });
+  await store.hydrateSession(sessionId, true);
+  const special = store.listRuns(sessionId).filter(run => run.metadata.kind === "context-compaction");
+  expect(special).toHaveLength(1);
+  expect(special[0]).toMatchObject({ sessionId, status: "completed", triggerMessageId: null });
+  expect(store.listMessages(sessionId).some(message => message.id === "manual-history")).toBe(true);
+  expect(store.listMessages(sessionId).filter(message => message.metadata.source === "context_compaction")).toHaveLength(1);
+}, 20_000);
+
+it("repairs a provider context rejection once through the same session checkpoint barrier", async () => {
+  scenario = "overflow";
+  const at = new Date().toISOString();
+  store.appendRun({ id:"overflow-old-run",sessionId,status:"completed",startedAt:at,completedAt:at,triggerMessageId:null,currentStep:1,stopReason:"stop",model:"fixture",metadata:{} });
+  store.appendMessage({ id:"overflow-history",sessionId,runId:"overflow-old-run",stepId:"overflow-old-step",role:"assistant",
+    content:"Historical evidence. ".repeat(4000),metadata:{},createdAt:at });
+  store.appendRunStep({id:"overflow-old-step",sessionId,runId:"overflow-old-run",index:1,status:"completed",model:"fixture",startedAt:at,completedAt:at,finishReason:"stop",metadata:{}});
+  const accepted = await coordinator.submitAsync(sessionId,{message:"Continue",maxTokens:8192},"provider-overflow");
+  await coordinator.waitForIdle();
+  expect(store.getRun(accepted.run.id).status,JSON.stringify(store.getRun(accepted.run.id))).toBe("completed");
+  expect(rejectedContextRequests).toBe(2);
+  const {readCheckpointHead}=await import("../checkpoint-service.js");
+  expect((await readCheckpointHead(sessionId)).checkpoint?.throughStepId).toBe("overflow-old-step");
+  expect(store.listMessages(sessionId).filter(message=>message.role==="user")).toHaveLength(1);
+},30_000);
 
 it("keeps an admitted native run going past 32 steps and ignores legacy maxSteps", async () => {
   scenario = "long";

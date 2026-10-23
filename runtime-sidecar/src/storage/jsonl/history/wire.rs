@@ -4,6 +4,8 @@ use crate::runtime::actor::RuntimeError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
+    #[error("READ_ONLY_HISTORY: history is sealed by a context checkpoint")]
+    ReadOnlyHistory,
     #[error("Conversation changed. Refresh history.")]
     StaleCursor,
     #[error("file operation: {0}")]
@@ -24,6 +26,7 @@ impl HistoryError {
     /// The `(code, message)` pair the wire answers with.
     pub fn wire(&self) -> (&'static str, String) {
         match self {
+            HistoryError::ReadOnlyHistory => ("READ_ONLY_HISTORY", self.to_string()),
             HistoryError::StaleCursor => (
                 "HISTORY_STALE",
                 "Conversation changed. Refresh history.".to_owned(),

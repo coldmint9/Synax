@@ -21,8 +21,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
   const userMessageFontWeight = useShellStore(
     (state) => state.preferences.userMessageFontWeight,
   );
-  const history = useSessionHistory(),
-    checkpoint = history?.checkpoint(messageId);
+  const history = useSessionHistory();
   const [editing, setEditing] = useState(false),
     [draft, setDraft] = useState(content),
     [saving, setSaving] = useState(false);
@@ -36,26 +35,20 @@ export const UserMessageBlock = memo(function UserMessageBlock({
   const save = async () => {
     if (
       !history ||
-      !checkpoint ||
+      !messageId ||
       saving ||
       !draft.trim()
     )
       return;
     setSaving(true);
     try {
-      if (await history.request("edit", checkpoint, draft)) setEditing(false);
+      if (await history.edit(messageId, draft)) setEditing(false);
     } finally {
       setSaving(false);
     }
   };
   const disabledReason =
-    history?.reason ||
-    (checkpoint?.available
-      ? null
-      : checkpoint?.reason ||
-        (zh
-          ? "此消息没有可用的会话检查点"
-          : "No conversation checkpoint for this message"));
+    history?.editReason(messageId) ?? (!history ? (zh ? "会话尚未加载" : "Conversation is not loaded") : null);
   return (
     <div className="flex justify-end">
       {editing ? (
@@ -81,19 +74,11 @@ export const UserMessageBlock = memo(function UserMessageBlock({
           />
           <MediaParts parts={contentParts?.filter((p) => p.type !== "text")} />
           <div className="message-inline-editor-footer">
-            {/*<span*/}
-            {/*  className={*/}
-            {/*    history?.error*/}
-            {/*      ? "message-inline-editor-hint text-danger"*/}
-            {/*      : "message-inline-editor-hint"*/}
-            {/*  }*/}
-            {/*  role={history?.error ? "alert" : undefined}*/}
-            {/*>*/}
-            {/*  {history?.error ||*/}
-            {/*    (zh*/}
-            {/*      ? "重新发送会截断此处之后的对话；不会自动修改工作区文件"*/}
-            {/*      : "Resending replaces the conversation from here; workspace files are not changed automatically")}*/}
-            {/*</span>*/}
+            <span className="message-inline-editor-hint" role={history?.error ? "alert" : undefined}>
+              {history?.error || (zh
+                ? "重新发送将替换此消息并删除后续对话，工作区文件保持不变"
+                : "Resending replaces this message and removes later conversation. Workspace files stay unchanged.")}
+            </span>
             <Button
               size="sm"
               variant="ghost"

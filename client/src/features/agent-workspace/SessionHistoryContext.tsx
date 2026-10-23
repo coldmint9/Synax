@@ -37,6 +37,8 @@ interface ContextValue {
   running: boolean;
   busy: boolean;
   error: string | null;
+  editReason: (messageId?: string) => string | null;
+  edit: (messageId: string, message: string) => Promise<boolean>;
   checkpoint: (
     messageId?: string,
     stepId?: string,
@@ -133,6 +135,26 @@ export function SessionHistoryProvider({
   const resolver = useRef<((ok: boolean) => void) | null>(null);
   const requestEpoch = useRef(0);
   const sessionId = session?.id;
+  const messageIndex = useMemo(() => new Map(messages.map(message => [message.id, message])), [messages]);
+  const checkpointIndex = useMemo(() => {
+    const byMessage = new Map<string, MessageCheckpoint>();
+    const byStep = new Map<string, MessageCheckpoint>();
+    let initial: MessageCheckpoint | undefined;
+    const readOnly = new Set(summary?.sessionId === sessionId ? summary?.readOnlyMessageIds ?? [] : []);
+    if (summary && summary.sessionId === sessionId) for (const checkpoint of summary.checkpoints) {
+      byMessage.set(checkpoint.messageId, checkpoint);
+      if (checkpoint.kind === "reply" && checkpoint.stepId) byStep.set(checkpoint.stepId, checkpoint);
+      if (checkpoint.initialInput) initial = checkpoint;
+    }
+    return { byMessage, byStep, initial, readOnly };
+  }, [summary, sessionId]);
+  const latestCompaction = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const state = messages[index].metadata?.contextCompaction as { status?: string; checkpointId?: string } | undefined;
+      if (state?.status === "completed" && state.checkpointId) return state.checkpointId;
+    }
+    return null;
+  }, [messages]);
   // 消息列表只用来过滤结果，不再作为请求触发器；否则每次流式增量都会带上
   // 一份新的 id 列表再请求一遍 checkpoints。
   const messageIds = useRef<string[]>([]);
@@ -140,6 +162,8 @@ export function SessionHistoryProvider({
   useConversationHistoryVisit(sessionId);
   const [includeFiles, setIncludeFiles] = useState(true);
   const forkInFlight = useRef(false);
+  const editInFlight = useRef(false);
+  const editAttempt = useRef<{ sessionId: string; messageId: string; message: string; requestId: string; submitted: boolean } | null>(null);
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       // A removed or archived session owns no checkpoints; skip the doomed
@@ -164,8 +188,14 @@ export function SessionHistoryProvider({
     if (!id) return null;
     return (await conversationHistoryApi.list(id, undefined, messageIds.current)) ?? null;
   }, [sessionId]);
+  useEffect(() => {
+    if (!latestCompaction) return;
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => controller.abort();
+  }, [latestCompaction, refresh]);
   // 会话边界只在中断、停止、等待和完成时变化。一次运行期间不再跟随每次
-  // 状态/消息变化重新拉取；在此之前由用户的编辑、回滚、分叉操作按需加载。
+  // 状态/消息变化重新拉取；在此之前由用户的回滚或分叉操作按需加载。
   const settledStatus = session?.status;
   useEffect(() => {
     const controller = new AbortController();
@@ -210,7 +240,7 @@ export function SessionHistoryProvider({
       message?: string,
       workspaceMode?: ForkWorkspaceMode,
     ): Promise<boolean> => {
-      if (!sessionId || executing || resolver.current || forkInFlight.current) return false;
+      if (!sessionId || executing || resolver.current || forkInFlight.current || editInFlight.current) return false;
       if (action === "fork" && !workspaceMode) return false;
       if (
         action !== "fork" &&
@@ -293,57 +323,6 @@ export function SessionHistoryProvider({
           );
       };
 
-      // Editing an already sent user message is intentionally a one-step,
-      // conversation-only operation. The inline editor owns the warning and
-      // retry state; file restoration remains opt-in through the full rollback
-      // dialog, so an edit cannot silently overwrite workspace files.
-      if (action === "edit") {
-        setExecuting(true);
-        try {
-          await stopIfRunning();
-          if (epoch !== requestEpoch.current) return false;
-          const value = await conversationHistoryApi.preview(
-            sessionId,
-            checkpoint.id,
-            action,
-            false,
-          );
-          if (epoch !== requestEpoch.current) return false;
-          setPreview(value);
-          if (!value.canApply) {
-            const conflict = value.conflicts[0];
-            throw new Error(
-              conflict
-                ? `${conflict.path}: ${conflict.reason}`
-                : zh
-                  ? "当前会话状态已变化，请重试"
-                  : "The conversation changed; please retry.",
-            );
-          }
-          await conversationHistoryApi.apply(sessionId, action, {
-            checkpointId: checkpoint.id,
-            revision: value.revision,
-            requestId,
-            message,
-            includeFiles: false,
-          });
-          const store = useAgentSessionStore.getState();
-          store.resetConversationHistory(sessionId);
-          // The history mutation has already been accepted. Keep the editor
-          // responsive and let the store refresh the transcript in the
-          // background while the previous layout remains painted.
-          void store.refreshSessions();
-          close(true);
-          void refresh();
-          return true;
-        } catch (e) {
-          if (epoch === requestEpoch.current) setError((e as Error).message);
-          return false;
-        } finally {
-          setExecuting(false);
-        }
-      }
-
       const result = new Promise<boolean>((resolve) => {
         resolver.current = resolve;
       });
@@ -369,8 +348,61 @@ export function SessionHistoryProvider({
     },
     [sessionId, session, executing, zh, close, refresh],
   );
+  const editReason = useCallback((messageId?: string): string | null => {
+    if (!sessionId || !messageId || isRuntimeResourceGone(sessionId))
+      return zh ? "此消息尚未保存，暂时无法编辑" : "This message is not saved yet";
+    if (session?.sessionMetadata?.historyRollbackEnabled === false)
+      return zh ? "分叉会话只追加历史，不支持编辑重发" : "This conversation is append-only";
+    if (summary?.sessionId === sessionId && summary.recoveryRequired)
+      return zh ? "请先恢复上一次历史操作" : "Recover the previous history operation first";
+    const checkpoint = messageId.startsWith("user-input-") ? checkpointIndex.initial : checkpointIndex.byMessage.get(messageId);
+    if (checkpointIndex.readOnly.has(messageId) || checkpoint?.reason?.startsWith("READ_ONLY_HISTORY"))
+      return zh ? "这段历史已压缩，仅供查看，不能编辑或回滚" : "This history is compacted and read-only";
+    if (messageIndex.get(messageId)?.historyProjection)
+      return zh ? "这是长消息预览，请勿用截断内容覆盖原消息" : "Load the full message before editing";
+    return null;
+  }, [sessionId, session?.sessionMetadata?.historyRollbackEnabled, summary, checkpointIndex, messageIndex, zh]);
+  const edit = useCallback(async (messageId: string, message: string): Promise<boolean> => {
+    if (!sessionId || !message.trim() || executing || resolver.current || forkInFlight.current || editInFlight.current)
+      return false;
+    const reason = editReason(messageId);
+    if (reason) { setError(reason); return false; }
+    const epoch = ++requestEpoch.current;
+    editInFlight.current = true;
+    setExecuting(true);
+    setError(null);
+    // Preserve the request identity on retry, including a lost response after
+    // the server already truncated history and accepted the replacement turn.
+    const previous = editAttempt.current;
+    const attempt = previous?.sessionId === sessionId && previous.messageId === messageId && previous.message === message
+      ? previous : { sessionId, messageId, message, requestId: crypto.randomUUID(), submitted: false };
+    editAttempt.current = attempt;
+    try {
+      const store = useAgentSessionStore.getState();
+      const current = store.sessions.find(entry => entry.id === sessionId);
+      if (!attempt.submitted && ACTIVE_STATUSES.has(current?.status ?? session?.status ?? "completed"))
+        await store.cancelSessionRun(sessionId);
+      if (epoch !== requestEpoch.current) return false;
+      attempt.submitted = true;
+      await conversationHistoryApi.edit(sessionId, {
+        messageId, message, requestId: attempt.requestId,
+      });
+      store.resetConversationHistory(sessionId);
+      void store.refreshSessions();
+      if (epoch !== requestEpoch.current) return false;
+      editAttempt.current = null;
+      void refresh();
+      return true;
+    } catch (e) {
+      if (epoch === requestEpoch.current) setError((e as Error).message);
+      return false;
+    } finally {
+      editInFlight.current = false;
+      if (epoch === requestEpoch.current) setExecuting(false);
+    }
+  }, [sessionId, session?.status, executing, editReason, refresh]);
   // 边界摘要可能还没加载（运行中不预取）：用当前消息和步骤重新定位 checkpoint，
-  // 只在用户真正点击编辑、回滚或分叉时发起这一次请求。
+  // 只在用户真正点击回滚或分叉时发起这一次请求；编辑按消息 ID 直接执行。
   const request = useCallback(
     async (
       action: HistoryAction,
@@ -393,9 +425,9 @@ export function SessionHistoryProvider({
             ? "此消息没有可用的会话检查点"
             : "No conversation checkpoint for this message",
         );
-      return historyRequest(action, resolved, message, workspaceMode);
+      return historyRequest(action, { ...checkpoint, ...resolved, transcriptOnly: checkpoint.transcriptOnly ?? resolved.transcriptOnly, destructive: checkpoint.destructive ?? resolved.destructive }, message, workspaceMode);
     },
-    [historyRequest, loadSummary, messages, zh],
+    [historyRequest, loadSummary, messages, summary, sessionId, zh],
   );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing || pending.checkpoint.transcriptOnly) return;
@@ -474,20 +506,30 @@ export function SessionHistoryProvider({
       running: Boolean(session && ACTIVE_STATUSES.has(session.status)),
       busy: Boolean(pending) || executing,
       error,
+      edit,
+      editReason,
       request,
       checkpoint: (messageId, stepId) => {
         if (!summary || summary.sessionId !== sessionId) return undefined;
-        return findCheckpoint(summary, messages, messageId, stepId, zh);
+        const found = messageId?.startsWith("user-input-") ? checkpointIndex.initial
+          : messageId ? checkpointIndex.byMessage.get(messageId) : stepId ? checkpointIndex.byStep.get(stepId) : undefined;
+        if (found?.kind === "input" && messageIndex.get(found.messageId)?.historyProjection)
+          return { ...found, available: false, reason: zh ? "这是长消息预览，请勿用截断内容覆盖原消息" : "Load the full message before editing" };
+        return found;
       },
       };
     },
     [
       session,
+      checkpointIndex,
+      messageIndex,
       sessionId,
       summary,
       loadError,
       pending,
       error,
+      edit,
+      editReason,
       request,
       executing,
       zh,
@@ -531,7 +573,7 @@ export function SessionHistoryProvider({
           >
             {zh ? "恢复" : "Recover"}
           </Button>
-          {loadError && <span className="text-danger">{loadError}</span>}
+          {loadError && <span role="alert" className="text-danger">{loadError}</span>}
         </div>
       )}
       {session?.sessionMetadata?.historyRollbackEnabled === false && (

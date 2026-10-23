@@ -14,6 +14,8 @@ import {
   startThemeRuntime,
 } from "../shared/state/themeStore";
 import { installScrollRevealScrollbar } from "../shared/lib/scrollRevealScrollbar";
+import { ErrorToastBridge } from "../shared/ui/ErrorToastBridge";
+import { ToastContainer } from "../shared/ui/ToastContainer";
 
 hydrateThemePreferences();
 hydrateShellPreferences();
@@ -25,6 +27,8 @@ function bootstrap() {
   ReactDOM.createRoot(document.getElementById("app")!).render(
     <React.StrictMode>
       <BrowserRouter>
+        <ErrorToastBridge />
+        <ToastContainer />
         <RuntimeAccessGate>
           <App />
         </RuntimeAccessGate>

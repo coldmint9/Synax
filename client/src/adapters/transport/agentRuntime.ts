@@ -747,9 +747,8 @@ export interface SessionBackgroundProcess {
 /**
  * Workspace-level Git facts for one project member.
  *
- * Two conversations opened on the same checkout share this object: it is keyed
- * by the canonical workspace path on the server and by `projectId` in the
- * client cache, never by session id.
+ * Conversations opened on the same checkout share these facts; session-bound
+ * worktrees are scoped separately so actions never target the wrong checkout.
  */
 export interface WorkspaceRepositoryGit {
   rootId: string;
@@ -759,6 +758,8 @@ export interface WorkspaceRepositoryGit {
   workspacePath: string;
   branch: string;
   headCommitSha: string;
+  /** Absent when connected to an older server. */
+  unpushedCommitCount?: number;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -980,6 +981,10 @@ export interface HistoryWindowResponse {
 }
 
 export const agentRuntimeApi = {
+  bindSessionWorktree: (sessionId: string, body: { rootId: string; path: string; expectedPath: string }) =>
+    request<{ roots: import('./project').ProjectWorkspaceRoot[]; revision?: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/workspace/binding`, { method: 'POST', body: JSON.stringify(body) },
+    ),
   compactContext: (sessionId: string) =>
     request<{ accepted: true; status: "compacting" }>(
       `/sessions/${encodeURIComponent(sessionId)}/context/compact`,

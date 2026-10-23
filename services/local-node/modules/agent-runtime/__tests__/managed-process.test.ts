@@ -19,9 +19,9 @@ describe('owned protocol process termination', () => {
       expect(process.child.signalCode).toBe('SIGKILL');
     } finally { await process.stop(); }
   });
-  it.skipIf(globalThis.process.platform === 'win32')('cleans up descendants even if their protocol host exits first', async () => {
+  it.skipIf(globalThis.process.platform === 'win32').each([false, true])('cleans up descendants even if their protocol host exits first (detached=%s)', async (detached) => {
     const childCode = "process.on('SIGTERM',()=>{});console.log('ready');setInterval(()=>{},1000)";
-    const parentCode = `const {spawn}=require('child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{stdio:['ignore','pipe','ignore']});c.stdout.once('data',()=>{console.log(c.pid);process.exit(0)})`;
+    const parentCode = `const {spawn}=require('child_process');const c=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{detached:${detached},stdio:['ignore','pipe','ignore']});c.stdout.once('data',()=>{console.log(c.pid);process.exit(0)})`;
     const managed = spawnManagedProcess(globalThis.process.execPath, ['-e', parentCode], { graceMs: 50 });
     try {
       const childPid = await withDeadline(new Promise<number>(resolve => managed.child.stdout.once('data', data => resolve(Number(String(data).trim())))), 2000, 'Child not ready');

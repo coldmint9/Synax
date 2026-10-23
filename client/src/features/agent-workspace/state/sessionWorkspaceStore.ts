@@ -34,38 +34,132 @@ export interface WorkspaceSessionState {
 type SessionWorkspaceRecord = Record<string, WorkspaceSessionState>;
 type WorkspaceSaveHandler = () => Promise<boolean>;
 
-const saveHandlers = new Map<string, WorkspaceSaveHandler>();
-const drafts = new Map<string, string>();
+interface WorkspaceTabResource {
+  draft?: string;
+  save?: WorkspaceSaveHandler;
+  active: boolean;
+}
+export interface WorkspaceDraftLease {
+  readonly state: WorkspaceTabResource;
+}
+const resources = new Map<string, Map<string, WorkspaceTabResource>>();
 
+function resource(sessionId: string, tabId: string): WorkspaceTabResource {
+  let tabs = resources.get(sessionId);
+  if (!tabs) {
+    tabs = new Map();
+    resources.set(sessionId, tabs);
+  }
+  let state = tabs.get(tabId);
+  if (!state) {
+    state = { active: true };
+    tabs.set(tabId, state);
+  }
+  return state;
+}
+export function acquireWorkspaceDraftLease(
+  sessionId: string,
+  tabId: string,
+): WorkspaceDraftLease {
+  return { state: resource(sessionId, tabId) };
+}
+function currentResource(
+  sessionId: string,
+  tabId: string,
+  lease?: WorkspaceDraftLease,
+) {
+  const current = resources.get(sessionId)?.get(tabId);
+  if (lease && (!lease.state.active || lease.state !== current))
+    return undefined;
+  return current;
+}
+function retireWorkspaceTab(sessionId: string, tabId: string) {
+  const tabs = resources.get(sessionId),
+    state = tabs?.get(tabId);
+  if (state) {
+    state.active = false;
+    delete state.draft;
+    delete state.save;
+  }
+  tabs?.delete(tabId);
+  if (!tabs?.size) resources.delete(sessionId);
+}
+function retireWorkspaceSession(sessionId: string, keepId?: string) {
+  const tabs = resources.get(sessionId);
+  if (!tabs) return;
+  for (const id of [...tabs.keys()])
+    if (id !== keepId) retireWorkspaceTab(sessionId, id);
+}
 export function registerWorkspaceSaveHandler(
+  sessionId: string,
   tabId: string,
   handler: WorkspaceSaveHandler,
+  lease?: WorkspaceDraftLease,
 ): () => void {
-  saveHandlers.set(tabId, handler);
+  const state = lease
+    ? currentResource(sessionId, tabId, lease)
+    : resource(sessionId, tabId);
+  if (!state) return () => {};
+  state.save = handler;
   return () => {
-    if (saveHandlers.get(tabId) === handler) saveHandlers.delete(tabId);
+    if (state.save === handler) delete state.save;
   };
 }
-
-export async function saveWorkspaceTab(tabId: string): Promise<boolean> {
-  return (await saveHandlers.get(tabId)?.()) ?? false;
+export async function saveWorkspaceTab(
+  sessionId: string,
+  tabId: string,
+): Promise<boolean> {
+  return (await currentResource(sessionId, tabId)?.save?.()) ?? false;
 }
-
-export function setWorkspaceDraft(tabId: string, content: string): void {
-  drafts.set(tabId, content);
+export function setWorkspaceDraft(
+  sessionId: string,
+  tabId: string,
+  content: string,
+  lease?: WorkspaceDraftLease,
+): void {
+  const state = lease
+    ? currentResource(sessionId, tabId, lease)
+    : resource(sessionId, tabId);
+  if (state) state.draft = content;
 }
-
-export function getWorkspaceDraft(tabId: string): string | undefined {
-  return drafts.get(tabId);
+export function getWorkspaceDraft(
+  sessionId: string,
+  tabId: string,
+  lease?: WorkspaceDraftLease,
+): string | undefined {
+  return currentResource(sessionId, tabId, lease)?.draft;
 }
-
-export function clearWorkspaceDraft(tabId: string): void {
-  drafts.delete(tabId);
+export function clearWorkspaceDraft(sessionId: string, tabId: string): void {
+  const state = currentResource(sessionId, tabId);
+  if (state) delete state.draft;
+}
+export function isWorkspaceDraftLeaseActive(
+  sessionId: string,
+  tabId: string,
+  lease: WorkspaceDraftLease,
+): boolean {
+  return !!currentResource(sessionId, tabId, lease);
+}
+export function workspaceResourceCounts() {
+  let tabs = 0,
+    drafts = 0,
+    handlers = 0;
+  for (const session of resources.values())
+    for (const state of session.values()) {
+      tabs++;
+      if (state.draft !== undefined) drafts++;
+      if (state.save) handlers++;
+    }
+  return { sessions: resources.size, tabs, drafts, handlers };
 }
 
 interface SessionWorkspaceStoreState {
   sessions: SessionWorkspaceRecord;
-  openSubagent: (sessionId: string, childSessionId: string, title: string) => void;
+  openSubagent: (
+    sessionId: string,
+    childSessionId: string,
+    title: string,
+  ) => void;
   closeSubagent: (sessionId: string) => void;
   setSubagentFullscreen: (sessionId: string, fullscreen: boolean) => void;
   openTab: (sessionId: string, tab: Omit<WorkspaceTab, "id">) => void;
@@ -75,8 +169,17 @@ interface SessionWorkspaceStoreState {
   showDashboard: (sessionId: string) => void;
   closeTab: (sessionId: string, id: string) => void;
   closeOthers: (sessionId: string, id: string) => void;
-  renameFileTabs: (sessionId: string, rootId: string | undefined, oldPath: string, newPath: string) => void;
-  closeFileTabs: (sessionId: string, rootId: string | undefined, path: string) => void;
+  renameFileTabs: (
+    sessionId: string,
+    rootId: string | undefined,
+    oldPath: string,
+    newPath: string,
+  ) => void;
+  closeFileTabs: (
+    sessionId: string,
+    rootId: string | undefined,
+    path: string,
+  ) => void;
   closeAll: (sessionId: string) => void;
   setTabDirty: (sessionId: string, id: string, dirty: boolean) => void;
   setPresentation: (
@@ -199,8 +302,7 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
       })),
 
     closeTab: (sessionId, id) => {
-      clearWorkspaceDraft(id);
-      saveHandlers.delete(id);
+      retireWorkspaceTab(sessionId, id);
       set((state) => ({
         sessions: patchSession(state.sessions, sessionId, (current) => {
           const tabs = current.tabs.filter((item) => item.id !== id);
@@ -222,33 +324,59 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
       set((state) => ({
         sessions: patchSession(state.sessions, sessionId, (current) => {
           const tabs = current.tabs.map((tab) => {
-            if ((tab.kind !== "file" && tab.kind !== "diff") || tab.rootId !== rootId || tab.path !== oldPath) return tab;
-            const title = tab.title.replace(oldPath.split(/[\\/]/).pop() ?? oldPath, newPath.split(/[\\/]/).pop() ?? newPath);
+            if (
+              (tab.kind !== "file" && tab.kind !== "diff") ||
+              tab.rootId !== rootId ||
+              tab.path !== oldPath
+            )
+              return tab;
+            const title = tab.title.replace(
+              oldPath.split(/[\\/]/).pop() ?? oldPath,
+              newPath.split(/[\\/]/).pop() ?? newPath,
+            );
             const next = { ...tab, path: newPath, title };
-            return { ...next, id: tabIdentity(next) };
+            const id = tabIdentity(next);
+            const draft = getWorkspaceDraft(sessionId, tab.id);
+            retireWorkspaceTab(sessionId, tab.id);
+            if (draft !== undefined) setWorkspaceDraft(sessionId, id, draft);
+            return { ...next, id };
           });
-          const activeIndex = current.tabs.findIndex((tab) => tab.id === current.activeTabId);
-          return { ...current, tabs, activeTabId: activeIndex < 0 ? current.activeTabId : tabs[activeIndex].id };
+          const activeIndex = current.tabs.findIndex(
+            (tab) => tab.id === current.activeTabId,
+          );
+          return {
+            ...current,
+            tabs,
+            activeTabId:
+              activeIndex < 0 ? current.activeTabId : tabs[activeIndex].id,
+          };
         }),
       })),
 
     closeFileTabs: (sessionId, rootId, path) => {
-      const tabs = get().sessions[sessionId]?.tabs.filter((tab) =>
-        (tab.kind === "file" || tab.kind === "diff") && tab.rootId === rootId && tab.path === path,
-      ) ?? [];
+      const tabs =
+        get().sessions[sessionId]?.tabs.filter(
+          (tab) =>
+            (tab.kind === "file" || tab.kind === "diff") &&
+            tab.rootId === rootId &&
+            tab.path === path,
+        ) ?? [];
       for (const tab of tabs) get().closeTab(sessionId, tab.id);
     },
 
-    closeOthers: (sessionId, id) =>
+    closeOthers: (sessionId, id) => {
+      retireWorkspaceSession(sessionId, id);
       set((state) => ({
         sessions: patchSession(state.sessions, sessionId, (current) => ({
           ...current,
           tabs: current.tabs.filter((item) => item.id === id),
           activeTabId: id,
         })),
-      })),
+      }));
+    },
 
-    closeAll: (sessionId) =>
+    closeAll: (sessionId) => {
+      retireWorkspaceSession(sessionId);
       set((state) => ({
         sessions: patchSession(state.sessions, sessionId, (current) => ({
           ...current,
@@ -256,17 +384,28 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
           activeTabId: null,
           presentation: "dock",
         })),
-      })),
+      }));
+    },
 
     setTabDirty: (sessionId, id, dirty) =>
-      set((state) => ({
-        sessions: patchSession(state.sessions, sessionId, (current) => ({
-          ...current,
-          tabs: current.tabs.map((tab) =>
-            tab.id === id ? { ...tab, dirty: dirty || undefined } : tab,
-          ),
-        })),
-      })),
+      set((state) => {
+        const current = state.sessions[sessionId];
+        if (!current) return state;
+        let changed = false;
+        const tabs = current.tabs.map((tab) => {
+          if (tab.id !== id || !!tab.dirty === dirty) return tab;
+          changed = true;
+          return { ...tab, dirty: dirty || undefined };
+        });
+        return changed
+          ? {
+              sessions: {
+                ...state.sessions,
+                [sessionId]: { ...current, tabs },
+              },
+            }
+          : state;
+      }),
 
     setPresentation: (sessionId, presentation) =>
       set((state) => ({
@@ -285,13 +424,15 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
       useSessionWorkspaceStore.getState().setPresentation(sessionId, "dock");
     },
 
-    resetSession: (sessionId) =>
+    resetSession: (sessionId) => {
+      retireWorkspaceSession(sessionId);
       set((state) => {
         if (!(sessionId in state.sessions)) return state;
         const sessions = { ...state.sessions };
         delete sessions[sessionId];
         return { sessions };
-      }),
+      });
+    },
 
     removeSessions: (sessionIds) =>
       set((state) => {
@@ -299,6 +440,7 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
         let changed = false;
         const sessions = { ...state.sessions };
         for (const sessionId of removed) {
+          retireWorkspaceSession(sessionId);
           if (sessionId in sessions) {
             delete sessions[sessionId];
             changed = true;
@@ -309,8 +451,11 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
             (tab) =>
               tab.kind !== "subagent" || !removed.has(tab.sessionId ?? ""),
           );
-          const subagentRemoved = Boolean(workspace.subagent && removed.has(workspace.subagent.sessionId));
-          if (tabs.length === workspace.tabs.length && !subagentRemoved) continue;
+          const subagentRemoved = Boolean(
+            workspace.subagent && removed.has(workspace.subagent.sessionId),
+          );
+          if (tabs.length === workspace.tabs.length && !subagentRemoved)
+            continue;
           changed = true;
           const activeTabId = tabs.some(
             (tab) => tab.id === workspace.activeTabId,
@@ -414,5 +559,7 @@ export function openWorkspaceSubagent(
   subagentSessionId: string,
   title: string,
 ): void {
-  useSessionWorkspaceStore.getState().openSubagent(ownerSessionId, subagentSessionId, title);
+  useSessionWorkspaceStore
+    .getState()
+    .openSubagent(ownerSessionId, subagentSessionId, title);
 }

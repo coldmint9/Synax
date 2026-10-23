@@ -32,7 +32,7 @@ describe("message action toolbar", () => {
       screen.queryByRole("button", { name: "Copied" }),
     ).not.toBeInTheDocument();
   });
-  it("keeps destructive controls inert while providing discoverable reasons", () => {
+  it("hides unavailable fork and rollback actions while keeping copy available", () => {
     const onRollback = vi.fn(),
       onFork = vi.fn();
     render(
@@ -44,13 +44,14 @@ describe("message action toolbar", () => {
         onFork={onFork}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Roll back to here" }));
-    fireEvent.click(screen.getByRole("button", { name: "Fork from here" }));
+    expect(
+      screen.queryByRole("button", { name: "Roll back to here" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Fork from here" }),
+    ).not.toBeInTheDocument();
     expect(onRollback).not.toHaveBeenCalled();
     expect(onFork).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Roll back to here" }),
-    ).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("button", { name: "Copy" })).not.toHaveAttribute(
       "aria-disabled",
       "true",
@@ -69,7 +70,9 @@ describe("message action toolbar", () => {
         onRollback={onRollback}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Roll back to here" }));
+    expect(
+      screen.queryByRole("button", { name: "Roll back to here" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Fork from here" }));
     expect(onFork).not.toHaveBeenCalled();
     expect(await screen.findAllByRole("menuitem")).toHaveLength(2);

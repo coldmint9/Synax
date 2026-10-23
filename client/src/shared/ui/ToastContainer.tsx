@@ -37,6 +37,7 @@ export function ToastContainer() {
 
   return (
     <div
+      data-synax-toast="container"
       className="fixed left-1/2 top-14 z-[100] w-[280px] max-w-[calc(100vw-24px)] -translate-x-1/2"
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
@@ -85,7 +86,12 @@ function ToastItem({ notification, index, total, expanded }: {
       }}
       className="motion-safe:transition-[transform,opacity] motion-safe:duration-300 motion-safe:ease-out"
     >
-      <div role={archive ? 'status' : undefined} className="flex items-start gap-2 rounded-xl border border-black/10 bg-white/90 px-3 py-2 text-zinc-900 shadow-overlay backdrop-blur-xl dark:border-white/15 dark:bg-black/80 dark:text-zinc-50 motion-safe:animate-toast-enter">
+      <div
+        data-synax-toast="item"
+        role={archive ? 'status' : notification.type === 'error' ? 'alert' : 'status'}
+        aria-live={notification.type === 'error' ? 'assertive' : 'polite'}
+        className="flex items-start gap-2 rounded-xl border border-black/10 bg-white/90 px-3 py-2 text-zinc-900 shadow-overlay backdrop-blur-xl dark:border-white/15 dark:bg-black/80 dark:text-zinc-50 motion-safe:animate-toast-enter"
+      >
         <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
         <div className="flex-1 min-w-0">
           <p className="text-xs leading-5 text-inherit">

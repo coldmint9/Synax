@@ -13,6 +13,7 @@ import { AgentNotFoundError, AgentValidationError } from "./runtime-errors.js";
 import type { AgentSessionStatus, ToolCallRecord } from "./contracts.js";
 import { detectMediaType } from "./media-assets.js";
 import { assertRelativePath, resolveSafeFile } from "./workspace-paths.js";
+import { readWorkspacePreview, previewText } from './workspace-preview.js';
 import {
   invalidateWorkspaceGitForSession,
   readWorkspaceGit,
@@ -323,10 +324,13 @@ export async function getSessionEnvironmentFileMedia(
   if (!stat.isFile())
     throw new AgentValidationError(`Not a file: ${cleanPath}`);
   if (stat.size > MAX_PREVIEW_IMAGE_BYTES)
-    throw new AgentValidationError(`Image preview exceeds 20 MB: ${cleanPath}`);
-  const bytes = fs.readFileSync(absolutePath);
+    throw new AgentValidationError(`Media preview exceeds 20 MB: ${cleanPath}`);
+  const preview = await readWorkspacePreview(absolutePath, MAX_PREVIEW_IMAGE_BYTES);
+  if (preview.truncated) throw new AgentValidationError(`Media preview exceeds 20 MB: ${cleanPath}`);
+  const bytes = preview.bytes;
   const mediaType = detectMediaType(bytes, cleanPath);
-  if (!mediaType.startsWith("image/") && mediaType !== "application/pdf")
+  if (!mediaType.startsWith("image/") && !mediaType.startsWith("audio/") &&
+      !mediaType.startsWith("video/") && mediaType !== "application/pdf")
     throw new AgentValidationError(`Unsupported media preview: ${cleanPath}`);
   return { sessionId, path: cleanPath, mediaType, bytes };
 }
@@ -347,6 +351,7 @@ export async function getSessionEnvironmentFile(
   ).path;
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   let content = "";
+  let truncated = false;
 
   if (kind === "diff") {
     const trackedDiff = await readWorkspaceGit(workspacePath, [
@@ -377,10 +382,9 @@ export async function getSessionEnvironmentFile(
     const stat = fs.statSync(absolutePath);
     if (!stat.isFile())
       throw new AgentValidationError(`Not a file: ${cleanPath}`);
-    content = fs
-      .readFileSync(absolutePath)
-      .subarray(0, MAX_FILE_BYTES)
-      .toString("utf8");
+    const preview = await readWorkspacePreview(absolutePath, MAX_FILE_BYTES);
+    truncated = preview.truncated;
+    content = previewText(preview.bytes, truncated);
   }
 
   return {
@@ -388,7 +392,6 @@ export async function getSessionEnvironmentFile(
     path: cleanPath,
     kind,
     content,
-    truncated:
-      kind === "input" && Buffer.byteLength(content, "utf8") >= MAX_FILE_BYTES,
+    truncated,
   };
 }

@@ -128,7 +128,7 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
     if (!pendingClose || !sessionId) return;
     setSavingClose(true);
     let saved = false;
-    try { saved = await saveWorkspaceTab(pendingClose.id); }
+    try { saved = await saveWorkspaceTab(sessionId, pendingClose.id); }
     catch (error) { handleError(error); }
     finally { setSavingClose(false); }
     if (!saved) return;

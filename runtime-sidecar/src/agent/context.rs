@@ -15,6 +15,8 @@ pub(crate) use crate::llm::tokenizer::tokens;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ContextPolicy {
     pub context_limit: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_limit: Option<usize>,
     pub output_reserve: usize,
     #[serde(default = "default_keep")]
     pub keep_recent_messages: usize,
@@ -28,6 +30,7 @@ impl ContextPolicy {
             || self.context_limit > 10_000_000
             || self.output_reserve == 0
             || self.output_reserve >= self.context_limit
+            || self.input_limit.is_some_and(|limit| limit == 0 || limit > 10_000_000)
             || self.keep_recent_messages < 2
             || self.keep_recent_messages > 256
         {
@@ -36,7 +39,11 @@ impl ContextPolicy {
         Ok(())
     }
     pub(crate) fn input_budget(&self) -> usize {
-        self.context_limit - self.output_reserve
+        self.budget_for_output(self.output_reserve)
+    }
+    fn budget_for_output(&self, output: usize) -> usize {
+        self.context_limit.saturating_sub(output)
+            .min(self.input_limit.unwrap_or(self.context_limit))
     }
 }
 
@@ -122,7 +129,7 @@ fn is_attachment(value: &Value) -> bool {
     )
 }
 
-fn contains_attachment(value: &Value) -> bool {
+pub(crate) fn contains_attachment(value: &Value) -> bool {
     if is_attachment(value) {
         return true;
     }
@@ -149,6 +156,10 @@ fn without_attachments(value: &Value) -> Value {
         ),
         _ => value.clone(),
     }
+}
+
+pub(crate) fn message_tokens(message: &Value) -> Result<usize, ContextError> {
+    Ok(tokens(&serde_json::to_string(&without_attachments(message))?) + 4)
 }
 
 fn has_tool_result(message: &Value) -> bool {
@@ -296,7 +307,7 @@ impl Compaction {
             self.summary
         );
         let remaining = &self.source[self.offset..];
-        let summary_budget = policy.context_limit.saturating_sub(self.summary_tokens);
+        let summary_budget = policy.budget_for_output(self.summary_tokens);
         let mut size = remaining.len().min(summary_budget.saturating_mul(3));
         loop {
             while !remaining.is_char_boundary(size) {
@@ -339,6 +350,37 @@ impl Compaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn input_limit_does_not_pay_output_reserve_twice() {
+        let policy = ContextPolicy {
+            context_limit: 1000, input_limit: Some(700), output_reserve: 200,
+            keep_recent_messages: 2,
+        };
+        policy.validate().unwrap();
+        assert_eq!(policy.input_budget(), 700);
+        assert_eq!(policy.budget_for_output(100), 700);
+        assert_eq!(policy.budget_for_output(400), 600);
+    }
+
+    #[test]
+    fn summary_chunks_honor_independent_input_limit() {
+        let source = input(vec![
+            json!({"role":"assistant","content":"Old evidence. ".repeat(1000)}),
+            json!({"role":"user","content":"Continue"}),
+            json!({"role":"assistant","content":"Checking"}),
+        ]);
+        let policy = ContextPolicy {
+            context_limit: 2000, input_limit: Some(700), output_reserve: 200,
+            keep_recent_messages: 2,
+        };
+        let ContextAction::Compact(compact) = plan(&source, &policy).unwrap() else {
+            panic!("expected compaction");
+        };
+        let (request, through) = compact.request(&source, &policy).unwrap();
+        assert!(through > 0);
+        assert!(composition(&request).unwrap().total <= 700);
+    }
+
     fn input(prompt: Vec<Value>) -> ProviderRequest {
         serde_json::from_value(json!({"apiFormat":"openai","model":"fixture","prompt":prompt}))
             .unwrap()
@@ -366,6 +408,7 @@ mod tests {
         ]);
         let policy = ContextPolicy {
             context_limit: 1500,
+            input_limit: None,
             output_reserve: 128,
             keep_recent_messages: 2,
         };
@@ -392,6 +435,7 @@ mod tests {
                 &source,
                 &ContextPolicy {
                     context_limit: 1000,
+                    input_limit: None,
                     output_reserve: 100,
                     keep_recent_messages: 2
                 }
@@ -408,6 +452,7 @@ mod tests {
         ]);
         let policy = ContextPolicy {
             context_limit: 1500,
+            input_limit: None,
             output_reserve: 128,
             keep_recent_messages: 2,
         };
@@ -426,6 +471,7 @@ mod tests {
     fn attachment_payload_size_never_triggers_text_compaction() {
         let policy = ContextPolicy {
             context_limit: 1500,
+            input_limit: None,
             output_reserve: 128,
             keep_recent_messages: 2,
         };
@@ -496,6 +542,7 @@ mod tests {
         let original = source.prompt.clone();
         let policy = ContextPolicy {
             context_limit: 3000,
+            input_limit: None,
             output_reserve: 128,
             keep_recent_messages: 2,
         };
@@ -554,6 +601,7 @@ mod tests {
         ]);
         let policy = ContextPolicy {
             context_limit: 1500,
+            input_limit: None,
             output_reserve: 128,
             keep_recent_messages: 2,
         };

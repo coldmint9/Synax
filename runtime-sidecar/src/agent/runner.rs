@@ -88,6 +88,10 @@ pub(crate) struct StepContextRequest {
     pub context_id: String,
     pub system_prompt: String,
     pub tools: Vec<Value>,
+    /// Fully reconstructed checkpoint + live tail, already budget-checked by
+    /// the host against this session's durable history. No historical replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<Vec<Value>>,
     #[serde(default)]
     pub execution_context: Option<ExecutionLease>,
 }
@@ -145,6 +149,8 @@ struct ExecutionState {
     call_tools: HashMap<String, String>,
     step_context: Option<StepContextRequest>,
     compacted_step: Option<u32>,
+    context_repair_step: Option<u32>,
+    context_correction: Option<String>,
     tool_argument_retry: Option<ToolArgumentRetry>,
     model_retry: Option<ModelRetry>,
     sequence: u64,
@@ -541,6 +547,8 @@ impl AgentLoopManager {
                     call_tools: HashMap::new(),
                     step_context: None,
                     compacted_step: None,
+                    context_repair_step: None,
+                    context_correction: None,
                     tool_argument_retry: None,
                     model_retry: None,
                     sequence: 0,
@@ -688,7 +696,7 @@ impl AgentLoopManager {
         let mut next = state.execution.clone();
         if let Some(previous) = &next.step_context {
             if previous.context_id == input.context_id {
-                if previous.system_prompt != input.system_prompt || previous.tools != input.tools {
+                if previous.system_prompt != input.system_prompt || previous.tools != input.tools || previous.prompt != input.prompt {
                     return Err("conflicting step context".into());
                 }
                 return handle.commit(&mut state, next, Vec::new(), false).await;
@@ -897,7 +905,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     .commit(
                         &mut state,
                         next,
-                        vec![json!({"type":"context-request","contextId":context_id,"step":step})],
+                        vec![json!({"type":"context-request","contextId":context_id,"step":step,"contextCorrection":execution.context_correction})],
                         false,
                     )
                     .await?;
@@ -922,6 +930,10 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 };
                 let mut state = handle.state.lock().await;
                 let mut next = state.execution.clone();
+                if let Some(prompt) = prepared.prompt {
+                    next.request.provider.prompt = prompt;
+                    next.compacted_step = Some(step);
+                }
                 next.request
                     .provider
                     .prompt
@@ -1164,6 +1176,26 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 }
                 if let Some(error) = failure {
                     drop(events);
+                    let message = error.to_string().to_ascii_lowercase();
+                    let context_overflow = ["context_length_exceeded", "maximum context length", "prompt is too long", "input is too long"]
+                        .iter().any(|text| message.contains(text));
+                    if !delivered && context_overflow && execution.context_repair_step != Some(step)
+                        && execution.request.provider.max_retries != Some(0) && execution.request.runtime_binding.is_some()
+                    {
+                        if let Some(policy) = execution.request.context_policy.as_ref() {
+                            let budget = policy.input_budget() * 3 / 4;
+                            let context_id = format!("{}:{step}:budget-repair", handle.id);
+                            let mut state = handle.state.lock().await;
+                            let mut next = state.execution.clone();
+                            next.context_repair_step = Some(step);
+                            next.request.context_policy.as_mut().unwrap().input_limit = Some(budget);
+                            next.step_context = None;
+                            next.phase = Phase::Context { step, context_id: context_id.clone() };
+                            handle.commit(&mut state, next, vec![json!({"type":"context-request","step":step,
+                                "contextId":context_id,"inputBudget":budget,"reason":"provider-context-overflow","contextCorrection":execution.context_correction})], false).await?;
+                            continue;
+                        }
+                    }
                     let retries = execution
                         .model_retry
                         .as_ref()
@@ -1291,6 +1323,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 let mut state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 next.tool_argument_retry = None;
+                next.context_correction = None;
                 if let Some(retry) = next.model_retry.take() {
                     final_events.push(json!({"type":"retry_status","step":step,"retry":{
                         "reason":retry.reason,"phase":"recovered","group":1,
@@ -1342,6 +1375,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                             }
                         }
                         Decision::Correct(reason) => {
+                            next.context_correction = Some(reason.clone());
                             next.request.provider.prompt.push(
                                 json!({"role":"user","content":[{"type":"text","text":reason}]}),
                             );
@@ -1452,6 +1486,8 @@ mod tests {
                     call_tools: HashMap::new(),
                     step_context: None,
                     compacted_step: None,
+                    context_repair_step: None,
+                    context_correction: None,
                     tool_argument_retry: None,
                     model_retry: None,
                     sequence: 0,

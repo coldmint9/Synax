@@ -1,5 +1,6 @@
 import { inspectMergeBranches } from "../../modules/git-mr/branch-options.js";
 import { Hono } from "hono";
+import { conversationGitSliceSchema } from '../../modules/agent-runtime/conversation-git/schemas.js';
 import * as z from "zod/v4";
 import type { WorkspaceLocation } from "../../modules/workspace-location.js";
 import { gitMrService, type GitMrService } from "../../modules/git-mr/service.js";
@@ -196,9 +197,11 @@ export function createGitMrRoutes(
         c.req.param("projectId")!,
         c.req.param("id"),
         c.req.param("fileId"),
+        c.req.raw.signal,
       ),
     ),
   );
+  routes.get('/:id/files/:fileId/content', async c => c.json(await service.fileSlice(c.req.param('projectId')!, c.req.param('id'), c.req.param('fileId'), conversationGitSliceSchema.parse(c.req.query()), c.req.raw.signal)));
   routes.put("/:id/files/:fileId", async (c) =>
     c.json(
       await service.saveFile(

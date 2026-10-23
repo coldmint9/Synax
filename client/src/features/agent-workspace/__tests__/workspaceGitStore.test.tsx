@@ -9,6 +9,7 @@ import {
   getWorkspaceGitSnapshot,
   invalidateWorkspaceGit,
   loadWorkspaceGit,
+  resetSessionWorkspaceGit,
   useWorkspaceGit,
 } from "../workspaceGitStore";
 
@@ -96,6 +97,27 @@ it("loads one workspace snapshot and reuses it for every reader", async () => {
   await loadWorkspaceGit("project", { maxAgeMs: 120_000 });
   expect(getChanges).toHaveBeenCalledTimes(1);
   expect(getWorkspaceGitSnapshot("project")?.revision).toBe("workspace-1");
+});
+
+it("keeps session worktree snapshots and concurrent requests separate from the default checkout", async () => {
+  const getChanges = vi.spyOn(api, "getWorkspaceGitChanges").mockImplementation(async (_projectId, options) =>
+    changes([repository({
+      workspacePath: options?.sessionId ? "/isolated" : "/ws",
+      dirty: !options?.sessionId,
+      unpushedCommitCount: options?.sessionId ? 1 : 0,
+    })], options?.sessionId ?? "default"),
+  );
+  await Promise.all([
+    loadWorkspaceGit("project-isolated", { force: true }),
+    loadWorkspaceGit("project-isolated", { force: true, sessionId: "isolated" }),
+  ]);
+  expect(getChanges).toHaveBeenCalledTimes(2);
+  expect(getWorkspaceGitSnapshot("project-isolated")?.repositories[0].dirty).toBe(true);
+  expect(getWorkspaceGitSnapshot("project-isolated", "isolated")?.repositories[0]).toMatchObject({
+    workspacePath: "/isolated", dirty: false, unpushedCommitCount: 1,
+  });
+  await loadWorkspaceGit("project-isolated", { sessionId: "isolated", maxAgeMs: 120_000 });
+  expect(getChanges).toHaveBeenCalledTimes(2);
 });
 
 it("sends the held revision and keeps object identity when the server answers unchanged", async () => {
@@ -190,4 +212,20 @@ it("does not poll while hidden or while the workbench page is inactive", async (
   hidden.rerender();
   await advance();
   expect(getChanges).toHaveBeenCalledTimes(1);
+});
+
+it("discards a pre-switch request and does not retain a different checkout with identical Git facts", async () => {
+  let resolveOld!: (value: WorkspaceGitChanges) => void;
+  const old = new Promise<WorkspaceGitChanges>(resolve => { resolveOld = resolve; });
+  const get = vi.spyOn(api, "getWorkspaceGitChanges").mockReturnValueOnce(old)
+    .mockResolvedValueOnce(changes([repository({ workspacePath: "/new-tree" })], "new-scope"));
+  const pending = loadWorkspaceGit("switch-project", { sessionId: "switch-session" });
+  resetSessionWorkspaceGit("switch-project", "switch-session");
+  await loadWorkspaceGit("switch-project", { sessionId: "switch-session" });
+  resolveOld(changes([repository({ workspacePath: "/old-tree" })]));
+  await pending;
+  expect(getWorkspaceGitSnapshot("switch-project", "switch-session")?.repositories[0].workspacePath).toBe("/new-tree");
+  get.mockResolvedValueOnce(changes([repository({ workspacePath: "/another-tree" })], "another-scope"));
+  await loadWorkspaceGit("switch-project", { sessionId: "switch-session" });
+  expect(getWorkspaceGitSnapshot("switch-project", "switch-session")?.repositories[0].workspacePath).toBe("/another-tree");
 });

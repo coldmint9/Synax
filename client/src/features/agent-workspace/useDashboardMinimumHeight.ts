@@ -1,7 +1,7 @@
 import { useLayoutEffect, type RefObject } from "react";
 
 const BODY =
-  ":scope > .dashboard-panel-content > .ws-card > .ws-card-body, :scope > .dashboard-panel-content > .work-runtime-details > .ws-card > .ws-card-body";
+  ":scope > .dashboard-panel-content > .ws-card > .ws-card-body:not([hidden]), :scope > .dashboard-panel-content > .work-runtime-details > .ws-card > .ws-card-body:not([hidden])";
 const ITEM =
   ".ws-row, .ws-tree-folder, .bui-process-row, .work-todos > li, .ws-card-head, .accordion__trigger, .ws-empty, .runtime-status-details > div:first-child";
 const MIN_HEIGHT = "--dashboard-panel-min-height";
@@ -24,8 +24,8 @@ function contentHeight(body: HTMLElement | null) {
   return height;
 }
 
-/** Keep the first row visible when space permits; share a limited height
- * budget when expanded cards cannot all fit their preferred minimums. */
+/** Reserve useful body space instead of squeezing every card to one row.
+ * If the viewport is too small, allow scrolling rather than hiding content. */
 export function useDashboardMinimumHeight(
   root: RefObject<HTMLDivElement | null>,
 ) {
@@ -40,6 +40,9 @@ export function useDashboardMinimumHeight(
     const resize = new ResizeObserver(schedule);
     const measure = () => {
       frame = 0;
+      const viewportHeight = `${viewport.clientHeight}px`;
+      if (viewport.style.getPropertyValue('--dashboard-viewport-height') !== viewportHeight)
+        viewport.style.setProperty('--dashboard-viewport-height', viewportHeight);
       const next = new Set<Element>([viewport]);
       const measurements: {
         panel: HTMLElement;
@@ -54,7 +57,8 @@ export function useDashboardMinimumHeight(
         const headerHeight = (heading?.offsetHeight ?? 0) + 2;
         if (heading) next.add(heading);
         const body = panel.querySelector<HTMLElement>(BODY);
-        const preferred = `${Math.min(420, headerHeight + contentHeight(body))}px`;
+        const naturalBody = contentHeight(body);
+        const preferred = `${Math.min(420, headerHeight + naturalBody)}px`;
         if (
           panel.style.getPropertyValue("--dashboard-panel-preferred-height") !==
           preferred
@@ -115,7 +119,9 @@ export function useDashboardMinimumHeight(
         measurements.push({
           panel,
           header: headerHeight,
-          preferred: Math.max(headerHeight, Math.ceil(bottom + 4)),
+          preferred: panel.dataset.sized === 'true'
+            ? Math.max(headerHeight, Math.ceil(bottom + 4))
+            : Math.max(headerHeight, Math.min(headerHeight + naturalBody, headerHeight + Math.min(144, Math.max(96, (bottom - headerHeight) * 3)))),
         });
       });
       const style = getComputedStyle(viewport);
@@ -140,10 +146,10 @@ export function useDashboardMinimumHeight(
         (sum, item) => sum + item.preferred - item.header,
         0,
       );
-      const ratio =
-        extra > 0 ? Math.min(1, Math.max(0, budget - headers) / extra) : 0;
+      const overflow = budget < headers + extra;
+      if (viewport.dataset.overflow !== String(overflow)) viewport.dataset.overflow = String(overflow);
       for (const item of measurements) {
-        const height = `${Math.floor(item.header + (item.preferred - item.header) * ratio)}px`;
+        const height = `${Math.floor(item.preferred)}px`;
         if (item.panel.style.getPropertyValue(MIN_HEIGHT) !== height)
           item.panel.style.setProperty(MIN_HEIGHT, height);
       }

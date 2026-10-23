@@ -1,6 +1,6 @@
 import { apiRequest } from "./origin";
 export type ForkWorkspaceMode = "new_worktree" | "reuse_worktree";
-export type HistoryAction = "edit" | "rollback" | "fork";
+export type HistoryAction = "rollback" | "fork";
 export interface MessageCheckpoint {
   id: string;
   kind: "input" | "reply";
@@ -23,6 +23,7 @@ export interface HistorySummary {
   forkReason?: string | null;
   stopRequired?: boolean;
   checkpoints: MessageCheckpoint[];
+  readOnlyMessageIds?: string[];
 }
 export interface HistoryPreview {
   checkpointId: string;
@@ -50,15 +51,19 @@ const post = <T>(sessionId: string, route: string, body: unknown) =>
     silent: true,
   });
 export const conversationHistoryApi = {
+  edit: (sessionId: string, body: { messageId: string; message: string; requestId: string }) =>
+    post<{ sessionId: string; revision: number }>(sessionId, "edit", body),
   list: (sessionId: string, signal?: AbortSignal, messageIds?: readonly string[]) => {
-    // 筛选只是响应优化。长会话使用无筛选查询，兼容旧服务的 64 条限制并避免 URL 超长。
-    const encoded = messageIds && messageIds.length <= 64
+    // Large loaded windows use a request body instead of falling back to a
+    // full-history query. Empty initial windows retain the existing summary.
+    const encoded = messageIds && messageIds.length > 0
       ? encodeURIComponent(JSON.stringify(messageIds))
       : undefined;
     const query = encoded !== undefined && encoded.length <= 6000 ? `?messageIds=${encoded}` : "";
     return apiRequest<HistorySummary>(`${base(sessionId)}/checkpoints${query}`, {
       signal,
       silent: true,
+      ...(encoded && encoded.length > 6000 ? { method: "POST", body: JSON.stringify({ messageIds }) } : {}),
     });
   },
   preview: (
