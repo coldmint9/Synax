@@ -859,12 +859,12 @@ export function SessionComposer({
       data-composer-mode={goalMode ? "goal" : "chat"}
     >
       {error && (
-        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
           {error}
         </p>
       )}
       {incompatibleModel && (
-        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
           {unsupportedBackend
             ? (zh ? "此会话使用的执行后端已移除。历史记录仍可查看，请新建 Synax 会话继续。" : "This session's execution backend has been removed. Its history remains available; start a new Synax session to continue.")
             : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}

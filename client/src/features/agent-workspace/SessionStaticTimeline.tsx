@@ -198,15 +198,19 @@ function renderTimelineRows({
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
     if (entry.kind === "user") break;
-    if (
-      entry.kind === "agent" &&
-      entry.turn.blocks.some(
-        (block) =>
-          block.type === "thinking" ||
-          block.type === "tool_call" ||
-          block.type === "tool_call_group",
-      )
-    ) {
+    if (entry.kind !== "agent") continue;
+    // A reply row closes the activity lane. Without this guard an older
+    // thinking row remains `working` after its answer has already rendered,
+    // leaving the ASCII placeholder above the real response.
+    const hasReply = entry.turn.blocks.some((block) =>
+      (block.type === "text" && Boolean(block.content.trim())) || block.type === "media" ||
+      block.type === "visualization" || block.type === "git_merge" ||
+      block.type === "sub_session",
+    );
+    if (hasReply) break;
+    if (entry.turn.blocks.some((block) =>
+      block.type === "thinking" || block.type === "tool_call" || block.type === "tool_call_group",
+    )) {
       latestActivityIndex = index;
       break;
     }
@@ -216,16 +220,18 @@ function renderTimelineRows({
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
       if (entry.kind === "agent" && entry.turn.stepId === liveId) {
-        liveIndex = index;
-        if (
-          entry.turn.blocks.some(
-            (block) =>
-              block.type === "thinking" ||
-              block.type === "tool_call" ||
-              block.type === "tool_call_group",
-          )
-        )
+        const hasReply = entry.turn.blocks.some((block) =>
+          (block.type === "text" && Boolean(block.content.trim())) || block.type === "media" ||
+          block.type === "visualization" || block.type === "git_merge" ||
+          block.type === "sub_session",
+        );
+        if (hasReply) break;
+        if (entry.turn.blocks.some((block) =>
+          block.type === "thinking" || block.type === "tool_call" || block.type === "tool_call_group",
+        )) {
+          liveIndex = index;
           break;
+        }
       }
     }
     if (liveIndex >= 0) latestActivityIndex = liveIndex;

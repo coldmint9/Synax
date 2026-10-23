@@ -47,7 +47,7 @@ const PLAN_TOOLS = new Set([
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
   'design.read', 'design.write', 'design.preview', 'design.transition', 'design.implement',
-  'git.merge.read', 'git.pr.read',
+  'git.merge.read', 'git.pr.read', 'worktree.list',
 ]);
 export function isPlanningReadTool(toolId: string): boolean {
   return PLAN_TOOLS.has(toolId);

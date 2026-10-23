@@ -822,6 +822,7 @@ export interface SessionEnvironmentOutputs {
 }
 
 export interface SessionEnvironmentFileView {
+  workspacePath?: string;
   sessionId: string;
   path: string;
   kind: "diff" | "input";
@@ -1143,6 +1144,8 @@ export const agentRuntimeApi = {
       {
         method: "POST",
         body: JSON.stringify({}),
+        // 归档失败由调用方给出面向用户的一句话（含撤销入口），避免重复弹窗。
+        silent: true,
       },
     ),
   clearInactiveSessions: (projectId: string) =>
@@ -1175,12 +1178,12 @@ export const agentRuntimeApi = {
   restoreSessionArchive: (batchId: string) =>
     request<{ ok: true; restoredSessionIds: string[] }>(
       `/session-archives/${encodeURIComponent(batchId)}/restore`,
-      { method: "POST", body: JSON.stringify({}) },
+      { method: "POST", body: JSON.stringify({}), silent: true },
     ),
   permanentlyDeleteSessionArchive: (batchId: string) =>
     request<{ ok: true; deletedSessionIds: string[] }>(
       `/session-archives/${encodeURIComponent(batchId)}`,
-      { method: "DELETE" },
+      { method: "DELETE", silent: true },
     ),
   messageVisualization: (sessionId: string, messageId: string) =>
     request<{ message: AgentRuntimeMessage | null }>(
@@ -1381,12 +1384,13 @@ export const agentRuntimeApi = {
     path: string,
     content: string,
     rootId?: string,
+    expectedWorkspacePath?: string,
   ) =>
     request<{ sessionId: string; path: string; bytes: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file`,
       {
         method: "PUT",
-        body: JSON.stringify({ path, content, rootId }),
+        body: JSON.stringify({ path, content, rootId, expectedWorkspacePath }),
       },
     ),
   streamCommitMessage: (

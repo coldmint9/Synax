@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Folder, Folders, GitBranch, RefreshCw, Trash2 } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Check, Folder, Folders, RefreshCw, Trash2 } from 'lucide-react';
 import type { GitWorkspaceSummary, GitWorktreeSummary } from '../../adapters/transport/project';
 import { agentRuntimeApi } from '../../adapters/transport/agentRuntime';
 import { useLocale } from '../../shared/hooks/useLocale';
 import type { WorkspaceEnvironmentRepository } from './workspaceEnvironmentView';
+import { countWorkspaceGitFiles, WorkspaceGitCountBadges } from './workspaceGitCountBadges';
 import { getProjectThemeColor } from './projectThemeColor';
 import { useAgentSessionStore } from './state/agentSessionStore';
 import { useSessionWorkspaceStore } from './state/sessionWorkspaceStore';
@@ -11,7 +12,8 @@ import { invalidateSessionEnvironmentCards } from './useSessionEnvironment';
 import { resetSessionWorkspaceGit } from './workspaceGitStore';
 import { refreshWorkspace } from './workspaceRefresh';
 import { WorktreeDeleteDialog } from '../git/WorktreeDeleteDialog';
-import { cachedWorktreeInventory, loadWorktreeInventory, WORKTREES_CHANGED } from '../git/worktreeInventory';
+import { cachedWorktreeInventory, invalidateWorktreeInventory, loadWorktreeInventory, removeMissingWorktree, WORKTREES_CHANGED } from '../git/worktreeInventory';
+import { RepositoryBranchPicker } from './RepositoryBranchPicker';
 import './workspaceProjectSwitcher.css';
 
 const pathKey = (value: string) => {
@@ -24,51 +26,67 @@ const pathKey = (value: string) => {
 const basename = (value: string) => value.split(/[\\/]/).filter(Boolean).pop() ?? value;
 
 interface ProjectRowProps {
+  sessionId: string;
   root: WorkspaceEnvironmentRepository;
   summary?: GitWorkspaceSummary;
   selected: boolean;
   locked: boolean;
   running: boolean;
+  userPath?: string;
+  executionPath?: string;
   error?: string;
   zh: boolean;
   onSelect: (rootId: string) => void;
   onBind: (root: WorkspaceEnvironmentRepository, path: string) => void;
   onDelete: (root: WorkspaceEnvironmentRepository, tree: GitWorktreeSummary) => void;
+  onBranchChanged: (rootId: string) => void;
 }
-const ProjectRow = memo(function ProjectRow({ root, summary, selected, locked, running, error, zh, onSelect, onBind, onDelete }: ProjectRowProps) {
+const ProjectRow = memo(function ProjectRow({ sessionId, root, summary, selected, locked, running, userPath, executionPath, error, zh, onSelect, onBind, onDelete, onBranchChanged }: ProjectRowProps) {
   const shadowCount = summary?.worktrees.filter(tree => !tree.primary).length ?? 0;
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => { if (!selected) setCollapsed(false); }, [selected]);
+  const expanded = selected && !collapsed && shadowCount > 0;
+  const changeCounts = useMemo(() => root.status === 'ready' ? countWorkspaceGitFiles(root.changedFiles) : undefined, [root.status, root.changedFiles]);
   const branch = root.branch || (root.headCommitSha ? `${zh ? '游离 HEAD' : 'Detached HEAD'} · ${root.headCommitSha.slice(0, 7)}` : '—');
   return <div className="shadow-project-group" data-selected={selected}>
+    <div className="shadow-project-header" data-active={selected}>
     <button type="button" className="shadow-project-row" data-active={selected} aria-pressed={selected}
-      aria-label={`${root.name} · ${root.branch}`} aria-expanded={shadowCount ? selected : undefined}
+      aria-label={`${root.name} · ${root.branch}`} aria-expanded={shadowCount ? expanded : undefined}
       aria-controls={shadowCount ? `shadow-trees-${root.rootId}` : undefined}
-      title={`${root.name}\n${branch}\n${root.workspacePath}`} onClick={() => onSelect(root.rootId)}>
+      title={`${root.name}\n${branch}\n${root.workspacePath}`} onClick={() => {
+        if (selected && shadowCount > 0) setCollapsed(value => !value);
+        else onSelect(root.rootId);
+      }}>
       <span className="ws-project-folder-icon" data-project-color={getProjectThemeColor(root.rootId)}>{shadowCount ? <Folders size={17} /> : <Folder size={17} />}</span>
-      <span className="shadow-project-text"><strong title={root.name}>{root.name}</strong>
-        {selected && <span className="shadow-project-subtitle" title={branch}><GitBranch size={11} /><span title={branch}>{branch}</span></span>}
-      </span>
-      {shadowCount > 0 && <span className="shadow-project-count" aria-label={zh ? `${shadowCount} 个影子工作树` : `${shadowCount} linked worktrees`}>{shadowCount}</span>}
+      <span className="shadow-project-text"><strong title={root.name}>{root.name}</strong></span>
+      <WorkspaceGitCountBadges counts={changeCounts} />
     </button>
-    {selected && shadowCount > 0 && <div className="shadow-worktrees" id={`shadow-trees-${root.rootId}`}>
+    {selected && root.status === 'ready' && <div className="shadow-project-branch">
+      <RepositoryBranchPicker key={`${sessionId}:${root.rootId}:${root.workspacePath}`} sessionId={sessionId} rootId={root.rootId}
+        branch={root.branch} disabled={locked} onSwitched={() => onBranchChanged(root.rootId)} />
+    </div>}
+    </div>
+    {expanded && <div className="shadow-worktrees" id={`shadow-trees-${root.rootId}`}>
       {summary!.worktrees.map(tree => {
-        const checked = pathKey(tree.path) === pathKey(root.workspacePath);
+        const checked = pathKey(tree.path) === pathKey(userPath ?? root.workspacePath);
+        const executing = !tree.prunable && executionPath !== undefined && pathKey(tree.path) === pathKey(executionPath);
         const directory = tree.primary ? zh ? '主目录' : 'Main directory' : basename(tree.path);
         const treeBranch = tree.branch || `${zh ? '游离 HEAD' : 'Detached HEAD'} · ${tree.head.slice(0, 7)}`;
         const label = tree.primary ? directory : treeBranch;
         const detail = tree.primary ? treeBranch : directory;
-        return <div className="shadow-worktree-row" key={tree.path} data-bound={checked}>
+        return <div className="shadow-worktree-row" key={tree.path} data-bound={checked} data-running={executing}>
           <button type="button" className="shadow-worktree-select" aria-pressed={checked} title={`${directory}\n${treeBranch}\n${tree.path}`}
             aria-label={`${root.name} · ${directory} · ${treeBranch}`} disabled={locked || running || tree.prunable}
             onClick={() => onBind(root, tree.path)}>
-            <span className="shadow-worktree-check">{checked && <Check size={12} />}</span>
-            <span className="shadow-worktree-text"><span className="shadow-worktree-name">{label}</span>
+            <span className="shadow-worktree-check" title={checked ? zh ? '用户选择' : 'User selection' : undefined}>{checked && <Check size={12} />}</span>
+            <span className="shadow-worktree-text"><span className="shadow-worktree-title">{executing && <span className="shadow-worktree-agent" role="img" aria-label={zh ? 'Agent 正在此目录运行' : 'Agent running in this directory'} title={zh ? 'Agent 正在此目录运行' : 'Agent running in this directory'}><Bot size={13} /></span>}<span className="shadow-worktree-name">{label}</span></span>
               {detail !== label && <span className="shadow-worktree-detail" title={detail}>{detail}</span>}
               {tree.prunable && <span className="shadow-worktree-unavailable">{zh ? '目录缺失' : 'Directory missing'}</span>}
             </span>
           </button>
           {!tree.primary && <button type="button" className="shadow-worktree-delete" disabled={locked}
             aria-label={`${zh ? '删除工作树' : 'Delete worktree'} ${directory}`}
-            title={checked ? zh ? '当前会话正在使用，请先切换目录' : 'Switch away from this worktree before deleting' : zh ? '删除工作树' : 'Delete worktree'}
+            title={tree.prunable ? zh ? '清理缺失目录的工作树登记' : 'Remove missing worktree registration' : checked ? zh ? '当前会话正在使用，请先切换目录' : 'Switch away from this worktree before deleting' : zh ? '删除工作树' : 'Delete worktree'}
             onClick={() => onDelete(root, tree)}><Trash2 size={13} /></button>}
         </div>;
       })}
@@ -99,10 +117,18 @@ export function WorkspaceProjectSwitcher({ sessionId, projectId, repositories, s
   const list = useRef<HTMLDivElement>(null);
   const session = useAgentSessionStore(state => state.sessions.find(item => item.id === sessionId));
   const running = Boolean(session?.activeRunId || (session && ['running', 'waiting_permission', 'waiting_input', 'paused'].includes(session.status)));
+  const backend = session?.sessionMetadata?.backend as { userWorktrees?: Record<string, { path: string }>; rootWorktrees?: Record<string, { path: string }>; workDir?: string; executionRootId?: string; workspaceBindingRevision?: number } | undefined;
+  const executionRootId = backend?.executionRootId ?? repositories.find(root => root.role === 'primary')?.rootId;
+  const executionPath = running ? backend?.rootWorktrees?.[executionRootId ?? '']?.path ??
+    (executionRootId === repositories.find(root => root.role === 'primary')?.rootId ? backend?.workDir : undefined) ??
+    repositories.find(root => root.rootId === executionRootId)?.workspacePath : undefined;
   const rootsKey = JSON.stringify(repositories.map(root => [root.rootId, root.status]));
   const rootsRef = useRef(repositories);
   rootsRef.current = repositories;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    if (backend?.workspaceBindingRevision || session?.sessionMetadata?.worktreesUpdatedAt) setRefresh(value => value + 1);
+  }, [backend?.workspaceBindingRevision, session?.sessionMetadata?.worktreesUpdatedAt]);
 
   const publish = useCallback((rootId: string, value: GitWorkspaceSummary) => {
     setSummaries(previous => previous[rootId] === value ? previous : { ...previous, [rootId]: value });
@@ -158,7 +184,10 @@ export function WorkspaceProjectSwitcher({ sessionId, projectId, repositories, s
   }, [projectId, publish]);
 
   const bind = useCallback(async (root: WorkspaceEnvironmentRepository, path: string) => {
-    if (bindingLock.current || deleting || running || pathKey(path) === pathKey(root.workspacePath)) return;
+    if (bindingLock.current || deleting || running) return;
+    const currentSession = useAgentSessionStore.getState().sessions.find(item => item.id === sessionId);
+    const userSelections = (currentSession?.sessionMetadata?.backend as { userWorktrees?: Record<string, { path: string }> } | undefined)?.userWorktrees;
+    if (pathKey(path) === pathKey(root.workspacePath) && pathKey(path) === pathKey(userSelections?.[root.rootId]?.path ?? root.workspacePath)) return;
     const tabs = useSessionWorkspaceStore.getState().sessions[sessionId]?.tabs ?? [];
     const affected = tabs.filter(tab => tab.rootId === root.rootId || (!tab.rootId && root.role === 'primary'));
     if (affected.some(tab => tab.dirty)) {
@@ -176,18 +205,41 @@ export function WorkspaceProjectSwitcher({ sessionId, projectId, repositories, s
       if (mounted.current) setActionError({ rootId: root.rootId, text: cause instanceof Error ? cause.message : String(cause) });
     } finally { bindingLock.current = false; if (mounted.current) setBinding(null); }
   }, [deleting, running, sessionId, projectId, reload, zh]);
-  const beginDelete = useCallback((root: WorkspaceEnvironmentRepository, tree: GitWorktreeSummary) => {
-    setNotice(''); setDeleteTarget({ root, tree });
-  }, []);
+  const deletionLock = useRef(false);
+  const branchChanged = useCallback((rootId: string) => {
+    invalidateWorktreeInventory(projectId, rootId);
+    invalidateSessionEnvironmentCards(sessionId);
+    void Promise.resolve(reload()).catch(cause => {
+      if (mounted.current) setActionError({ rootId, text: cause instanceof Error ? cause.message : String(cause) });
+    });
+  }, [projectId, sessionId, reload]);
+  const beginDelete = useCallback(async (root: WorkspaceEnvironmentRepository, tree: GitWorktreeSummary) => {
+    if (deletionLock.current || bindingLock.current) return;
+    setNotice(''); setActionError(null);
+    if (!tree.prunable) { setDeleteTarget({ root, tree }); return; }
+    deletionLock.current = true; setDeleting(true);
+    try {
+      await removeMissingWorktree(projectId, tree.path, root.rootId);
+      if (!mounted.current) return;
+      setSummaries(previous => {
+        const summary = previous[root.rootId];
+        return summary ? { ...previous, [root.rootId]: { ...summary, worktrees: summary.worktrees.filter(item => item.path !== tree.path) } } : previous;
+      });
+      setNotice(zh ? '缺失目录登记已清理，分支与提交已保留' : 'Missing registration removed. Branch and commits kept.');
+    } catch (cause) {
+      if (mounted.current) setActionError({ rootId: root.rootId, text: cause instanceof Error ? cause.message : String(cause) });
+    } finally { deletionLock.current = false; if (mounted.current) setDeleting(false); }
+  }, [projectId, zh]);
 
   return <section className="shadow-projects" aria-label={zh ? '工作区项目' : 'Workspace projects'}>
     <div className="shadow-projects-heading"><span>{zh ? '工作区项目' : 'Workspace projects'}<span className="shadow-project-total">{repositories.length}</span></span>
       <button type="button" disabled={deleting} aria-label={zh ? '刷新全部项目' : 'Refresh all projects'} onClick={() => { setRefresh(value => value + 1); void reload(); }}><RefreshCw size={13} /></button>
     </div>
     <div className="shadow-project-list" ref={list}>
-      {repositories.map(root => <ProjectRow key={root.rootId} root={root} summary={summaries[root.rootId]} selected={selectedRootId === root.rootId}
+      {repositories.map(root => <ProjectRow key={root.rootId} sessionId={sessionId} root={root} summary={summaries[root.rootId]} selected={selectedRootId === root.rootId}
         locked={Boolean(binding) || deleting} running={running} zh={zh} error={actionError?.rootId === root.rootId ? actionError.text : errors[root.rootId]}
-        onSelect={onSelect} onBind={bind} onDelete={beginDelete} />)}
+        userPath={backend?.userWorktrees?.[root.rootId]?.path} executionPath={root.rootId === executionRootId ? executionPath : undefined}
+        onSelect={onSelect} onBind={bind} onDelete={beginDelete} onBranchChanged={branchChanged} />)}
     </div>
     {notice && <p className="shadow-project-notice" role="status">{notice}</p>}
     {deleteTarget && <WorktreeDeleteDialog key={deleteTarget.tree.path} projectId={projectId} rootId={deleteTarget.root.rootId} target={deleteTarget.tree}

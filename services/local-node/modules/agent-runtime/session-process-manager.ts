@@ -171,7 +171,12 @@ export class SessionProcessManager {
     const { requests } = await resourceRequest<{ requests: OverdueResource[] }>("overdue", {});
     for (const request of requests) {
       const state = [...this.children.values()].find(child => child.ownerId === request.ownerId);
-      if (state) this.releaseChild(state.sessionId, "Tool execution exceeded its deadline or stopped responding.", { pushStreamError: true });
+      if (state) {
+        logger.warn({ sessionId: request.sessionId, runId: request.runId,
+          ownerId: request.ownerId, resourceId: request.id, resource: request.resource, timeoutMs: request.timeoutMs },
+        "[agent-session] tool cleanup grace expired; terminating worker");
+        this.releaseChild(state.sessionId, "Tool execution exceeded its deadline or stopped responding.", { pushStreamError: true });
+      }
     }
     for (const [ownerId, sessionIds] of this.resourceCleanup) {
       const owner = await resourceRequest<{ active: boolean }>("owner", { ownerId });

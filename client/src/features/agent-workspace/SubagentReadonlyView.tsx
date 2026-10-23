@@ -75,7 +75,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
 
   if (error) {
     return (
-      <div role="alert" className="flex h-full items-center justify-center p-4 text-[11px] text-destructive">
+      <div data-error-toast="off" role="alert" className="flex h-full items-center justify-center p-4 text-[11px] text-destructive">
         {error}
       </div>
     );

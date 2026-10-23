@@ -37,6 +37,7 @@ pub struct HistoryOps {
     store: Arc<JsonlStore>,
     sessions: Arc<SessionCache<Arc<HistorySession>>>,
     slots: Arc<Semaphore>,
+    measurement_slots: Arc<Semaphore>,
 }
 
 impl HistoryOps {
@@ -57,6 +58,7 @@ impl HistoryOps {
             store,
             sessions: Arc::new(SessionCache::default()),
             slots: Arc::new(Semaphore::new(32)),
+            measurement_slots: Arc::new(Semaphore::new(2)),
         }
     }
 
@@ -68,8 +70,10 @@ impl HistoryOps {
         operation: String,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, HistoryError> {
-        let permit = self
-            .slots
+        // Tokenization is CPU work, independent of history. It must not fill
+        // the queue used by UI reads while several agents prepare prompts.
+        let slots = if operation == "context_measure" { &self.measurement_slots } else { &self.slots };
+        let permit = slots
             .clone()
             .acquire_owned()
             .await
@@ -87,6 +91,34 @@ impl HistoryOps {
         .await
         .map_err(|error| HistoryError::InvalidCommand(format!("history task failed: {error}")))?
     }
+}
+
+fn object_value_chunk(session: &HistorySession, value: &Value) -> Result<Vec<u8>, HistoryError> {
+    let id = required_string(value, "objectId")?;
+    validate_object_id(id)?;
+    let index = session.read();
+    let entity = index.objects.get(id).ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
+    let cached = session.encoded_values.lock().iter().find(|(key, _)| key == id).map(|(_, text)| text.clone());
+    let text_value = match cached {
+        Some(text) => text,
+        None => {
+            let text = Arc::new(serde_json::to_string(&entity.value)
+                .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?);
+            if text.len() > MAX_OBJECT_BYTES { return Err(HistoryError::InvalidCommand("object value exceeds transfer budget".into())); }
+            let mut cache = session.encoded_values.lock();
+            cache.retain(|(key, _)| key != id);
+            while cache.len() >= 2 { cache.pop_front(); }
+            cache.push_back((id.to_owned(), text.clone()));
+            text
+        }
+    };
+    let offset = value["offset"].as_u64().unwrap_or(0) as usize;
+    if offset > text_value.len() || !text_value.is_char_boundary(offset) {
+        return Err(HistoryError::InvalidCommand("invalid object chunk offset".into()));
+    }
+    let mut end = offset.saturating_add(64 * 1024).min(text_value.len());
+    while !text_value.is_char_boundary(end) { end -= 1; }
+    serialized(&serde_json::json!({"text":&text_value[offset..end],"next":if end < text_value.len() {Some(end)} else {None}}))
 }
 
 struct HistoryTask {
@@ -112,6 +144,7 @@ fn readonly_operation(operation: &str) -> bool {
             | "metadata_page"
             | "head_read"
             | "history_sync"
+            | "message_content"
             | "object_value_chunk"
             | "get_object"
             | "get_blob_chunk"
@@ -223,6 +256,26 @@ impl HistoryTask {
         if operation == "fork_copy" {
             return self.fork_copy(session_id, request_id, &value);
         }
+        if operation == "context_measure" {
+            let request = serde_json::from_value(serde_json::json!({"apiFormat":"openai","model":"context-measure",
+                "prompt":value["prompt"],"tools":value["tools"]}))
+                .map_err(|_| HistoryError::InvalidCommand("invalid context measurement".into()))?;
+            return serialized(&crate::agent::context::composition(&request)
+                .map_err(|_| HistoryError::InvalidCommand("context measurement failed".into()))?);
+        }
+        if matches!(operation, "history_sync" | "head_read" | "message_content") {
+            let session = self.session(session_id)?;
+            let index = session.read();
+            return match operation {
+                "history_sync" => serialized(&history_sync(&index, session_id, &value)?),
+                "message_content" => serialized(&super::sync::message_content(&index, session_id, &value)?),
+                _ => serialized(&index.head),
+            };
+        }
+        if operation == "object_value_chunk" {
+            let session = self.session(session_id)?;
+            return object_value_chunk(&session, &value);
+        }
         let readonly = readonly_operation(operation);
         let key = receipt_key(session_id, request_id);
         // Keep the execution owner pinned through the history commit. Stop or
@@ -273,7 +326,6 @@ impl HistoryTask {
                 let through = required_u64(&value, "through")?;
                 serialized(&object(&[("ackedThrough", number(through))]))?
             }
-            "history_sync" => serialized(&history_sync(ops.index(), session_id, &value)?)?,
             "context_current" => ops.context_current()?,
             "history_updates" => ops.history_updates(&value)?,
             "execution_entities" => ops.execution_entities(&value)?,
@@ -283,17 +335,9 @@ impl HistoryTask {
             "context_recover" => ops.context_recover(authority.as_deref())?,
             "context_messages" => ops.context_messages(&value)?,
             "context_prompt" => ops.context_prompt(&value)?,
-            "context_measure" => {
-                let request = serde_json::from_value(serde_json::json!({"apiFormat":"openai","model":"context-measure",
-                    "prompt":value["prompt"],"tools":value["tools"]}))
-                    .map_err(|_| HistoryError::InvalidCommand("invalid context measurement".into()))?;
-                serialized(&crate::agent::context::composition(&request)
-                    .map_err(|_| HistoryError::InvalidCommand("context measurement failed".into()))?)?
-            }
             "context_begin" => ops.context_begin(&value, configuration.as_deref())?,
             "context_finish" => ops.context_finish(&value)?,
             "context_commit" => ops.context_commit(&value, configuration.as_deref())?,
-            "object_value_chunk" => ops.object_value_chunk(&value)?,
             "append_entities" => ops.append_entities(&value)?,
             "subagent_summary" => ops.subagent_summary(&value)?,
             "append_entities_blob" => ops.append_entities_blob(&value)?,
@@ -334,7 +378,6 @@ impl HistoryTask {
                 let object_id = required_string(&value, "objectId")?;
                 serialized(&*ops.read_object(object_id)?)?
             }
-            "head_read" => serialized(&ops.index().head)?,
             "fork_status" => {
                 if ops.state.failed { return Err(HistoryError::FileIo("Fork publication durability is not confirmed; retry the copy request.".into())); }
                 let request = required_string(&value, "requestId")?;
@@ -1430,42 +1473,6 @@ impl SessionOps<'_> {
         }
     }
 
-    fn object_value_chunk(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
-        let entity = self.read_object(required_string(value, "objectId")?)?;
-        let text_value = if let Some((_, text)) = self.state.encoded_values.iter().find(|(id, _)| id == &entity.object_id) {
-            text.clone()
-        } else {
-            let text = Arc::new(serde_json::to_string(&entity.value)
-                .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?);
-            if text.len() > MAX_OBJECT_BYTES { return Err(HistoryError::InvalidCommand("object value exceeds transfer budget".into())); }
-            while self.state.encoded_values.len() >= 2 { self.state.encoded_values.pop_front(); }
-            self.state.encoded_values.push_back((entity.object_id.clone(), text.clone()));
-            text
-        };
-        let offset = value["offset"].as_u64().unwrap_or(0) as usize;
-        if offset > text_value.len() || !text_value.is_char_boundary(offset) {
-            return Err(HistoryError::InvalidCommand(
-                "invalid object chunk offset".into(),
-            ));
-        }
-        let mut end = (offset + 64 * 1024).min(text_value.len());
-        while !text_value.is_char_boundary(end) {
-            end -= 1;
-        }
-        let next = if end < text_value.len() {
-            number(end as u64)
-        } else {
-            Value::Null
-        };
-        serialized(&object(&[
-            (
-                "text",
-                text(text_value.get(offset..end).unwrap_or_default()),
-            ),
-            ("next", next),
-        ]))
-    }
-
     // ------------------------------------------------------------ append
 
     /// Monotonic fixed-message upsert without loading/scanning the transcript.
@@ -1996,4 +2003,53 @@ fn write_replace(path: &std::path::Path, bytes: &[u8]) -> Result<(), HistoryErro
     drop(file);
     std::fs::rename(&temp, path).map_err(file_io)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod read_isolation_tests {
+    use super::*;
+
+    #[test]
+    fn ui_reads_and_token_measurement_do_not_wait_for_history_writer() {
+        let root = std::env::temp_dir().join(format!("synax-read-isolation-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(JsonlStore::open(&root).unwrap());
+        let task = HistoryTask { store: store.clone(), sessions: Arc::new(SessionCache::default()) };
+        let payload = serde_json::json!({"objects":[{"kind":"runtime.message","value":{
+            "id":"m","sessionId":"s","sequence":1,"role":"assistant","content":"历史🙂".repeat(5000)}}]});
+        task.command("s", "seed", "append_entities", &serialized(&payload).unwrap()).unwrap();
+        // Initialize the bundled tokenizer before measuring lock isolation;
+        // loading its vocabulary is unrelated to waiting for a writer.
+        crate::agent::context::tokens("warm tokenizer");
+        let session = task.session("s").unwrap();
+        let published = session.read();
+        let object_id = published.entity_keys("message").next().unwrap().1.object_id.clone();
+        let revision = published.head.revision;
+        drop(published);
+        let mut writer = session.lock.lock();
+        // A staged writer revision is not part of the published reader snapshot.
+        writer.index.head.revision += 1;
+        let (send, receive) = std::sync::mpsc::channel();
+        let read = std::thread::spawn(move || {
+            let results = [
+                ("context_measure", serde_json::json!({"prompt":[{"role":"user","content":"measure"}],"tools":[]})),
+                ("history_sync", serde_json::json!({})),
+                ("head_read", serde_json::json!({})),
+                ("object_value_chunk", serde_json::json!({"objectId":object_id,"offset":0})),
+                ("message_content", serde_json::json!({"messageId":"m","offset":0,"revision":revision})),
+            ].map(|(op, value)| task.command("s", "read", op, &serialized(&value).unwrap()));
+            send.send(results).unwrap();
+        });
+        let result = receive.recv_timeout(std::time::Duration::from_secs(3));
+        writer.index.head.revision = revision;
+        drop(writer);
+        read.join().unwrap();
+        let results = result.expect("read waited for the history writer");
+        for result in &results { assert!(result.is_ok(), "{result:?}"); }
+        let head: Value = serde_json::from_slice(results[2].as_ref().unwrap()).unwrap();
+        assert_eq!(head["revision"], revision);
+        let page: Value = serde_json::from_slice(results[4].as_ref().unwrap()).unwrap();
+        assert!(page["text"].as_str().unwrap().len() <= 8192);
+        assert!(page["next"].as_u64().unwrap() > 0);
+        drop(session); drop(store); std::fs::remove_dir_all(root).unwrap();
+    }
 }

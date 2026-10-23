@@ -134,9 +134,9 @@ export function FieldError({
     className,
   );
   return field === null ? (
-    <p {...props} role="alert" className={classes} />
+    <p {...props} data-error-toast="off" role="alert" className={classes} />
   ) : (
-    <HeadlessDescription as="p" {...props} role="alert" className={classes} />
+    <HeadlessDescription as="p" {...props} data-error-toast="off" role="alert" className={classes} />
   );
 }
 

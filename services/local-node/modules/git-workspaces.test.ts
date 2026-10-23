@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_ROOT } from "../infrastructure/runtime/env.js";
 import {
   cleanupGitWorktrees, createGitWorktree, listGitWorkspaces, previewGitWorktreeCleanup,
-  previewGitWorktreePath, previewGitWorktreePrune, pruneGitWorktrees, removeGitWorktree,
+  previewGitWorktreePath, previewGitWorktreePrune, pruneGitWorktrees, removeGitWorktree, removeMissingGitWorktree,
   type WorktreeSessionUsage,
 } from "./git-workspaces.js";
 import { cleanupReasons, isTerminalWorktreeSession, type GitWorktreeSummary } from "./git-worktree-management-contracts.js";
@@ -44,6 +44,28 @@ afterEach(() => {
 });
 
 describe("safe worktree management with real Git", () => {
+  it('removes exactly one missing registration without scanning Git status, preserving branches', async () => {
+    const first = linked('missing-first');
+    const other = linked('missing-other');
+    fs.rmSync(first, { recursive: true }); fs.rmSync(other, { recursive: true });
+    const trace = path.join(temp, 'git-trace');
+    const previousTrace = process.env.GIT_TRACE;
+    process.env.GIT_TRACE = trace;
+    try { await removeMissingGitWorktree(repository, first); }
+    finally { if (previousTrace === undefined) delete process.env.GIT_TRACE; else process.env.GIT_TRACE = previousTrace; }
+    expect(fs.readFileSync(trace, 'utf8')).not.toMatch(/git status/);
+    expect(git(['worktree', 'list', '--porcelain'])).not.toContain(first);
+    expect(git(['worktree', 'list', '--porcelain'])).toContain(other);
+    expect(git(['rev-parse', 'missing-first'])).toBe(git(['rev-parse', 'main']));
+  });
+  it('refuses missing-only deletion for existing, locked, primary and foreign directories', async () => {
+    const target = linked('restored');
+    await expect(removeMissingGitWorktree(repository, target)).rejects.toThrow(/仍存在/);
+    git(['worktree', 'lock', target]); fs.rmSync(target, { recursive: true });
+    await expect(removeMissingGitWorktree(repository, target)).rejects.toThrow(/锁定/);
+    await expect(removeMissingGitWorktree(repository, repository)).rejects.toThrow(/主工作树/);
+    await expect(removeMissingGitWorktree(repository, path.join(temp, 'foreign'))).rejects.toThrow(/not a worktree/);
+  });
   it("retains a worktree when a session starts while Git status is being read", async () => {
     const target = linked("late-session");
     let checks = 0;
@@ -107,7 +129,7 @@ describe("safe worktree management with real Git", () => {
     expect(fs.existsSync(busy)).toBe(true);
   }, 20_000);
 
-  it("rechecks every confirmed item, deduplicates, preserves unconfirmed trees, and continues after skips", async () => {
+  it("removes confirmed items in one pass, deduplicates, preserves unconfirmed trees, and continues after skips", async () => {
     const first = linked("first");
     const second = linked("second");
     const unconfirmed = linked("unconfirmed");
@@ -120,7 +142,8 @@ describe("safe worktree management with real Git", () => {
     expect(result.results.map(item => item.status)).toEqual(["skipped", "removed", "skipped"]);
     expect(result.results[0]).toMatchObject({ path: first, branch: "first" });
     expect(result.results[1]).toMatchObject({ path: second, branch: "second" });
-    expect(calls).toBeGreaterThanOrEqual(3);
+    // Confirmed candidates share one usage read and one Git listing instead of re-verifying per path.
+    expect(calls).toBe(1);
     expect(fs.existsSync(first)).toBe(true);
     expect(fs.existsSync(unconfirmed)).toBe(true);
     expect(fs.existsSync(second)).toBe(false);

@@ -3,10 +3,16 @@ import { setTimeout as delay } from "node:timers/promises";
 import { currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import type { RegisteredTool, ToolExecutionInput, ToolExecutionProgress } from "./contracts.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
+import { resolveExecTimeoutMs } from "./tools/command-timeout.js";
+
+// Admission starts before command setup. Allow syntax validation (10s),
+// process termination (2s), guardian acknowledgement (10s), and control I/O
+// to finish before the outer deadline cancels the tool and discards its result.
+const COMMAND_SETUP_AND_CLEANUP_MS = 30_000;
 
 type Resource = "search" | "io" | "command" | "cpu";
 interface LeaseStatus { state: string; queuedAt: number; startedAt: number | null; deadline: number | null; queueWaitMs: number }
-export interface OverdueResource { ownerId: string; sessionId: string; rootSessionId: string; id: string }
+export interface OverdueResource { ownerId: string; sessionId: string; rootSessionId: string; id: string; runId: string; resource: string; timeoutMs: number }
 
 /** Small independent HTTP control calls do not wait behind history/stream RPCs. */
 export async function resourceRequest<T>(operation: string, body: unknown, signal?: AbortSignal): Promise<T> {
@@ -37,7 +43,9 @@ export function toolResourcePolicy(tool: RegisteredTool, args: unknown): { resou
   if (["rg", "grep.search", "file.glob"].includes(tool.id)) return { resource: "search", timeoutMs: Math.min(120_000, Math.max(100, input?.timeoutMs ?? 30_000)) + 5_000 };
   // Compositions and parent waits must not retain a slot needed by their children.
   if (tool.mutability === "task" || tool.category === "task" || ["code", "code.run"].includes(tool.id) || tool.id.startsWith("subagent.")) return null;
-  if (tool.category === "shell" || tool.id === "verification.run") return { resource: "command", timeoutMs: Math.min(3_600_000, Math.max(1_000, input?.timeoutMs ?? 900_000)) };
+  if (tool.id === "bash" || tool.id === "verification.run") return { resource: "command",
+    timeoutMs: resolveExecTimeoutMs(input?.timeoutMs, tool.id === "verification.run" ? 120_000 : undefined) + COMMAND_SETUP_AND_CLEANUP_MS };
+  if (tool.category === "shell") return { resource: "command", timeoutMs: Math.min(3_600_000, Math.max(1_000, input?.timeoutMs ?? 900_000)) };
   return { resource: tool.category === "mcp" || tool.category === "external_execution" ? "command" : "io", timeoutMs: tool.executionTimeoutMs ?? 300_000 };
 }
 

@@ -529,14 +529,13 @@ pub struct SessionState {
     pub index: SessionIndex,
     pub published: Arc<ArcSwap<SessionIndex>>,
     checkpoint_offset: u64,
-    /// Bounded transfer cache. Two concurrent readers can page large immutable
-    /// records without serializing every earlier byte again for each chunk.
-    encoded_values: std::collections::VecDeque<(String, Arc<String>)>,
 }
 
 pub struct HistorySession {
     session_id: String,
     lock: Mutex<SessionState>,
+    /// Immutable object transfers never contend with the append writer.
+    encoded_values: Mutex<std::collections::VecDeque<(String, Arc<String>)>>,
     published: Arc<ArcSwap<SessionIndex>>,
 }
 
@@ -569,11 +568,11 @@ impl HistorySession {
             lock: Mutex::new(SessionState {
                 failed: false,
                 checkpoint_offset: start,
-                encoded_values: std::collections::VecDeque::new(),
                 file,
                 index,
                 published: published.clone(),
             }),
+            encoded_values: Mutex::new(std::collections::VecDeque::new()),
             published,
         })
     }

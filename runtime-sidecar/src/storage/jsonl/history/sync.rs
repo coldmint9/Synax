@@ -65,7 +65,43 @@ fn foreign_session(cursor_session: &str, session: &str) -> bool {
     cursor_session != session
 }
 
-fn wire_value(value: &serde_json::Value, id: &str, limit: usize) -> serde_json::Value {
+/// Exact identity lookup and byte slicing; never page through the transcript
+/// or serialize the full message again for each content continuation.
+pub(super) fn message_content(index: &SessionIndex, session: &str, value: &serde_json::Value) -> Result<serde_json::Value, HistoryError> {
+    let revision = index.head.revision;
+    if value["revision"].as_u64().is_some_and(|expected| expected != revision)
+        || value["offset"].as_u64().unwrap_or(0) > 0 && value["revision"].as_u64().is_none() {
+        return Err(HistoryError::StaleCursor);
+    }
+    let id = super::required_string(value, "messageId")?;
+    let message = index.identity.get(&super::identity_key("message", session, id))
+        .and_then(|key| index.order.get(key)).ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
+    let content = message.value["content"].as_str().unwrap_or("");
+    let offset = value["offset"].as_u64().unwrap_or(0) as usize;
+    if offset > content.len() || !content.is_char_boundary(offset) { return Err(invalid("invalid content offset")); }
+    let mut end = offset.saturating_add(8192).min(content.len());
+    while !content.is_char_boundary(end) { end -= 1; }
+    Ok(serde_json::json!({"text":&content[offset..end],"next":if end < content.len() {Some(end)} else {None},"revision":revision}))
+}
+
+fn wire_value(value: &serde_json::Value, id: &str, limit: usize, transcript: bool) -> serde_json::Value {
+    let original = value;
+    // Provider replay data duplicates message text and may embed media bytes.
+    // The transcript uses content/contentParts; execution reads keep the raw object.
+    let has_projection = transcript && value["metadata"].get("rustMessage").is_some();
+    let projected;
+    let value = if has_projection {
+        let mut fields = serde_json::Map::new();
+        for (key, field) in value.as_object().into_iter().flatten() {
+            fields.insert(key.clone(), if key == "metadata" {
+                serde_json::Value::Object(field.as_object().into_iter().flatten()
+                    .filter(|(key, _)| key.as_str() != "rustMessage")
+                    .map(|(key, value)| (key.clone(), value.clone())).collect())
+            } else { field.clone() });
+        }
+        projected = serde_json::Value::Object(fields);
+        &projected
+    } else { value };
     let size = serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .unwrap_or(0);
@@ -74,7 +110,7 @@ fn wire_value(value: &serde_json::Value, id: &str, limit: usize) -> serde_json::
     }
     object(&[
         ("$historyObject", text(id)),
-        ("bytes", number(size as u64)),
+        ("bytes", number(if has_projection { serde_json::to_vec(original).map(|bytes| bytes.len()).unwrap_or(0) } else { size } as u64)),
         ("id", value["id"].clone()),
     ])
 }
@@ -131,7 +167,7 @@ fn window_page(
                 more = true;
                 break;
             }
-            let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES);
+            let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES, value["transcript"] == true);
             let size = serde_json::to_vec(&item)
                 .map(|bytes| bytes.len())
                 .unwrap_or(0)
@@ -240,7 +276,7 @@ fn change_page(
         let item = if entity.kind == "runtime.tombstone" {
             object(&[("collection", text(name)), ("id", text(&id))])
         } else {
-            wire_value(&entity.value, &entity.object_id, INLINE_BYTES)
+            wire_value(&entity.value, &entity.object_id, INLINE_BYTES, value["transcript"] == true)
         };
         let size = serde_json::to_vec(&item)
             .map(|bytes| bytes.len())

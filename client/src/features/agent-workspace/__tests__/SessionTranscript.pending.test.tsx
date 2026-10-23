@@ -106,6 +106,18 @@ it("does not show thinking while a session detail snapshot is refreshing", () =>
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
+it("reveals cached history while the active session is still reconciling", async () => {
+  useAgentSessionStore.setState({
+    sessions: [{ id: "s1", status: "running", activeRunId: run.id } as AgentSession],
+    detailLoading: false, detailRefreshing: true,
+    messages: [{ id: "cached", sessionId: "s1", role: "assistant", content: "Cached answer", metadata: {}, runId: null, stepId: null, createdAt: "" }],
+  });
+  const { container } = render(<SessionTranscript />);
+  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
+  expect(useAgentSessionStore.getState().detailRefreshing).toBe(true);
+  expect(screen.getByText('Cached answer')).toBeVisible();
+});
+
 it("shows the thinking placeholder for an already-running session without local pending state", () => {
   const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
   const previousReply = {

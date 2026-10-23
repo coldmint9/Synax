@@ -94,6 +94,7 @@ import { browserTools } from "./tools/browser/browser-tools.js";
 import { designTools } from "./design-tools.js";
 import { conversationGitTools } from "./conversation-git/tools.js";
 import { remotePrTools } from "../remote-pr/tools.js";
+import { worktreeTools } from './tools/worktree.js';
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -144,6 +145,7 @@ export class ToolRegistry {
       ...designTools,
       ...conversationGitTools,
       ...remotePrTools,
+      ...worktreeTools,
       ...workTools,
       verificationTool,
       bashTool,

@@ -5,7 +5,11 @@ import { projectApi, type ProjectWorkspaceRoot, type WorkspaceTreeListing } from
 import { useAgentSessionStore } from '../state/agentSessionStore';
 import { useSessionWorkspaceStore } from '../state/sessionWorkspaceStore';
 import { useShellStore } from '../../../shared/state/shellStore';
+import { agentRuntimeApi, type WorkspaceRepositoryGit } from '../../../adapters/transport/agentRuntime';
+import { invalidateWorkspaceGit, loadWorkspaceGit, resetSessionWorkspaceGit } from '../workspaceGitStore';
 vi.mock('../../../adapters/transport/project', () => ({ projectApi: { getWorkspace: vi.fn(), listWorkspaceTree: vi.fn(), workspaceTreeStatus: vi.fn() } }));
+vi.mock('../../../adapters/transport/agentRuntime', () => ({ agentRuntimeApi: { getWorkspaceGitChanges: vi.fn() } }));
+vi.mock('../../../adapters/transport/runtimeEventBus', () => ({ subscribe: () => () => {} }));
 const roots: ProjectWorkspaceRoot[] = [
   { id: 'p', name: 'Synax', path: '/repo', role: 'primary', status: 'available' },
   { id: 'ref', name: 'API', path: '/api', role: 'reference', status: 'available' },
@@ -18,9 +22,53 @@ beforeEach(() => {
   useShellStore.setState(s => ({ preferences: { ...s.preferences, locale: 'zh' } }));
   useAgentSessionStore.setState({ selectedSessionId: null, sessions: [] });
   useSessionWorkspaceStore.setState({ sessions: {} });
+  invalidateWorkspaceGit();
+  resetSessionWorkspaceGit('p', 's');
+  vi.mocked(agentRuntimeApi.getWorkspaceGitChanges).mockResolvedValue({ projectId: 'p', revision: 'empty', repositories: [], refreshedAt: '', unchanged: false });
   vi.mocked(projectApi.getWorkspace).mockResolvedValue({ roots });
   vi.mocked(projectApi.workspaceTreeStatus).mockResolvedValue({ revision: 1, indexing: false });
   vi.mocked(projectApi.listWorkspaceTree).mockImplementation(async (_, options) => page(options?.rootId, options?.path));
+});
+
+const git = (rootId: string, workspacePath: string, files: Array<{ path: string; untracked: boolean }>): WorkspaceRepositoryGit => ({
+  rootId, name: rootId, role: 'primary', status: 'ready', workspacePath, branch: 'main', headCommitSha: 'abc',
+  dirty: files.length > 0, additions: 0, deletions: 0, unpushedCommitCount: 0, revision: JSON.stringify(files),
+  changedFiles: files.map(file => ({ ...file, status: file.untracked ? 'untracked' : 'modified', staged: false, additions: 0, deletions: 0 })),
+});
+
+it('loads shared Git counts without a session, aggregates descendants and updates collapsed directories', async () => {
+  vi.mocked(agentRuntimeApi.getWorkspaceGitChanges).mockResolvedValue({ projectId: 'p', revision: 'counts-1', refreshedAt: '', unchanged: false, repositories: [
+    git('p', '/repo', [{ path: 'src/app.ts', untracked: false }, { path: 'src/deep/new.ts', untracked: true }, { path: 'src-other/file.ts', untracked: false }]),
+    git('ref', '/api', [{ path: 'handler.ts', untracked: true }]),
+  ] });
+  vi.mocked(projectApi.listWorkspaceTree).mockImplementation(async (_, o) => page(o?.rootId, o?.path,
+    o?.rootId === 'p' ? [{ name: 'src', path: 'src', kind: 'directory', hasChildren: true }] : []));
+  const view = render(<WorkspaceDirectoryTree projectId="p" />);
+  const source = await screen.findByRole('button', { name: 'src', exact: true });
+  await waitFor(() => expect(within(source).getByTitle('未跟踪 1 个文件')).toBeVisible());
+  expect(within(source).getByTitle('未提交 1 个文件')).toBeVisible();
+  expect(source).toHaveAttribute('aria-expanded', 'false');
+  expect(within(screen.getByRole('button', { name: 'Synax', exact: true })).getByTitle('未提交 2 个文件')).toBeVisible();
+  const api = screen.getByRole('button', { name: 'API', exact: true });
+  expect(within(api).getByTitle('未跟踪 1 个文件')).toBeVisible();
+  expect(api.querySelector('.workspace-git-count-badge--uncommitted')).toBeNull();
+  expect(agentRuntimeApi.getWorkspaceGitChanges).toHaveBeenCalledWith('p', expect.objectContaining({ sessionId: undefined }));
+
+  vi.mocked(agentRuntimeApi.getWorkspaceGitChanges).mockResolvedValue({ projectId: 'p', revision: 'counts-2', refreshedAt: '', unchanged: false,
+    repositories: [git('p', '/repo', []), git('ref', '/api', [])] });
+  await act(async () => { await loadWorkspaceGit('p'); });
+  expect(view.container.querySelector('.workspace-git-count-badges')).toBeNull();
+});
+
+it('does not show another checkout’s counts for the selected session directory', async () => {
+  useAgentSessionStore.setState({ selectedSessionId: 's', sessions: [{ id: 's', projectId: 'p' }] as never });
+  vi.mocked(projectApi.getWorkspace).mockResolvedValue({ roots: [{ ...roots[0], path: '/new-tree' }] });
+  vi.mocked(agentRuntimeApi.getWorkspaceGitChanges).mockResolvedValue({ projectId: 'p', revision: 'old-tree', refreshedAt: '', unchanged: false,
+    repositories: [git('p', '/repo', [{ path: 'old.ts', untracked: false }])] });
+  const view = render(<WorkspaceDirectoryTree projectId="p" />);
+  await screen.findByRole('button', { name: 'Synax' });
+  await waitFor(() => expect(agentRuntimeApi.getWorkspaceGitChanges).toHaveBeenCalledWith('p', expect.objectContaining({ sessionId: 's' })));
+  expect(view.container.querySelector('.workspace-git-count-badges')).toBeNull();
 });
 afterEach(() => vi.useRealTimers());
 it('renders all project roots inside the tree, collapses roots, and has no refresh or title dropdown', async () => {

@@ -502,7 +502,7 @@ export function MergeRequestForm({
                   </div>
                 )}
                 {invalidSources.length > 0 && (
-                  <p className="mr-compose-notice" role="alert">
+                  <p className="mr-compose-notice" data-error-toast-tone="warning" role="alert">
                     请移除不可合入的源分支。
                   </p>
                 )}

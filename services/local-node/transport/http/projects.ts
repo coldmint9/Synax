@@ -48,6 +48,7 @@ import {
   gitHistoryConflict,
   pruneGitWorktrees,
   removeGitWorktree,
+  removeMissingGitWorktree,
   previewGitWorktreePath,
   previewGitWorktreeCleanup,
   cleanupGitWorktrees,
@@ -275,6 +276,7 @@ const removeWorktreeSchema = z.object({
   rootId: z.string().min(1).optional(),
   path: z.string().min(1).max(4096),
   force: z.boolean().optional().default(false),
+  missingOnly: z.boolean().optional().default(false),
 });
 
 const cleanupWorktreeSchema = z.object({
@@ -1150,7 +1152,8 @@ projectRoutes.delete("/:id/git/worktrees", async (c) => {
     );
   try {
     const root = projectGitRoot(project, parsed.data.rootId, true);
-    await removeGitWorktree(root.repository, root.scope, parsed.data.path, {
+    if (parsed.data.missingOnly) await removeMissingGitWorktree(root.repository, parsed.data.path);
+    else await removeGitWorktree(root.repository, root.scope, parsed.data.path, {
       force: parsed.data.force,
       readUsage: readWorktreeSessionUsage,
     });

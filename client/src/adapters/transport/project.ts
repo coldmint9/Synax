@@ -309,7 +309,7 @@ export const projectApi = {
 
   removeGitWorktree(
     id: string,
-    body: { path: string; force?: boolean; rootId?: string },
+    body: { path: string; force?: boolean; rootId?: string; missingOnly?: boolean },
   ): Promise<{ removed: true }> {
     return projectRequest(
       `${API_BASE}/${encodeURIComponent(id)}/git/worktrees`,

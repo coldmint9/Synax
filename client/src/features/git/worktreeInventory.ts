@@ -6,6 +6,12 @@ const requests = new Map<string, Promise<GitWorkspaceSummary>>();
 const keyFor = (projectId: string, rootId?: string) => JSON.stringify([projectId, rootId ?? projectId]);
 export const WORKTREES_CHANGED = 'git:worktrees-changed';
 
+/** Missing rows use a single request; the server confirms absence, not Git status. */
+export async function removeMissingWorktree(projectId: string, path: string, rootId?: string) {
+  await projectApi.removeGitWorktree(projectId, { path, rootId, missingOnly: true });
+  invalidateWorktreeInventory(projectId, rootId);
+}
+
 export function cachedWorktreeInventory(projectId: string, rootId?: string) {
   return cache.get(keyFor(projectId, rootId))?.value;
 }

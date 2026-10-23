@@ -38,7 +38,7 @@ export function ToastContainer() {
   return (
     <div
       data-synax-toast="container"
-      className="fixed left-1/2 top-14 z-[100] w-[280px] max-w-[calc(100vw-24px)] -translate-x-1/2"
+      className="fixed left-1/2 top-14 z-[100] w-[340px] max-w-[calc(100vw-24px)] -translate-x-1/2"
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
@@ -94,9 +94,17 @@ function ToastItem({ notification, index, total, expanded }: {
       >
         <Icon size={14} className={`mt-0.5 shrink-0 ${ICON_STYLES[notification.type]}`} />
         <div className="flex-1 min-w-0">
-          <p className="text-xs leading-5 text-inherit">
+          <p className="line-clamp-3 break-words text-xs leading-5 text-inherit">
             {notification.message}
           </p>
+          {notification.detail && (
+            <p
+              className="mt-0.5 line-clamp-2 break-words text-[10px] leading-4 text-muted-foreground"
+              title={notification.detail}
+            >
+              {notification.detail}
+            </p>
+          )}
           {notification.actions && notification.actions.length > 0 && (
             <div className="mt-1.5 flex items-center gap-3">
               {notification.actions.map((a, i) => (

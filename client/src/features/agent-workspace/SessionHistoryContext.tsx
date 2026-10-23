@@ -546,6 +546,7 @@ export function SessionHistoryProvider({
     <HistoryContext.Provider value={value}>
       {summary?.recoveryRequired && (
         <div
+          data-error-toast="off"
           role="alert"
           className="mx-auto my-2 flex max-w-3xl items-center gap-3 rounded-xl border border-warning/25 bg-warning/5 p-3 text-sm"
         >
@@ -573,7 +574,7 @@ export function SessionHistoryProvider({
           >
             {zh ? "恢复" : "Recover"}
           </Button>
-          {loadError && <span role="alert" className="text-danger">{loadError}</span>}
+          {loadError && <span data-error-toast="off" role="alert" className="text-danger">{loadError}</span>}
         </div>
       )}
       {session?.sessionMetadata?.historyRollbackEnabled === false && (
@@ -662,6 +663,7 @@ export function SessionHistoryProvider({
                   )}
                   {preview.conflicts.length > 0 && (
                     <div
+                      data-error-toast="off"
                       role="alert"
                       className="rounded-xl bg-danger/5 p-3 text-danger"
                     >
@@ -683,7 +685,7 @@ export function SessionHistoryProvider({
                 </>
               )}
               {error && (
-                <p role="alert" className="break-words text-danger">
+                <p data-error-toast="off" role="alert" className="break-words text-danger">
                   {error}
                 </p>
               )}

@@ -5,6 +5,26 @@ const MAX_HISTORY_READ_RESTARTS = 7;
 const HISTORY_PAGE_MAX_BYTES = 768 * 1024;
 const HISTORY_OBJECT_MAX_BYTES = 4 * 1024 * 1024;
 
+type Transfers = { active: number; waiting: Array<() => void> };
+const transfers = new WeakMap<RuntimeSidecarClient, Map<string, Transfers>>();
+
+/** Rust retains two encoded objects per session. Limit whole transfers, not
+ * individual chunks, across concurrent window/environment/history readers. */
+async function transferObject<T>(client: RuntimeSidecarClient, sessionId: string, read: () => Promise<T>): Promise<T> {
+  let sessions = transfers.get(client);
+  if (!sessions) transfers.set(client, sessions = new Map());
+  let state = sessions.get(sessionId);
+  if (!state) sessions.set(sessionId, state = { active: 0, waiting: [] });
+  if (state.active >= 2) await new Promise<void>(resolve => state.waiting.push(resolve));
+  else state.active++;
+  try { return await read(); }
+  finally {
+    const next = state.waiting.shift();
+    if (next) next();
+    else if (--state.active === 0) sessions.delete(sessionId);
+  }
+}
+
 function isRevisionConflict(error: unknown): error is RuntimeSidecarError {
   return error instanceof RuntimeSidecarError && error.code === 'REVISION_CONFLICT';
 }
@@ -51,22 +71,24 @@ export async function hydrateHistoryValues<T>(
           (!Number.isSafeInteger(declaredBytes) || declaredBytes < 0 || declaredBytes > HISTORY_OBJECT_MAX_BYTES))
         throw new Error('Invalid history object size.');
       const maxBytes = declaredBytes ?? HISTORY_OBJECT_MAX_BYTES;
-      const chunks: string[] = [];
-      let offset = 0;
-      while (true) {
-        const input = { sessionId, requestId: randomUUID(), operation: 'object_value_chunk', payload: { objectId: value.$historyObject, offset } };
-        const bytes = global ? await client.historyCommandGlobal(input) : await client.historyCommand(input);
-        const page = JSON.parse(Buffer.from(bytes).toString('utf8')) as { text: string; next?: number | null };
-        if (typeof page?.text !== 'string') throw new Error('History object chunk did not advance.');
-        const end = offset + Buffer.byteLength(page.text);
-        if (end > maxBytes || (page.next != null && (page.next !== end || end <= offset || end >= maxBytes)))
-          throw new Error('History object chunk did not advance.');
-        chunks.push(page.text);
-        offset = end;
-        if (page.next == null) break;
-      }
-      if (declaredBytes !== undefined && offset !== declaredBytes) throw new Error('History object chunk is incomplete.');
-      result[index] = JSON.parse(chunks.join('')) as T;
+      result[index] = await transferObject(client, sessionId, async () => {
+        const chunks: string[] = [];
+        let offset = 0;
+        while (true) {
+          const input = { sessionId, requestId: randomUUID(), operation: 'object_value_chunk', payload: { objectId: value.$historyObject, offset } };
+          const bytes = global ? await client.historyCommandGlobal(input) : await client.historyCommand(input);
+          const page = JSON.parse(Buffer.from(bytes).toString('utf8')) as { text: string; next?: number | null };
+          if (typeof page?.text !== 'string') throw new Error('History object chunk did not advance.');
+          const end = offset + Buffer.byteLength(page.text);
+          if (end > maxBytes || (page.next != null && (page.next !== end || end <= offset || end >= maxBytes)))
+            throw new Error('History object chunk did not advance.');
+          chunks.push(page.text);
+          offset = end;
+          if (page.next == null) break;
+        }
+        if (declaredBytes !== undefined && offset !== declaredBytes) throw new Error('History object chunk is incomplete.');
+        return JSON.parse(chunks.join('')) as T;
+      });
     }
   };
   await Promise.all([worker(), worker()]);

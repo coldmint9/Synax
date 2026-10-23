@@ -262,7 +262,7 @@ export class RuntimeSidecarClient {
   }): Promise<Uint8Array> {
     // History cursors carry their own generation/revision. A read must not
     // open the execution actor merely to attach an unrelated runtime fence.
-    if (["history_sync", "object_value_chunk", "list_checkpoints"].includes(input.operation)) {
+    if (["history_sync", "object_value_chunk", "list_checkpoints", "head_read", "message_content", "context_measure"].includes(input.operation)) {
       return this.historyCommandGlobal(input);
     }
     const snapshot = await this.snapshot(input.sessionId);

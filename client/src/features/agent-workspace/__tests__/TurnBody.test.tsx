@@ -7,7 +7,7 @@ import { useShellStore } from "../../../shared/state/shellStore";
 const emptyTurn: InterleavedTurn = { stepId: "step-1", index: 0, status: "running", duration: null, completedAt: null, blocks: [] };
 const call = (id: string): ToolCallView => ({
   id, toolId: "bash", inputSummary: "command-" + id, outputSummary: "result-" + id,
-  status: "completed", category: "exec", duration: "10ms", mutability: "read",
+  status: "completed", category: "exec", duration: null, mutability: "read",
 });
 const tool = (id: string): TurnContentBlock => ({ type: "tool_call", call: call(id) });
 
@@ -124,7 +124,7 @@ describe("TurnBody continuous process", () => {
 
   it("reports the latest command when no thought is available", () => {
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("call-line")] }} entryId="call-line" isWorking />);
-    expect(container.querySelector(".session-process-line")).toHaveTextContent("已在 10ms 内运行 command-call-line");
+    expect(container.querySelector(".session-process-line")).toHaveTextContent("已运行 command-call-line");
   });
 
   it("restores manually expanded groups and tool details after history remounts", () => {

@@ -60,7 +60,7 @@ export function AgentDockDialog({
         {sessionTitle}
       </div>
 
-      {error && <p role="alert" className="mb-2 text-[11px] text-destructive/90">{error}</p>}
+      {error && <p data-error-toast="off" role="alert" className="mb-2 text-[11px] text-destructive/90">{error}</p>}
 
       <div className="agent-dock-dialog-scroll max-h-[14rem] space-y-2 overflow-y-auto">
         {thinking.trim() && (

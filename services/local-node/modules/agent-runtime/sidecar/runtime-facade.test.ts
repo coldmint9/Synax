@@ -254,7 +254,7 @@ it('returns one history page and forwards opaque incremental cursors without hyd
   const since = Buffer.from(JSON.stringify(rawCursor)).toString('base64url');
   const result = await facade.historyWindowAuthoritative('s', undefined, since);
   expect(historyCommand).toHaveBeenCalledOnce();
-  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor} }));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor, transcript:true} }));
   expect(all).not.toHaveBeenCalled();
   expect(result.historyWindow.syncCursor).toBe(since);
   expect(result.messages).toEqual([{id:'m',content:'new'}]);

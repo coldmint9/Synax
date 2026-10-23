@@ -20,6 +20,8 @@ import {
 import { resolveWorkspacePath, workspaceRoot } from "./workspace.js";
 import { parseWslUncPath } from "../../workspace-location.js";
 import { sessionHomeDir } from "./session-home.js";
+import { EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS, resolveExecTimeoutMs } from "./command-timeout.js";
+export { resolveExecTimeoutMs } from "./command-timeout.js";
 
 const SAFE_REDIRECT_TARGETS = new Set([
   "/dev/null",
@@ -27,29 +29,6 @@ const SAFE_REDIRECT_TARGETS = new Set([
   "/dev/stderr",
 ]);
 const MAX_OUTPUT_BYTES = 64_000;
-const EXEC_TIMEOUT_MS = 30_000;
-/** Advertised bounds for the per-command timeout window. */
-const MIN_EXEC_TIMEOUT_MS = 1_000;
-const MAX_EXEC_TIMEOUT_MS = 600_000;
-
-/**
- * Resolve the timeout window for one command. The model may raise it per call
- * through the tool schema, and verification passes its own estimate; both paths
- * are clamped here so a bypassed schema cannot hand the process an unbounded or
- * sub-second window.
- */
-export function resolveExecTimeoutMs(
-  requested: number | undefined,
-  fallback: number = EXEC_TIMEOUT_MS,
-): number {
-  if (typeof requested !== "number" || !Number.isFinite(requested)) {
-    return fallback;
-  }
-  return Math.min(
-    Math.max(Math.trunc(requested), MIN_EXEC_TIMEOUT_MS),
-    MAX_EXEC_TIMEOUT_MS,
-  );
-}
 
 /** Keep the captured bytes of one stream, with an explicit truncation notice. */
 function truncateCapture(

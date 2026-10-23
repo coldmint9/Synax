@@ -84,17 +84,19 @@ export const skillsApi = {
     apiRequest<{ skill: SkillSummary }>(`${SKILLS_BASE}/install`, {
       method: 'POST',
       body: JSON.stringify(input),
+      silent: true,
     }),
   setEnabled: (skillId: string, enabled: boolean, projectId?: string) => {
     const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
-    return apiRequest(`${SKILLS_BASE}/${encodeURIComponent(skillId)}/${enabled ? 'enable' : 'disable'}${qs}`, { method: 'POST' })
+    return apiRequest(`${SKILLS_BASE}/${encodeURIComponent(skillId)}/${enabled ? 'enable' : 'disable'}${qs}`, { method: 'POST', silent: true })
   },
   uninstall: (skillId: string) =>
-    apiRequest<{ ok: boolean }>(`${SKILLS_BASE}/${encodeURIComponent(skillId)}`, { method: 'DELETE' }),
+    apiRequest<{ ok: boolean }>(`${SKILLS_BASE}/${encodeURIComponent(skillId)}`, { method: 'DELETE', silent: true }),
   sync: (sourceId?: string) =>
     apiRequest<{ synced: number; errors?: Array<{ sourceId: string; message: string }> }>(`${SKILLS_BASE}/sync`, {
       method: 'POST',
       body: JSON.stringify(sourceId ? { sourceId } : {}),
+      silent: true,
     }),
 }
 
@@ -111,16 +113,18 @@ export const skillSourcesApi = {
     apiRequest<{ source: SkillSourceRecord }>(SOURCES_BASE, {
       method: 'POST',
       body: JSON.stringify(input),
+      silent: true,
     }),
   update: (sourceId: string, patch: Partial<Pick<SkillSourceRecord, 'label' | 'enabled' | 'priority' | 'config'>>) =>
     apiRequest<{ source: SkillSourceRecord }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
+      silent: true,
     }),
   remove: (sourceId: string) =>
-    apiRequest<{ ok: boolean }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}`, { method: 'DELETE' }),
+    apiRequest<{ ok: boolean }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}`, { method: 'DELETE', silent: true }),
   sync: (sourceId: string) =>
-    apiRequest<{ synced: number }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}/sync`, { method: 'POST' }),
+    apiRequest<{ synced: number }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}/sync`, { method: 'POST', silent: true }),
   test: (sourceId: string) =>
-    apiRequest<{ ok: boolean; error?: string }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}/test`, { method: 'POST' }),
+    apiRequest<{ ok: boolean; error?: string }>(`${SOURCES_BASE}/${encodeURIComponent(sourceId)}/test`, { method: 'POST', silent: true }),
 }

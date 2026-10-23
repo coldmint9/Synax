@@ -76,7 +76,7 @@ describe("Git worktree management", () => {
     expect(projectApi.cleanupGitWorktrees).toHaveBeenCalledWith("p", [clean.path], "reference");
     expect(within(dialog).queryByRole("button", { name: /确认清理/ })).toBeNull();
   });
-  it("continues after a single request failure and preserves per-item failure information", async () => {
+  it("sends the confirmed paths as one batch and preserves per-item failure information", async () => {
     vi.mocked(projectApi.previewGitWorktreeCleanup).mockResolvedValue({ candidates: [clean, { ...clean, path: "/repo/second", branch: "second" }], retained: [] });
     vi.mocked(projectApi.cleanupGitWorktrees).mockRejectedValueOnce(new Error("网络连接中断"));
     render(<Harness />);
@@ -84,8 +84,30 @@ describe("Git worktree management", () => {
     const dialog = await screen.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("button", { name: "确认清理 2 个" }));
     await waitFor(() => expect(dialog).toHaveTextContent("网络连接中断"));
+    expect(projectApi.cleanupGitWorktrees).toHaveBeenCalledTimes(1);
+    expect(projectApi.cleanupGitWorktrees).toHaveBeenCalledWith("p", [clean.path, "/repo/second"], "reference");
+    expect(dialog).toHaveTextContent("已清理 0 个，跳过 / 失败 2 个");
+  });
+  it("cleans more than one API batch without re-verifying each worktree in between", async () => {
+    const many = Array.from({ length: 101 }, (_, index) => ({ ...clean, path: `/repo/clean-${index}`, branch: `feature/clean-${index}` }));
+    vi.mocked(projectApi.previewGitWorktreeCleanup).mockResolvedValue({ candidates: many, retained: [] });
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: /一键清理/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认清理 101 个" }));
+    await waitFor(() => expect(dialog).toHaveTextContent("已清理 101 个"));
     expect(projectApi.cleanupGitWorktrees).toHaveBeenCalledTimes(2);
-    expect(dialog).toHaveTextContent("已清理 1 个，跳过 / 失败 1 个");
+    expect(vi.mocked(projectApi.cleanupGitWorktrees).mock.calls[0][1]).toHaveLength(100);
+    expect(vi.mocked(projectApi.cleanupGitWorktrees).mock.calls[1][1]).toHaveLength(1);
+  });
+  it("closes the cleanup window from its close button without deleting", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: /一键清理/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "关闭清理窗口" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(projectApi.cleanupGitWorktrees).not.toHaveBeenCalled();
   });
   it("explains why an empty candidate list cannot be confirmed", async () => {
     vi.mocked(projectApi.previewGitWorktreeCleanup).mockResolvedValue({ candidates: [], retained: [{ worktree: main, reasons: ["主工作树不可删除"] }] });

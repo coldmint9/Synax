@@ -111,6 +111,7 @@ function resolveSessionFileRepository(
 }
 
 export interface SessionEnvironmentFileView {
+  workspacePath?: string;
   sessionId: string;
   path: string;
   kind: "diff" | "input";
@@ -276,6 +277,7 @@ export async function saveSessionEnvironmentFile(
   relativePath: string,
   content: string,
   rootId?: string,
+  expectedWorkspacePath?: string,
 ): Promise<{ sessionId: string; path: string; bytes: number }> {
   const session = getSession(sessionId);
   const workspacePath = resolveSessionRepository(
@@ -283,6 +285,8 @@ export async function saveSessionEnvironmentFile(
     session.projectId,
     rootId,
   ).path;
+  if (expectedWorkspacePath && workspacePath !== expectedWorkspacePath)
+    throw new AgentValidationError('工作树已切换。草稿已保留，请重新打开目标文件后保存。');
   const cleanPath = assertRelativePath(relativePath);
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   if (!fs.existsSync(absolutePath)) {
@@ -391,6 +395,7 @@ export async function getSessionEnvironmentFile(
     sessionId,
     path: cleanPath,
     kind,
+    workspacePath,
     content,
     truncated,
   };

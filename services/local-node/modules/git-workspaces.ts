@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, mkdir, realpath } from "node:fs/promises";
+import { access, lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { DATA_ROOT } from "../infrastructure/runtime/env.js";
@@ -806,19 +806,57 @@ function validateCleanupPaths(paths: string[]): void {
     throw new GitWorkspaceError("Invalid worktree path list.");
 }
 
-/** Every item acquires the repository lock and re-reads both usage and Git state. */
+const DIRTY_REMOVAL_REFUSAL = /contains modified or untracked files/i;
+
+/**
+ * Removes already confirmed cleanup candidates in one pass.
+ *
+ * The preview already established Git state for every candidate, so re-running a
+ * full status scan per path only delays the batch. Each item keeps the cheap live
+ * guards - it must still be a listed worktree of this project and must not be the
+ * primary, locked, prunable or actively used tree - and Git itself refuses a tree
+ * that became dirty after the preview because --force is never passed.
+ */
 export async function cleanupGitWorktrees(repository: RepositoryInput, projectId: string, paths: string[], readUsage?: ReadWorktreeSessionUsage): Promise<GitWorktreeCleanupResponse> {
   validateCleanupPaths(paths);
+  const requested = [...new Set(paths)];
   const results: GitWorktreeCleanupResponse["results"] = [];
-  for (const worktreePath of new Set(paths)) {
-    let branch: string | null = null;
-    try {
-      await removeGitWorktree(repository, projectId, worktreePath, { readUsage, onTarget: target => { branch = target.branch; } });
-      results.push({ path: worktreePath, branch, status: "removed" });
-    } catch (error) {
-      results.push({ path: worktreePath, branch, status: error instanceof GitWorkspaceError && [404, 409].includes(error.status) ? "skipped" : "failed", reason: error instanceof Error ? error.message : String(error) });
+  if (!requested.length) return { results };
+  const context = await assertRepository(repository);
+  await withRepositoryLock(context, async () => {
+    const usage = await readUsage?.();
+    const summary = await listGitWorkspaces(context.location, projectId, usage?.sessionCounts, usage?.activeSessionCounts, { includeHistory: false, inspectStatus: false });
+    for (const worktreePath of requested) {
+      const requestedPath = await canonical(context.location, worktreePath).catch(() => normalized(context.location, worktreePath));
+      const target = summary.worktrees.find(item => samePath(context.location, item.path, requestedPath));
+      if (!target) {
+        results.push({ path: worktreePath, branch: null, status: "skipped", reason: "该路径不是本仓库的工作树。" });
+        continue;
+      }
+      const blocked = target.primary
+        ? "主工作树不可删除"
+        : target.locked
+          ? "工作树已锁定"
+          : target.prunable
+            ? "工作树目录缺失，请改用清理记录"
+            : (target.activeSessionCount ?? 0) > 0
+              ? "工作树仍被活跃会话占用"
+              : null;
+      if (blocked) {
+        results.push({ path: worktreePath, branch: target.branch, status: "skipped", reason: blocked });
+        continue;
+      }
+      try {
+        await git(context.location, context.root, ["worktree", "remove", "--", target.path]);
+        results.push({ path: worktreePath, branch: target.branch, status: "removed" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        results.push(DIRTY_REMOVAL_REFUSAL.test(detail)
+          ? { path: worktreePath, branch: target.branch, status: "skipped", reason: "工作树在确认后出现了未提交修改，已跳过。" }
+          : { path: worktreePath, branch: target.branch, status: "failed", reason: detail });
+      }
     }
-  }
+  });
   return { results };
 }
 
@@ -871,6 +909,34 @@ export async function removeGitWorktree(
       "--",
       target.path,
     ]);
+  });
+}
+
+/** Clear exactly one absent checkout. Never scan status or prune unrelated entries. */
+export async function removeMissingGitWorktree(repositoryPath: RepositoryInput, worktreePath: string): Promise<void> {
+  const context = await assertRepository(repositoryPath);
+  await withRepositoryLock(context, async () => {
+    const requested = normalized(context.location, worktreePath);
+    const worktrees = await rawWorktrees(context);
+    const index = worktrees.findIndex(item => samePath(context.location, item.path, requested));
+    if (index < 0) throw new GitWorkspaceError('The selected path is not a worktree of this project.', 404);
+    const target = worktrees[index];
+    if (index === 0) throw new GitWorkspaceError('主工作树不可删除', 409);
+    if (target.locked) throw new GitWorkspaceError('工作树已锁定', 409);
+    let exists: boolean;
+    if (context.location.kind === 'wsl') {
+      const result = await execute(context.location, context.root, 'sh', ['-c', 'if [ -e "$1" ] || [ -L "$1" ]; then printf present; else printf missing; fi', 'worktree-exists', target.path]);
+      exists = result.stdout !== 'missing';
+    } else {
+      exists = await lstat(target.path).then(() => true, error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      });
+    }
+    if (exists || !target.prunable) throw new GitWorkspaceError('工作树目录仍存在，请刷新后使用普通删除。', 409);
+    // Git removes the registration of an absent checkout, keeping refs intact.
+    // No --force: a directory restored concurrently still gets Git's protection.
+    await git(context.location, context.root, ['worktree', 'remove', '--', target.path]);
   });
 }
 

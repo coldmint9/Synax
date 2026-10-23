@@ -9,6 +9,22 @@ import { patchRuntime } from "../sidecar/runtime-repository.js";
 beforeEach(resetAgentRuntimeFixtures);
 afterEach(() => vi.restoreAllMocks());
 
+it("boots a worker's conversation family without loading unrelated session lists or history", async () => {
+  const parent = agentSessionRuntime.create(executorInput);
+  const child = agentSessionRuntime.create({ ...executorInput, profileId: "explorer", parentSessionId: parent.id });
+  const unrelated = agentSessionRuntime.create(executorInput);
+  await store.flush();
+  store.reset();
+  const enumerate = vi.spyOn(runtimeClient(), "sessionList");
+  const history = vi.spyOn(runtimeClient(), "historyCommandGlobal");
+  await store.hydrateSessionFamily(child.id);
+  expect(store.getSession(parent.id).childSessionIds).toContain(child.id);
+  expect(store.getSession(child.id).parentSessionId).toBe(parent.id);
+  expect(store.tryGetSession(unrelated.id)).toBeUndefined();
+  expect(enumerate).not.toHaveBeenCalled();
+  expect(history.mock.calls.some(([input]) => input.operation.startsWith("list_") || input.operation === "history_updates")).toBe(false);
+});
+
 it("refreshes new messages and non-UI entities without rereading existing collections", async () => {
   const session = agentSessionRuntime.create(executorInput);
   store.updateSession(session.id, { status: "completed" });

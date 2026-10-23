@@ -712,7 +712,12 @@ impl SessionActor {
             }
             "session_patch" | "workspace_bind" => {
                 if operation == "workspace_bind" {
-                    if self.state.active_run_id.is_some()
+                    if let Some(execution) = value.get("execution") {
+                        ExecutionLease::decode(session_id, execution)?.assert_current(
+                            self.state.active_run_id.as_deref(), control.execution_lease.as_ref(),
+                        )?;
+                        if control.runtime_control.is_some() { return Err(RuntimeError::SessionBusy); }
+                    } else if self.state.active_run_id.is_some()
                         || control.runtime_control.is_some()
                         || control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
                     {

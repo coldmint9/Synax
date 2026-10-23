@@ -1247,3 +1247,24 @@ fn metadata_compare_and_set_rejects_a_stale_mailbox_after_reopen() {
     })).unwrap()).unwrap();
     drop(ops); std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn workspace_binding_accepts_only_the_live_agent_lease() {
+    let (dir, ops) = started("agent-workspace-binding");
+    let lease = json!({"sessionId":"s", "runId":"r", "epoch":"generation", "hostId":"host"});
+    let fence = ops.snapshot("s").unwrap();
+    ops.control("s", "open", fence.epoch, fence.revision, "execution_open", &serde_json::to_vec(&lease).unwrap()).unwrap();
+    let change = json!({"execution":lease, "expectedBindingRevision":0,
+        "patch":{"sessionMetadata":{"backend":{"workspaceBindingRevision":1,"workDir":"/tree"}}}});
+    let fence = ops.snapshot("s").unwrap();
+    let mut stale = change.clone(); stale["execution"]["epoch"] = json!("old-generation");
+    assert!(matches!(ops.control("s", "stale-agent", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&stale).unwrap()), Err(RuntimeError::ExecutionSuperseded(_))));
+    ops.control("s", "agent-bind", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&change).unwrap()).unwrap();
+    assert_eq!(ops.snapshot("s").unwrap().active_run_id.as_deref(), Some("r"));
+    let fence = ops.snapshot("s").unwrap();
+    ops.control("s", "close", fence.epoch, fence.revision, "execution_close", &serde_json::to_vec(&lease).unwrap()).unwrap();
+    let fence = ops.snapshot("s").unwrap();
+    let mut closed = change; closed["expectedBindingRevision"] = json!(1); closed["patch"]["sessionMetadata"]["backend"]["workspaceBindingRevision"] = json!(2);
+    assert!(matches!(ops.control("s", "closed-agent", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&closed).unwrap()), Err(RuntimeError::ExecutionSuperseded(_))));
+    drop(ops); std::fs::remove_dir_all(dir).unwrap();
+}

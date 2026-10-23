@@ -332,6 +332,31 @@ export class AgentRuntimeStore {
   async hydrateExecutionSession(sessionId: string, refresh = false): Promise<void> {
     return this.hydrateSession(sessionId, refresh, { execution: true });
   }
+  /** Worker bootstrap needs its conversation family, never every workspace's
+   * session list. Preserve ancestors and descendants for ownership checks. */
+  async hydrateSessionFamily(sessionId: string): Promise<void> {
+    const ancestors = new Set<string>();
+    let rootId = sessionId;
+    for (;;) {
+      if (ancestors.has(rootId)) throw new Error("Session ancestry contains a cycle.");
+      ancestors.add(rootId);
+      await this.hydrateSessionSummary(rootId);
+      const parent = this.getSession(rootId).parentSessionId;
+      if (!parent) break;
+      rootId = parent;
+    }
+    const pending = [rootId];
+    const seen = new Set(pending);
+    for (let offset = 0; offset < pending.length;) {
+      const batch = pending.slice(offset, offset + 4);
+      offset += batch.length;
+      await readAll(batch.map(id => this.hydrateSessionSummary(id)));
+      for (const id of batch) for (const child of this.getSession(id).childSessionIds ?? []) {
+        if (seen.has(child)) continue;
+        seen.add(child); pending.push(child);
+      }
+    }
+  }
   private async readExecutionEntities(sessionId: string, kind: string, fromRevision: number, head: { revision: number; generation: number }): Promise<Entity[]> {
     const collection = kind === "tool_call" ? "tool" : kind === "aux_usage" ? "aux" : kind;
     let cursor: unknown = null;

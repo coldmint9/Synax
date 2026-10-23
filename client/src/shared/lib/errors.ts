@@ -80,9 +80,34 @@ function toastTypeForError(err: AppError): ToastType {
   return "error";
 }
 
-function userMessage(err: AppError): string {
-  if (err.code && err.code in ERROR_MESSAGES) return ERROR_MESSAGES[err.code];
-  return err.message;
+/** 后端没有给出业务 code 时，用状态码兜底，避免把 HTTP 细节直接甩给用户。 */
+const STATUS_FALLBACK: Record<number, string> = {
+  404: "目标不存在或已被移除",
+  409: "当前状态与操作冲突，请刷新后重试",
+  413: "内容过大，请精简后重试",
+  422: "输入内容有误，请检查后重试",
+  429: "请求过于频繁，请稍后再试",
+};
+
+/** 后端把技术细节直接写进 message 的情况，主文案只给结论，原文进 detail。 */
+const TECHNICAL_MESSAGE =
+  /^(Config API error|HTTP \d{3}|Failed to fetch|NetworkError|Unexpected token|Unexpected end of JSON)/i;
+
+function resolveUserMessage(err: AppError): { message: string; detail?: string } {
+  const withDetail = (message: string) => ({
+    message,
+    detail: err.message === message ? undefined : err.message,
+  });
+  if (err.code && err.code in ERROR_MESSAGES) {
+    return withDetail(ERROR_MESSAGES[err.code]);
+  }
+  if (err.statusCode && err.statusCode in STATUS_FALLBACK) {
+    return withDetail(STATUS_FALLBACK[err.statusCode]);
+  }
+  if (TECHNICAL_MESSAGE.test(err.message)) {
+    return withDetail("操作失败，请稍后重试");
+  }
+  return { message: err.message };
 }
 
 export function handleError(err: unknown): AppError {
@@ -173,7 +198,7 @@ function routeError(err: AppError): void {
   // runtime repairs it on the next read, so surfacing it as "resource not
   // found" would report a failure the user never experienced.
   if (isTransientRuntimeError(err)) return;
-  const message = userMessage(err);
+  const { message, detail } = resolveUserMessage(err);
   if (isExpectedMissingRuntimeResource(err)) return;
   const isMissingRuntimeResource =
     err.code === "NOT_FOUND" &&
@@ -183,6 +208,7 @@ function routeError(err: AppError): void {
       id: "err-agent-runtime-resource-not-found",
       type: toastTypeForError(err),
       message,
+      ...(detail && { detail }),
       duration: 5000,
     });
     return;
@@ -191,6 +217,7 @@ function routeError(err: AppError): void {
     id: errorNotificationId(message),
     type: toastTypeForError(err),
     message,
+    ...(detail && { detail }),
     ...(err.code &&
       LLM_CONFIG_ERROR_CODES.has(err.code) && {
         action: {

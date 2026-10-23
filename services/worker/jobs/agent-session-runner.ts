@@ -16,7 +16,7 @@ import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-ru
 import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
 import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
 import { businessStore } from "../../local-node/infrastructure/persistence/business-store.js";
-import { hydrateRuntimeAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
+import { hydrateSessionAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
 import { AgentNotFoundError } from "../../local-node/modules/agent-runtime/runtime-errors.js";
 import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/sidecar/sidecar-client.js";
 
@@ -70,8 +70,9 @@ async function runStream(
   activeStreams.set(streamId, abortController);
   try {
     await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
-    await businessStore.refresh();
-    await hydrateRuntimeAssets([sessionId]);
+    // The native backend refreshes policy metadata before execution. Only
+    // this conversation's asset bindings are needed, not the global catalog.
+    await hydrateSessionAssets(sessionId);
     for await (const chunk of withinExecutionContext(
       input.executionContext,
       pickGenerator(mode, sessionId, input, abortController.signal),
@@ -131,7 +132,7 @@ function main(): void {
     if (initialized || !process.connected) return;
     initialized = true;
     try {
-      await agentRuntimeStore.hydrateSessions();
+      await agentRuntimeStore.hydrateSessionFamily(init.sessionId);
     } catch (error) {
       // A newly started sidecar may not have a projection yet. The worker can
       // still boot and return a structured error for requests against a
@@ -152,7 +153,7 @@ function main(): void {
       logger.info({ sessionId: init.sessionId }, "[agent-session-runner] session missing during bootstrap");
     }
     await businessStore.refresh();
-    await hydrateRuntimeAssets([init.sessionId]);
+    await hydrateSessionAssets(init.sessionId);
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);

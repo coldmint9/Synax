@@ -204,7 +204,14 @@ agentRuntimeRoutes.use('*', async (c, next) => {
         !metadataOnly &&
         !c.req.path.endsWith('/runtime-ticket');
       if (!loadsWorkingSet) await agentRuntimeStore.hydrateSessionSummary(id);
-      if (loadsWorkingSet) await agentRuntimeStore.hydrateSession(id);
+      if (loadsWorkingSet) {
+        // Run admission validates current work, permissions and interactions.
+        // Do not hydrate sealed history first only to evict it again in the
+        // admission/worker execution projection.
+        if (c.req.method === 'POST' && c.req.path.endsWith('/runs'))
+          await agentRuntimeStore.hydrateExecutionSession(id);
+        else await agentRuntimeStore.hydrateSession(id);
+      }
       if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
     } else if (c.req.method !== 'GET' && /\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
       // Collection reads use the authoritative summary index directly. Loading
@@ -2092,6 +2099,7 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
       path: z.string().min(1),
       content: z.string(),
       rootId: z.string().min(1).optional(),
+      expectedWorkspacePath: z.string().min(1).max(4096).optional(),
     })
     .safeParse(body);
   if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
@@ -2102,6 +2110,7 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
         parsed.data.path,
         parsed.data.content,
         parsed.data.rootId,
+        parsed.data.expectedWorkspacePath,
       ),
     );
   } catch (error) {

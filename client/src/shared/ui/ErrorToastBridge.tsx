@@ -1,11 +1,33 @@
 import { useEffect } from "react";
-import { useNotificationStore } from "../state/notificationStore";
+import {
+  useNotificationStore,
+  type NotificationType,
+} from "../state/notificationStore";
 import { errorNotificationId } from "../lib/errors";
 
 const ERROR_SELECTOR = '[role="alert"], [data-error], [class*="error"], [class*="Error"]';
 const TOAST_SOURCE_ATTRIBUTE = "data-synax-error-toast-source";
 /** Tool rows state their own outcome inline, including failures and denials. */
 const TOOL_ROW_ATTRIBUTE = "[data-tool-status]";
+/** 组件声明"这里的错误我在原地展示"，桥接既不提升也不隐藏它。 */
+const OPT_OUT_ATTRIBUTE = "data-error-toast";
+/** 显式指定浮层色调，缺省按 class 里的 warning 语义推断。 */
+const TONE_ATTRIBUTE = "data-error-toast-tone";
+const WARNING_HINT = /(?:^|\s)(?:text|border|bg|ring)-warning(?:\/\d+)?(?:\s|$)/;
+
+function isSuppressed(element: HTMLElement): boolean {
+  return element.closest(`[${OPT_OUT_ATTRIBUTE}="off"]`) !== null;
+}
+
+function toneFor(element: HTMLElement): NotificationType {
+  const explicit = element
+    .closest<HTMLElement>(`[${TONE_ATTRIBUTE}]`)
+    ?.getAttribute(TONE_ATTRIBUTE);
+  if (explicit === "warning" || explicit === "info") return explicit;
+  return WARNING_HINT.test(element.getAttribute("class") ?? "")
+    ? "warning"
+    : "error";
+}
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -35,6 +57,7 @@ function hideSource(element: HTMLElement): void {
 
 function promote(element: HTMLElement, processed: WeakMap<HTMLElement, string>): void {
   if (
+    isSuppressed(element) ||
     element.hasAttribute(TOAST_SOURCE_ATTRIBUTE) ||
     element.closest("[data-synax-toast]") ||
     // A failed or denied tool call is transcript content the model works with,
@@ -53,7 +76,7 @@ function promote(element: HTMLElement, processed: WeakMap<HTMLElement, string>):
   hideSource(element);
   useNotificationStore.getState().pushAggregated({
     id: errorNotificationId(message),
-    type: "error",
+    type: toneFor(element),
     message,
     actions: actions.length > 0 ? actions : undefined,
     duration: actions.length > 0 ? 0 : 5000,

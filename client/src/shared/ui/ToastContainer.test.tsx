@@ -23,7 +23,7 @@ it('renders the archive notice with the normal toast surface and inline actions,
   )
   expect(surface.querySelector('svg')).toHaveAttribute('width', '14')
   expect(surface.querySelector('.rounded-md svg')).toHaveAttribute('width', '12')
-  expect(surface.parentElement?.parentElement?.parentElement).toHaveClass('w-[280px]')
+  expect(surface.parentElement?.parentElement?.parentElement).toHaveClass('w-[340px]')
   expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Undo' })).toHaveClass('text-[11px]', 'font-medium', 'text-success')
   await userEvent.setup().click(screen.getByRole('button', { name: 'Undo' }))
@@ -48,4 +48,16 @@ it('shows an animated translucent toast surface in both themes and retains dismi
 
   await userEvent.setup().click(screen.getByRole('button', { name: '关闭通知' }))
   expect(screen.queryByText('Use the embedded job’s controls to stop this session.')).not.toBeInTheDocument()
+})
+
+it('keeps the technical detail as secondary copy under the headline', () => {
+  useNotificationStore.getState().push({
+    type: 'error',
+    message: '操作失败，请稍后重试',
+    detail: 'Config API error 500: internal failure',
+  })
+
+  render(<ToastContainer />)
+  expect(screen.getByText('操作失败，请稍后重试')).toHaveClass('line-clamp-3')
+  expect(screen.getByText('Config API error 500: internal failure')).toHaveClass('line-clamp-2')
 })

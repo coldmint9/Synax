@@ -10,6 +10,11 @@ const MAX_REQUESTS: usize = 4096;
 const MAX_ROOT_QUEUE: usize = 128;
 const MAX_POOLS: usize = 128;
 const QUEUE_TIMEOUT_MS: u64 = 300_000;
+/// Give the tool and its owned process tree time to settle after its own
+/// deadline before the host treats the worker as unrecoverable. The resource
+/// lease remains occupied during this window; only confirmed cleanup releases
+/// it.
+const CLEANUP_GRACE_MS: u64 = 15_000;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -157,15 +162,15 @@ impl ResourceScheduler {
         state.entries.retain(|_, entry| {
             match entry.status.state {
                 "queued" if now >= entry.request.expires_at => entry.status.state = "queue_timeout",
-                "running"
+                "running" | "unresponsive"
                     if entry.started.is_some_and(|s| {
                         s.elapsed() >= Duration::from_millis(entry.request.timeout_ms)
                     }) =>
                 {
-                    entry.status.state = "cancelling"
+                    entry.status.state = "cancelling";
                 }
                 "running" if entry.last_seen.elapsed() >= Duration::from_secs(30) => {
-                    entry.status.state = "unresponsive"
+                    entry.status.state = "unresponsive";
                 }
                 _ => {}
             }
@@ -325,7 +330,16 @@ impl ResourceScheduler {
         state
             .entries
             .values()
-            .filter(|e| matches!(e.status.state, "cancelling" | "unresponsive"))
+            .filter(|e| match e.status.state {
+                "cancelling" => e.started.is_some_and(|started| {
+                    started.elapsed()
+                        >= Duration::from_millis(e.request.timeout_ms + CLEANUP_GRACE_MS)
+                }),
+                "unresponsive" => {
+                    e.last_seen.elapsed() >= Duration::from_millis(30_000 + CLEANUP_GRACE_MS)
+                }
+                _ => false,
+            })
             .map(|e| e.request.clone())
             .collect()
     }
@@ -414,5 +428,79 @@ mod tests {
         assert_eq!(scheduler.request(b.clone()).unwrap().state, "queued");
         scheduler.release("a", "owner").unwrap();
         assert_eq!(scheduler.request(b).unwrap().state, "running");
+    }
+
+    #[test]
+    fn deadline_allows_cooperative_cleanup_before_worker_termination() {
+        let scheduler = scheduler(1);
+        let a = request("a", "root-a");
+        let b = request("b", "root-b");
+        scheduler.request(a.clone()).unwrap();
+        scheduler.request(b.clone()).unwrap();
+        scheduler.state.lock().entries.get_mut("a").unwrap().started =
+            Some(Instant::now() - Duration::from_millis(a.timeout_ms + 100));
+        assert!(scheduler.overdue().is_empty());
+        assert_eq!(scheduler.request(a).unwrap().state, "cancelling");
+        // Cleanup still owns the slot, but can return a normal tool failure.
+        assert_eq!(scheduler.request(b.clone()).unwrap().state, "queued");
+        scheduler.release("a", "owner").unwrap();
+        assert!(scheduler.overdue().is_empty());
+        assert_eq!(scheduler.request(b).unwrap().state, "running");
+    }
+
+    #[test]
+    fn heartbeats_cannot_extend_the_deadline_cleanup_window() {
+        let scheduler = scheduler(1);
+        let a = request("a", "root");
+        scheduler.request(a.clone()).unwrap();
+        scheduler.state.lock().entries.get_mut("a").unwrap().started =
+            Some(Instant::now() - Duration::from_millis(a.timeout_ms + 20_000));
+        assert_eq!(scheduler.request(a).unwrap().state, "cancelling");
+        assert_eq!(scheduler.overdue().len(), 1);
+    }
+
+    #[test]
+    fn missed_heartbeats_get_a_bounded_recovery_window() {
+        let scheduler = scheduler(1);
+        let mut a = request("a", "root");
+        a.timeout_ms = 120_000;
+        scheduler.request(a.clone()).unwrap();
+        scheduler
+            .state
+            .lock()
+            .entries
+            .get_mut("a")
+            .unwrap()
+            .last_seen = Instant::now() - Duration::from_secs(31);
+        assert!(scheduler.overdue().is_empty());
+        assert_eq!(scheduler.request(a).unwrap().state, "running");
+        scheduler
+            .state
+            .lock()
+            .entries
+            .get_mut("a")
+            .unwrap()
+            .last_seen = Instant::now() - Duration::from_secs(46);
+        assert_eq!(scheduler.overdue().len(), 1);
+    }
+
+    #[test]
+    fn a_late_heartbeat_cannot_revive_an_expired_unresponsive_lease() {
+        let scheduler = scheduler(1);
+        let mut a = request("a", "root");
+        a.timeout_ms = 120_000;
+        scheduler.request(a.clone()).unwrap();
+        scheduler
+            .state
+            .lock()
+            .entries
+            .get_mut("a")
+            .unwrap()
+            .last_seen = Instant::now() - Duration::from_secs(31);
+        assert!(scheduler.overdue().is_empty());
+        scheduler.state.lock().entries.get_mut("a").unwrap().started =
+            Some(Instant::now() - Duration::from_millis(a.timeout_ms + 20_000));
+        assert_eq!(scheduler.request(a).unwrap().state, "cancelling");
+        assert_eq!(scheduler.overdue().len(), 1);
     }
 }

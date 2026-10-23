@@ -481,6 +481,7 @@ export function SessionCommitDialog({
 
                 {error ? (
                   <p
+                    data-error-toast="off"
                     role="alert"
                     className="flex items-start gap-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] leading-relaxed text-destructive"
                   >

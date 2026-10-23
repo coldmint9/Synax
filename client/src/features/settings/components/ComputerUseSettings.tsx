@@ -71,7 +71,7 @@ export function ComputerUseSettings({ value, onSave, locale, globalEnabled = fal
         {!globalEnabled ? <a className="computer-use-link" href="/settings?section=computerUse">{zh ? '前往全局电脑操作设置 ↗' : 'Open global Computer Use settings ↗'}</a> : null}
 
         {permissionIssue ? (
-          <div className="computer-use-alert" role="alert">
+          <div className="computer-use-alert" data-error-toast-tone="warning" role="alert">
             <div className="computer-use-alert__icon" aria-hidden="true"><AlertTriangle size={17} /></div>
             <div className="computer-use-alert__copy">
               <strong>{zh ? '需要桌面权限' : 'Desktop permissions required'}</strong>

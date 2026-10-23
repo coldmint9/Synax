@@ -1797,10 +1797,18 @@ export class RuntimeFacade {
     // call, full-session hydration, or loop through older pages on this path.
     const page = await this.historyCommand({ sessionId,
       requestId: historyReadRequest('history-sync', sessionId), operation: 'history_sync',
-      payload: { cursor: decode(cursor), since: decode(since), ...(preview ? {preview: true} : {}) },
+      payload: { cursor: decode(cursor), since: decode(since), transcript: true, ...(preview ? {preview: true} : {}) },
     }) as Awaited<ReturnType<RuntimeFacade['historyWindowAuthoritative']>>;
     for (const field of ['messages', 'runs', 'steps', 'toolCalls', 'events', 'permissions'] as const) {
       const records = await hydrateHistoryValues(client, sessionId, page[field] as unknown[]);
+      if (field === 'messages') for (const record of records as AgentRuntimeMessage[]) {
+        // Large objects arrive through immutable transfer refs, so project
+        // the same replay-only field after hydration as the Rust inline path.
+        if (record.metadata?.rustMessage) {
+          const { rustMessage: _replay, ...metadata } = record.metadata;
+          record.metadata = metadata;
+        }
+      }
       // Changes are in revision order; preserve it so the newest identity wins.
       (page as unknown as Record<string, unknown>)[field] = page.historyWindow.incremental
         ? records : this.orderedHistory(records);
@@ -1876,50 +1884,13 @@ export class RuntimeFacade {
     next?: number;
     revision: number;
   }> {
-    const head = await this.historyHead(sessionId);
-    if (expectedRevision !== undefined && expectedRevision !== head.revision)
-      throw new AgentRuntimeError(
-        "Conversation changed.",
-        "HISTORY_STALE",
-        409,
-      );
-    if (cursor > 0 && expectedRevision === undefined)
-      throw new AgentRuntimeError(
-        "Content continuation requires the original revision.",
-        "HISTORY_STALE",
-        409,
-      );
-    let graphCursor: string | undefined;
-    let message: AgentRuntimeMessage | undefined;
-    for (let page = 0; page < 128 && !message; page++) {
-      const result = await this.historyEntityPageAuthoritative(
-        sessionId,
-        "list_messages",
-        graphCursor,
-        256,
-      );
-      message = (result.items as AgentRuntimeMessage[]).find(
-        (item) => item.id === messageId,
-      );
-      if (!result.cursor) break;
-      graphCursor = result.cursor;
-    }
-    if (!message)
-      throw new AgentRuntimeError("Message missing.", "NOT_FOUND", 404);
-    const text = typeof message.content === "string" ? message.content : "";
-    const pageSize = 8192;
-    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > text.length)
-      throw new AgentRuntimeError(
-        "Invalid content cursor.",
-        "INVALID_INPUT",
-        400,
-      );
-    return {
-      text: text.slice(cursor, cursor + pageSize),
-      next: cursor + pageSize < text.length ? cursor + pageSize : undefined,
-      revision: head.revision,
-    };
+    if (!Number.isSafeInteger(cursor) || cursor < 0)
+      throw new AgentRuntimeError("Invalid content cursor.", "INVALID_INPUT", 400);
+    return this.historyCommand({ sessionId, requestId: historyReadRequest("message-content", sessionId),
+      operation: "message_content", payload: { messageId, offset: cursor, revision: expectedRevision },
+    }) as Promise<{ text: string; next?: number; revision: number }>;
   }
+
   async uiSnapshotAuthoritative(sessionId: string): Promise<{
     session: AgentSession;
     run: AgentRun | null;

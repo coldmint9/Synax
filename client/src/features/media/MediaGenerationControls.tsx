@@ -31,12 +31,12 @@ export function MediaGenerationControls({
   return (
     <div className="flex flex-wrap items-center gap-2" data-media-generation-controls={mode}>
       {!selected && (
-        <span role="alert" className="text-[11px] text-danger">
+        <span data-error-toast="off" role="alert" className="text-[11px] text-danger">
           所选媒体模型不可用，请在供应商设置中配置。
         </span>
       )}
       {selected && !operation && (
-        <span role="alert" className="text-[11px] text-danger">
+        <span data-error-toast="off" role="alert" className="text-[11px] text-danger">
           当前模型不支持所选参考素材对应的生成操作。
         </span>
       )}
@@ -104,7 +104,7 @@ export function MediaGenerationControls({
         <span role="status" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Check size={12} />已完成</span>
       )}
       {(error || (job && ['failed', 'cancelled', 'unknown'].includes(job.status))) && (
-        <span role="alert" className="inline-flex items-center gap-1 text-[11px] text-danger">
+        <span data-error-toast="off" role="alert" className="inline-flex items-center gap-1 text-[11px] text-danger">
           {error ?? job?.error ?? job?.status}
           {onRetry && <button type="button" onClick={onRetry} aria-label="重试媒体任务" title="重试媒体任务"><RotateCcw size={14} /></button>}
         </span>

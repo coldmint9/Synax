@@ -47,7 +47,7 @@ function send(socket: net.Socket, envelope: SidecarEnvelope): void {
 }
 
 describe('RuntimeSidecarClient', () => {
-  it('reads a bounded history window without first fetching an execution snapshot', async () => {
+  it.each(['history_sync', 'object_value_chunk', 'head_read', 'message_content', 'context_measure'])('reads %s without first fetching an execution snapshot', async operation => {
     const operations: string[] = [];
     const bound = await startServer((socket, envelope) => {
       if (envelope.body.type === 'hello') {
@@ -62,7 +62,7 @@ describe('RuntimeSidecarClient', () => {
     });
     const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
     try {
-      await expect(client.historyCommand({ sessionId: 's', requestId: 'page', operation: 'history_sync', payload: {} })).resolves.toBeInstanceOf(Uint8Array);
+      await expect(client.historyCommand({ sessionId: 's', requestId: 'page', operation, payload: {} })).resolves.toBeInstanceOf(Uint8Array);
       expect(operations).toEqual(['history_command']);
     } finally { client.close(); }
   });

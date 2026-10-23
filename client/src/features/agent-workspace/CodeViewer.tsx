@@ -128,6 +128,7 @@ export const CodeViewer = memo(function CodeViewer({
   // Guards against a slow read for a previous file overwriting the current one.
   const requestRef = useRef(0);
   const contentRef = useRef(content);
+  const loadedWorkspacePath = useRef<string | undefined>(undefined);
   const dirtyRef = useRef(false);
   const editorFlush = useRef<(() => void) | null>(null);
   const saveFlight = useRef<{
@@ -256,6 +257,7 @@ export const CodeViewer = memo(function CodeViewer({
               ));
       const text = result.content ?? "";
       if (requestRef.current !== requestId) return;
+      loadedWorkspacePath.current = 'workspacePath' in result ? result.workspacePath as string | undefined : undefined;
       const draft = tabId
         ? getWorkspaceDraft(sessionId, tabId, draftLease)
         : undefined;
@@ -308,6 +310,7 @@ export const CodeViewer = memo(function CodeViewer({
           path,
           submitted,
           rootId,
+          loadedWorkspacePath.current,
         );
         if (!isWorkspaceDraftLeaseActive(sessionId, tabId, draftLease))
           return true;

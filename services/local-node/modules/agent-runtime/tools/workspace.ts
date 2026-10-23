@@ -39,6 +39,8 @@ export function invalidateSessionWorkspaceRoots(sessionId?: string): void {
 
 export function workspaceRoot(sessionId?: string): string {
   if (!sessionId) return path.resolve(process.cwd());
+  const selected = agentExecutionRoot(sessionId);
+  if (selected) return selected;
   const bound = sessionWorkspaceRoots.get(sessionId);
   if (bound) return bound;
   const session = agentRuntimeStore.tryGetSession(sessionId);
@@ -166,11 +168,22 @@ export function resolveSessionWorkDir(
   sessionId: string,
   projectId: string,
 ): string {
+  const selected = agentExecutionRoot(sessionId);
+  if (selected) return selected;
   const bound = tryGetSessionWorkspaceRoot(sessionId);
   if (bound) return bound;
   return workspaceLocationHostPath(
     resolveSessionWorkspaceLocation(sessionId, projectId),
   );
+}
+
+function agentExecutionRoot(sessionId: string): string | undefined {
+  const session = agentRuntimeStore.tryGetSession(sessionId);
+  const binding = session?.sessionMetadata?.backend as { executionRootId?: string } | undefined;
+  if (!session || !binding?.executionRootId) return undefined;
+  const root = resolveWorkspaceRootsFromSession(session).find(item => item.id === binding.executionRootId);
+  if (!root) throw new Error('The selected execution project is no longer in this workspace.');
+  return workspaceRootHostPath(root);
 }
 
 /** Keep repository views and tool execution on the same primary directory. */
@@ -317,7 +330,7 @@ export function bindSessionWorkDir(sessionId: string): string {
       workspaceRoots,
     },
   });
-  return root;
+  return agentExecutionRoot(sessionId) ?? root;
 }
 
 function readProjectWorkDirEntriesSafely(): ProjectWorkDirEntry[] {

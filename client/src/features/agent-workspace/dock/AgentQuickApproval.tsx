@@ -135,7 +135,7 @@ export function AgentQuickApprovalActions({
         </span>
       )}
       {error && (
-        <p role="alert" className="bui-approval-error">
+        <p data-error-toast="off" role="alert" className="bui-approval-error">
           {error}
         </p>
       )}

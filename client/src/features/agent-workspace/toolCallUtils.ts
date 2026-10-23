@@ -17,9 +17,10 @@ export function toolCallRecordToView(tc: ToolCallRecord): ToolCallView {
   };
 }
 
-export function formatToolDuration(startedAt: string, endedAt: string): string {
+/** Short calls have no duration label in either live or historical views. */
+export function formatToolDuration(startedAt: string, endedAt: string): string | null {
   const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
-  if (ms < 1000) return `${ms}ms`;
+  if (!Number.isFinite(ms) || ms <= 10_000) return null;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 

@@ -66,6 +66,19 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
+  it('submits through the execution projection without reloading the archived transcript', async () => {
+    const id = await createSession('synax');
+    const original = agentRuntimeStore.hydrateSession.bind(agentRuntimeStore);
+    const hydrate = vi.spyOn(agentRuntimeStore, 'hydrateSession').mockImplementation((sessionId, refresh, options) => {
+      if (!options?.execution) throw new Error('full transcript loaded before run admission');
+      return original(sessionId, refresh, options);
+    });
+    try {
+      const response = await request('POST', `/sessions/${id}/runs`, { message: 'Continue', requestId: 'bounded-admission' });
+      expect(response.status, response.body).toBe(202);
+      expect(hydrate).toHaveBeenCalled();
+    } finally { hydrate.mockRestore(); }
+  });
   it('opens a cold target session without enumerating every session or hydrating its history', async () => {
     const id = await createSession('synax');
     agentRuntimeStore.reset();
