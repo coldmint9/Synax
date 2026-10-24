@@ -254,8 +254,24 @@ it('returns one history page and forwards opaque incremental cursors without hyd
   const since = Buffer.from(JSON.stringify(rawCursor)).toString('base64url');
   const result = await facade.historyWindowAuthoritative('s', undefined, since);
   expect(historyCommand).toHaveBeenCalledOnce();
-  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor, transcript:true} }));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor, transcript:true, limit:100} }));
   expect(all).not.toHaveBeenCalled();
   expect(result.historyWindow.syncCursor).toBe(since);
   expect(result.messages).toEqual([{id:'m',content:'new'}]);
+});
+
+it('requests a 100-message tail and resumes client eviction boundaries within the runtime generation', async () => {
+  const historyCommand = vi.fn(async () => encode({
+    messages: [], runs: [], steps: [], toolCalls: [], events: [], permissions: [], removed: [],
+    historyWindow: { revision: 2, epoch: 1, generation: 1, incremental: false },
+  }));
+  const facade = new RuntimeFacade(() => remote({ historyCommand }));
+  const before = { generation: 1, rows: { messages: 'm100', steps: 'step80' } };
+  const result = await facade.historyWindowAuthoritative('s', undefined, undefined, false, JSON.stringify(before));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation: 'history_sync',
+    payload: { cursor: undefined, since: undefined, transcript: true, limit: 100, before },
+  }));
+  expect(result.historyWindow.messageLimit).toBe(100);
+  await expect(facade.historyWindowAuthoritative('s', undefined, undefined, false, '{')).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
+  expect(historyCommand).toHaveBeenCalledTimes(1);
 });

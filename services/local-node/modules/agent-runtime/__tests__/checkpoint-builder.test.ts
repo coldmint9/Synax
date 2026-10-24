@@ -16,6 +16,17 @@ function input(overrides: Partial<CheckpointBuilderInput> = {}): CheckpointBuild
 }
 
 describe("incremental checkpoint builder", () => {
+  it("keeps a valid summary when the provider emits stale source references", async () => {
+    const result = await buildContextCheckpoint({
+      ...input(),
+      pages: (async function* () { yield [{ objectId: "sha256:valid", role: "assistant", text: "Evidence" , offset: 0 }]; })(),
+      generate: vi.fn(async () => ({ finishReason: "stop", text: JSON.stringify({
+        summary: { goal: [], constraints: [], decisions: [], completedWork: ["Evidence"], evidence: [], failures: [], openQuestions: [], nextActions: [] },
+        sourceRefs: ["sha256:valid", "sha256:stale"],
+      }) })),
+    });
+    expect(result?.sourceRefs).toEqual(["sha256:valid"]);
+  });
   it("combines small records into a bounded call instead of summarizing each message", async () => {
     const args = input({ pages: pages(Array.from({ length: 60 }, (_, i) => ({ objectId: `o-${i}`, role: "tool", text: "done", offset: 0 }))) });
     expect(await buildContextCheckpoint(args)).toMatchObject({ summary });
@@ -34,16 +45,39 @@ describe("incremental checkpoint builder", () => {
     }
   });
 
-  it("rejects truncated output and retries once without installing a candidate", async () => {
+  it("accepts a complete JSON response even when the provider marks the stream length-limited", async () => {
     const args = input({ generate: vi.fn(async () => ({ text: JSON.stringify({ summary, sourceRefs: [] }), finishReason: "length" })) });
-    await expect(buildContextCheckpoint(args)).rejects.toThrow("incomplete checkpoint response");
-    expect(args.generate).toHaveBeenCalledTimes(2);
+    await expect(buildContextCheckpoint(args)).resolves.toMatchObject({ summary });
+    expect(args.generate).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects invented refs and allows one corrected answer", async () => {
-    const generate = vi.fn().mockResolvedValueOnce({ text: JSON.stringify({ summary, sourceRefs: ["invented"] }), finishReason: "stop" })
-      .mockResolvedValueOnce({ text: JSON.stringify({ summary, sourceRefs: ["object-1"] }), finishReason: "stop" });
+  it("filters invented refs while keeping valid evidence links", async () => {
+    const generate = vi.fn().mockResolvedValue({ text: JSON.stringify({ summary, sourceRefs: ["invented", "object-1"] }), finishReason: "stop" });
     expect(await buildContextCheckpoint(input({ generate }))).toMatchObject({ sourceRefs: ["object-1"] });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it("commits a deterministic checkpoint when the provider returns malformed JSON", async () => {
+    const result = await buildContextCheckpoint(input({
+      generate: vi.fn(async () => ({ text: '{"summary":', finishReason: "length" })),
+    }));
+    expect(result?.summary.evidence).toContain("Observed error");
+    expect(result?.summary.nextActions).toContain("Continue from the latest completed step.");
+  });
+
+  it("commits a deterministic checkpoint when the provider call throws", async () => {
+    const result = await buildContextCheckpoint(input({
+      generate: vi.fn(async () => { throw new Error("provider temporarily unavailable"); }),
+    }));
+    expect(result?.summary.evidence).toContain("Observed error");
+  });
+
+  it("keeps a minimal checkpoint when a history page fails", async () => {
+    async function* failingPages() {
+      throw new Error("history page temporarily unavailable");
+    }
+    const result = await buildContextCheckpoint(input({ pages: failingPages() }));
+    expect(result?.summary.nextActions).toContain("Continue from the latest completed step.");
   });
 
   it("does not accept a late response after cancellation", async () => {

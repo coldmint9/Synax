@@ -1,4 +1,4 @@
-import { useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import { Button } from "@/shared/ui/ui/Button";
 import { Input } from "@/shared/ui/ui/Field";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import type { ProjectSummary } from "../../shared/state/shellStore";
+import type { ProjectSessionActivity } from "../agent-workspace/projectSessionBadges";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useWorkspaceCopy } from "./workspaceCopy";
 import { WorkspaceRenameDialog } from "./WorkspaceRenameDialog";
@@ -33,6 +34,7 @@ interface Props {
   onRemoveRequest: (event: MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
   iconOnly?: boolean;
+  otherActivity?: ProjectSessionActivity;
   renderBadge: (id: string) => ReactNode;
 }
 
@@ -46,6 +48,7 @@ export function WorkspaceSwitcher({
   onRemoveRequest,
   onOpen,
   iconOnly,
+  otherActivity,
   renderBadge,
 }: Props) {
   const c = useWorkspaceCopy();
@@ -56,6 +59,7 @@ export function WorkspaceSwitcher({
   const [targetId, setTargetId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ProjectSummary | null>(null);
   const [notice, setNotice] = useState("");
+  const activityDescriptionId = useId();
   const actionButtons = useRef(new Map<string, HTMLButtonElement>());
   const backRef = useRef<HTMLButtonElement>(null);
   const target = projects.find((project) => project.id === targetId);
@@ -65,6 +69,15 @@ export function WorkspaceSwitcher({
       .includes(search.trim().toLocaleLowerCase()),
   );
   const displayName = hasProject ? projectName : c.switchWorkspace;
+  const activityLabels = {
+    waiting: c.waitingElsewhere,
+    failed: c.failedElsewhere,
+    running: c.runningElsewhere,
+    unread: c.unreadElsewhere,
+  };
+  const activityDescription = otherActivity
+    ? activityLabels[otherActivity.status].replace("{count}", String(otherActivity.count))
+    : c.noActivityElsewhere;
   const back = () => {
     const id = targetId;
     setTargetId(null);
@@ -85,14 +98,27 @@ export function WorkspaceSwitcher({
                 onOpen?.();
               }}
             />
-            <Tooltip content={displayName}>
+            <Tooltip
+              content={otherActivity ? `${displayName} · ${activityDescription}` : displayName}
+            >
               <PopoverButton
                 className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`}
                 aria-label={t("appSwitchProject")}
+                aria-describedby={otherActivity ? activityDescriptionId : undefined}
               >
                 <Folder size={15} aria-hidden="true" />
                 {!iconOnly && (
                   <span className="wh-project-label">{displayName}</span>
+                )}
+                {otherActivity && (
+                  <span className="workspace-activity" data-status={otherActivity.status} aria-hidden="true">
+                    <span className="workspace-activity__signal">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    <span className="workspace-activity__count">{otherActivity.count}</span>
+                  </span>
                 )}
                 {!iconOnly && <ChevronDown size={12} aria-hidden="true" />}
               </PopoverButton>
@@ -295,6 +321,9 @@ export function WorkspaceSwitcher({
           </>
         )}
       </Popover>
+      <span id={activityDescriptionId} className="sr-only" role="status" aria-atomic="true">
+        {activityDescription}
+      </span>
       <WorkspaceRenameDialog
         workspace={renameTarget}
         onClose={() => setRenameTarget(null)}

@@ -11,6 +11,8 @@ import { runSessionCheckpoint, type CheckpointHead } from "../checkpoint-service
 
 let head: CheckpointHead;
 let loseCommit: boolean;
+let failCurrentReads: number;
+let failCommitOnce: boolean;
 const summary = { goal: ["Investigate"], constraints: [], decisions: [], completedWork: [], evidence: [], failures: [], openQuestions: [], nextActions: ["Continue"] };
 const input = () => ({ sessionId: "s", projectId: "p", model: "fixture", budget: { contextLimit: 10_000, outputReserve: 2048 }, summaryBudget: 500, validate: vi.fn(async () => true) });
 
@@ -18,10 +20,18 @@ beforeEach(() => {
   vi.clearAllMocks();
   head = { checkpoint: null, active: null, revision: 20, generation: 1, latestStepId: "last-step" };
   loseCommit = false;
+  failCurrentReads = 0;
+  failCommitOnce = false;
   mocks.generate.mockResolvedValue({ text: JSON.stringify({ summary, sourceRefs: [] }), finishReason: "stop", usage: { inputTokens: 25, outputTokens: 50 } });
   mocks.command.mockImplementation(async ({ operation, payload }: { operation: string; payload: Record<string, unknown> }) => {
     let result: unknown = {};
-    if (operation === "context_current") result = head;
+    if (operation === "context_current") {
+      if (failCurrentReads > 0 && head.active) {
+        failCurrentReads--;
+        throw new Error("checkpoint head unavailable");
+      }
+      result = head;
+    }
     else if (operation === "context_begin") {
       head.active = { runId: payload.runId as string, stepId: payload.stepId as string, status: "running",
         throughRevision: 20, throughStepId: "last-step", sourceFingerprint: "a".repeat(64),
@@ -32,12 +42,24 @@ beforeEach(() => {
     };
     else if (operation === "context_finish") head.active!.status = payload.status as string;
     else if (operation === "context_commit") {
+      if (failCommitOnce) {
+        failCommitOnce = false;
+        throw new Error("temporary history transport failure");
+      }
       head.checkpoint = payload.checkpoint as CheckpointHead["checkpoint"];
       head.active!.status = "completed";
       if (loseCommit) throw new Error("ack lost");
     }
     return Buffer.from(JSON.stringify(result));
   });
+});
+
+it("retries an idempotent commit without regenerating the summary", async () => {
+  failCommitOnce = true;
+  const result = await runSessionCheckpoint(input());
+  expect(result?.sessionId).toBe("s");
+  expect(mocks.generate).toHaveBeenCalledTimes(1);
+  expect(mocks.command.mock.calls.filter(([c]) => c.operation === "context_commit")).toHaveLength(2);
 });
 
 it("uses a same-session run and commits only after complete-request validation", async () => {
@@ -58,6 +80,14 @@ it("reconciles a lost commit response without repeating the LLM request", async 
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.command.mock.calls.some(([c]) => c.operation === "context_finish")).toBe(false);
   expect(mocks.emit.mock.calls.at(-1)?.[1].state.status).toBe("completed");
+});
+
+it("commits the deterministic fallback when the provider call fails", async () => {
+  mocks.generate.mockRejectedValueOnce(new Error("provider failed"));
+  const result = await runSessionCheckpoint(input());
+  expect(result?.summary.evidence).toContain("Observed evidence");
+  expect(head.active?.status).toBe("completed");
+  expect(mocks.command.mock.calls.some(([c]) => c.operation === "context_finish")).toBe(false);
 });
 
 it("never publishes a boundary after failed full-request validation", async () => {

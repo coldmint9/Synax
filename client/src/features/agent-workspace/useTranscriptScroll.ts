@@ -1,3 +1,5 @@
+import { useAgentSessionStore } from "./state/agentSessionStore";
+import { setSessionHistoryReading } from "./state/sessionTailWindow";
 import {
   useCallback,
   useLayoutEffect,
@@ -7,7 +9,7 @@ import {
 
 const positions = new Map<
   string,
-  { top: number; pinned: boolean; reading: boolean }
+  { top: number; pinned: boolean; reading: boolean; firstId?: string }
 >();
 
 export interface TranscriptScrollController {
@@ -56,7 +58,9 @@ export function useTranscriptScroll(
     const element = scrollRef.current;
     if (!element || !sessionId || !ready) return;
     const content = element.firstElementChild;
-    const saved = positions.get(sessionId);
+    const previous = positions.get(sessionId);
+    const firstId = useAgentSessionStore.getState().sessionDetailCache[sessionId]?.messages[0]?.id;
+    const saved = previous?.firstId === firstId ? previous : undefined;
     pinnedRef.current = saved?.pinned ?? true;
     readingRef.current = saved?.reading ?? false;
     let manualUntil = 0;
@@ -101,6 +105,10 @@ export function useTranscriptScroll(
       pinnedRef.current = false;
       publish(true);
     };
+    const readHistory = () => {
+      pinnedRef.current = false;
+      publish(true);
+    };
     const handleDisclosureKey = (event: KeyboardEvent) => {
       if (event.key === "Enter" || event.key === " ") inspectDisclosure(event);
     };
@@ -123,6 +131,7 @@ export function useTranscriptScroll(
       lastClientHeight = element.clientHeight;
     };
     element.addEventListener("click", inspectDisclosure, true);
+    element.addEventListener("transcript-history-reading", readHistory);
     element.addEventListener("keydown", handleDisclosureKey, true);
     element.addEventListener("scroll", handleScroll, { passive: true });
     element.addEventListener("wheel", markManual, { passive: true });
@@ -155,9 +164,12 @@ export function useTranscriptScroll(
         top: lastTopRef.current,
         pinned: pinnedRef.current,
         reading: readingRef.current,
+        firstId,
       });
+      setSessionHistoryReading(sessionId, false);
       if (positions.size > 32) positions.delete(positions.keys().next().value!);
       element.removeEventListener("click", inspectDisclosure, true);
+      element.removeEventListener("transcript-history-reading", readHistory);
       element.removeEventListener("keydown", handleDisclosureKey, true);
       element.removeEventListener("scroll", handleScroll);
       element.removeEventListener("wheel", markManual);

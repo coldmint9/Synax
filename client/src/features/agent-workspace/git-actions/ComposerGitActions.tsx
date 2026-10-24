@@ -164,6 +164,7 @@ export default function ComposerGitActions({
           rootName={commitTarget.name}
           branch={commitTarget.branch}
           changedFiles={commitTarget.changedFiles?.length ?? 0}
+          repositories={dirtyRepositories}
           onClose={() => {
             setCommitOpen(false);
             setCommitTarget(null);

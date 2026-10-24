@@ -32,6 +32,14 @@ const completed = {
     originalTokens: 10000,
     compressedTokens: 2000,
     messageCount: 4,
+    contextUsage: {
+      version: 1 as const,
+      stepId: "cmp-step",
+      total: 2000,
+      limit: 200000,
+      composition: { version: 2 as const, messages: 1500, tools: 200, mcp: 100, skills: 50, system: 150, total: 2000, measuredAt: "" },
+      measuredAt: "",
+    },
   },
   message: {
     id: "msg-1",
@@ -50,6 +58,7 @@ beforeEach(() => {
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
     selectedSessionId: "s",
+    sessions: [{ id: "s", sessionMetadata: {} } as never],
     fetchSessionStats: vi.fn(async () => {}),
     refreshDetail: vi.fn(async () => {}),
   });
@@ -93,6 +102,10 @@ describe("manual compaction", () => {
       compressedTokens: 2000,
       messageCount: 4,
     });
+  });
+  it("applies the post-compaction usage snapshot to the composer session", () => {
+    act(() => useAgentSessionStore.getState().applyLiveEvent(completed, "s"));
+    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata?.contextUsage).toMatchObject({ total: 2000, stepId: "cmp-step" });
   });
   it("keeps a running state after refresh data is applied", () => {
     render(

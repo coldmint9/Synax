@@ -1,8 +1,9 @@
+import { setSessionHistoryReading } from "./state/sessionTailWindow";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
 import { useTranscriptReveal } from "./useTranscriptReveal";
 import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   projectPendingSubmission,
   usePendingSubmissionStore,
@@ -242,10 +243,16 @@ export function SessionTranscript({
   // cover it with a skeleton until every change-feed page has arrived.
   const revealed = useTranscriptReveal(scrollRef, sessionId, !loading || Boolean(pending), active);
   const preparing = !revealed && !error;
+  const readingChanged = useCallback((reading: boolean) => {
+    if (sessionId) setSessionHistoryReading(sessionId, reading);
+    onReadingHistoryChange?.(reading);
+    if (!reading && useAgentSessionStore.getState().selectedSessionId === sessionId)
+      useAgentSessionStore.getState().compactHistoryTail();
+  }, [sessionId, onReadingHistoryChange]);
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
-    onReadingHistoryChange,
+    readingChanged,
     active && !waitingForHistory,
   );
   useLayoutEffect(() => {
@@ -318,6 +325,13 @@ export function SessionTranscript({
                   {locale === "zh" ? "重试" : "Retry"}
                 </button>
               </div>
+            )}
+            {olderHistory.hasEarlier && !waitingForHistory && (
+              <button type="button" disabled={olderHistory.loading}
+                className="mx-auto block py-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => void olderHistory.retry()}>
+                {locale === "zh" ? "加载更早消息" : "Load earlier messages"}
+              </button>
             )}
             {olderHistory.loading && (
               <div

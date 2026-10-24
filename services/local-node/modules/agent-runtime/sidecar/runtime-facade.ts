@@ -1770,7 +1770,7 @@ export class RuntimeFacade {
         : {}),
     };
   }
-  async historyWindowAuthoritative(sessionId: string, cursor?: string, since?: string, preview = false): Promise<{
+  async historyWindowAuthoritative(sessionId: string, cursor?: string, since?: string, preview = false, before?: string): Promise<{
     messages: AgentRuntimeMessage[];
     runs: AgentRun[];
     steps: AgentRunStep[];
@@ -1779,7 +1779,7 @@ export class RuntimeFacade {
     permissions: unknown[];
     removed: Array<{ collection: string; id: string }>;
     historyWindow: {
-      revision: number; epoch: number; generation: number;
+      revision: number; epoch: number; generation: number; messageLimit?: number;
       cursor?: string; olderCursor?: string; syncCursor?: string;
       hasEarlier: boolean; latest: boolean; detailsTruncated: boolean;
       incremental: boolean; hasMoreChanges?: boolean;
@@ -1797,7 +1797,12 @@ export class RuntimeFacade {
     // call, full-session hydration, or loop through older pages on this path.
     const page = await this.historyCommand({ sessionId,
       requestId: historyReadRequest('history-sync', sessionId), operation: 'history_sync',
-      payload: { cursor: decode(cursor), since: decode(since), transcript: true, ...(preview ? {preview: true} : {}) },
+      payload: { cursor: decode(cursor), since: decode(since), transcript: true, limit: 100,
+        ...(before ? { before: (() => {
+          if (before.length > 16_384) throw new AgentRuntimeError('Invalid history boundary.', 'INVALID_COMMAND', 400);
+          try { return JSON.parse(before); }
+          catch { throw new AgentRuntimeError('Invalid history boundary.', 'INVALID_COMMAND', 400); }
+        })() } : {}), ...(preview ? {preview: true} : {}) },
     }) as Awaited<ReturnType<RuntimeFacade['historyWindowAuthoritative']>>;
     for (const field of ['messages', 'runs', 'steps', 'toolCalls', 'events', 'permissions'] as const) {
       const records = await hydrateHistoryValues(client, sessionId, page[field] as unknown[]);
@@ -1818,6 +1823,7 @@ export class RuntimeFacade {
       page.historyWindow[field] = token ? Buffer.from(JSON.stringify(token)).toString('base64url') : undefined;
     }
     page.historyWindow.cursor = cursor;
+    if (!page.historyWindow.incremental) page.historyWindow.messageLimit = 100;
     return page;
   }
   async historyTimelineAuthoritative(

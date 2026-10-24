@@ -14,7 +14,7 @@ import type { GitActionInput, GitActionResult } from "./git-history-contracts.js
 import type { MergeRequest, MergeFile, MergeFileSave, MergeFileSlice, MergeFileSliceInput } from "./git-mr/contracts.js";
 import { readFile as readMergeFile, readFileSlice as readMergeFileSlice, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
 import { GitMrStore } from "./git-mr/store.js";
-import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, type GitWorktreeSummary, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
+import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, MAX_WORKTREE_CHANGE_ENTRIES, WORKTREE_DIRTY_REASON, type GitWorktreeSummary, type GitWorktreeChanges, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
 export type { GitWorktreeSummary } from "./git-worktree-management-contracts.js";
 
 const execFileAsync = promisify(execFile);
@@ -882,7 +882,11 @@ export async function removeGitWorktree(
         404,
       );
     options.onTarget?.(target);
-    const reasons = cleanupReasons(target);
+    // A forced removal may discard uncommitted work, but it never overrides the
+    // primary, locked, missing or in-use guards.
+    const reasons = cleanupReasons(target).filter((reason) =>
+      !(options.force && reason === WORKTREE_DIRTY_REASON),
+    );
     if (reasons.length) throw new GitWorkspaceError(reasons.join("；"), 409);
     // Listing Git status can take time; check live occupancy again just before removal.
     const latestUsage = await options.readUsage?.();
@@ -906,10 +910,31 @@ export async function removeGitWorktree(
     await git(context.location, context.root, [
       "worktree",
       "remove",
+      ...(options.force ? ["--force"] : []),
       "--",
       target.path,
     ]);
   });
+}
+
+/** Local changes a forced removal would discard, listed so the user confirms them by name. */
+export async function listWorktreeChanges(repository: RepositoryInput, worktreePath: string): Promise<GitWorktreeChanges> {
+  const context = await assertRepository(repository);
+  const requested = await canonical(context.location, worktreePath).catch(() => normalized(context.location, worktreePath));
+  const target = (await rawWorktrees(context)).find((item) => samePath(context.location, item.path, requested));
+  if (!target) throw new GitWorkspaceError("The selected path is not a worktree of this project.", 404);
+  if (target.prunable) throw new GitWorkspaceError("The worktree directory is missing.", 409);
+  const { stdout } = await git(context.location, target.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"]);
+  const entries = stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => ({ code: line.slice(0, 2).trim() || "?", path: line.slice(3) }));
+  return {
+    path: worktreePath,
+    entries: entries.slice(0, MAX_WORKTREE_CHANGE_ENTRIES),
+    total: entries.length,
+    truncated: entries.length > MAX_WORKTREE_CHANGE_ENTRIES,
+  };
 }
 
 /** Clear exactly one absent checkout. Never scan status or prune unrelated entries. */

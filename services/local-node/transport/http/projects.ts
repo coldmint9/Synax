@@ -53,6 +53,7 @@ import {
   previewGitWorktreeCleanup,
   cleanupGitWorktrees,
   previewGitWorktreePrune,
+  listWorktreeChanges,
 } from "../../modules/git-workspaces.js";
 import { listGitSessions } from "../../modules/git-session-index.js";
 import { resolveWorkspaceRootsFromSession } from "../../modules/agent-runtime/tools/workspace.js";
@@ -1081,6 +1082,18 @@ projectRoutes.get("/:id/git/worktrees/preview", async (c) => {
   try {
     const root = projectGitRoot(project, c.req.query("rootId"), true);
     return c.json(await previewGitWorktreePath(root.repository, root.scope, branch.data));
+  } catch (error) { return gitWorkspaceRouteError(c, error); }
+});
+
+/** GET /:id/git/worktrees/changes — local changes a forced removal would discard. */
+projectRoutes.get("/:id/git/worktrees/changes", async (c) => {
+  const project = projects.get(c.req.param("id"));
+  if (!project) return c.json({ error: "Project not found" }, 404);
+  const worktreePath = z.string().min(1).max(4096).safeParse(c.req.query("path"));
+  if (!worktreePath.success) return c.json({ error: "Invalid worktree path" }, 400);
+  try {
+    const root = projectGitRoot(project, c.req.query("rootId"), true);
+    return c.json(await listWorktreeChanges(root.repository, worktreePath.data));
   } catch (error) { return gitWorkspaceRouteError(c, error); }
 });
 

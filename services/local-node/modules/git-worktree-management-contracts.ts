@@ -29,6 +29,19 @@ export interface GitWorktreeCleanupResult {
 export interface GitWorktreeCleanupResponse { results: GitWorktreeCleanupResult[] }
 export const MAX_WORKTREE_CLEANUP_PATHS = 100;
 
+/** Shared wording so clients can recognise the only reason a forced removal may discard. */
+export const WORKTREE_DIRTY_REASON = "工作树包含未提交或未跟踪的修改";
+export const MAX_WORKTREE_CHANGE_ENTRIES = 100;
+
+export interface GitWorktreeChangeEntry { code: string; path: string }
+/** Local changes a forced removal would discard; never a reason to delete on its own. */
+export interface GitWorktreeChanges {
+  path: string;
+  entries: GitWorktreeChangeEntry[];
+  total: number;
+  truncated: boolean;
+}
+
 export function isTerminalWorktreeSession(status: unknown): boolean {
   return typeof status === "string" && ["completed", "failed", "cancelled", "interrupted"].includes(status);
 }
@@ -40,7 +53,7 @@ export function cleanupReasons(worktree: GitWorktreeSummary): string[] {
   if (worktree.locked) reasons.push("工作树已锁定");
   if (worktree.prunable) reasons.push("工作树目录缺失，需单独确认清理元数据");
   if (worktree.statusKnown !== true) reasons.push("无法确认 Git 状态");
-  if (worktree.dirty) reasons.push("工作树包含未提交或未跟踪的修改");
+  if (worktree.dirty) reasons.push(WORKTREE_DIRTY_REASON);
   if ((worktree.activeSessionCount ?? worktree.sessionCount) > 0) reasons.push("工作树仍被活跃会话占用");
   return reasons;
 }

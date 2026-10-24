@@ -236,6 +236,31 @@ fn revoking_manual_owner_fences_late_commit_and_recovery_clears_running_state() 
 }
 
 #[test]
+fn superseded_running_compaction_is_terminalized_before_ui_refresh() {
+    let root = temp_root("context-superseded");
+    let (store, ops) = open(&root);
+    let seed = ok(&ops, "s", "seed", "append_entities", objects(serde_json::json!([
+        {"kind":"runtime.step","value":{"id":"old-step","sessionId":"s","runId":"run","status":"completed","index":1}}
+    ])));
+    let active = ok(&ops, "s", "begin", "context_begin", serde_json::json!({
+        "runId":"compact-run","stepId":"compact-step","throughStepId":"old-step","expectedRevision":seed["revision"]
+    }));
+    // A newer completed step makes the captured compaction boundary stale.
+    ok(&ops, "s", "advance", "append_entities", objects(serde_json::json!([
+        {"kind":"runtime.step","value":{"id":"new-step","sessionId":"s","runId":"run","status":"completed","index":2}}
+    ])));
+    let current = ok(&ops, "s", "current", "context_current", temp());
+    assert_eq!(current["active"]["runId"], active["runId"]);
+    assert_eq!(current["active"]["status"], "failed");
+    assert!(current["active"]["error"].as_str().unwrap().contains("superseded"));
+    let recovered = ok(&ops, "s", "recover", "context_recover", temp());
+    assert_eq!(recovered["active"]["status"], "failed");
+    let runs = ok(&ops, "s", "runs", "list_runs", temp());
+    assert_eq!(runs["items"][0]["status"], "interrupted");
+    drop(ops); drop(store); std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn corrupt_latest_checkpoint_uses_previous_summary_without_lowering_readonly_boundary() {
     let root = temp_root("checkpoint-fallback");
     let (store, ops) = open(&root);
@@ -330,21 +355,18 @@ fn context_checkpoint_run_and_boundary_commit_once_and_survive_reopen() {
 }
 
 #[test]
-fn invalid_or_cancelled_context_candidate_never_publishes_a_boundary() {
+fn invalid_context_references_are_dropped_and_checkpoint_publishes() {
     let root = temp_root("context-cancel");
     let (store, ops) = open(&root);
     let active = begin_context(&ops);
     let mut candidate = checkpoint_candidate(&active);
     candidate["sourceRefs"] = serde_json::json!(["sha256:missing"]);
     let before = ok(&ops, "s", "head", "head_read", temp());
-    assert!(call(&ops, "s", "bad-commit", "context_commit", serde_json::json!({"checkpoint":candidate})).is_err());
-    assert_eq!(ok(&ops, "s", "head", "head_read", temp()), before);
-    let done = ok(&ops, "s", "interrupt", "context_finish",
-        serde_json::json!({"runId":"compact-run","status":"interrupted","error":"owner exited"}));
-    assert_eq!(done["status"], "failed");
-    assert!(call(&ops, "s", "late", "context_commit",
-        serde_json::json!({"checkpoint":checkpoint_candidate(&active)})).unwrap_err().to_string().contains("COMPACTION_SUPERSEDED"));
-    assert!(ok(&ops, "s", "read", "context_current", temp())["checkpoint"].is_null());
+    let done = ok(&ops, "s", "bad-commit", "context_commit", serde_json::json!({"checkpoint":candidate}));
+    assert_eq!(done["status"], "completed");
+    let current = ok(&ops, "s", "head", "context_current", temp());
+    assert!(current["checkpoint"]["sourceRefs"].as_array().unwrap().is_empty());
+    assert!(current["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
     drop(ops); drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -1512,4 +1534,46 @@ fn subagent_summary_is_monotonic_and_keeps_one_message_across_reopen() {
     assert_eq!(page["items"].as_array().unwrap().len(),1);
     assert_eq!(page["items"][0]["content"],"newest");
     drop(ops); drop(store); std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn history_sync_tail_resumes_evicted_rows_without_gaps() {
+    let root = temp_root("tail-resume");
+    let (store, ops) = open(&root);
+    // Bodies exceed the per-row inline allowance: the count guarantee must
+    // survive byte budgeting by returning immutable object references.
+    ok(&ops, "s", "append-tail", "append_entities", objects(Value::Array(
+        (0..240).map(|i| message(&format!("m{i}"), i, &"x".repeat(2000))).collect(),
+    )));
+    let latest = ok(&ops, "s", "tail", "history_sync", with(&[("limit", number(100))]));
+    assert_eq!(latest["messages"].as_array().unwrap().len(), 100);
+    assert_eq!(latest["messages"][0]["id"], "m239");
+    assert_eq!(latest["messages"][99]["id"], "m140");
+    assert!(serde_json::to_vec(&latest).unwrap().len() < 512 * 1024);
+    let boundary = serde_json::json!({
+        "generation": latest["historyWindow"]["generation"], "rows": {"messages":"m180"}
+    });
+    let older = ok(&ops, "s", "resume-tail", "history_sync", serde_json::json!({
+        "limit":100, "cursor":latest["historyWindow"]["olderCursor"], "before":boundary
+    }));
+    assert_eq!(older["messages"].as_array().unwrap().len(), 100);
+    assert_eq!(older["messages"][0]["id"], "m179");
+    assert_eq!(older["messages"][99]["id"], "m80");
+    let oldest = ok(&ops, "s", "resume-oldest", "history_sync", serde_json::json!({
+        "limit":100, "cursor":older["historyWindow"]["olderCursor"]
+    }));
+    assert_eq!(oldest["messages"].as_array().unwrap().len(), 80);
+    assert_eq!(oldest["messages"][79]["id"], "m0");
+    let without_cursor = ok(&ops, "s", "resume-only-boundary", "history_sync", serde_json::json!({
+        "limit":100, "before":boundary
+    }));
+    assert_eq!(without_cursor["messages"][0]["id"], "m179");
+    assert!(matches!(call(&ops, "s", "invalid-boundary", "history_sync", serde_json::json!({
+        "before":{"generation":999,"rows":{"messages":"m180"}}
+    })), Err(HistoryError::StaleCursor)));
+    assert!(matches!(call(&ops, "s", "missing-boundary", "history_sync", serde_json::json!({
+        "before":{"generation": latest["historyWindow"]["generation"],"rows":{"messages":"gone"}}
+    })), Err(HistoryError::StaleCursor)));
+    drop(store);
+    cleanup(root);
 }

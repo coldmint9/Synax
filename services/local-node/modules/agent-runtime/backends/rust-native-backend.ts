@@ -25,7 +25,7 @@ import { resolveMediaMessages } from "../media-capabilities.js";
 import { countTokens } from "../context-tokenizer.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
 import { toRuntimeError } from "../runtime-errors.js";
-import { contextUsageSnapshot } from "../analytics-projection.js";
+import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "../analytics-projection.js";
 import { contextInputBudget } from "../context-checkpoint.js";
 import { prepareCheckpointContext } from "../checkpoint-projection.js";
 import { buildNativeStepContext } from "../native-step-context.js";
@@ -310,12 +310,21 @@ export class RustNativeBackend implements BackendAdapter {
               [String(event.chunk)]: event.usage } } });
         } else if (event.type === "context-compacted") {
           compacting = false;
+          const priorUsage = readContextUsage(store.getSession(sessionId).sessionMetadata?.contextUsage);
+          const contextUsage = compactedContextUsageSnapshot(
+            priorUsage,
+            event.compressedTokens ?? 0,
+            step?.id ?? run.id,
+            selection.modelDef.contextLimit ?? null,
+          );
+          if (contextUsage) store.updateSessionMetadata(sessionId, { contextUsage });
           const recordId = `cmp_${event.loopId}_${event.step}`;
           store.saveCompactionRecord({ id: recordId, sessionId, runId: run.id,
             summaryText: event.summary ?? "", compressedMessageCount: event.messageCount ?? 0,
             originalTokenCount: event.originalTokens ?? 0, compressedTokenCount: event.compressedTokens ?? 0, createdAt: nowIso() });
           emitSessionLive(sessionId, { type: "context_compacted", stepId: step?.id ?? "",
-            originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0 });
+            originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0,
+            ...(contextUsage ? { contextUsage } : {}) });
         } else if (event.type === "context-composition") {
           if (step && event.composition) {
             store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,

@@ -97,6 +97,22 @@ describe("TurnBody continuous process", () => {
     expect(container.querySelector(".bui-tool-details")).toHaveTextContent("result-settled");
   });
 
+  it("virtualizes a long finished call record list", () => {
+    const blocks = Array.from({ length: 20 }, (_, index) => tool(`history-${index}`));
+    const { container } = render(
+      <TurnBody
+        turn={{ ...emptyTurn, status: "completed", blocks }}
+        entryId="history-many"
+      />,
+    );
+
+    fireEvent.click(container.querySelector(".session-process-trigger")!);
+
+    const viewport = container.querySelector(".session-process-window-viewport")!;
+    expect(viewport).toHaveAttribute("data-windowed", "true");
+    expect(container.querySelectorAll(".session-process-window-row").length).toBeLessThan(20);
+  });
+
   it("settles the live group into a quiet summary when the answer arrives", () => {
     const { container, rerender } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("live")] }} entryId="live" isWorking />);
     const header = container.querySelector(".session-process-trigger")!;

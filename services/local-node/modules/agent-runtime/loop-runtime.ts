@@ -31,7 +31,7 @@ import {
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
-import { contextUsageSnapshot } from "./analytics-projection.js";
+import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "./analytics-projection.js";
 import {
   normalizeInput,
   hasInput,
@@ -1118,6 +1118,14 @@ export class AgentLoopRuntime {
               modelResult = { model: event.model, step: event.step };
             }
             if (event.type === "context_compacted") {
+              const priorUsage = readContextUsage(this.store.getSession(sessionId).sessionMetadata?.contextUsage);
+              const contextUsage = compactedContextUsageSnapshot(
+                priorUsage,
+                event.compressedTokens,
+                step?.id ?? run.id,
+                this.store.getSessionStats(sessionId).contextLimit,
+              );
+              if (contextUsage) this.store.updateSessionMetadata(sessionId, { contextUsage });
               const compactEvt = this.events.append({
                 sessionId,
                 type: "progress_updated",
@@ -1144,6 +1152,7 @@ export class AgentLoopRuntime {
                 originalTokens: event.originalTokens,
                 compressedTokens: event.compressedTokens,
                 messageCount: event.messageCount,
+                ...(contextUsage ? { contextUsage } : {}),
               });
             }
           }

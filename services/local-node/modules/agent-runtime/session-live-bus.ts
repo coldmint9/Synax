@@ -5,6 +5,7 @@ import type {
   RuntimeEvent,
   ToolCallRecord,
 } from "./contracts.js";
+import type { ContextUsageSnapshot } from "./analytics-projection.js";
 import { isSessionEventsQuiesced } from "./runtime-event-quiesce.js";
 import type { ConversationGitStateEvent } from './conversation-git/contracts.js';
 
@@ -47,6 +48,7 @@ export type SessionLiveEvent =
       originalTokens: number;
       compressedTokens: number;
       messageCount: number;
+      contextUsage?: ContextUsageSnapshot;
       event?: RuntimeEvent;
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };

@@ -269,6 +269,7 @@ impl HistoryTask {
             guard.file = replacement;
             guard.index = index;
             guard.checkpoint_offset = 0;
+            guard.checkpoint_generation += 1;
             guard.published.store(Arc::new(guard.index.clone()));
             target.published.store(Arc::new(guard.index.clone()));
             #[cfg(unix)] if let Err(error) = File::open(&directory).and_then(|file| file.sync_all()) {

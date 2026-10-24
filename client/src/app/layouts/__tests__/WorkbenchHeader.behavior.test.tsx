@@ -11,12 +11,16 @@ import {
 } from "../../../shared/state/shellStore";
 import { useAgentSessionStore } from "../../../features/agent-workspace/state/agentSessionStore";
 import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
+import type { ProjectSessionBadge } from "../../../features/agent-workspace/projectSessionBadges";
+
+const badgeState = vi.hoisted(() => ({ badges: {} as Record<string, ProjectSessionBadge> }));
 
 vi.mock("../../../shared/hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en", t: (key: string) => key }),
 }));
-vi.mock("../../../features/agent-workspace/projectSessionBadges", () => ({
-  useProjectSessionBadges: () => ({ badges: {}, refresh: async () => {} }),
+vi.mock("../../../features/agent-workspace/projectSessionBadges", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../../features/agent-workspace/projectSessionBadges")>(),
+  useProjectSessionBadges: () => ({ badges: badgeState.badges, refresh: async () => {} }),
 }));
 vi.mock("../useIslandPresence", () => ({
   useIslandPresence: (open: boolean) => ({ ref: () => {}, present: open }),
@@ -54,6 +58,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   </MemoryRouter>
 );
 beforeEach(() => {
+  badgeState.badges = {};
   useAgentSessionStore.setState(useAgentSessionStore.getInitialState());
   useTerminalStore.setState({ open: false });
   useApiConnectivityStore.setState({
@@ -83,6 +88,77 @@ async function openRemoval(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("workbench action state", () => {
+  it("shows running sessions elsewhere and updates the count when switching workspaces or sessions finish", () => {
+    badgeState.badges = {
+      p: { waitingInput: 0, unreadFailed: 0, running: 4, unreadCompleted: 0, total: 4 },
+      other: { waitingInput: 0, unreadFailed: 0, running: 2, unreadCompleted: 3, total: 5 },
+      third: { waitingInput: 0, unreadFailed: 0, running: 1, unreadCompleted: 0, total: 1 },
+      removed: { waitingInput: 10, unreadFailed: 10, running: 20, unreadCompleted: 0, total: 40 },
+    };
+    const props = {
+      ...base,
+      projects: [project, { ...project, id: "other", name: "Other" }, { ...project, id: "third", name: "Third" }],
+    };
+    const view = render(<WorkbenchHeader {...props} />, { wrapper });
+    const trigger = screen.getByRole("button", { name: "appSwitchProject" });
+    expect(trigger).toHaveTextContent("Example3");
+    expect(trigger).toHaveAccessibleDescription("Active sessions in other workspaces: 3");
+
+    view.rerender(<WorkbenchHeader {...props} currentProjectId="other" projectName="Other" />);
+    expect(trigger).toHaveTextContent("Other5");
+    expect(trigger).toHaveAccessibleDescription("Active sessions in other workspaces: 5");
+
+    badgeState.badges = {
+      p: { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 4, total: 4 },
+      other: { waitingInput: 2, unreadFailed: 3, running: 2, unreadCompleted: 3, total: 10 },
+      third: { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 1, total: 1 },
+    };
+    view.rerender(<WorkbenchHeader {...props} currentProjectId="other" projectName="Other" />);
+    expect(trigger).toHaveTextContent("Other5");
+    expect(trigger).toHaveAccessibleDescription("Unread completed sessions in other workspaces: 5");
+    expect(trigger.querySelector(".workspace-activity")).toHaveAttribute("data-status", "unread");
+
+    badgeState.badges.p = { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 0, total: 0 };
+    badgeState.badges.third = { ...badgeState.badges.p };
+    view.rerender(<WorkbenchHeader {...props} currentProjectId="other" projectName="Other" />);
+    expect(trigger).toHaveTextContent(/^Other$/);
+    expect(trigger).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByText("No sessions need attention in other workspaces")).toHaveAttribute("role", "status");
+  });
+
+  it("prioritizes waiting over failed, running and unread completion in both trigger and workspace rows", async () => {
+    const user = userEvent.setup();
+    const props = { ...base, projects: [project, { ...project, id: "other", name: "Other" }] };
+    badgeState.badges.other = { waitingInput: 1, unreadFailed: 2, running: 3, unreadCompleted: 4, total: 10 };
+    const view = render(<WorkbenchHeader {...props} />, { wrapper });
+    const trigger = screen.getByRole("button", { name: "appSwitchProject" });
+    const activity = () => trigger.querySelector(".workspace-activity");
+    expect(activity()).toHaveAttribute("data-status", "waiting");
+    expect(activity()).toHaveTextContent("1");
+    expect(trigger).toHaveAccessibleDescription("Sessions waiting for input or approval in other workspaces: 1");
+    await user.click(trigger);
+    const list = await screen.findByRole("group", { name: "Workspaces" });
+    expect(list.querySelector('.project-session-badge__dot')).toHaveAttribute("data-status", "waiting");
+    expect(list.querySelector('.project-session-badge__count')).toHaveTextContent("1");
+    await user.keyboard("{Escape}");
+
+    badgeState.badges.other = { ...badgeState.badges.other, waitingInput: 0, total: 9 };
+    view.rerender(<WorkbenchHeader {...props} />);
+    expect(activity()).toHaveAttribute("data-status", "failed");
+    expect(activity()).toHaveTextContent("2");
+    expect(trigger).toHaveAccessibleDescription("Unread failed sessions in other workspaces: 2");
+
+    badgeState.badges.other = { ...badgeState.badges.other, unreadFailed: 0, total: 7 };
+    view.rerender(<WorkbenchHeader {...props} />);
+    expect(activity()).toHaveAttribute("data-status", "running");
+    expect(activity()).toHaveTextContent("3");
+
+    badgeState.badges.other = { ...badgeState.badges.other, running: 0, total: 4 };
+    view.rerender(<WorkbenchHeader {...props} />);
+    expect(activity()).toHaveAttribute("data-status", "unread");
+    expect(activity()).toHaveTextContent("4");
+  });
+
   it("keeps the workspace menu and navigation in the same header when entering a viewer", async () => {
     const user = userEvent.setup();
     const view = render(<WorkbenchHeader {...base} />, { wrapper });

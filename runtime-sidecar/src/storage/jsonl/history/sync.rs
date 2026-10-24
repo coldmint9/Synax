@@ -140,13 +140,26 @@ fn window_page(
         }
     }
 
+    let before = value.get("before").filter(|v| !v.is_null());
+    if let Some(before) = before {
+        if before["generation"].as_u64() != Some(generation) {
+            return Err(HistoryError::StaleCursor);
+        }
+        let rows = before["rows"].as_object().ok_or_else(|| invalid("invalid history boundary"))?;
+        if rows.iter().any(|(name, id)| !COLLECTIONS.iter().any(|(_, collection)| name == collection) || !id.is_string()) {
+            return Err(invalid("invalid history boundary collection"));
+        }
+    }
     let mut after = BTreeMap::new();
     for (kind, name) in COLLECTIONS {
-        let start = cursor
-            .as_ref()
-            .and_then(|cursor| cursor.after.get(kind).cloned())
-            .flatten();
-        if cursor.is_some() && start.is_none() {
+        let boundary = before.and_then(|before| before["rows"][name].as_str());
+        let start = if let Some(id) = boundary {
+            Some(index.identity.get(&super::identity_key(kind, session, id))
+                .ok_or(HistoryError::StaleCursor)?.clone())
+        } else {
+            cursor.as_ref().and_then(|cursor| cursor.after.get(kind).cloned()).flatten()
+        };
+        if (cursor.is_some() || before.is_some()) && start.is_none() {
             after.insert(kind.into(), None);
             continue;
         }
@@ -167,7 +180,7 @@ fn window_page(
                 more = true;
                 break;
             }
-            let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES, value["transcript"] == true);
+            let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES.min(WINDOW_COLLECTION_BYTES / limit - 1), value["transcript"] == true);
             let size = serde_json::to_vec(&item)
                 .map(|bytes| bytes.len())
                 .unwrap_or(0)
@@ -211,7 +224,7 @@ fn window_page(
             })?,
         ),
         ("hasEarlier", boolean(has_earlier)),
-        ("latest", boolean(cursor.is_none())),
+        ("latest", boolean(cursor.is_none() && before.is_none())),
         ("detailsTruncated", boolean(false)),
         ("incremental", boolean(false)),
     ]);
@@ -333,7 +346,7 @@ pub fn history_sync(
     session: &str,
     value: &serde_json::Value,
 ) -> Result<serde_json::Value, HistoryError> {
-    if !value["cursor"].is_null() && !value["since"].is_null() {
+    if (!value["cursor"].is_null() || !value["before"].is_null()) && !value["since"].is_null() {
         return Err(invalid("use either history cursor or since"));
     }
     let head = index.head.clone();
@@ -350,7 +363,7 @@ pub fn history_sync(
     }
     result["removed"] = array(Vec::new());
     let mut used = 4096usize;
-    let limit = value["limit"].as_u64().unwrap_or(24).clamp(1, 64) as usize;
+    let limit = value["limit"].as_u64().unwrap_or(24).clamp(1, 128) as usize;
     if value["since"].is_null() {
         window_page(
             index,

@@ -262,18 +262,17 @@ it("mounts the initial bottom view without waiting for intersection callbacks", 
   expect(screen.getByText("History")).toBeTruthy();
 });
 
-it("mounts the bottom of long histories immediately while keeping distant history lazy", () => {
+it("mounts only the bottom window of long histories without per-row observers", () => {
   const messages = Array.from({ length: 100 }, (_, index) => ({
     ...history,
     id: `history-${index}`,
     content: `History message ${index}`,
     createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
   }));
-  render(<SessionStaticTimeline {...props} messages={messages} />);
+  const { container } = render(<SessionStaticTimeline {...props} messages={messages} scrollRootRef={{ current: null }} />);
   expect(screen.getByText("History message 99")).toBeTruthy();
   expect(screen.queryByText("History message 0")).toBeNull();
-  ViewportObserver.reveal();
-  expect(screen.getByText("History message 0")).toBeTruthy();
+  expect(container.querySelectorAll("[data-session-entry]").length).toBeLessThan(40);
 });
 
 it("updates an epoch rewrite in place without remounting the visible row", () => {

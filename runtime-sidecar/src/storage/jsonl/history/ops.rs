@@ -436,6 +436,12 @@ impl HistoryTask {
         ops.staged.push(Record::HistoryReceipt(receipt));
         ops.commit()?;
         session.published.store(Arc::new(guard.index.clone()));
+        drop(guard);
+        drop(authority);
+        if let Err(error) = super::checkpoint::save_session(&session) {
+            tracing::warn!(event = "storage.history_checkpoint_failed", error = %error,
+                "History query index remains available; checkpoint will be retried");
+        }
         Ok(result)
     }
 }
@@ -1939,10 +1945,6 @@ impl SessionOps<'_> {
             .published
             .store(Arc::new(SessionIndex::clone_index(&index)));
         self.state.index = index;
-        if let Err(error) = super::checkpoint::save(self.state, false) {
-            tracing::warn!(event = "storage.history_checkpoint_failed", error = %error,
-                "History query index remains available; checkpoint will be retried");
-        }
         Ok(())
     }
 }

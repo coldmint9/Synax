@@ -529,9 +529,12 @@ pub struct SessionState {
     pub index: SessionIndex,
     pub published: Arc<ArcSwap<SessionIndex>>,
     checkpoint_offset: u64,
+    // Changes when fork publication replaces the underlying log.
+    checkpoint_generation: u64,
 }
 
 pub struct HistorySession {
+    checkpoint_lock: Mutex<()>,
     session_id: String,
     lock: Mutex<SessionState>,
     /// Immutable object transfers never contend with the append writer.
@@ -564,10 +567,12 @@ impl HistorySession {
         let file = AppendFile::open_committed(&path, committed).map_err(convert_io)?;
         let published = Arc::new(ArcSwap::from_pointee(index.clone()));
         Ok(Self {
+            checkpoint_lock: Mutex::new(()),
             session_id: session_id.to_owned(),
             lock: Mutex::new(SessionState {
                 failed: false,
                 checkpoint_offset: start,
+                checkpoint_generation: 0,
                 file,
                 index,
                 published: published.clone(),

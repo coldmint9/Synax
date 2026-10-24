@@ -184,6 +184,7 @@ impl SessionOps<'_> {
 
     pub(super) fn context_recover(&mut self, actor: Option<&crate::storage::jsonl::session::SessionActor>) -> Result<Vec<u8>, HistoryError> {
         if let Some(active) = self.index().aux_value(ACTIVE).filter(|v| v["status"] == "running").cloned() {
+            let stale_reason = self.compaction_stale_reason(&active);
             let alive = actor.is_some_and(|actor| {
                 if !active["executionContext"].is_null() {
                     crate::runtime::execution::ExecutionLease::decode(self.session_id, &active["executionContext"])
@@ -194,8 +195,8 @@ impl SessionOps<'_> {
                         marker["state"] == "compacting" && !active["ownerId"].is_null() && marker["ownerId"] == active["ownerId"])
                 }
             });
-            if !alive {
-                self.terminal_compaction(&active, "interrupted", Some("Compaction execution owner is no longer active"), None)?;
+            if stale_reason.is_some() || !alive {
+                self.terminal_compaction(&active, "interrupted", stale_reason.or(Some("Compaction execution owner is no longer active")), None)?;
             }
         }
         self.context_current()
@@ -348,11 +349,19 @@ impl SessionOps<'_> {
         Err(HistoryError::ReadOnlyHistory)
     }
 
-    pub(super) fn context_current(&self) -> Result<Vec<u8>, HistoryError> {
-        let published = self.index().aux_value(CURRENT);
+    pub(super) fn context_current(&mut self) -> Result<Vec<u8>, HistoryError> {
+        let published = self.index().aux_value(CURRENT).cloned();
+        // Always reconcile an expired/superseded active run before validating
+        // the published checkpoint. A corrupt old checkpoint must not prevent
+        // the UI from observing a terminal compaction state.
+        if let Some(active) = self.index().aux_value(ACTIVE).filter(|v| v["status"] == "running").cloned() {
+            if let Some(reason) = self.compaction_stale_reason(&active) {
+                self.terminal_compaction(&active, "interrupted", Some(reason), None)?;
+            }
+        }
         let mut checkpoint = None;
         let mut checkpoint_object = None;
-        if let Some(published) = published {
+        if let Some(published) = published.as_ref() {
             // Validate bounded semantic state without loading its transcript.
             // A fallback changes only the model's starting point; the sealed
             // write floor remains the latest committed throughRevision.
@@ -369,14 +378,35 @@ impl SessionOps<'_> {
             }
             if checkpoint.is_none() { return Err(invalid("CHECKPOINT_UNAVAILABLE: no valid committed context checkpoint")); }
         }
+        let active = self.index().aux_value(ACTIVE);
         let boundary = self.index().aux_value("context\0latest-boundary");
         let latest_step = boundary.map(|value| value["throughStepId"].clone());
-        serialized(&json!({"checkpoint":checkpoint,"active":self.index().aux_value(ACTIVE),
+        serialized(&json!({"checkpoint":checkpoint,"active":active,
             "checkpointObjectId":checkpoint_object,
             "sealedThroughRevision":published.map(|v| v["throughRevision"].clone()),
             "revision":self.index().head.revision,"generation":self.index().index_generation,"latestStepId":latest_step,
             "messageSequence":self.index().aux_value("context\0message-sequence").and_then(Value::as_u64).unwrap_or(0),
             "throughRevision":boundary.map(|v| v["throughRevision"].clone())}))
+    }
+
+    /// A compaction run owns one completed-step boundary. Once a newer
+    /// completed boundary is published, the old run can no longer commit a
+    /// checkpoint for the current context and must not remain visible as
+    /// `running` to the UI.
+    fn compaction_stale_reason(&self, active: &Value) -> Option<&'static str> {
+        if active["status"] != "running" {
+            return None;
+        }
+        if active["deadline"].as_i64().unwrap_or(0) <= chrono::Utc::now().timestamp_millis() {
+            return Some("Compaction deadline expired");
+        }
+        let boundary = self.index().aux_value("context\0latest-boundary")?;
+        if boundary["throughStepId"] != active["throughStepId"]
+            || boundary["throughRevision"] != active["throughRevision"]
+        {
+            return Some("Compaction boundary was superseded by newer history");
+        }
+        None
     }
 
     pub(super) fn context_begin(&mut self, value: &Value, configuration: Option<&str>) -> Result<Vec<u8>, HistoryError> {
@@ -495,7 +525,7 @@ impl SessionOps<'_> {
     }
 
     pub(super) fn context_commit(&mut self, value: &Value, configuration: Option<&str>) -> Result<Vec<u8>, HistoryError> {
-        let checkpoint = ContextCheckpoint::parse(&serialized(&value["checkpoint"])? , MAX_SUMMARY_TOKENS)
+        let mut checkpoint = ContextCheckpoint::parse(&serialized(&value["checkpoint"])? , MAX_SUMMARY_TOKENS)
             .map_err(invalid)?;
         if checkpoint.session_id != self.session_id { return Err(invalid("checkpoint session mismatch")); }
         let active = self.active_compaction(&checkpoint.compaction_run_id)?;
@@ -510,12 +540,15 @@ impl SessionOps<'_> {
             || active["sourceFingerprint"] != checkpoint.source_fingerprint
             || active["previousCheckpointId"] != self.index().aux_value(CURRENT).map(|v| v["id"].clone()).unwrap_or(Value::Null)
         { return Err(invalid("COMPACTION_SOURCE_CHANGED")); }
-        for reference in &checkpoint.source_refs {
-            // References are immutable history object IDs, resolved by the
-            // existing O(1) content index, never by scanning a transcript.
-            let source = self.read_object(reference)?;
-            if source.value["sessionId"] != self.session_id { return Err(invalid("checkpoint reference scope mismatch")); }
-        }
+        // Source references are advisory retrieval hints, not checkpoint
+        // validity conditions. A provider can preserve an ID from an older
+        // chunk, emit a stale object after a fork, or return a malformed hint.
+        // Keep only objects that are still present in this session; the
+        // bounded summary remains authoritative and the commit stays atomic.
+        checkpoint.source_refs.retain(|reference| {
+            self.read_object(reference)
+                .is_ok_and(|source| source.value["sessionId"] == self.session_id)
+        });
         let state = self.terminal_compaction(&active, "completed", None, Some(&checkpoint))?;
         let key = super::super::identity_key("compaction", self.session_id, &checkpoint.id);
         let object_id = self.index().identity.get(&key).and_then(|key| self.index().order.get(key))

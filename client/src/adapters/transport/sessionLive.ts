@@ -18,6 +18,7 @@ import type {
   RuntimeEvent,
   AgentRuntimeMessage,
   ContextCompactionState,
+  ContextUsageSnapshot,
   ToolCallRecord,
   PermissionDecision,
 } from "./agentRuntime";
@@ -74,6 +75,7 @@ export type SessionLiveEvent =
       originalTokens: number;
       compressedTokens: number;
       messageCount: number;
+      contextUsage?: ContextUsageSnapshot;
       event?: RuntimeEvent;
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };

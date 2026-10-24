@@ -9,7 +9,7 @@ import type { ProjectWorkspaceRoot } from '../../modules/project-workspace.js';
 const isolation = vi.hoisted(() => ({
   dataRoot: '', listSessions: vi.fn(), listGitWorkspaces: vi.fn(),
   createGitWorktree: vi.fn(), removeGitWorktree: vi.fn(), pruneGitWorktrees: vi.fn(),
-  previewGitWorktreePath: vi.fn(), previewGitWorktreeCleanup: vi.fn(), cleanupGitWorktrees: vi.fn(), previewGitWorktreePrune: vi.fn(), getRun: vi.fn(),
+  previewGitWorktreePath: vi.fn(), previewGitWorktreeCleanup: vi.fn(), cleanupGitWorktrees: vi.fn(), previewGitWorktreePrune: vi.fn(), listWorktreeChanges: vi.fn(), getRun: vi.fn(),
   workspaceList: vi.fn(), workspaceIndexProject: vi.fn(),
 }));
 
@@ -46,6 +46,7 @@ vi.mock('../../modules/git-workspaces.js', () => ({
   previewGitWorktreeCleanup: isolation.previewGitWorktreeCleanup,
   cleanupGitWorktrees: isolation.cleanupGitWorktrees,
   previewGitWorktreePrune: isolation.previewGitWorktreePrune,
+  listWorktreeChanges: isolation.listWorktreeChanges,
 }));
 vi.mock('../../modules/workspace-index-service.js', () => ({
   workspaceIndexService: {
@@ -198,6 +199,22 @@ describe('worktree management HTTP contracts', () => {
     expect((await routes.request('/main/git/worktrees/prune', { method: 'POST' })).status).toBe(400);
     expect(isolation.pruneGitWorktrees).not.toHaveBeenCalled();
   });
+
+  it('lists the discarded changes before a forced removal and forwards force to the service', async () => {
+    isolation.listWorktreeChanges.mockResolvedValue({ path: '/wip', entries: [{ code: 'M', path: 'a.java' }], total: 1, truncated: false });
+    const changes = await routes.request('/main/git/worktrees/changes?path=%2Fwip');
+    expect(changes.status).toBe(200);
+    expect(await changes.json()).toMatchObject({ path: '/wip', total: 1, entries: [{ code: 'M', path: 'a.java' }] });
+    expect(isolation.listWorktreeChanges).toHaveBeenCalledWith(mainPath, '/wip');
+    expect((await routes.request('/main/git/worktrees/changes')).status).toBe(400);
+    expect((await routes.request('/main/git/worktrees/changes?path=')).status).toBe(400);
+    expect((await routes.request('/missing/git/worktrees/changes?path=%2Fwip')).status).toBe(404);
+    await routes.request('/main/git/worktrees', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '/wip', force: true }),
+    });
+    expect(isolation.removeGitWorktree).toHaveBeenCalledWith(mainPath, 'main', '/wip', expect.objectContaining({ force: true }));
+  });
 });
 
 beforeEach(async () => {
@@ -208,6 +225,7 @@ beforeEach(async () => {
   isolation.previewGitWorktreeCleanup.mockResolvedValue({ candidates: [], retained: [] });
   isolation.cleanupGitWorktrees.mockResolvedValue({ results: [] });
   isolation.previewGitWorktreePrune.mockResolvedValue({ paths: [] });
+  isolation.listWorktreeChanges.mockResolvedValue({ path: mainPath, entries: [], total: 0, truncated: false });
   isolation.getRun.mockReset();
   isolation.workspaceList.mockResolvedValue({
     projectId: 'main', rootId: 'main', rootName: 'Project main', rootPath: mainPath,

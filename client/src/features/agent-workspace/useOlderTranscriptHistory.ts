@@ -1,3 +1,5 @@
+import { setSessionHistoryReading } from "./state/sessionTailWindow";
+import { anchorVirtualEntry, virtualEntryOffset } from "./TimelineVirtualWindow";
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject,
 } from "react";
@@ -10,9 +12,11 @@ interface ScrollAnchor {
   epoch: number;
   top: number;
   height: number;
+  entryId?: string;
+  entryTop?: number;
 }
 
-/** Prefetch within one viewport of the start, preserving the reader's position. */
+/** Load on an upward reading gesture only, preserving the reader's position. */
 export function useOlderTranscriptHistory(
   scrollRef: RefObject<HTMLDivElement | null>,
   sessionId: string | null,
@@ -54,7 +58,9 @@ export function useOlderTranscriptHistory(
     if (anchor.firstId === firstId && anchor.cursor === page?.olderCursor) return;
     const element = scrollRef.current;
     if (element) {
-      element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
+      const anchored = anchor.entryId && anchor.entryTop !== undefined &&
+        anchorVirtualEntry(element, anchor.entryId, anchor.entryTop);
+      if (!anchored) element.scrollTop = anchor.top + element.scrollHeight - anchor.height;
     }
     pending.current = null;
   }, [firstId, page?.olderCursor, page?.epoch, scrollRef, sessionId]);
@@ -65,6 +71,8 @@ export function useOlderTranscriptHistory(
         useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
     if (!manual && blockedCursor.current === page.olderCursor) return;
     blockedCursor.current = null;
+    setSessionHistoryReading(sessionId, true);
+    element.dispatchEvent(new Event("transcript-history-reading"));
     busy.current = true;
     const token = ++generation.current;
     const cursor = page.olderCursor;
@@ -72,6 +80,16 @@ export function useOlderTranscriptHistory(
       sessionId, cursor, firstId, epoch: page.epoch,
       top: element.scrollTop, height: element.scrollHeight,
     };
+    const rootTop = element.getBoundingClientRect().top;
+    const visible = Array.from(element.querySelectorAll<HTMLElement>("[data-session-entry]"))
+      .find(row => row.getBoundingClientRect().bottom > rootTop);
+    if (visible?.dataset.sessionEntry) {
+      const offset = virtualEntryOffset(element, visible.dataset.sessionEntry);
+      if (offset !== undefined) {
+        pending.current.entryId = visible.dataset.sessionEntry;
+        pending.current.entryTop = offset - element.scrollTop;
+      }
+    }
     setLoading(true);
     setError("");
     try {
@@ -102,39 +120,64 @@ export function useOlderTranscriptHistory(
     const element = scrollRef.current;
     if (!active || !element || !sessionId || !page?.olderCursor) return;
     let frame = 0;
+    let upwardIntent = false;
+    let lastTop = element.scrollTop;
+    let touchY = 0;
+    let dragging = false;
     const check = () => {
       frame = 0;
-      if (element.clientHeight === 0) return;
-      const maxTop = element.scrollHeight - element.clientHeight;
-      const nearStart = element.scrollTop <= Math.max(96, element.clientHeight);
-      // Opening a short but scrollable transcript should still show the latest
-      // page. Prefetch once the reader leaves the bottom, or fill an empty viewport.
-      if (maxTop <= 1 || (nearStart && (element.scrollTop <= 1 || maxTop - element.scrollTop > 48)))
-        void loadOlder();
+      if (!upwardIntent || element.clientHeight === 0) return;
+      upwardIntent = false;
+      if (element.scrollTop <= Math.max(96, element.clientHeight)) void loadOlder();
     };
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(check);
-    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(check); };
     const onScroll = () => {
       if (pending.current) {
+        if (pending.current.entryTop !== undefined)
+          pending.current.entryTop -= element.scrollTop - pending.current.top;
         pending.current.top = element.scrollTop;
         pending.current.height = element.scrollHeight;
       }
-      schedule();
+      if (dragging && element.scrollTop < lastTop) upwardIntent = true;
+      lastTop = element.scrollTop;
+      if (upwardIntent) schedule();
     };
+    const onWheel = (event: WheelEvent) => {
+      upwardIntent = event.deltaY < 0;
+      if (upwardIntent) schedule();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) { upwardIntent = true; schedule(); }
+    };
+    const onTouchStart = (event: TouchEvent) => { touchY = event.touches[0]?.clientY ?? 0; };
+    const onTouchMove = (event: TouchEvent) => {
+      const y = event.touches[0]?.clientY ?? touchY;
+      upwardIntent = y > touchY;
+      touchY = y;
+      if (upwardIntent) schedule();
+    };
+    const onPointerDown = () => { dragging = true; };
+    const onPointerUp = () => { dragging = false; };
     element.addEventListener("scroll", onScroll, { passive: true });
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-    observer?.observe(element);
-    if (element.firstElementChild) observer?.observe(element.firstElementChild);
-    // Recheck after each request settles, even if its cursor was already
-    // published while busy. Lazy rows and viewport resizes can change the edge.
-    schedule();
+    element.addEventListener("wheel", onWheel, { passive: true });
+    element.addEventListener("keydown", onKey);
+    element.addEventListener("touchstart", onTouchStart, { passive: true });
+    element.addEventListener("touchmove", onTouchMove, { passive: true });
+    element.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     return () => {
       element.removeEventListener("scroll", onScroll);
-      observer?.disconnect();
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("keydown", onKey);
+      element.removeEventListener("touchstart", onTouchStart);
+      element.removeEventListener("touchmove", onTouchMove);
+      element.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       cancelAnimationFrame(frame);
     };
-  }, [active, loadOlder, loading, page?.olderCursor, scrollRef, sessionId]);
+  }, [active, loadOlder, page?.olderCursor, scrollRef, sessionId]);
 
-  return { loading, error, retry: () => loadOlder(true) };
+  return { loading, error, hasEarlier: Boolean(page?.olderCursor), retry: () => loadOlder(true) };
 }

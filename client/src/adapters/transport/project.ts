@@ -167,6 +167,12 @@ export const projectApi = {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paths, rootId }),
     });
   },
+  /** Local changes a forced removal would discard; the dialog lists them before confirming. */
+  gitWorktreeChanges(id: string, path: string, rootId?: string): Promise<import("../../../../services/local-node/modules/git-worktree-management-contracts").GitWorktreeChanges> {
+    const query = new URLSearchParams({ path });
+    if (rootId) query.set("rootId", rootId);
+    return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/changes?${query}`);
+  },
   previewGitWorktreePrune(id: string, rootId?: string): Promise<{ paths: string[] }> {
     const query = new URLSearchParams(rootId ? { rootId } : {});
     return projectRequest(`${API_BASE}/${encodeURIComponent(id)}/git/worktrees/prune?${query}`);

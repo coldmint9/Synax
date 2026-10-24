@@ -8,9 +8,13 @@ type Transcript = Pick<
 >;
 
 function byId<T extends { id: string }>(first: T[], second: T[]): T[] {
+  if (second.length === 0) return first;
   const records = new Map(first.map((record) => [record.id, record]));
-  for (const record of second) records.set(record.id, record);
-  return [...records.values()];
+  let changed = false;
+  for (const record of second) {
+    if (records.get(record.id) !== record) { records.set(record.id, record); changed = true; }
+  }
+  return changed ? [...records.values()] : first;
 }
 
 const COLLECTIONS = ["messages", "runs", "steps", "toolCalls", "events", "permissions"] as const;
@@ -18,12 +22,32 @@ const COLLECTIONS = ["messages", "runs", "steps", "toolCalls", "events", "permis
 /** A change cursor proves continuity even when the new page has no overlap. */
 function applyChanges(previous: SessionDetailCacheEntry, latest: SessionDetailCacheEntry): SessionDetailCacheEntry {
   const deleted = { ...previous.historyDeleted };
-  const combined = combine(previous, latest);
+  const retained = { ...latest };
+  if (previous.historyWindow?.hasEarlier) {
+    for (const name of COLLECTIONS) {
+      const first = previous[name][0] as unknown as Record<string, unknown> | undefined;
+      if (!first) continue;
+      const loaded = new Set(previous[name].map(item => item.id));
+      // The change feed can update an evicted row. Do not resurrect isolated
+      // history before the loaded window; its next page will read the update.
+      (retained[name] as Array<{ id: string }>) = latest[name].filter(item => {
+        if (loaded.has(item.id)) return true;
+        const row = item as unknown as Record<string, unknown>;
+        if (typeof row.sequence === "number" && typeof first.sequence === "number")
+          return row.sequence >= first.sequence;
+        const time = Date.parse(String(row.createdAt ?? row.startedAt ?? row.timestamp ?? ""));
+        const start = Date.parse(String(first.createdAt ?? first.startedAt ?? first.timestamp ?? ""));
+        return !Number.isFinite(time) || !Number.isFinite(start) || time >= start;
+      });
+    }
+  }
+  const combined = combine(previous, retained);
   for (const name of COLLECTIONS) {
     const ids = new Set(deleted[name] ?? []);
     for (const item of latest[name]) ids.delete(item.id);
     for (const item of latest.removed ?? []) if (item.collection === name) ids.add(item.id);
     deleted[name] = [...ids];
+    if (latest[name].length === 0 && !(latest.removed ?? []).some(item => item.collection === name)) continue;
     (combined[name] as Array<{ id: string }>) = combined[name].filter(item => !ids.has(item.id)).sort((a, b) => {
       const left = a as unknown as Record<string, unknown>, right = b as unknown as Record<string, unknown>;
       if (typeof left.sequence === "number" && typeof right.sequence === "number") return left.sequence - right.sequence;
@@ -43,10 +67,10 @@ function applyChanges(previous: SessionDetailCacheEntry, latest: SessionDetailCa
     ...previous, ...latest, ...combined,
     historyDeleted: deleted,
     historyPagesLoaded: previous.historyPagesLoaded,
-    timelineMessages: byId(previous.timelineMessages ?? [], latest.messages.map(previewTimelineMessage)).filter(item => !removed.messages.has(item.id)),
-    timelineRuns: byId(previous.timelineRuns ?? [], latest.runs).filter(item => !removed.runs.has(item.id)),
-    timelineSteps: byId(previous.timelineSteps ?? [], latest.steps).filter(item => !removed.steps.has(item.id)),
-    timelineToolCalls: byId(previous.timelineToolCalls ?? [], latest.toolCalls).filter(item => !removed.toolCalls.has(item.id)),
+    timelineMessages: byId(previous.timelineMessages ?? previous.messages.map(previewTimelineMessage), retained.messages.map(previewTimelineMessage)).filter(item => !removed.messages.has(item.id)),
+    timelineRuns: byId(previous.timelineRuns ?? previous.runs, retained.runs).filter(item => !removed.runs.has(item.id)),
+    timelineSteps: byId(previous.timelineSteps ?? previous.steps, retained.steps).filter(item => !removed.steps.has(item.id)),
+    timelineToolCalls: byId(previous.timelineToolCalls ?? previous.toolCalls, retained.toolCalls).filter(item => !removed.toolCalls.has(item.id)),
     timelineIndexLoaded: previous.timelineIndexLoaded, timelineIndexError: previous.timelineIndexError,
     historyWindow: {
       ...previous.historyWindow!, ...latest.historyWindow!,
@@ -75,7 +99,8 @@ export function mergeRefreshedHistory(
 
   if (latest.historyWindow?.incremental && previous?.historyWindow &&
       previous.historyWindow.generation === latest.historyWindow.generation) {
-    return applyChanges(previous, latest);
+    if (previous.historyWindow.epoch === latest.historyWindow.epoch) return applyChanges(previous, latest);
+    return latest;
   }
 
   if (

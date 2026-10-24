@@ -28,6 +28,8 @@ export type CommitMessageEvent =
   | { type: "final"; message: string };
 export interface CommitMessageGenerationInput {
   rootId?: string;
+  /** Generate against the selected destination branch while reading the current worktree diff. */
+  branch?: string;
   /** Keep the generated diff aligned with the files the commit will stage. */
   includeUntracked?: boolean;
   model: string;
@@ -70,12 +72,13 @@ export async function prepareCommitMessageGeneration(
   input: CommitMessageGenerationInput,
 ) {
   const context =
-    input.includeUntracked === undefined
+    input.includeUntracked === undefined && input.branch === undefined
       ? await collectCommitMessageContext(sessionId, input.rootId)
       : await collectCommitMessageContext(
           sessionId,
           input.rootId,
-          input.includeUntracked,
+          input.includeUntracked ?? true,
+          input.branch,
         );
   const locale = resolvePromptLocale(input.locale, context.subjects.join("\n"));
   const request = {

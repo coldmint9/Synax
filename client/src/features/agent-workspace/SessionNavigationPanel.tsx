@@ -1,3 +1,4 @@
+import { scrollToVirtualEntry, virtualEntryOffset } from "./TimelineVirtualWindow";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -59,7 +60,8 @@ export function resolveActiveEntryIndex(
 }
 
 function scrollToEntry(scrollRoot: HTMLElement | null, entryId: string) {
-  // The anchor element is always in the DOM, but its body may still be a height
+  if (scrollRoot && scrollToVirtualEntry(scrollRoot, entryId)) return;
+  // Nonvirtual embedded transcripts retain a DOM anchor and may have a height
   // reservation that only mounts once it approaches the viewport. Re-centre
   // after that swap, otherwise jumping to an older message lands short.
   const target = scrollRoot?.querySelector(`#${CSS.escape(sessionEntryDomId(entryId))}`);
@@ -284,11 +286,9 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
       const next: Array<{ id: string; top: number }> = [];
       for (const turn of turns) {
         const element = root.querySelector(`#${CSS.escape(sessionEntryDomId(turn.id))}`);
-        if (!(element instanceof HTMLElement)) continue;
-        next.push({
-          id: turn.id,
-          top: element.getBoundingClientRect().top - rootTop + root.scrollTop,
-        });
+        const top = virtualEntryOffset(root, turn.id) ??
+          (element instanceof HTMLElement ? element.getBoundingClientRect().top - rootTop + root.scrollTop : undefined);
+        if (top !== undefined) next.push({ id: turn.id, top });
       }
       offsets = next;
     };

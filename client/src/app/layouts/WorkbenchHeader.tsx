@@ -22,9 +22,11 @@ import type { ProjectSummary } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 import {
+  projectSessionActivity,
   useProjectSessionBadges,
   type ProjectSessionBadge,
 } from "../../features/agent-workspace/projectSessionBadges";
+import { useWorkspaceCopy } from "../../features/workspace/workspaceCopy";
 import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/sessionWorkspaceStore";
 import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
@@ -66,9 +68,13 @@ function ProjectSessionBadgeMark({
   showCount?: boolean;
 }) {
   const { t } = useLocale();
-  if (!badge?.total) return null;
+  const c = useWorkspaceCopy();
+  const activity = projectSessionActivity(badge);
+  if (!badge || !activity) return null;
 
   const label = [
+    badge.waitingInput > 0 ? c.activityWaiting.replace("{count}", String(badge.waitingInput)) : "",
+    badge.unreadFailed > 0 ? c.activityFailed.replace("{count}", String(badge.unreadFailed)) : "",
     badge.running > 0 ? t("projectBadgeRunning", { count: badge.running }) : "",
     badge.unreadCompleted > 0
       ? t("projectBadgeUnread", { count: badge.unreadCompleted })
@@ -86,12 +92,12 @@ function ProjectSessionBadgeMark({
     >
       <span
         className="project-session-badge__dot"
-        data-status={badge.running > 0 ? "running" : "unread"}
+        data-status={activity.status}
         aria-hidden="true"
       />
-      {showCount && badge.running > 0 && (
+      {showCount && (
         <span className="project-session-badge__count" aria-hidden="true">
-          {badge.running}
+          {activity.count}
         </span>
       )}
     </span>
@@ -118,10 +124,25 @@ function ProjectSwitcher({
   onOpen?: () => void;
 }) {
   const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
+  const otherBadges = projects.reduce<ProjectSessionBadge>(
+    (counts, project) => {
+      const badge = badges[project.id];
+      if (project.id !== currentProjectId && badge) {
+        counts.waitingInput += badge.waitingInput;
+        counts.unreadFailed += badge.unreadFailed;
+        counts.running += badge.running;
+        counts.unreadCompleted += badge.unreadCompleted;
+        counts.total += badge.total;
+      }
+      return counts;
+    },
+    { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 0, total: 0 },
+  );
   return <WorkspaceSwitcher
     hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
     projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
     onRemoveRequest={onRemoveRequest}
+    otherActivity={projectSessionActivity(otherBadges)}
     onOpen={() => { onOpen?.(); void refresh(); }}
     renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;

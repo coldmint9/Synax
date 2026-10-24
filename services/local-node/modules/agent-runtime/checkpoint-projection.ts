@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { contextInputBudget, type ContextBudget, type ContextCheckpoint } from "./context-checkpoint.js";
-import { readCheckpointHead, recoverCheckpointHead, runSessionCheckpoint, type CheckpointHead } from "./checkpoint-service.js";
+import { persistCompactedContextUsage, readCheckpointHead, recoverCheckpointHead, runSessionCheckpoint, type CheckpointHead } from "./checkpoint-service.js";
 import { runtimeClient, decode } from "./sidecar/runtime-repository.js";
 import { hydrateHistoryValues } from "./sidecar/history-pages.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
@@ -21,8 +21,13 @@ type Input = {
   resolve(message: AgentRuntimeMessage): Promise<unknown[]>;
 };
 
-const failedCandidates = new Map<string, string>();
+type FailedCompaction = { key: string; failedAt: number };
+const failedCandidates = new Map<string, FailedCompaction>();
 const MAX_SESSIONS = 128;
+// A failed provider/storage attempt must not be repeated on every subsequent
+// model step. The main run can continue using the retained history while this
+// short circuit is active; an explicit/manual request (`force`) retries it.
+const COMPACTION_FAILURE_COOLDOWN_MS = 120_000;
 
 async function command<T>(sessionId: string, operation: string, payload: unknown): Promise<T> {
   return decode<T>(await runtimeClient().historyCommand({ sessionId, requestId: randomUUID(), operation, payload }));
@@ -84,9 +89,16 @@ export async function prepareCheckpointContext(input: Input): Promise<Checkpoint
   if (!input.force && originalTokens <= Math.floor(budget * 0.8)) return unchanged();
   const recompact = Boolean(head.checkpoint && head.checkpoint.throughStepId === head.latestStepId && (input.force || originalTokens > budget));
   if (!head.latestStepId || head.throughRevision == null || head.checkpoint?.throughStepId === head.latestStepId && !recompact) return unchanged();
-  const fingerprint = createHash("sha256").update(JSON.stringify([head.latestStepId, head.throughRevision,
-    head.checkpoint?.id, input.model, input.budget, input.systemPrompt, input.tools])).digest("hex");
-  if (!input.force && failedCandidates.get(input.sessionId) === fingerprint) return unchanged();
+  // Keep the retry key independent of the moving tail. A new step should not
+  // defeat the cooldown when the same compaction configuration is repeatedly
+  // failing; the full fingerprint remains useful for diagnostics and future
+  // extensions, but is intentionally not the gate here.
+  const retryKey = createHash("sha256").update(JSON.stringify([
+    head.checkpoint?.id ?? null, input.model, input.budget, input.systemPrompt, input.tools,
+  ])).digest("hex");
+  const previousFailure = failedCandidates.get(input.sessionId);
+  if (!input.force && previousFailure?.key === retryKey && Date.now() - previousFailure.failedAt < COMPACTION_FAILURE_COOLDOWN_MS)
+    return unchanged();
   // Count the mandatory tail before paying for a summary. This tail starts at
   // the last completed step, not at the head containing the new running step.
   const required = await readTail(input, head, head.throughRevision, budget - fixed);
@@ -107,6 +119,9 @@ export async function prepareCheckpointContext(input: Input): Promise<Checkpoint
         candidate = { prompt, tokens, originalTokens, compacted: true };
         return true;
       },
+      onCommitted: checkpoint => candidate
+        ? persistCompactedContextUsage(input.sessionId, checkpoint.throughStepId, candidate.tokens, input.budget.contextLimit)
+        : null,
     });
     if (checkpoint && candidate) {
       failedCandidates.delete(input.sessionId);
@@ -122,7 +137,7 @@ export async function prepareCheckpointContext(input: Input): Promise<Checkpoint
     if (latest.checkpoint?.id !== head.checkpoint?.id || latest.generation !== head.generation || latest.active?.status === "running") throw error;
   }
   failedCandidates.delete(input.sessionId);
-  failedCandidates.set(input.sessionId, fingerprint);
+  failedCandidates.set(input.sessionId, { key: retryKey, failedAt: Date.now() });
   if (failedCandidates.size > MAX_SESSIONS) failedCandidates.delete(failedCandidates.keys().next().value!);
   return unchanged();
 }

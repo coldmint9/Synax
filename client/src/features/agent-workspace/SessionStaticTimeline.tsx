@@ -1,3 +1,4 @@
+import { TimelineVirtualWindow } from "./TimelineVirtualWindow";
 import {
   memo,
   useMemo,
@@ -184,16 +185,9 @@ function renderTimelineRows({
   cacheVersion,
   liveEntryIds,
   appendedIds,
-}: RowsProps & { appendedIds: ReadonlySet<string> }) {
-  // The initial scroll lands at the bottom before paint. Mount its surrounding
-  // rows in the same commit instead of revealing them one observer tick later.
-  const initialViewportHeight = scrollRootRef?.current?.clientHeight || 800;
-  let eagerStart = entries.length;
-  let eagerHeight = 0;
-  while (eagerStart > 0 && eagerHeight < initialViewportHeight + 1200) {
-    eagerStart -= 1;
-    eagerHeight += estimateEntryHeight(entries[eagerStart]);
-  }
+  visibleEntries = entries,
+  start = 0,
+}: RowsProps & { appendedIds: ReadonlySet<string>; visibleEntries?: ConversationTimelineEntry[]; start?: number }) {
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -236,7 +230,8 @@ function renderTimelineRows({
     }
     if (liveIndex >= 0) latestActivityIndex = liveIndex;
   }
-  return entries.map((entry, index) => {
+  return visibleEntries.map((entry, visibleIndex) => {
+    const index = start + visibleIndex;
     let isLiveEntry = false;
     if (liveEntryIds) {
       for (const stepId of liveEntryIds) {
@@ -260,7 +255,7 @@ function renderTimelineRows({
         sessionId={sessionId}
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
-        eager={eager || index >= eagerStart}
+        eager={eager}
         cacheVersion={entryCacheVersion}
         appended={appendedIds.has(entry.id)}
         isWorking={Boolean(streaming && index === latestActivityIndex)}
@@ -318,32 +313,16 @@ function TimelineRows({
   }, [entries, live, liveId, liveSeed]);
   // Appending a row reveals it; a history page or a folded round must not.
   const appendedIds = useAppendedEntryIds(combined, sessionId);
-  const rows = useMemo(
-    () =>
-      renderTimelineRows({
-        entries: combined,
-        sessionId,
-        streaming,
-        liveId,
-        onExpandChild,
-        scrollRootRef,
-        cacheVersion,
-        liveEntryIds,
-        appendedIds,
-      }),
-    [
-      combined,
-      sessionId,
-      streaming,
-      liveId,
-      onExpandChild,
-      scrollRootRef,
-      cacheVersion,
-      liveEntryIds,
-      appendedIds,
-    ],
-  );
-  return <>{rows}</>;
+  return <TimelineVirtualWindow
+    key={sessionId ?? "standalone"}
+    cacheKey={`${sessionId ?? "standalone"}:${cacheVersion}`}
+    entries={combined}
+    scrollRootRef={scrollRootRef}
+    renderRows={(visibleEntries, start) => renderTimelineRows({
+      entries: combined, visibleEntries, start, sessionId, streaming, liveId,
+      onExpandChild, scrollRootRef, cacheVersion, liveEntryIds, appendedIds, eager: true,
+    })}
+  />;
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({

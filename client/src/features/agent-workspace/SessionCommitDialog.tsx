@@ -25,6 +25,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   agentRuntimeApi,
+  type SessionGitBranches,
   type SessionGitCommitResult,
 } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -52,12 +53,21 @@ interface Props {
   rootName?: string;
   branch: string;
   changedFiles: number;
+  repositories?: CommitRepositoryOption[];
   onClose: () => void;
   onCommitted: (result: SessionGitCommitResult) => void;
 }
 
+interface CommitRepositoryOption {
+  rootId: string;
+  name: string;
+  branch: string;
+  changedFiles: unknown[];
+  status?: string;
+}
+
 /**
- * Commit the session workspace on its current branch, optionally pushing it.
+ * Commit the selected session repository and branch, optionally pushing it.
  *
  * Message generation is an explicit, cancellable preview separate from committing.
  */
@@ -69,6 +79,7 @@ export function SessionCommitDialog({
   rootName,
   branch,
   changedFiles,
+  repositories,
   onClose,
   onCommitted,
 }: Props) {
@@ -104,9 +115,29 @@ export function SessionCommitDialog({
   const selectedModelRef = selectedModel
     ? formatModelReference(selectedModel.providerId, selectedModel.modelId)
     : null;
-  const detached = !branch || branch === "HEAD";
+  const repositoryOptions = useMemo(
+    () =>
+      (repositories ?? []).filter(
+        (repository) =>
+          (repository.status === undefined || repository.status === "ready") &&
+          repository.changedFiles.length > 0,
+      ),
+    [repositories],
+  );
+  const [targetRootId, setTargetRootId] = useState<string | undefined>(rootId);
+  const selectedRepository = repositoryOptions.find(
+    (repository) => repository.rootId === targetRootId,
+  );
+  const activeBranch = selectedRepository?.branch ?? branch;
+  const activeChangedFiles = selectedRepository?.changedFiles.length ?? changedFiles;
+  const activeRootName = selectedRepository?.name ?? rootName;
+  const detached = !activeBranch || activeBranch === "HEAD";
   const [message, setMessage] = useState("");
   const [branchName, setBranchName] = useState("");
+  const [selectedBranch, setSelectedBranch] = useState(activeBranch);
+  const [branchData, setBranchData] = useState<SessionGitBranches | null>(null);
+  const [branchLoading, setBranchLoading] = useState(false);
+  const canSelectBranches = typeof agentRuntimeApi.listSessionBranches === "function";
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [submitting, setSubmitting] = useState<"commit" | "push" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +148,40 @@ export function SessionCommitDialog({
   const frame = useRef<number | null>(null);
   const generation = useRef(0);
   const locked = useRef(false);
+
+  useEffect(() => {
+    const nextRootId = rootId ?? repositoryOptions[0]?.rootId;
+    setTargetRootId(nextRootId);
+  }, [rootId, repositoryOptions]);
+
+  useEffect(() => {
+    setSelectedBranch(activeBranch);
+    setBranchName("");
+    setBranchData(null);
+  }, [targetRootId, activeBranch]);
+
+  useEffect(() => {
+    if (!isOpen || !sessionId || !targetRootId) return;
+    const listBranches = agentRuntimeApi.listSessionBranches;
+    if (typeof listBranches !== "function") return;
+    let active = true;
+    setBranchLoading(true);
+    void listBranches(sessionId, targetRootId)
+      .then((data) => {
+        if (!active) return;
+        setBranchData(data);
+        setSelectedBranch(data.current || activeBranch);
+      })
+      .catch(() => {
+        if (active) setBranchData(null);
+      })
+      .finally(() => {
+        if (active) setBranchLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, sessionId, targetRootId, activeBranch]);
 
   // Each open starts from a clean form instead of replaying the last attempt.
   useEffect(() => {
@@ -137,7 +202,7 @@ export function SessionCommitDialog({
       frame.current = null;
       locked.current = false;
     };
-  }, [isOpen, sessionId, projectId, rootId]);
+  }, [isOpen, sessionId, projectId, targetRootId]);
 
   const cancelGeneration = () => {
     if (!streamController.current) return;
@@ -173,7 +238,14 @@ export function SessionCommitDialog({
       await agentRuntimeApi.streamCommitMessage(
         sessionId,
         {
-          ...(rootId ? { rootId } : {}),
+          ...(targetRootId ? { rootId: targetRootId } : {}),
+          ...(detached
+            ? branchName.trim()
+              ? { branch: branchName.trim() }
+              : {}
+            : selectedBranch
+              ? { branch: selectedBranch }
+              : {}),
           model: selectedModelRef,
           locale,
           ...(includeUntracked ? {} : { includeUntracked: false }),
@@ -217,7 +289,9 @@ export function SessionCommitDialog({
 
   const run = async (push: boolean) => {
     if (!sessionId || !isOpen || locked.current || generating) return;
-    if (detached && (!branchName.trim() || branchName !== branchName.trim())) {
+    const rawBranch = detached ? branchName : selectedBranch;
+    const destinationBranch = rawBranch.trim();
+    if (!destinationBranch || rawBranch !== destinationBranch) {
       setError(t("workspaceCommitBranchRequired"));
       return;
     }
@@ -234,9 +308,11 @@ export function SessionCommitDialog({
       const committed = await agentRuntimeApi.commitSessionWorkspace(
         sessionId,
         {
-          ...(rootId ? { rootId } : {}),
+          ...(targetRootId ? { rootId: targetRootId } : {}),
           message: commitMessage,
-          ...(detached ? { branchName } : {}),
+          ...(destinationBranch && destinationBranch !== activeBranch
+            ? { branchName: destinationBranch }
+            : {}),
           ...(push ? {} : { push: false }),
           ...(includeUntracked ? {} : { includeUntracked: false }),
         },
@@ -269,7 +345,7 @@ export function SessionCommitDialog({
   };
 
   const busy = submitting !== null;
-  const upstream = result?.upstream ?? result?.branch ?? branch;
+  const upstream = result?.upstream ?? result?.branch ?? activeBranch;
   const pushed = result?.pushed === true;
 
   return (
@@ -286,9 +362,9 @@ export function SessionCommitDialog({
             </DialogTitle>
           </DialogHeader>
           <DialogBody className="space-y-4">
-            {rootName && (
-              <p className="text-xs font-medium" title={rootName}>
-                {rootName}
+            {activeRootName && (
+              <p className="text-xs font-medium" title={activeRootName}>
+                {activeRootName}
               </p>
             )}
             {result ? (
@@ -329,25 +405,90 @@ export function SessionCommitDialog({
               </div>
             ) : (
               <>
+                {repositoryOptions.length > 1 && (
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-foreground/85"
+                      htmlFor="session-commit-project"
+                    >
+                      {t("workspaceCommitProject")}
+                    </label>
+                    <AppSelect
+                      aria-label={t("workspaceCommitProject")}
+                      value={targetRootId ?? null}
+                      isDisabled={busy || generating}
+                      onChange={(value) => {
+                        if (!value || value === targetRootId) return;
+                        cancelGeneration();
+                        setError(null);
+                        setTargetRootId(value);
+                      }}
+                      options={repositoryOptions.map((repository) => ({
+                        key: repository.rootId,
+                        label: repository.name,
+                        textValue: repository.name,
+                      }))}
+                    />
+                  </div>
+                )}
+
                 {/* Target summary: which branch receives the commit, and how much is pending. */}
                 <div className="flex items-center justify-between gap-3 rounded-lg border border-border/40 bg-secondary/40 px-3 py-2">
                   <span className="flex min-w-0 items-center gap-1.5 text-[11px]">
                     <GitBranch size={11} className="shrink-0 text-primary" />
                     <span
                       className="truncate font-mono text-foreground/85"
-                      title={detached ? t("workspaceCommitNoBranch") : branch}
+                      title={detached ? t("workspaceCommitNoBranch") : selectedBranch}
                     >
-                      {detached ? t("workspaceCommitNoBranch") : branch}
+                      {detached ? t("workspaceCommitNoBranch") : selectedBranch}
                     </span>
                   </span>
                   <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {changedFiles > 0
+                    {activeChangedFiles > 0
                       ? t("workspaceCommitChangedFiles", {
-                          count: changedFiles,
+                          count: activeChangedFiles,
                         })
                       : t("workspaceCommitNoChanges")}
                   </span>
                 </div>
+
+                {!detached && canSelectBranches && (
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium text-foreground/85"
+                      htmlFor="session-commit-target-branch"
+                    >
+                      {t("workspaceCommitBranchTarget")}
+                    </label>
+                    <AppSelect
+                      aria-label={t("workspaceCommitBranchTarget")}
+                      value={selectedBranch || null}
+                      isDisabled={busy || generating || branchLoading}
+                      onChange={(value) => {
+                        if (!value) return;
+                        cancelGeneration();
+                        setSelectedBranch(value);
+                        setError(null);
+                      }}
+                      options={[
+                        ...(branchData?.branches ?? [])
+                          .filter((item) => !item.occupied)
+                          .map((item) => ({ key: item.name, label: item.name })),
+                        ...(!branchData?.branches.some((item) => item.name === activeBranch) && activeBranch
+                          ? [{ key: activeBranch, label: activeBranch }]
+                          : []),
+                      ]}
+                      placeholder={
+                        branchLoading
+                          ? t("workspaceCommitBranchLoading")
+                          : t("workspaceCommitNoBranch")
+                      }
+                    />
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      {t("workspaceCommitBranchTargetHint")}
+                    </p>
+                  </div>
+                )}
 
                 {detached && (
                   <div className="space-y-1.5">
@@ -460,7 +601,7 @@ export function SessionCommitDialog({
                             size="sm"
                             onClick={() => void generate()}
                             disabled={
-                              !selectedModelRef || changedFiles === 0 || busy
+                              !selectedModelRef || activeChangedFiles === 0 || busy
                             }
                             aria-label={t("workspaceCommitGenerate")}
                           >
@@ -521,7 +662,7 @@ export function SessionCommitDialog({
                     pending={submitting === "commit"}
                     disabled={
                       !sessionId ||
-                      changedFiles === 0 ||
+                      activeChangedFiles === 0 ||
                       submitting === "push" ||
                       generating
                     }
@@ -535,7 +676,7 @@ export function SessionCommitDialog({
                     pending={submitting === "push"}
                     disabled={
                       !sessionId ||
-                      changedFiles === 0 ||
+                      activeChangedFiles === 0 ||
                       submitting === "commit" ||
                       generating
                     }

@@ -920,6 +920,7 @@ function RepositoryCard({
           rootName={repository?.name}
           branch={environment.branch}
           changedFiles={changedCount}
+          repositories={environment.repositories}
           onClose={() => {
             setCommitOpen(false);
             void reload();

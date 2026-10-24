@@ -7,6 +7,7 @@ import type { RuntimeContentPart } from "../../../adapters/transport/runtimeMedi
 import type { TurnReference } from "../../../adapters/transport/agentRuntime";
 import type { BackendId } from "../../../adapters/transport/agentRuntime";
 import { create } from "zustand";
+import { compactSessionTail, isSessionHistoryReading, SESSION_TAIL_RETAIN } from "./sessionTailWindow";
 import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
 import { hydrateHistoryMessageContent } from "./hydrateHistoryMessageContent";
 import {
@@ -189,7 +190,7 @@ function readMarkersStorageKey(projectId: string): string {
   return `${READ_MARKERS_KEY}:${projectId}`;
 }
 
-function loadReadMarkers(projectId: string | null): Record<string, string> {
+export function loadReadMarkers(projectId: string | null): Record<string, string> {
   if (!projectId || typeof localStorage === "undefined") return {};
   const key = readMarkersStorageKey(projectId);
   try {
@@ -417,10 +418,12 @@ function trimSessionDetailCache(
       ? [selectedSessionId, ...inactive]
       : inactive;
   for (const key of keys) {
-    const size = detailEntryBytes(cache[key], remaining);
-    if (size > remaining) continue;
-    next[key] = cache[key];
-    remaining -= size;
+    const entry = key === selectedSessionId ? cache[key] : compactSessionTail(cache[key]);
+    const size = detailEntryBytes(entry, remaining);
+    // A large selected transcript or the minimum warm tail must never evict
+    // itself. Reclaim optional historical pages before dropping a whole session.
+    next[key] = key !== selectedSessionId && size > remaining ? compactSessionTail(entry, true) : entry;
+    remaining = Math.max(0, remaining - size);
   }
   return next;
 }
@@ -798,9 +801,12 @@ function clearInvocationUsageRefresh(): void {
   }
 }
 
-function upsertById<T extends { id: string }>(items: T[], next: T, limit = 128): T[] {
+function upsertById<T extends { id: string }>(items: T[], next: T, limit = Infinity): T[] {
   const index = items.findIndex((item) => item.id === next.id);
-  if (index === -1) return [...items, next].slice(-limit);
+  if (index === -1) {
+    const appended = [...items, next];
+    return appended.length > limit + 60 ? appended.slice(-limit) : appended;
+  }
   if (items[index] === next) return items;
   const replaced = [...items];
   replaced[index] = next;
@@ -1023,6 +1029,7 @@ export interface AgentSessionStoreState {
   /** Paint the persisted last-known-good transcript before its refresh lands. */
   paintPersistedDetail: (sessionId: string) => Promise<void>;
   closePanel: () => void;
+  compactHistoryTail: () => void;
   loadOlderHistory: () => Promise<void>;
   loadTimelineIndex: () => Promise<void>;
   loadHistoryUntil: (entryId: string) => Promise<boolean>;
@@ -1823,7 +1830,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // A copy saved mid-run cannot answer for a session that has since settled;
       // a copy saved after completion is the finished transcript, so reopening
       // it inside the trust window costs nothing.
-      const cacheFresh =
+      const needsTailUpgrade = existingCache?.historyWindow?.generation !== undefined &&
+        existingCache.historyWindow.hasEarlier && (existingCache.historyWindow.messageLimit ?? 0) < SESSION_TAIL_RETAIN &&
+        existingCache.messages.length < SESSION_TAIL_RETAIN;
+      const cacheFresh = !needsTailUpgrade && (
         existingCache?.restored === "active"
           ? false
           : existingCache?.restored === "terminal"
@@ -1831,7 +1841,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 existingCache,
                 RESTORED_TERMINAL_TRUST_MS,
               )
-            : isFreshInactivePageCache(existingCache);
+            : isFreshInactivePageCache(existingCache));
       if (panelOpen && prev === sessionId) {
         if (!forceFresh && !liveSession && cacheFresh) return;
         if (
@@ -1867,12 +1877,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         detailRefreshing: needsRefresh && Boolean(cached?.cachedAt),
         detailError: null,
         selectedSessionId: sessionId,
-        sessionDetailCache: cached
-          ? {
-              ...state.sessionDetailCache,
-              [sessionId]: { ...cached, lastVisitedAt: Date.now() },
-            }
-          : state.sessionDetailCache,
+        sessionDetailCache: trimSessionDetailCache(cached
+          ? { ...state.sessionDetailCache, [sessionId]: { ...cached, lastVisitedAt: Date.now() } }
+          : state.sessionDetailCache, sessionId),
         ...(isSwitch ? { interactionState: null } : {}),
         ...(isSwitch
           ? {
@@ -1976,6 +1983,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }));
     },
 
+    compactHistoryTail: () => {
+      const state = get();
+      const id = state.selectedSessionId;
+      if (!id || isSessionHistoryReading(id)) return;
+      const current = state.sessionDetailCache[id];
+      if (!current) return;
+      const entry = compactSessionTail(current);
+      if (entry === current) return;
+      set({ messages: entry.messages, runs: entry.runs, steps: entry.steps,
+        toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
+        sessionDetailCache: { ...state.sessionDetailCache, [id]: entry } });
+    },
     loadOlderHistory: async () => {
       const sessionId = get().selectedSessionId;
       if (!sessionId) return;
@@ -2497,7 +2516,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               let moreChanges = false;
               do {
                 const beforeRead = get();
-                const since = forceFresh && !moreChanges ? undefined : get().sessionDetailCache[targetSessionId]?.historyWindow?.syncCursor;
+                const currentCache = get().sessionDetailCache[targetSessionId];
+                const undersizedTail = currentCache?.historyWindow?.generation !== undefined &&
+                  currentCache.historyWindow.hasEarlier && (currentCache.historyWindow.messageLimit ?? 0) < SESSION_TAIL_RETAIN &&
+                  currentCache.messages.length < SESSION_TAIL_RETAIN;
+                const since = (forceFresh || undersizedTail) && !moreChanges ? undefined : currentCache?.historyWindow?.syncCursor;
                 const transcriptSource = windowed
                   ? readLatestHistoryWindow(targetSessionId,
                       since,
@@ -2590,7 +2613,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
                       let pendingFinalReply = false;
                       set((s) => {
-                        const merged =
+                        let merged =
                           windowed && (!forceFresh || cacheEntry.historyWindow?.incremental)
                             ? mergeRefreshedHistory(
                                 s.sessionDetailCache[targetSessionId],
@@ -2604,6 +2627,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                             merged[collection], beforeRead[collection], s[collection],
                           );
                         }
+                        if (!isSessionHistoryReading(targetSessionId)) merged = compactSessionTail(merged);
                         // This response was reconciled against the runtime, so the
                         // entry no longer carries a restore-time provenance.
                         merged.restored = undefined;
@@ -3043,21 +3067,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         case "message": {
           if (!streamVisible || event.message.sessionId !== get().selectedSessionId) break;
           set((state) => {
-            // Never discard browsed history when a new live message arrives.
             const messages = upsertById(state.messages, event.message, Infinity);
+            const cached = state.sessionDetailCache[event.message.sessionId];
+            const base = { ...cached,
+              runs: state.runs, steps: state.steps, toolCalls: state.toolCalls,
+              events: state.events, permissions: state.permissions, messages,
+              sessionStats: state.sessionStats, sessionTodos: state.sessionTodos,
+              sessionInvocationUsage: state.sessionInvocationUsage, cachedAt: cached?.cachedAt ?? 0,
+              ...(cached?.timelineMessages ? {
+                timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
+              } : {}),
+            };
+            const entry = isSessionHistoryReading(event.message.sessionId) ? base : compactSessionTail(base);
             return {
-              messages,
+              messages: entry.messages, runs: entry.runs, steps: entry.steps,
+              toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
+              sessionDetailCache: { ...state.sessionDetailCache, [event.message.sessionId]: entry },
               streamingCompletedSteps: retireSnapshots(
                 state.streamingCompletedSteps, state.steps, messages, state.toolCalls, false,
               ),
             };
-          });
-          const cached = get().sessionDetailCache[event.message.sessionId];
-          patchSessionDetailCache(event.message.sessionId, {
-            messages: get().messages,
-            ...(cached?.timelineMessages ? {
-              timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
-            } : {}),
           });
           break;
         }
@@ -3275,6 +3304,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             sessionMetadata: {
               ...session?.sessionMetadata,
               contextCompaction: event.state,
+              ...(event.state.contextUsage
+                ? { contextUsage: event.state.contextUsage }
+                : {}),
             },
           });
           set((state) => ({
@@ -3291,6 +3323,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           break;
         case "context_compacted":
           if (!streamVisible) break;
+          if (event.contextUsage) {
+            const session = get().sessions.find(
+              (item) => item.id === get().selectedSessionId,
+            );
+            if (session) {
+              get().patchSession(session.id, {
+                sessionMetadata: {
+                  ...session.sessionMetadata,
+                  contextUsage: event.contextUsage,
+                },
+              });
+            }
+          }
           set({
             contextCompactionNotice: {
               status: "completed",

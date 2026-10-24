@@ -1313,7 +1313,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
   try {
     const id = c.req.param("sessionId");
     return c.json(
-      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor"), c.req.query("since"), c.req.query("view") === "timeline"),
+      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor"), c.req.query("since"), c.req.query("view") === "timeline", c.req.query("before")),
     );
   } catch (error) {
     return runtimeError(c, error);
@@ -2294,6 +2294,7 @@ agentRuntimeRoutes.post(
 );
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
+  branch: z.string().min(1).max(1024).optional(),
   includeUntracked: z.boolean().optional(),
   model: z.string().trim().min(1).max(256),
   locale: z.enum(["zh", "en"]).optional(),

@@ -221,9 +221,9 @@ impl JsonlStore {
         }
     }
 
-    fn checkpoint(&self, actor: &mut SessionActor, force: bool) {
-        if let Err(error) = super::session::checkpoint::save(&self.root.path, actor, force) {
-            tracing::warn!(event = "storage.checkpoint_failed", session_id = actor.id, error = %error,
+    fn checkpoint(&self, handle: &SessionHandle, force: bool) {
+        if let Err(error) = super::session::checkpoint::save(handle, force) {
+            tracing::warn!(event = "storage.checkpoint_failed", session_id = handle.id, error = %error,
                 "Runtime checkpoint will be retried; committed logs remain authoritative");
         }
     }
@@ -249,7 +249,8 @@ impl JsonlStore {
             let mut actor = handle.actor.lock();
             actor.sync()?;
             self.cache_summary(&actor);
-            self.checkpoint(&mut actor, true);
+            drop(actor);
+            self.checkpoint(&handle, true);
         }
         tracing::info!(
             event = "storage.flushed",
@@ -264,7 +265,8 @@ impl JsonlStore {
             let mut actor = handle.actor.lock();
             actor.sync()?;
             self.cache_summary(&actor);
-            self.checkpoint(&mut actor, false);
+            drop(actor);
+            self.checkpoint(&handle, false);
         }
         Ok(())
     }
@@ -310,7 +312,8 @@ impl JsonlStore {
                     return false;
                 }
                 self.cache_summary(&actor);
-                self.checkpoint(&mut actor, true);
+                drop(actor);
+                self.checkpoint(handle, true);
                 true
             },
         )
@@ -377,6 +380,7 @@ pub fn build_handle(root: &Path, session_id: &str, loaded: load::Loaded) -> Sess
         first_retained: 1,
     }));
     let cell = Arc::new(SessionHandleCell {
+        checkpoint_lock: Mutex::new(()),
         id: id.clone(),
         actor: actor.clone(),
         lake: lake.clone(),

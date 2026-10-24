@@ -1,3 +1,4 @@
+import { historyWindowQuery } from "../../shared/lib/historyWindowCursor";
 export interface ToolExecutionProgress {
   phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
   resource?: string;
@@ -957,6 +958,8 @@ export interface SessionSearchResponse {
 }
 
 export interface HistoryWindowState {
+  /** Capacity of the latest message page, including sessions with fewer messages. */
+  messageLimit?: number;
   storage?: "rust";
   revision: number;
   epoch: number;
@@ -1204,12 +1207,12 @@ export const agentRuntimeApi = {
     ),
   historyWindow: (sessionId: string, cursor?: string, since?: string) =>
     request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : since ? `?since=${encodeURIComponent(since)}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, since)}`,
       { silent: true },
     ),
   historyIndexPage: (sessionId: string, cursor?: string) =>
     request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window?view=timeline${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, undefined, true)}`,
       { silent: true },
     ),
   listMessages: (sessionId: string) =>

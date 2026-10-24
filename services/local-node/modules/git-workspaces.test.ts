@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_ROOT } from "../infrastructure/runtime/env.js";
 import {
   cleanupGitWorktrees, createGitWorktree, listGitWorkspaces, previewGitWorktreeCleanup,
-  previewGitWorktreePath, previewGitWorktreePrune, pruneGitWorktrees, removeGitWorktree, removeMissingGitWorktree,
+  listWorktreeChanges, previewGitWorktreePath, previewGitWorktreePrune, pruneGitWorktrees, removeGitWorktree, removeMissingGitWorktree,
   type WorktreeSessionUsage,
 } from "./git-workspaces.js";
 import { cleanupReasons, isTerminalWorktreeSession, type GitWorktreeSummary } from "./git-worktree-management-contracts.js";
@@ -95,12 +95,32 @@ describe("safe worktree management with real Git", () => {
     expect(preview.candidates[0]).toMatchObject({ sessionCount: 4, activeSessionCount: 0, statusKnown: true });
     expect(preview.retained.map(item => item.worktree.path).sort()).toEqual([repository, dirty, locked, missing, busy].sort());
     for (const item of preview.retained) expect(item.reasons.length).toBeGreaterThan(0);
-    for (const target of [repository, dirty, locked, missing, busy]) {
+    // Uncommitted work is the only guard a confirmed force removal may lift.
+    for (const target of [repository, locked, missing, busy]) {
       await expect(removeGitWorktree(repository, projectId, target, { force: true, readUsage })).rejects.toThrow();
     }
     expect(fs.readFileSync(path.join(dirty, "untracked.txt"), "utf8")).toBe("do not lose\n");
+    const dirtyChanges = await listWorktreeChanges(repository, dirty);
+    expect(dirtyChanges.total).toBe(1);
+    expect(dirtyChanges.entries[0]).toMatchObject({ code: "??", path: "untracked.txt" });
     await removeGitWorktree(repository, projectId, clean, { force: true, readUsage });
     expect(fs.existsSync(clean)).toBe(false);
+  }, 30_000);
+
+  it("discards local changes only when the user forces the removal", async () => {
+    const target = linked("force-dirty");
+    fs.appendFileSync(path.join(target, "tracked.txt"), "work in progress\n");
+    fs.writeFileSync(path.join(target, "notes.md"), "untracked\n");
+    const changes = await listWorktreeChanges(repository, target);
+    expect(changes.entries.map(entry => `${entry.code} ${entry.path}`)).toEqual(["M tracked.txt", "?? notes.md"]);
+    expect(changes.truncated).toBe(false);
+    await expect(removeGitWorktree(repository, projectId, target)).rejects.toThrow("工作树包含未提交或未跟踪的修改");
+    expect(fs.existsSync(target)).toBe(true);
+    await removeGitWorktree(repository, projectId, target, { force: true });
+    expect(fs.existsSync(target)).toBe(false);
+    // An unused branch keeps the commits the discarded checkout pointed at.
+    expect(git(["branch", "--list", "force-dirty"])).toContain("force-dirty");
+    await expect(listWorktreeChanges(repository, path.join(temp, "force-dirty"))).rejects.toThrow(/not a worktree/);
   }, 30_000);
 
   it("does not treat unreadable status as clean", async () => {

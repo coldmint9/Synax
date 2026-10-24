@@ -261,6 +261,50 @@ export function contextUsageSnapshot(
   };
 }
 
+/** Build an immediate post-compaction snapshot from the last measured
+ * composition. Compaction changes the total request size before the next
+ * provider call, so preserve the previous category proportions until the next
+ * exact composition measurement arrives. */
+export function compactedContextUsageSnapshot(
+  previous: ContextUsageSnapshot | null,
+  compressedTokens: number,
+  stepId: string,
+  limit?: number | null,
+  measuredAt = new Date().toISOString(),
+): ContextUsageSnapshot | null {
+  if (!Number.isSafeInteger(compressedTokens) || compressedTokens <= 0 || !stepId)
+    return null;
+  const total = compressedTokens;
+  const source = previous?.composition;
+  const sourceTotal = previous?.total ?? source?.total ?? 0;
+  const categories = ["messages", "tools", "mcp", "skills", "system"] as const;
+  const composition = {
+    version: 2 as const,
+    messages: 0,
+    tools: 0,
+    mcp: 0,
+    skills: 0,
+    system: 0,
+    total,
+    measuredAt,
+  };
+  if (source && sourceTotal > 0) {
+    let assigned = 0;
+    for (const category of categories) {
+      const value = Math.max(0, Math.trunc(Number(source[category] ?? 0)));
+      const scaled = Math.round((value / sourceTotal) * total);
+      composition[category] = scaled;
+      assigned += scaled;
+    }
+    // Keep the rounded buckets lossless. Put the correction in messages,
+    // which is the category most affected by a context checkpoint.
+    composition.messages = Math.max(0, composition.messages + total - assigned);
+  } else {
+    composition.messages = total;
+  }
+  return contextUsageSnapshot(composition, stepId, limit);
+}
+
 export function readContextUsage(
   value: unknown,
 ): ContextUsageSnapshot | null {

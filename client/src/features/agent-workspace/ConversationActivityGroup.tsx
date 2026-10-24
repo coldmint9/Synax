@@ -56,7 +56,12 @@ function ActivityRows({ blocks, working, streaming, rememberKey, fileLinks }: {
     key: row.key,
     node: <div className="session-flow-entry" data-process data-activity>{row.node}</div>,
   }));
-  return <VirtualActivityWindow rows={rows} windowed={working} visibleRows={9} rowHeight={25} animate={streaming} />;
+  // Keep large historical call logs virtualized as well. Live rows still
+  // follow the newest call, while settled logs get the same bounded viewport
+  // when they exceed the visible budget instead of mounting every record.
+  const visibleRows = 9;
+  const windowed = working || rows.length > visibleRows;
+  return <VirtualActivityWindow rows={rows} windowed={windowed} visibleRows={visibleRows} rowHeight={25} animate={streaming} />;
 }
 
 export function ConversationActivityGroup({ blocks, rememberKey, working, streaming, defaultExpanded }: {

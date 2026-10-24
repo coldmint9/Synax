@@ -8,6 +8,9 @@ import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-
 import type { ContextCompactionState } from "./context-compaction-types.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
 import { currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
+import { agentRuntimeStore } from "./session-store.js";
+import { compactedContextUsageSnapshot, readContextUsage, type ContextUsageSnapshot } from "./analytics-projection.js";
 
 export interface CheckpointHead {
   checkpoint: ContextCheckpoint | null;
@@ -26,6 +29,33 @@ export interface CheckpointHead {
 
 async function command<T>(sessionId: string, operation: string, payload: unknown, requestId: string = randomUUID()): Promise<T> {
   return decode<T>(await runtimeClient().historyCommand({ sessionId, operation, payload, requestId }));
+}
+
+function isTerminalCompactionError(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /COMPACTION_(CONFIGURATION_CHANGED|SOURCE_CHANGED|OWNER_SUPERSEDED|SUPERSEDED|EXPIRED)|REVISION_CONFLICT/.test(text);
+}
+
+/** History commands are receipt-idempotent. Retry transport/storage blips
+ * with the same request ID, while semantic ownership conflicts fail fast. */
+async function commandWithRetry<T>(
+  sessionId: string,
+  operation: string,
+  payload: unknown,
+  requestId: string,
+  attempts = 3,
+): Promise<T> {
+  let last: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await command<T>(sessionId, operation, payload, requestId);
+    } catch (error) {
+      last = error;
+      if (isTerminalCompactionError(error) || attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
 }
 
 export function readCheckpointHead(sessionId: string): Promise<CheckpointHead> {
@@ -51,6 +81,25 @@ function notify(sessionId: string, active: NonNullable<CheckpointHead["active"]>
   emitSessionLive(sessionId, { type: "context_compaction_state", state, message });
 }
 
+export function persistCompactedContextUsage(
+  sessionId: string,
+  stepId: string,
+  compressedTokens: number,
+  limit: number,
+): ContextUsageSnapshot | null {
+  try {
+    const session = agentRuntimeStore.getSession(sessionId);
+    const previous = readContextUsage(session.sessionMetadata?.contextUsage);
+    const snapshot = compactedContextUsageSnapshot(previous, compressedTokens, stepId, limit);
+    if (!snapshot) return null;
+    agentRuntimeStore.updateSessionMetadata(sessionId, { contextUsage: snapshot });
+    return snapshot;
+  } catch (error) {
+    logger.warn({ sessionId, error: String(error) }, "Post-compaction context usage persistence skipped");
+    return null;
+  }
+}
+
 export async function runSessionCheckpoint(input: {
   sessionId: string;
   projectId: string;
@@ -64,11 +113,14 @@ export async function runSessionCheckpoint(input: {
   /** Called before persistence with the exact candidate; must check the
    * complete next request, including required context and native media. */
   validate(checkpoint: ContextCheckpoint): Promise<boolean> | boolean;
+  /** Called after the durable commit to persist derived UI usage metadata. */
+  onCommitted?: (checkpoint: ContextCheckpoint) => Promise<ContextUsageSnapshot | null> | ContextUsageSnapshot | null;
 }): Promise<ContextCheckpoint | null> {
   const timeout = AbortSignal.timeout(300_000);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   signal.throwIfAborted();
-  const head = input.head ?? await readCheckpointHead(input.sessionId);
+  let head = input.head ?? await readCheckpointHead(input.sessionId);
+  if (head.active?.status === "running") head = await recoverCheckpointHead(input.sessionId);
   if (!head.latestStepId || !input.recompact && head.checkpoint?.throughStepId === head.latestStepId) return null;
   const runId = `run_cmp_${randomUUID()}`;
   const authority = { ownerId: input.ownerId, executionContext: currentExecutionContext() };
@@ -95,16 +147,17 @@ export async function runSessionCheckpoint(input: {
       let cursor: unknown = null;
       do {
         signal.throwIfAborted();
-        const page = await command<{ items: CheckpointTextSlice[]; cursor: unknown }>(input.sessionId, "context_messages", {
+        const page = await commandWithRetry<{ items: CheckpointTextSlice[]; cursor: unknown }>(input.sessionId, "context_messages", {
           fromRevision: head.checkpoint?.throughRevision ?? 0,
           throughRevision: active.throughRevision, generation: active.indexGeneration, cursor,
-        });
+        }, `messages:${runId}:${cursor ? JSON.stringify(cursor) : "root"}`);
         signal.throwIfAborted();
         if (page.cursor && JSON.stringify(page.cursor) === JSON.stringify(cursor)) throw new Error("checkpoint_cursor_did_not_advance");
         yield page.items;
         cursor = page.cursor;
       } while (cursor);
     }
+    let usageSequence = 0;
     const checkpoint = await buildContextCheckpoint({
       identity: { version: 1, id: `cmp_${randomUUID()}`, sessionId: input.sessionId,
         compactionRunId: runId, throughRevision: active.throughRevision, throughStepId: active.throughStepId,
@@ -121,35 +174,70 @@ export async function runSessionCheckpoint(input: {
         }, request.signal);
         // Bounded usage records belong to the special run; no summary source
         // or generated tokens are echoed through the UI event stream.
-        await command(input.sessionId, "append_entities", { objects: [{ kind: "runtime.aux_usage", value: {
-          id: `usage_${randomUUID()}`, sessionId: input.sessionId, runId, purpose: "context-compaction",
-          startedAt: active.startedAt, completedAt: new Date().toISOString(), usage: result.usage,
-        } }] });
+        const usage = { id: `usage_${runId}_${usageSequence++}`, sessionId: input.sessionId, runId,
+          purpose: "context-compaction", startedAt: active.startedAt,
+          completedAt: new Date().toISOString(), usage: result.usage };
+        try {
+          await commandWithRetry(input.sessionId, "append_entities", { objects: [{ kind: "runtime.aux_usage", value: usage }] }, `usage:${usage.id}`);
+        } catch (error) {
+          // Usage telemetry is auxiliary. A telemetry write must never turn a
+          // valid checkpoint into a failed compaction.
+          logger.warn({ sessionId: input.sessionId, runId, error: String(error) }, "Context checkpoint usage write skipped");
+        }
         return { text: result.text, finishReason: result.finishReason };
       },
     });
     signal.throwIfAborted();
     if (!checkpoint || !await input.validate(checkpoint)) {
-      await command(input.sessionId, "context_finish", { runId, status: "completed" }, `finish:${runId}`);
+      await commandWithRetry(input.sessionId, "context_finish", { runId, status: "completed" }, `finish:${runId}`);
       notify(input.sessionId, active, "completed", { compacted: false });
       return null;
     }
     signal.throwIfAborted();
-    await command(input.sessionId, "context_commit", { checkpoint, ...authority }, `commit:${runId}`);
+    await commandWithRetry(input.sessionId, "context_commit", { checkpoint, ...authority }, `commit:${runId}`);
     committed = true;
-    notify(input.sessionId, active, "completed", { compacted: true, checkpointId: checkpoint.id });
+    const contextUsage = await input.onCommitted?.(checkpoint);
+    notify(input.sessionId, active, "completed", {
+      compacted: true,
+      checkpointId: checkpoint.id,
+      ...(contextUsage ? { contextUsage } : {}),
+    });
     return checkpoint;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // A lost commit response must be reconciled before reporting failure or
     // allowing another model call. Never overwrite a completed durable run.
-    const current = await readCheckpointHead(input.sessionId);
-    if (committed || current.checkpoint?.compactionRunId === runId) {
-      notify(input.sessionId, active, "completed", { compacted: true, checkpointId: current.checkpoint?.id });
-      return current.checkpoint;
+    let current: CheckpointHead | null = null;
+    try {
+      current = await readCheckpointHead(input.sessionId);
+    } catch {
+      // The current checkpoint may itself be unreadable after a storage fault.
+      // The special run still has a durable identity, so its terminal record
+      // can be written without reading the checkpoint head first.
     }
-    if (current.active?.runId === runId && current.active.status === "running")
-      await command(input.sessionId, "context_finish", { runId, status: signal.aborted ? "interrupted" : "failed", error: message.slice(0, 1000) }, `fail:${runId}`);
+    if (committed || current?.checkpoint?.compactionRunId === runId) {
+      notify(input.sessionId, active, "completed", { compacted: true, checkpointId: current?.checkpoint?.id });
+      return current?.checkpoint ?? null;
+    }
+    // Always attempt a terminal write from the run identity captured at
+    // context_begin. A failed head read must not leave the UI's special run
+    // in `running` forever. If another actor already finished it, the
+    // sidecar returns COMPACTION_SUPERSEDED and the desired terminal state is
+    // already durable.
+    try {
+      await commandWithRetry(input.sessionId, "context_finish", {
+        runId,
+        status: signal.aborted ? "interrupted" : "failed",
+        error: message.slice(0, 1000),
+      }, `fail:${runId}`);
+    } catch (finishError) {
+      const finishMessage = finishError instanceof Error ? finishError.message : String(finishError);
+      if (!finishMessage.includes("COMPACTION_SUPERSEDED")) {
+        // Preserve the original provider/storage error for the caller while
+        // retaining a diagnostic for the rare terminal-write failure.
+        logger.warn({ sessionId: input.sessionId, runId, error: finishMessage }, "Context checkpoint terminal write failed");
+      }
+    }
     notify(input.sessionId, active, "failed", { error: message });
     throw error;
   }

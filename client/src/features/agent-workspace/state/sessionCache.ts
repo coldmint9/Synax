@@ -1,3 +1,4 @@
+import { compactSessionTail } from "./sessionTailWindow";
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
 
 /**
@@ -172,9 +173,8 @@ function isQuotaError(error: unknown): boolean {
 }
 
 /**
- * Keep a restorable entry: drop the redundant retained indexes, then the oldest
- * transcript rows. A trimmed entry also loses `olderCursor`/`hasEarlier`, so a
- * restore can never hand the reader a cursor it cannot resume.
+ * Keep a restorable tail with an identity-based resume boundary. The minimum
+ * window takes priority over the soft byte budget; IndexedDB quota still applies.
  */
 function fitEntry(
   entry: PersistedDetailEntry,
@@ -186,25 +186,9 @@ function fitEntry(
     events: entry.events.slice(-EVENTS_RETAINED),
   };
   if (detailEntryBytes(slim) <= limit) return slim;
-  let messages = slim.messages;
-  while (messages.length > 1) {
-    const retained = Math.max(1, Math.ceil(messages.length * 0.9));
-    messages = messages.slice(messages.length - retained);
-    const candidate: PersistedDetailEntry = {
-      ...slim,
-      messages,
-      historyPagesLoaded: false,
-      historyWindow: {
-        ...slim.historyWindow!,
-        olderCursor: undefined,
-        hasEarlier: false,
-        incremental: false,
-        syncCursor: undefined,
-      },
-    };
-    if (detailEntryBytes(candidate) <= limit) return candidate;
-  }
-  return null;
+  // Byte budgets are soft for the minimum 100-message tail. Dropping arbitrary
+  // rows here used to lose the resume cursor and make cached history incomplete.
+  return compactSessionTail(slim, true);
 }
 
 export function toPersistedEntry(
@@ -212,6 +196,7 @@ export function toPersistedEntry(
   status: "active" | "terminal",
   limit = PERSISTED_DETAIL_MAX_ENTRY_BYTES,
 ): PersistedDetailEntry | null {
+  if (entry) entry = compactSessionTail(entry);
   const window = entry?.historyWindow;
   if (!entry?.cachedAt || !window) return null;
   if (!Number.isFinite(window.revision) || !Number.isFinite(window.epoch))
