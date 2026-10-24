@@ -9,19 +9,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::runtime::actor::{
-    ControlCommandReceipt, PendingEvent, RunAdmission, RuntimeError, SessionSnapshot,
-    StreamAppendReceipt, StreamEvent,
+    PendingEvent, RunAdmission, RuntimeError, SessionSnapshot, StreamAppendReceipt, StreamEvent,
 };
-use crate::runtime::input_queue::QueueState;
 use crate::runtime::session_types::{ActivationReceipt, FinishReceipt};
 use crate::storage::jsonl::segment::{PValue, Projection};
 
 use super::super::session::state::Tx;
 use crate::runtime::session_types::append_fingerprint;
 use crate::storage::jsonl::session::{SessionActor, SessionHandle};
-
-/// Control operations that answer from live state and own no receipt.
-const RECEIPT_FREE: [&str; 2] = ["read", "execution_check"];
 
 const MAX_EVENT_BYTES: usize = 1024 * 1024 - 8192;
 const MAX_REQUEST_BYTES: usize = 512 * 1024;
@@ -113,10 +108,6 @@ pub fn set_projection_state(
     projection
         .session
         .set("updatedAt", PValue::String(updated_at.to_owned()));
-}
-
-fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339()
 }
 
 impl SessionHandle {
@@ -857,7 +848,7 @@ impl SessionActor {
                 actual: producer_sequence,
             });
         }
-        let mut projection = self
+        let projection = self
             .projection
             .clone()
             .ok_or(RuntimeError::ProjectionMissing)?;

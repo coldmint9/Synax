@@ -125,14 +125,14 @@ describe("TurnBody continuous process", () => {
     expect(screen.getByText("Final answer")).toBeVisible();
   });
 
-  it("uses the current thought as the live toggle without duplicating it in the list", () => {
+  it("uses a human-readable live event instead of raw thought or command text", () => {
     const blocks: TurnContentBlock[] = [
       { type: "thinking", content: "**Setting up module symlinks**" }, tool("stream"),
     ];
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="stream" isWorking />);
     const header = container.querySelector(".session-process-trigger")!;
-    expect(header.querySelector(".session-process-line")?.textContent).toBe("Setting up module symlinks");
-    expect(header).toHaveAttribute("aria-label", "Setting up module symlinks");
+    expect(header.querySelector(".session-process-line")?.textContent).toBe("正在执行命令");
+    expect(header).toHaveAttribute("aria-label", "正在执行命令");
     expect(header.querySelector(".session-process-chevron")).not.toBeNull();
     expect(container.querySelectorAll(".bui-thinking")).toHaveLength(0);
     expect(container.querySelector(".session-activity-group")).toHaveAttribute("data-live", "true");
@@ -140,7 +140,7 @@ describe("TurnBody continuous process", () => {
 
   it("reports the latest command when no thought is available", () => {
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("call-line")] }} entryId="call-line" isWorking />);
-    expect(container.querySelector(".session-process-line")).toHaveTextContent("已运行 command-call-line");
+    expect(container.querySelector(".session-process-line")).toHaveTextContent("正在执行命令");
   });
 
   it("restores manually expanded groups and tool details after history remounts", () => {
@@ -179,7 +179,7 @@ describe("TurnBody continuous process", () => {
 
   it("shows the waiting indicator for an empty live turn only", () => {
     const { container, rerender } = render(<TurnBody turn={emptyTurn} entryId="empty" isStreaming />);
-    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("thinking-indicator")).toContainElement(screen.getByRole("status"));
     rerender(<TurnBody turn={{ ...emptyTurn, status: "completed" }} entryId="empty" />);
     expect(container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
   });

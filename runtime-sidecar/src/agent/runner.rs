@@ -140,7 +140,6 @@ struct ModelRetry {
 
 #[derive(Clone)]
 struct ExecutionState {
-    version: u32,
     initial_hash: String,
     request: AgentLoopRequest,
     phase: Phase,
@@ -538,7 +537,6 @@ impl AgentLoopManager {
             cancel,
             state: Mutex::new(LoopState {
                 execution: ExecutionState {
-                    version: 1,
                     initial_hash,
                     request,
                     phase: initial_phase,
@@ -1474,7 +1472,6 @@ mod tests {
             cancel,
             state: Mutex::new(LoopState {
                 execution: ExecutionState {
-                    version: 1,
                     initial_hash: String::new(),
                     request: request(),
                     phase: Phase::Model {

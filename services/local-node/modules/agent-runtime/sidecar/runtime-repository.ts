@@ -57,6 +57,7 @@ export async function patchRuntime(
         attempt >= 7
       )
         throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(200, 10 * 2 ** attempt)));
     }
   }
 }

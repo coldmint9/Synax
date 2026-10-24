@@ -1041,15 +1041,6 @@ impl SessionOps<'_> {
         Ok(head)
     }
 
-    /// Advance the idempotency/liveness generation (pins, files, metadata).
-    fn bump_generation(&mut self) -> u64 {
-        let generation = self.index().generation.saturating_add(1);
-        self.staged
-            .push(Record::HistoryAux(AuxRecord::Generation(generation)));
-        self.work().set_generation(generation);
-        generation
-    }
-
     /// Advance the visible-index generation. `history_sync` cursors are tied
     /// to it and go stale only when the index is rebuilt from another root.
     fn bump_index_generation(&mut self) -> u64 {
@@ -1626,7 +1617,6 @@ impl SessionOps<'_> {
         refs.extend(staged.iter().rev().map(|object| object.object_id.clone()));
         let mut changes = Vec::new();
         for object in &staged {
-            let kind = indexed_kind(&object.kind, &object.value).unwrap_or_default();
             if let Some(collection) = change_collection(&object.kind, &object.value).or_else(|| indexed_kind(&object.kind, &object.value)) {
                 changes.push(ChangeEntry {
                     collection: collection.to_owned(),

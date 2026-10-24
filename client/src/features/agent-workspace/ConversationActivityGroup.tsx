@@ -3,8 +3,7 @@ import { Button } from "@headlessui/react";
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
-import { activityPreview, thinkingBannerPhrase } from "./activityText";
-import { conversationActivitySummary, conversationToolPresentation } from "./conversationActivity";
+import { conversationActivityLiveLabel, conversationActivitySummary } from "./conversationActivity";
 import { flattenToolBlocks } from "./toolCallUtils";
 import { parseFileLink, type FileLinkTarget, type ToolFileLinks } from "./fileLink";
 import { useTranscriptSession } from "./SessionTranscriptContext";
@@ -77,15 +76,9 @@ export function ConversationActivityGroup({ blocks, rememberKey, working, stream
   const [expanded, toggle] = useActivityDisclosure(rememberKey ? `process:${rememberKey}` : undefined, defaultExpanded ?? (working && calls.length > 0));
   const id = useId();
   const summary = conversationActivitySummary(calls, locale);
-  const thought = [...blocks].reverse().find((block) => block.type === "thinking");
-  const thoughtText = thought?.type === "thinking"
-    ? thinkingBannerPhrase(thought.content) ?? activityPreview(thought.content, 240)
-    : null;
-  const latestCall = calls[calls.length - 1];
-  const latest = latestCall ? conversationToolPresentation(latestCall, locale) : null;
   const label = working
-    ? thoughtText ?? (latest ? `${latest.label} ${latest.displayTarget}` : locale === "zh" ? "正在思考" : "Thinking")
-    : summary.text || thoughtText || (locale === "zh" ? "思考过程" : "Thought process");
+    ? conversationActivityLiveLabel(calls, locale)
+    : summary.text || (locale === "zh" ? "思考过程" : "Thought process");
   const Icon = summary.icon;
   return (
     <section className="session-activity-group" data-live={working || undefined} data-expanded={expanded}>

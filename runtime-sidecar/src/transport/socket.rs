@@ -2,11 +2,10 @@ use crate::runtime::actor::{Durability, PendingEvent, RuntimeError, SessionShard
 use crate::transport::flow::CreditWindow;
 use crate::transport::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse,
-    WireHistoryState, WireImportProjectionResponse, WireImportStreamResponse, WirePong,
-    WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse, WireSnapshotResponse,
-    WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message, decode_wire,
-    encode_server_message, encode_wire, wire_envelope,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState,
+    WirePong, WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse,
+    WireSnapshotResponse, WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message,
+    decode_wire, encode_server_message, encode_wire, wire_envelope,
 };
 use crate::transport::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
@@ -1449,7 +1448,6 @@ fn history_error_to_wire(
         HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
         HistoryError::InvalidCommand(message) => wire_error("INVALID_COMMAND", &message),
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
-        other => wire_error("HISTORY_ERROR", &other.to_string()),
     }
 }
 

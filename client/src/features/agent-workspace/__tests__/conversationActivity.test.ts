@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationActivitySummary, conversationToolPresentation } from "../conversationActivity";
+import { conversationActivityLiveLabel, conversationActivitySummary, conversationToolPresentation } from "../conversationActivity";
 import type { ToolCallView } from "../buildInterleavedTurns";
 
 function call(toolId: string, inputSummary = "", extra: Partial<ToolCallView> = {}): ToolCallView {
@@ -28,5 +28,25 @@ describe("conversation activity presentation", () => {
   it("uses active language for running commands and elapsed time only after completion", () => {
     expect(conversationToolPresentation(call("bash", "npm test", { status: "running", duration: "2s" }), "zh").label).toBe("正在运行");
     expect(conversationToolPresentation(call("bash", "npm test", { duration: "36s" }), "zh").label).toBe("已在 36s 内运行");
+  });
+  it("maps running calls to human-readable events without exposing raw input", () => {
+    expect(conversationActivityLiveLabel([call("bash", "rm -rf production", { status: "running" })], "zh")).toBe("正在执行命令");
+    expect(conversationActivityLiveLabel([call("rg", "secret-token", {
+      status: "running",
+      execution: { phase: "executing_tool", files: 42 },
+    })], "zh")).toBe("正在搜索代码 · 已扫描 42 个文件");
+    expect(conversationActivityLiveLabel([call("bash", "npm test", {
+      status: "running",
+      execution: { phase: "queued_resources", resource: "command" },
+    })], "zh")).toBe("正在准备命令执行");
+    expect(conversationActivityLiveLabel([call("bash", "npm test", {
+      status: "running",
+      execution: { phase: "generating" },
+    })], "zh")).toBe("正在整理结果");
+    expect(conversationActivityLiveLabel([
+      call("bash", "npm test", { status: "running" }),
+      call("rg", "TODO", { status: "running" }),
+    ], "zh")).toBe("正在并行处理 2 个任务");
+    expect(conversationActivityLiveLabel([], "zh")).toBe("正在分析任务");
   });
 });

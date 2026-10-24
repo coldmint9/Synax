@@ -28,11 +28,6 @@ fn to_value(value: &impl serde::Serialize) -> Result<Value, RuntimeError> {
     serde_json::to_value(value).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))
 }
 
-fn from_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(value)
-        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
-}
-
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }

@@ -9,6 +9,7 @@ const base = { id: "context:run", runId: "run", stepId: "step", startedAt: "2026
 it("announces an in-progress same-session compaction", () => {
   render(<ContextCompactionFeedback state={{ ...base, status: "running" }} />);
   expect(screen.getByRole("status")).toHaveAccessibleName(/正在压缩上下文/);
+  expect(screen.getAllByText("正在压缩上下文")).toHaveLength(1);
   expect(screen.getByText("正在压缩上下文")).toBeVisible();
 });
 

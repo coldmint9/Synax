@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { buildContextCheckpoint, type CheckpointTextSlice } from "./checkpoint-builder.js";
 import { CHECKPOINT_MAX_SUMMARY_TOKENS, type ContextBudget, type ContextCheckpoint } from "./context-checkpoint.js";
 import { countTokens } from "./context-tokenizer.js";
@@ -56,6 +56,11 @@ async function commandWithRetry<T>(
     }
   }
   throw last instanceof Error ? last : new Error(String(last));
+}
+
+function safeRequestId(prefix: string, value: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);
+  return `${prefix}:${digest}`;
 }
 
 export function readCheckpointHead(sessionId: string): Promise<CheckpointHead> {
@@ -150,7 +155,7 @@ export async function runSessionCheckpoint(input: {
         const page = await commandWithRetry<{ items: CheckpointTextSlice[]; cursor: unknown }>(input.sessionId, "context_messages", {
           fromRevision: head.checkpoint?.throughRevision ?? 0,
           throughRevision: active.throughRevision, generation: active.indexGeneration, cursor,
-        }, `messages:${runId}:${cursor ? JSON.stringify(cursor) : "root"}`);
+        }, safeRequestId(`messages:${runId}`, cursor ?? "root"));
         signal.throwIfAborted();
         if (page.cursor && JSON.stringify(page.cursor) === JSON.stringify(cursor)) throw new Error("checkpoint_cursor_did_not_advance");
         yield page.items;
