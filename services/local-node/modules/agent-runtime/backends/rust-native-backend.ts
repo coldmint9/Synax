@@ -29,6 +29,7 @@ import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage }
 import { contextInputBudget } from "../context-checkpoint.js";
 import { prepareCheckpointContext } from "../checkpoint-projection.js";
 import { buildNativeStepContext } from "../native-step-context.js";
+import { persistInlineVisualization } from "../visualization-integration.js";
 
 /** Translates Rust decisions into host tool execution and public projections.
  * Step progression and model/tool context live in the current Rust process. */
@@ -433,6 +434,9 @@ export class RustNativeBackend implements BackendAdapter {
           role: "assistant", content: summary, metadata: { engine: "rust", disposition: disposition?.reason }, createdAt: nowIso() });
         yield { type: "message", message: assistant };
       }
+      // Capture the file while the worker still owns the completed reply. The
+      // completion event and later history reads must carry the same snapshot.
+      if (finalStatus === "completed" && assistant) persistInlineVisualization(assistant);
       const completed = store.updateRun(run.id, { status: finalStatus, completedAt: nowIso(), stopReason: disposition?.reason ?? "completed", model: selection.modelId });
       store.updateSession(sessionId, { status: finalStatus === "blocked" ? "completed" : finalStatus,
         activeRunId: null, pendingResumeToken: null, completedAt: nowIso(),

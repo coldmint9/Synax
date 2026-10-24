@@ -88,9 +88,8 @@ class RuntimeJournal {
     if (signal?.aborted) return Promise.resolve();
     return new Promise(resolve => {
       const waiters = this.waiters.get(sessionId) ?? new Set<() => void>();
-      let timer: ReturnType<typeof setTimeout>;
       const wake = () => { clearTimeout(timer); signal?.removeEventListener('abort', wake); waiters.delete(wake); if (!waiters.size) this.waiters.delete(sessionId); resolve(); };
-      waiters.add(wake); this.waiters.set(sessionId, waiters); timer = setTimeout(wake, ms); signal?.addEventListener('abort', wake, { once: true });
+      waiters.add(wake); this.waiters.set(sessionId, waiters); const timer = setTimeout(wake, ms); signal?.addEventListener('abort', wake, { once: true });
     });
   }
 

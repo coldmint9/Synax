@@ -147,7 +147,7 @@ import {
   resolveRegisteredProjectWorkDir,
 } from "../../modules/agent-runtime/tools/workspace.js";
 import { listTurnReferenceOptions } from "../../modules/agent-runtime/turn-references.js";
-import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
+import { loadHistoricalVisualization } from "../../modules/agent-runtime/visualization-history.js";
 import { workRuntime } from "../../modules/agent-runtime/work-runtime.js";
 import { bindSessionWorktree } from '../../modules/agent-runtime/session-worktree-binding.js';
 import { workflowMode } from "../../modules/agent-runtime/workflow-mode.js";
@@ -1340,28 +1340,9 @@ agentRuntimeRoutes.get(
     try {
       const sessionId = c.req.param("sessionId");
       {
-        const message = (
-          await runtimeFacade.listMessageHistory(sessionId)
-        ).find(
-          (item) =>
-            (
-              item as {
-                id?: unknown;
-              }
-            ).id === c.req.param("messageId"),
-        ) as AgentRuntimeMessage | undefined;
-        if (!message) return c.json({ error: "Message not found." }, 404);
-        if (message.role !== "assistant" || message.metadata?.partial)
-          return c.json({ message: null });
-        hydrateCompletedVisualizations([message]);
-        if (
-          message.metadata.source !== "inline_visualization" &&
-          !(
-            message.metadata.purpose === "work_result" &&
-            Array.isArray(message.metadata.visualizations)
-          )
-        )
-          return c.json({ message: null });
+        const message = await loadHistoricalVisualization(sessionId, c.req.param("messageId"));
+        if (message === undefined) return c.json({ error: "Message not found." }, 404);
+        if (message === null) return c.json({ message: null });
         if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
           return c.json(
             { error: "Preview exceeds the response size limit." },

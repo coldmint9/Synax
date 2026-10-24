@@ -13,6 +13,8 @@ import { validateCuaArtifact } from "./validate-cua-artifact.js";
 const root = join(import.meta.dirname, "..");
 const serverDist = join(root, "server-dist");
 const src = join(root, "node_modules");
+mkdirSync(join(serverDist, "file-generation"), { recursive: true });
+cpSync(join(root, "services/local-node/modules/agent-runtime/file-generation/bootstrap.py"), join(serverDist, "file-generation/bootstrap.py"));
 
 // Place a package.json in server-dist so require() resolves correctly
 writeFileSync(

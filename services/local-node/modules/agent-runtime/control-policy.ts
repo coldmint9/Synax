@@ -9,6 +9,7 @@ import {
 import { isToolMountedForSession, isPlanningReadTool } from "./tool-mount-policy.js";
 import { getStoredPlan } from './plan-execution.js';
 import { readSubagentControl } from './subagent-control-broker.js';
+import { gitMergeWorkflowSubcommands } from './tools/bash-command-policy.js';
 
 export const CONTROL_TOOLS = new Set([
   "human.ask",
@@ -19,11 +20,31 @@ export const CONTROL_TOOLS = new Set([
   "work.checkpoint",
   "design.implement",
 ]);
+
+function gitMergeBashError(
+  session: AgentSession,
+  tool: Pick<RegisteredTool, "id">,
+  args?: unknown,
+): string | null {
+  if (tool.id !== "bash" || session.profileId === "git-merge-worker") return null;
+  const root = controlRoot(session);
+  if (!isSynaxProfile(root.profileId)) return null;
+  const command =
+    typeof args === "object" && args && "command" in args &&
+    typeof (args as { command?: unknown }).command === "string"
+      ? (args as { command: string }).command
+      : "";
+  const operations = gitMergeWorkflowSubcommands(command);
+  if (!operations.size) return null;
+  return `Git merge workflow commands (${[...operations].join(", ")}) are blocked in Bash for Synax sessions. Use git.merge.create for a new persistent interactive merge card, or git.merge.analyze/read/propose for an existing task. Read-only git status, diff and log commands remain available.`;
+}
 export function controlToolError(
   session: AgentSession,
   tool: Pick<RegisteredTool, "id">,
   args?: unknown,
 ): string | null {
+  const gitError = gitMergeBashError(session, tool, args);
+  if (gitError) return gitError;
   if (!isToolMountedForSession(session, tool)) {
     if (["work.checkpoint", "goal.finish", "verification.run"].includes(tool.id))
       return `Tool ${tool.id} is only available in goal mode.`;

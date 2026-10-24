@@ -78,6 +78,8 @@ import { bashTool } from "./tools/bash.js";
 import { fileReadTool } from "./tools/file-read.js";
 import { fileDeleteTool } from "./tools/file-delete.js";
 import { fileWriteTool } from "./tools/file-write.js";
+import { fileGenerateTool } from "./tools/file-generate.js";
+import { resolvePythonRuntime } from "../../infrastructure/runtime/python-runtime.js";
 import { rgTool } from "./tools/rg.js";
 import { webSearchTool } from "./tools/web-search.js";
 import {
@@ -168,6 +170,8 @@ export class ToolRegistry {
       ...browserTools,
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
+    if (resolvePythonRuntime()) this.register(fileGenerateTool);
+    else logger.warn("[agent-runtime] file.generate is unavailable: no bundled Python runtime or development python3 found.");
     for (const tool of createCodeTools(this, this.store, this.profiles)) this.register(tool);
     this.capabilities = new NativeCapabilities(this, this.store, this.profiles);
     for (const tool of this.capabilities.tools()) this.register(tool);

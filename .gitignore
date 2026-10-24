@@ -53,6 +53,7 @@ Thumbs.db
 *.swo
 
 # Python (prototype phase)
+/python-runtime/
 __pycache__/
 *.py[cod]
 *.egg-info/

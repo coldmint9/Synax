@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Stage the bundled Python runtime used by the `file.generate` tool.
@@ -14,13 +15,14 @@ import { promisify } from 'node:util';
  * release and verified by SHA-256 so an upstream retag cannot silently change
  * what ships inside the installer.
  */
-const RELEASE = '20261021';
-const PYTHON_VERSION = '3.12.15';
+export const PYTHON_RELEASE = '20261021';
+const RELEASE = PYTHON_RELEASE;
+export const PYTHON_VERSION = '3.12.15';
 const BASE_URL = `https://github.com/astral-sh/python-build-standalone/releases/download/${RELEASE}/`;
 
 interface Artifact { name: string; sha256: string }
 
-const artifacts: Record<string, Artifact> = {
+export const pythonArchives: Record<string, Artifact> = {
   'darwin-arm64': {
     name: `cpython-${PYTHON_VERSION}+${RELEASE}-aarch64-apple-darwin-install_only.tar.gz`,
     sha256: 'a18cc33862b53bd54a148c710def5375c1b47470cccedf817a19c2d211764584',
@@ -57,6 +59,16 @@ async function checksum(filename: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filename)) hash.update(chunk);
   return hash.digest('hex');
+}
+
+export async function verifyPythonArchive(filename: string, expected: string): Promise<void> {
+  if (await checksum(filename) !== expected) throw new Error('Python runtime archive SHA-256 mismatch');
+}
+
+export function validatePythonArchiveLayout(listing: string): void {
+  const names = listing.trim().split(/\r?\n/);
+  if (!names.length || names.some(name => !name.startsWith('python/') || name.includes('\\') || name.split('/').includes('..')))
+    throw new Error('Unexpected Python archive layout');
 }
 
 async function downloadArchive(artifact: Artifact): Promise<string> {
@@ -97,6 +109,8 @@ async function downloadArchive(artifact: Artifact): Promise<string> {
 }
 
 async function extractArchive(archive: string, destination: string): Promise<void> {
+  const { stdout } = await promisify(execFile)('tar', ['-tzf', archive], { maxBuffer: 16 * 1024 * 1024 });
+  validatePythonArchiveLayout(stdout);
   await fs.mkdir(destination, { recursive: true });
   await new Promise<void>((resolve, reject) => {
     // Windows 10+ and every supported CI runner ship tar; the archive itself is
@@ -132,7 +146,7 @@ async function signMacBinaries(root: string): Promise<void> {
       if (
         entry.name.endsWith('.dylib') ||
         entry.name.endsWith('.so') ||
-        current === path.join(root, 'bin')
+        (current === path.join(root, 'bin') && /^python3(?:\.\d+)?$/.test(entry.name))
       ) {
         binaries.push(target);
       }
@@ -150,10 +164,10 @@ async function signMacBinaries(root: string): Promise<void> {
 async function smokeTest(executable: string): Promise<void> {
   const { stdout } = await promisify(execFile)(
     executable,
-    ['-I', '-c', 'import sys; print(sys.version.split()[0])'],
+    ['-I', '-B', '-c', 'import sys, hashlib, json, pathlib; print(sys.version.split()[0])'],
     { timeout: 30_000, env: { ...process.env, PYTHONHOME: undefined, PYTHONPATH: undefined } },
   );
-  if (!stdout.trim().startsWith(PYTHON_VERSION.split('.').slice(0, 2).join('.'))) {
+  if (stdout.trim() !== PYTHON_VERSION) {
     throw new Error(`Bundled Python reported unexpected version: ${stdout.trim()}`);
   }
 }
@@ -165,10 +179,10 @@ async function smokeTest(executable: string): Promise<void> {
  * network download while developing.
  */
 export async function stagePythonRuntime(platform: string, arch: string): Promise<void> {
-  const artifact = artifacts[`${platform}-${arch}`];
+  const artifact = pythonArchives[`${platform}-${arch}`];
   if (!artifact) throw new Error(`No verified Python runtime artifact for ${platform}/${arch}`);
   const output = path.join(PYTHON_RUNTIME_DIR, `${platform}-${arch}`);
-  const executable = path.join(output, 'bin', pythonExecutableName(platform));
+  const executable = path.join(output, ...(platform === 'win32' ? [] : ['bin']), pythonExecutableName(platform));
   const local = process.env.SYNAX_PYTHON_RUNTIME_PATH?.trim();
   const ready = async (): Promise<boolean> => {
     try {
@@ -187,13 +201,14 @@ export async function stagePythonRuntime(platform: string, arch: string): Promis
     const archive = await downloadArchive(artifact);
     const staging = `${output}.${process.pid}.tmp`;
     await fs.rm(staging, { recursive: true, force: true });
-    await extractArchive(archive, staging);
-    // install_only archives unpack into a single `python/` directory.
-    const unpacked = path.join(staging, 'python');
-    await fs.rm(output, { recursive: true, force: true });
-    await fs.mkdir(path.dirname(output), { recursive: true });
-    await fs.rename(unpacked, output);
-    await fs.rm(staging, { recursive: true, force: true });
+    try {
+      await extractArchive(archive, staging);
+      // install_only archives unpack into a single `python/` directory.
+      const unpacked = path.join(staging, 'python');
+      await fs.rm(output, { recursive: true, force: true });
+      await fs.mkdir(path.dirname(output), { recursive: true });
+      await fs.rename(unpacked, output);
+    } finally { await fs.rm(staging, { recursive: true, force: true }); }
   }
 
   await fs.chmod(executable, 0o755);
@@ -201,8 +216,12 @@ export async function stagePythonRuntime(platform: string, arch: string): Promis
   await smokeTest(executable);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  stagePythonRuntime(process.platform, process.arch).catch((error) => {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  stagePythonRuntime(process.platform, process.arch).then(async () => {
+    const binary = path.resolve(PYTHON_RUNTIME_DIR, `${process.platform}-${process.arch}`, ...(process.platform === 'win32' ? [] : ['bin']), pythonExecutableName(process.platform));
+    console.log(`Staged Python: ${binary}`);
+    if (process.env.GITHUB_ENV) await fs.appendFile(process.env.GITHUB_ENV, `SYNAX_PYTHON_RUNTIME=${binary}\n`);
+  }).catch((error) => {
     console.error(error);
     process.exit(1);
   });

@@ -33,6 +33,7 @@ export function hideVisualizationSource(
 
 export function visualizationReplyParts(
   message: AgentRuntimeMessage,
+  { loadMissing = true }: { loadMissing?: boolean } = {},
 ): ReplyPart[] {
   const text = (content: string): ReplyPart[] =>
     content.trim() ? [{ type: "text", content, messageId: message.id }] : [];
@@ -46,7 +47,12 @@ export function visualizationReplyParts(
     message.metadata.source === "inline_visualization" ||
     Array.isArray(message.metadata.visualizations)
   );
-  if (!message.metadata.partial && (missingMetadata || missingContent)) {
+  // Native replies from before snapshot finalization was wired in have a
+  // complete declaration but no metadata, even in an untruncated history page.
+  const missingSnapshot = loadMissing && !!message.runId && !message.metadata.source &&
+    message.metadata.type !== "thinking" && message.metadata.kind !== "thought" &&
+    visualizationBlocks(message.content).length > 0;
+  if (loadMissing && !message.metadata.partial && (missingMetadata || missingContent || missingSnapshot)) {
     return [{ type: "visualization", messageId: message.id, reference: {
       id: `history:${message.sessionId}:${message.id}`,
       historyMessage: message,

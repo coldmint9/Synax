@@ -128,7 +128,7 @@ function buildPlanNodePrompt(
     feedbackBlock,
     "## Rules",
     "1. Read relevant code with rg and file.read before writing.",
-    "2. Use file.patch for edits; file.write only for complete new files.",
+    "2. Use file.patch for small edits and file.write for short complete files. When available, prefer file.generate for templates, multi-file scaffolds, batch rewrites and long or escape-sensitive text. Its Python script stages changes using synax.write/delete/move, then validates and commits them together; ordinary open() is read-only. Delete/move still require file.delete capability.",
     "3. Prefer expected files; explain clearly if you must go outside that scope.",
     "4. Keep changes within the requested scope and verify them before finishing.",
     "5. You may use shell to run tests and verify changes.",

@@ -326,6 +326,29 @@ export function parseBashInvocations(command: string): BashInvocation[] {
     .filter((invocation): invocation is BashInvocation => invocation !== null);
 }
 
+/** Git operations that must be represented by the persistent merge task card.
+ * Read-only inspection such as status, diff and log remains available through bash. */
+export type GitMergeWorkflowSubcommand = "merge" | "rebase" | "cherry-pick" | "revert" | "am";
+
+export function gitMergeWorkflowSubcommands(command: string): Set<GitMergeWorkflowSubcommand> {
+  const found = new Set<GitMergeWorkflowSubcommand>();
+  for (const segment of splitBashCommands(command)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const gitIndex = tokens.findIndex((token) => normalizeCommandName(token) === "git");
+    if (gitIndex < 0) continue;
+    let index = gitIndex + 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(token)) { index += 2; continue; }
+      if (token.startsWith("-")) { index += 1; continue; }
+      if (["merge", "rebase", "cherry-pick", "revert", "am"].includes(token))
+        found.add(token as GitMergeWorkflowSubcommand);
+      break;
+    }
+  }
+  return found;
+}
+
 export function bashPermissionPatterns(command: string): string[] {
   const invocations = parseBashInvocations(command);
   if (invocations.length === 0) return ["*"];

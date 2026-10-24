@@ -1,6 +1,6 @@
 import { setSessionWorkspaceRoot, clearSessionWorkspaceRoot } from '../tools/workspace.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { gitCommandDiscardsLocalChanges, parseBashInvocations } from '../tools/bash-command-policy.js';
+import { gitCommandDiscardsLocalChanges, gitMergeWorkflowSubcommands, parseBashInvocations } from '../tools/bash-command-policy.js';
 import { permissionPolicy } from '../permission-policy.js';
 import { permissionRulesForTier } from '../permission-tiers.js';
 
@@ -28,6 +28,14 @@ describe('parseBashInvocations', () => {
     expect(invocations).toHaveLength(2);
     expect(invocations[0]?.risk).toBe('read');
     expect(invocations[1]?.risk).toBe('write');
+  });
+
+  it('identifies merge workflow commands while ignoring read-only git inspection', () => {
+    expect([...gitMergeWorkflowSubcommands('git status && git diff')]).toEqual([]);
+    expect([...gitMergeWorkflowSubcommands('git merge feature/foo')]).toEqual(['merge']);
+    expect([...gitMergeWorkflowSubcommands('git fetch origin && git rebase origin/main')]).toEqual(['rebase']);
+    expect([...gitMergeWorkflowSubcommands('git -C /tmp/repo merge feature/foo')]).toEqual(['merge']);
+    expect([...gitMergeWorkflowSubcommands('git cherry-pick abc && git revert def')]).toEqual(['cherry-pick', 'revert']);
   });
 });
 

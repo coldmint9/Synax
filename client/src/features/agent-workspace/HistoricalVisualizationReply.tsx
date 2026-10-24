@@ -44,7 +44,7 @@ export default function HistoricalVisualizationReply({ message }: { message: Age
       </div>
     </div>
   </>;
-  return <>{visualizationReplyParts({ ...result.message, historyProjection: undefined }).map((part, index) =>
+  return <>{visualizationReplyParts({ ...result.message, historyProjection: undefined }, { loadMissing: false }).map((part, index) =>
     part.type === "visualization"
       ? <InlineVisualization key={part.reference.id} visualization={part.reference} />
       : <StreamingTextBlock key={`text:${index}`} text={part.content} isStreaming={false} markdown />,

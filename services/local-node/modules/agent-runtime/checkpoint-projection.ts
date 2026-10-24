@@ -86,7 +86,11 @@ export async function prepareCheckpointContext(input: Input): Promise<Checkpoint
       throw new Error(`context_blocked: required context does not fit input budget (${budget}); no valid checkpoint available`);
     return { prompt: originalPrompt, tokens: originalTokens, originalTokens, compacted: false };
   };
-  if (!input.force && originalTokens <= Math.floor(budget * 0.8)) return unchanged();
+  // Do not pay for a model checkpoint merely because the prompt crossed the
+  // historical 80% watermark. As long as the complete projected context still
+  // fits the provider input budget, preserve it and let the next real overflow
+  // (or an explicit force request) trigger compaction.
+  if (!input.force && originalTokens <= budget) return unchanged();
   const recompact = Boolean(head.checkpoint && head.checkpoint.throughStepId === head.latestStepId && (input.force || originalTokens > budget));
   if (!head.latestStepId || head.throughRevision == null || head.checkpoint?.throughStepId === head.latestStepId && !recompact) return unchanged();
   // Keep the retry key independent of the moving tail. A new step should not

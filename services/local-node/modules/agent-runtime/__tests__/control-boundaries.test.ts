@@ -19,6 +19,21 @@ beforeEach(async () => {
   ensureSynaxAgentRegistered();
 });
 describe("control authority boundaries", () => {
+  it("blocks shell merge commands in Synax sessions and points to the merge task tools", async () => {
+    const session = agentSessionRuntime.create({
+      projectId: "project-alpha",
+      profileId: "synax",
+      prompt: "Merge the feature branch into main.",
+      sessionMetadata: { mode: "chat" },
+    });
+    const denied = await toolRegistry.execute(session.id, "bash", {
+      command: "git merge feature/example",
+    });
+    expect(denied.record.status).toBe("denied");
+    expect(denied.record.error).toContain("git.merge.create");
+    expect(denied.record.error).toContain("blocked in Bash");
+  });
+
   it("revokes a specialist read when the parent changes its current permissions", async () => {
     const parent = agentSessionRuntime.create({
       projectId: "project-alpha",

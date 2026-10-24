@@ -69,6 +69,7 @@ async function launchSidecar(expectedGeneration: number): Promise<number> {
     PATH: await resolveDesktopPath(process.env.PATH),
     PORT: String(recoveryPort),
     SYNAX_DESKTOP_SIDECAR: "1",
+    ...(app.isPackaged ? { SYNAX_PYTHON_RUNTIME: getResourcePath("python-runtime", `${process.platform}-${process.arch}`, ...(process.platform === "win32" ? ["python.exe"] : ["bin", "python3"])) } : {}),
     SYNAX_RUNTIME_SIDECAR_SUPERVISOR: "1",
     SYNAX_RUNTIME_SIDECAR_STREAM: "authoritative",
     DATA_ROOT: getDataRoot(),

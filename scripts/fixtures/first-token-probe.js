@@ -1,3 +1,4 @@
+/* global window, document, PerformanceObserver, requestAnimationFrame, MutationObserver, TextDecoder */
 /**
  * Injected into every measured page before the app boots (benchmark fixture).
  *

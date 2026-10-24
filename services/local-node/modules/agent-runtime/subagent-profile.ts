@@ -13,7 +13,7 @@ import { activeTurnReferences, effectiveTurnMcpIds } from "./turn-reference-stat
 export const SUBAGENT_PROFILE_ID = "subagent";
 const controls = new Set(["human.ask", "plan.propose", "plan.execute", "mode.switch", "goal.finish", "work.checkpoint", "agent.adapt"]);
 const wrappers = new Set(["agent.discover", "agent.execute", "code.run", "code.tools", "code.result", "tools.invalid"]);
-const files = new Set(["file.write", "file.patch", "file.delete"]);
+const files = new Set(["file.write", "file.patch", "file.delete", "file.generate"]);
 export const isSubagentControl = (id: string) => id.startsWith("subagent.") || controls.has(id);
 
 interface Snapshot {
@@ -123,6 +123,8 @@ export function assertSubagentToolAllowed(session: AgentSession, tool: Registere
       ![...parent.skillIds, ...(activeTurnReferences(parent.id)?.skillIds ?? [])].includes((args as { skillId: string }).skillId)))
     throw new AgentPermissionError("Skill is outside the subagent assignment.");
   if (!saved.profile.writeScope || !files.has(tool.id)) return;
+  // Dynamic generation paths are checked individually during commit.
+  if (tool.id === "file.generate" && !(args as { path?: string })?.path) return;
   const paths = tool.id === "file.patch"
     ? parseApplyPatchEnvelope((args as { patch: string }).patch).flatMap(hunk => [hunk.path, ...("movePath" in hunk && hunk.movePath ? [hunk.movePath] : [])])
     : [(args as { path: string }).path];

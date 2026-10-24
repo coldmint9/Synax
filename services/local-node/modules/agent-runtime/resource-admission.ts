@@ -4,6 +4,7 @@ import { currentExecutionContext } from "../../infrastructure/runtime/execution-
 import type { RegisteredTool, ToolExecutionInput, ToolExecutionProgress } from "./contracts.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { resolveExecTimeoutMs } from "./tools/command-timeout.js";
+import { generationTimeout } from "./file-generation/limits.js";
 
 // Admission starts before command setup. Allow syntax validation (10s),
 // process termination (2s), guardian acknowledgement (10s), and control I/O
@@ -45,6 +46,7 @@ export function toolResourcePolicy(tool: RegisteredTool, args: unknown): { resou
   if (tool.mutability === "task" || tool.category === "task" || ["code", "code.run"].includes(tool.id) || tool.id.startsWith("subagent.")) return null;
   if (tool.id === "bash" || tool.id === "verification.run") return { resource: "command",
     timeoutMs: resolveExecTimeoutMs(input?.timeoutMs, tool.id === "verification.run" ? 120_000 : undefined) + COMMAND_SETUP_AND_CLEANUP_MS };
+  if (tool.id === "file.generate") return { resource: "command", timeoutMs: generationTimeout(input?.timeoutMs) + COMMAND_SETUP_AND_CLEANUP_MS };
   if (tool.category === "shell") return { resource: "command", timeoutMs: Math.min(3_600_000, Math.max(1_000, input?.timeoutMs ?? 900_000)) };
   return { resource: tool.category === "mcp" || tool.category === "external_execution" ? "command" : "io", timeoutMs: tool.executionTimeoutMs ?? 300_000 };
 }

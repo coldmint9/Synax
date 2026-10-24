@@ -54,6 +54,9 @@ jobs:
       - name: Test desktop platform behavior
         run: npm run test:desktop
 
+      - name: Stage and smoke test bundled Python
+        run: npx tsx scripts/stage-python-runtime.ts
+
       - name: Test desktop publishing behavior
         if: runner.os == 'Linux'
         run: npx vitest run scripts/publish-desktop-*.test.ts
@@ -100,6 +103,9 @@ jobs:
 
       - name: Build Rust runtime for Node integration tests
         run: npm run runtime-sidecar:build
+
+      - name: Verify file generation with bundled Python
+        run: npx vitest run services/local-node/modules/agent-runtime/__tests__/file-generate.test.ts scripts/stage-python-runtime.test.ts services/local-node/infrastructure/runtime/__tests__/python-runtime.test.ts
 
       - name: Verify execution ownership and worker error propagation
         run: npx vitest run services/local-node/infrastructure/runtime/execution-context.test.ts services/local-node/modules/agent-runtime/__tests__/session-process-manager-fence.test.ts
