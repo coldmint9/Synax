@@ -40,12 +40,14 @@ import {
   recoverRuntimeSession,
   restoreUnlaunchedInput,
 } from "./runtime-recovery.js";
-import { RuntimeStreamWriter } from "./runtime-stream-writer.js";
+import { DurableDeltaBuffer } from "./durable-delta-buffer.js";
+import { createRunRealtimeChannel, closeRunRealtimeChannel, type RunRealtimeChannel } from "./run-realtime-channel.js";
 import { applySessionPermissionUpdate } from "./session-permissions.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 interface Owner {
+  realtime?: RunRealtimeChannel;
   context?: RuntimeExecutionContext;
   runId: string;
   controller: AbortController;
@@ -313,6 +315,7 @@ export class RunCoordinator {
     });
     input = { ...input, executionContext: context };
     const owner: Owner = {
+      realtime: createRunRealtimeChannel(sessionId, runId),
       context,
       runId,
       controller: new AbortController(),
@@ -425,21 +428,44 @@ export class RunCoordinator {
     mode: AgentSessionStreamMode,
     input: StreamTurnRequest,
   ): Promise<void> {
-    const writer = new RuntimeStreamWriter(sessionId, owner.runId, () =>
+    const buffer = new DurableDeltaBuffer(sessionId, owner.runId, () =>
       this.ownsLease(owner),
     );
+    const writer = buffer.writer;
+    let terminalChunk: AgentRunStreamChunk | undefined;
     const record = async (chunk: AgentRunStreamChunk) => {
-      await agentRuntimeStore.flushSession(sessionId);
+      if (!this.ownsLease(owner)) return;
+      // done is emitted after the durable barrier, so clients cannot mistake a
+      // successful transport for a successful durable completion.
+      if (chunk.type === "done") {
+        buffer.append(chunk);
+        await buffer.flush();
+        return;
+      }
+      if (chunk.type === "run_completed" || chunk.type === "run_failed") {
+        agentRuntimeStore.acceptRunProjection(chunk.run);
+        buffer.append(chunk);
+        await buffer.flush();
+        await agentRuntimeStore.flushSession(sessionId);
+        terminalChunk = chunk;
+        return;
+      }
+      chunk = owner.realtime?.publish(chunk) ?? chunk;
       if ("run" in chunk && chunk.run)
         agentRuntimeStore.acceptRunProjection(chunk.run);
-      writer.write(chunk);
+      buffer.append(chunk);
+      if (process.env.SYNAX_DURABLE_DELTA_BUFFER === "0") {
+        await agentRuntimeStore.flushSession(sessionId);
+        await buffer.flush();
+      }
     };
     const flush = async () => {
-      writer.flush();
-      await writer.settled();
+      await agentRuntimeStore.flushSession(sessionId);
+      await buffer.flush();
     };
     let settledNormally = false;
     let leaseLost = false;
+    let waiting = false;
     try {
       if (owner.controller.signal.aborted)
         throw new Error("Execution stopped before launch.");
@@ -469,6 +495,7 @@ export class RunCoordinator {
       for await (const chunk of withinExecutionContext(
         owner.context,
         this.driver.execute(sessionId, mode, input, owner.controller.signal),
+        resolveSessionBackend(sessionId).id === "native" ? { native: true, signal: owner.controller.signal } : undefined,
       ))
         await record(chunk);
       await flush();
@@ -478,6 +505,7 @@ export class RunCoordinator {
         throw new Error("Backend ended without settling its Run.");
       }
       settledNormally = true;
+      waiting = ["waiting_input", "waiting_permission"].includes(run.status);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.warn(
@@ -523,84 +551,98 @@ export class RunCoordinator {
       }
       await record({ type: "done", sessionId, runId: run.id });
     } finally {
-      let ownsLease = !leaseLost && this.ownsLease(owner);
-      if (!ownsLease) writer.abandon();
-      if (ownsLease) {
-        await flush();
-        await writer.prepareFinish();
-        runWithExecutionContext(owner.context, () => writer.finish());
-        await writer.settled();
-        if (this.ownsLease(owner)) {
-          const run = agentRuntimeStore.getRun(owner.runId);
-          await runtimeFacade.finishExecution(
-            sessionId,
-            run,
-          );
-          if (run.status === "interrupted" && run.stopReason?.includes("RUN_INTERRUPTED")) {
-            await runtimeFacade.sessionPatch(sessionId, `interrupted-session:${run.id}`, {
-              status: "paused", activeRunId: null, pendingResumeToken: null, blockedReason: run.stopReason,
-            });
-          }
-          if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
-            // Include any final partial message written after the stream drained.
-            await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
-            // All backends settle here, including Rust and external sessions
-            // that never enter the legacy loop's checkpoint finalizer.
-            try {
-              await captureCompletedReply(sessionId, run.id);
-            } catch (error) {
-              logger.warn({ sessionId, runId: run.id, error },
-                "[run-coordinator] reply checkpoint could not be saved");
+      try {
+        let ownsLease = !leaseLost && this.ownsLease(owner);
+        if (!ownsLease) writer.abandon();
+        if (ownsLease) {
+          await flush();
+          await writer.prepareFinish();
+          runWithExecutionContext(owner.context, () => writer.finish());
+          await writer.settled();
+          if (this.ownsLease(owner)) {
+            const run = agentRuntimeStore.getRun(owner.runId);
+            await runtimeFacade.finishExecution(
+              sessionId,
+              run,
+            );
+            if (run.status === "interrupted" && run.stopReason?.includes("RUN_INTERRUPTED")) {
+              await runtimeFacade.sessionPatch(sessionId, `interrupted-session:${run.id}`, {
+                status: "paused", activeRunId: null, pendingResumeToken: null, blockedReason: run.stopReason,
+              });
+            }
+            if (["completed", "interrupted", "cancelled", "failed", "blocked"].includes(run.status)) {
+              // Include any final partial message written after the stream drained.
+              await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
+              // All backends settle here, including Rust and external sessions
+              // that never enter the legacy loop's checkpoint finalizer.
+              try {
+                await captureCompletedReply(sessionId, run.id);
+              } catch (error) {
+                logger.warn({ sessionId, runId: run.id, error },
+                  "[run-coordinator] reply checkpoint could not be saved");
+              }
+            }
+            // Terminal finish closes the lease in the same Rust transaction.
+            // Waiting checkpoints retain the run but release this executor.
+            if (["waiting_input", "waiting_permission"].includes(run.status)) {
+              await runtimeFacade.controlCommand({ sessionId,
+                requestId: `execution-close:${owner.runId}:${owner.context?.epoch}`,
+                operation: "execution_close", payload: owner.context });
             }
           }
-          // Terminal finish closes the lease in the same Rust transaction.
-          // Waiting checkpoints retain the run but release this executor.
-          if (["waiting_input", "waiting_permission"].includes(run.status)) {
-            await runtimeFacade.controlCommand({ sessionId,
-              requestId: `execution-close:${owner.runId}:${owner.context?.epoch}`,
-              operation: "execution_close", payload: owner.context });
+          ownsLease = this.ownsLease(owner);
+          if (!ownsLease) writer.abandon();
+        }
+        if (ownsLease) {
+          if (terminalChunk) owner.realtime?.publish(terminalChunk);
+          if (waiting) owner.realtime?.publish({ type: "run_finished", runId: owner.runId, run: agentRuntimeStore.getRun(owner.runId) });
+          else owner.realtime?.publish({ type: "done", sessionId, runId: owner.runId });
+        }
+        if (!owner.stopping && this.owners.get(sessionId) === owner)
+          this.owners.delete(sessionId);
+        emitRuntimeBusEvent({ type: "session_checkpoint_changed", sessionId });
+        const pending = this.pendingResumes.get(sessionId);
+        this.pendingResumes.delete(sessionId);
+        if (pending && !owner.stopping && !leaseLost) {
+          try {
+            this.resume(sessionId, pending);
+          } catch (error) {
+            logger.warn(
+              { sessionId, error },
+              "[run-coordinator] resume was no longer applicable",
+            );
+          }
+        } else if (
+          settledNormally &&
+          agentRuntimeStore.getRun(owner.runId).status !== "interrupted" &&
+          ownsLease &&
+          !owner.stopping &&
+          !owner.controller.signal.aborted &&
+          !this.isActive(sessionId)
+        ) {
+          try {
+            const continuation = goalContinuationInput(sessionId, owner.runId);
+            if (continuation)
+              await this.submitGoalContinuation(
+                sessionId,
+                owner.runId,
+                continuation,
+              );
+            else await this.dispatchQueuedInput(sessionId);
+          } catch (error) {
+            logger.warn(
+              { sessionId, runId: owner.runId, error },
+              "[run-coordinator] goal handoff could not be continued",
+            );
           }
         }
-        ownsLease = this.ownsLease(owner);
-        if (!ownsLease) writer.abandon();
-      }
-      if (!owner.stopping && this.owners.get(sessionId) === owner)
-        this.owners.delete(sessionId);
-      emitRuntimeBusEvent({ type: "session_checkpoint_changed", sessionId });
-      const pending = this.pendingResumes.get(sessionId);
-      this.pendingResumes.delete(sessionId);
-      if (pending && !owner.stopping && !leaseLost) {
-        try {
-          this.resume(sessionId, pending);
-        } catch (error) {
-          logger.warn(
-            { sessionId, error },
-            "[run-coordinator] resume was no longer applicable",
-          );
-        }
-      } else if (
-        settledNormally &&
-        agentRuntimeStore.getRun(owner.runId).status !== "interrupted" &&
-        ownsLease &&
-        !owner.stopping &&
-        !owner.controller.signal.aborted &&
-        !this.isActive(sessionId)
-      ) {
-        try {
-          const continuation = goalContinuationInput(sessionId, owner.runId);
-          if (continuation)
-            await this.submitGoalContinuation(
-              sessionId,
-              owner.runId,
-              continuation,
-            );
-          else await this.dispatchQueuedInput(sessionId);
-        } catch (error) {
-          logger.warn(
-            { sessionId, runId: owner.runId, error },
-            "[run-coordinator] goal handoff could not be continued",
-          );
-        }
+      } catch (error) {
+        owner.realtime?.close(error instanceof Error ? error.message : String(error));
+        throw error;
+      } finally {
+        const replacement = this.owners.get(sessionId);
+        if (owner.realtime && (replacement === owner || replacement?.realtime !== owner.realtime))
+          closeRunRealtimeChannel(owner.realtime, waiting);
       }
     }
   }

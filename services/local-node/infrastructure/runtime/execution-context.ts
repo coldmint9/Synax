@@ -78,7 +78,8 @@ export async function assertRuntimeExecutionCurrent(): Promise<void> {
   await assertExecutionContextCurrent(currentExecutionContext());
 }
 
-export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>): AsyncGenerator<T> {
+export async function* withinExecutionContext<T>(context: RuntimeExecutionContext | undefined, source: AsyncGenerator<T>,
+  producerFence?: { signal: AbortSignal; native: true }): AsyncGenerator<T> {
   if (!context) { yield* source; return; }
   let first = true;
   try {
@@ -87,8 +88,15 @@ export async function* withinExecutionContext<T>(context: RuntimeExecutionContex
       // loop rechecks it before starting the provider request. Avoid a second
       // synchronous control RPC on the critical first-token path; subsequent
       // turns still revalidate before every advancement.
+      producerFence?.signal.throwIfAborted();
+      assertHostFence(context);
+      // Native Rust checks before provider requests and periodically during
+      // streaming; host tools and mutations still validate their own leases.
+      // Forwarding that output must not queue another control RPC per token at
+      // each nested generator boundary. The coordinator and IPC generation
+      // additionally fence the local consumer before realtime publication.
       if (first) first = false;
-      else await assertExecutionContextCurrent(context);
+      else if (!producerFence) await assertExecutionContextCurrent(context);
       const result = await contexts.run(context, () => source.next());
       if (result.done) return;
       yield result.value;

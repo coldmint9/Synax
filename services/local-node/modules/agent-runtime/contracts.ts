@@ -768,7 +768,16 @@ export interface CompactionRecord {
   createdAt: string;
 }
 
-export type AgentRunStreamChunk =
+export type { FirstTokenTiming } from "../../../../packages/runtime-protocol/first-token-timing.js";
+import type { FirstTokenTiming } from "../../../../packages/runtime-protocol/first-token-timing.js";
+
+export type AgentRunStreamChunk = AgentRunStreamPayload & {
+  firstTokenTiming?: FirstTokenTiming;
+  /** Run-local cursor, independent of the durable session journal cursor. */
+  realtimeSequence?: number;
+};
+
+type AgentRunStreamPayload =
   | { type: "worker_yield"; runId: string }
   | { type: "execution_status"; runId: string; execution: ToolExecutionProgress }
   | { type: "input_queue_changed"; sessionId: string; queueSize: number; queueRevision: number; forceInjectItemId: string | null }

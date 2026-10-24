@@ -45,7 +45,10 @@ export async function* executeBackendSession(
       model ? { ...input, model } : input,
       signal,
     )) {
-      await assertExecutionContextCurrent(input.executionContext);
+      signal?.throwIfAborted();
+      // Native output is fenced by Rust and the worker generation. External
+      // adapters retain the host's per-advancement authoritative lease check.
+      if (binding.id !== "native") await assertExecutionContextCurrent(input.executionContext);
       maybeScheduleSessionTitleFromStreamChunk(sessionId, chunk);
       yield chunk;
     }

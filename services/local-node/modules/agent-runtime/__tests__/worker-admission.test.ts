@@ -1,0 +1,44 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { WorkerAdmission } from '../worker-admission.js';
+afterEach(() => vi.unstubAllEnvs());
+it('counts starting/releasing workers and rejects late generations after confirmed exit', () => {
+  const admission = new WorkerAdmission(1);
+  const lifecycle = admission.lifecycle;
+  const first = lifecycle.start('s');
+  expect(admission.canStart('other', lifecycle.physicalCount, () => true)).toBe(false);
+  expect(admission.canStart('s', lifecycle.physicalCount, () => true)).toBe(false);
+  lifecycle.running(first); lifecycle.release(first);
+  expect(lifecycle.physicalCount).toBe(1);
+  lifecycle.exited(first);
+  expect(lifecycle.physicalCount).toBe(0);
+  expect(admission.canStart('s', 0, () => true)).toBe(false);
+  lifecycle.recovered(first);
+  const second = lifecycle.start('s');
+  expect(second.generation).toBeGreaterThan(first.generation);
+  lifecycle.exited(first); lifecycle.recovered(first);
+  expect(lifecycle.current(second)).toBe(true);
+  expect(() => lifecycle.running(first)).toThrow();
+});
+it('separates same-session idle reuse from capacity, and admission alone selects eviction', () => {
+  vi.stubEnv('SYNAX_IDLE_WORKER_MAX', '1');
+  const admission = new WorkerAdmission(1);
+  const lease = admission.lifecycle.start('s');
+  admission.lifecycle.running(lease); admission.lifecycle.idle(lease);
+  expect(admission.canStart('s', 1, () => true)).toBe(true);
+  expect(admission.canStart('other', 1, () => true)).toBe(false);
+  expect(admission.evictions()).toEqual([]);
+  expect(admission.evictions(true)).toEqual([lease]);
+  vi.stubEnv('SYNAX_IDLE_WORKER_MAX', '0');
+  expect(admission.evictions()).toEqual([lease]);
+});
+it('removes cancelled queue requests before any worker can start', async () => {
+  const admission = new WorkerAdmission(1);
+  admission.queue.push('cancelled'); admission.queue.push('next');
+  const abort = new AbortController();
+  const pending = admission.queue.wait(abort.signal);
+  abort.abort(new Error('cancelled'));
+  await expect(pending).rejects.toThrow('cancelled');
+  admission.queue.remove('cancelled');
+  expect(admission.canStart('next', 0, () => true)).toBe(true);
+  expect(admission.lifecycle.physicalCount).toBe(0);
+});

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useAgentSessionStore, scheduleSessionRefresh } from "./state/agentSessionStore";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
+import { hasRunRealtimeObservation } from "../../adapters/transport/runRealtime";
 
 export function isTitleOnlyPatch(
   patch: Partial<AgentSession>,
@@ -68,7 +69,16 @@ export function useRuntimeSSE() {
           if (data.patch.historyReset)
             store.resetConversationHistory(data.sessionId);
           const titleOnly = isTitleOnlyPatch(data.patch, previous);
-          const patched = patchSession(data.sessionId, data.patch);
+          const realtime = hasRunRealtimeObservation(data.sessionId);
+          const patch = { ...data.patch };
+          if (realtime) {
+            // Run transport owns lifecycle until durable finalization. A
+            // session-wide hint must not expose an early completed state or
+            // start a competing full-history hydration for every token tick.
+            delete patch.status; delete patch.activeRunId;
+            delete patch.pendingResumeToken; delete patch.blockedReason;
+          }
+          const patched = patchSession(data.sessionId, patch);
           // A status change for a row outside the loaded page is fetched by
           // id; the page itself stays as it is. Titles for unknown rows are
           // handled inside `patchSession`, so this never doubles a read.
@@ -78,7 +88,7 @@ export function useRuntimeSSE() {
           if (data.sessionId === selected && !titleOnly) {
             scheduleSessionRefresh(
               data.sessionId,
-              "detail",
+              realtime ? "usage" : "detail",
               data.patch.historyRevision,
             );
           }
@@ -88,7 +98,7 @@ export function useRuntimeSSE() {
           const selected = useAgentSessionStore.getState().selectedSessionId;
           // Status and timestamps arrive as a `session_changed` patch; the step
           // itself only matters for the open transcript.
-          if (sessionId === selected) scheduleSessionRefresh(sessionId, "detail");
+          if (sessionId === selected && !hasRunRealtimeObservation(sessionId)) scheduleSessionRefresh(sessionId, "detail");
         },
         session_input_queue_changed: (e) => {
           const { sessionId } = JSON.parse(e.data) as { sessionId: string };

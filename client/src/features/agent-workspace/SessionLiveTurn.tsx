@@ -24,7 +24,7 @@ const CompletedStepView = memo(function CompletedStepView({
   return (
     <div className="session-completed-step animate-[fade-up_0.3s_ease-out]">
       <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
-        <TurnContent blocks={visibleBlocks} rowKeyPrefix={stepId} />
+        <TurnContent blocks={visibleBlocks} rowKeyPrefix={stepId} stepId={stepId} />
       </div>
     </div>
   );
@@ -50,9 +50,9 @@ const LiveStepView = memo(function LiveStepView({
   const hasContent = blocks.length > 0;
 
   return (
-    <div className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
+    <div data-stream-step-id={stepId} className="session-turn-content flex min-w-0 flex-1 flex-col gap-1">
       {hasContent ? (
-        <TurnContent blocks={blocks} isStreaming rowKeyPrefix={stepId} />
+        <TurnContent blocks={blocks} isStreaming rowKeyPrefix={stepId} stepId={stepId} />
       ) : !retry ? (
         <ThinkingIndicator />
       ) : null}

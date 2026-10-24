@@ -91,6 +91,7 @@ import {
   applyToolResult,
   hasStreamingContent,
   snapshotStreamingBuffers,
+  hasStreamingText,
   type StreamingLiveBuffers,
 } from "../streamingLiveBlocks";
 import {
@@ -924,13 +925,15 @@ function flushStreamingDeltas(): void {
 
 function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
   if (!delta) return;
-  delta = delta.slice(0, 64 * 1024);
+  const firstText = type === "text" && !hasStreamingText(useAgentSessionStore.getState().streamingLive);
   bufferedDeltaChars += delta.length;
   const last = deltaBuffer[deltaBuffer.length - 1];
   if (last?.type === type) last.delta += delta;
   else deltaBuffer.push({ type, delta });
-  if (bufferedDeltaChars >= 64 * 1024 || deltaBuffer.length >= 64)
+  if (firstText || bufferedDeltaChars >= 64 * 1024 || deltaBuffer.length >= 64) {
     flushStreamingDeltas();
+    return;
+  }
   // Timers also work when an Electron window is hidden; no parallel rAF and
   // interval loops, artificial typewriter backlog, or permanently idle timers.
   if (deltaFlushTimer === null)

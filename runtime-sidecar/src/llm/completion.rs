@@ -44,15 +44,22 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
         // into the same events. Keep cumulative display telemetry here so the
         // native loop exposes the same live token counters for all protocols.
         let mut streamed_output = String::new();
+        let mut first_text_at: Option<u64> = None;
         let mut streamed_reasoning = String::new();
         let mut reasoning_sent = HashMap::<usize, String>::new();
         let idle_timeout = super::deadline::configured_timeout();
         while let Some(item) = super::deadline::next(stream.next(), idle_timeout).await? {
             match item? {
                 Item::Event(StreamEvent::Text { part, text }) => {
+                    let timing = if first_text_at.is_none() && !text.is_empty() {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default().as_millis() as u64;
+                        first_text_at = Some(now);
+                        json!({"rustFirstTokenAt":now})
+                    } else { Value::Null };
                     streamed_output.push_str(&text);
                     yield json!({"type":"text-delta","id":format!("rust-text-{}",part.index()),"delta":text,
-                        "outputTokens":super::tokenizer::tokens(&streamed_output)});
+                        "outputTokens":super::tokenizer::tokens(&streamed_output),"firstTokenTiming":timing});
                 }
                 Item::Event(StreamEvent::Reasoning { part, text }) => {
                     reasoning_sent.entry(part.index()).or_default().push_str(&text);

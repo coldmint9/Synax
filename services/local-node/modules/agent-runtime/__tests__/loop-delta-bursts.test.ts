@@ -1,13 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { coalesceLoopDeltas } from "../loop-delta-bursts.js";
 import type { LoopModelStreamEvent } from "../contracts.js";
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 const collect = async (source: AsyncIterable<LoopModelStreamEvent>) => {
   const out: LoopModelStreamEvent[] = [];
   for await (const event of source) out.push(event);
   return out;
 };
 describe("bounded native delta bursts", () => {
+  it("does not wait for another upstream read or a timer for the first non-empty text", async () => {
+    vi.useFakeTimers();
+    let pulls = 0;
+    const stream = coalesceLoopDeltas(async function* () {
+      yield { type: "text_delta", delta: "" };
+      pulls++;
+      yield { type: "text_delta", delta: "first" };
+      pulls++;
+      yield { type: "text_delta", delta: "second" };
+      yield { type: "text_delta", delta: "third" };
+    });
+    expect(await stream.next()).toMatchObject({ value: { delta: "first" } });
+    expect(pulls).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(await stream.next()).toMatchObject({ value: { delta: "secondthird" } });
+    await stream.return();
+  });
   it("coalesces adjacent deltas but preserves control/type boundaries and exact text", async () => {
     vi.useFakeTimers();
     const usage = {
@@ -31,10 +48,20 @@ describe("bounded native delta bursts", () => {
         .map((e) => (e as { delta: string }).delta)
         .join(""),
     ).toBe("🙂".repeat(100));
-    expect(events).toHaveLength(5);
+    expect(events).toHaveLength(6);
     expect(events[2]).toBe(usage);
-    expect(events[3]).toEqual({ type: "text_delta", delta: "ab" });
-    expect(events[4]).toEqual({ type: "thought_delta", delta: "tail" });
+    expect(events[3]).toEqual({ type: "text_delta", delta: "a" });
+    expect(events[4]).toEqual({ type: "text_delta", delta: "b" });
+    expect(events[5]).toEqual({ type: "thought_delta", delta: "tail" });
+  });
+  it("flushes the first non-empty text delta immediately when enabled", async () => {
+    vi.useFakeTimers();
+    const events = await collect(coalesceLoopDeltas(async function* () {
+      yield { type: "text_delta", delta: "first" };
+      yield { type: "text_delta", delta: "second" };
+    }));
+    expect(events[0]).toEqual({ type: "text_delta", delta: "first" });
+    expect(events[1]).toEqual({ type: "text_delta", delta: "second" });
   });
   it("splits large Unicode deltas into bounded output without cutting code points", async () => {
     const value = "漢🙂".repeat(5000);
@@ -52,7 +79,8 @@ describe("bounded native delta bursts", () => {
       expect(Buffer.byteLength(delta)).toBeLessThanOrEqual(8192);
     }
   });
-  it("flushes at the deadline even while the single upstream next is waiting", async () => {
+  it("keeps the previous merge deadline when first flush is disabled", async () => {
+    vi.stubEnv("SYNAX_STREAM_FIRST_FLUSH", "0");
     vi.useFakeTimers();
     let release!: () => void;
     let pulls = 0;
@@ -87,7 +115,7 @@ describe("bounded native delta bursts", () => {
       aborted = false;
     const stream = coalesceLoopDeltas(async function* (signal) {
       try {
-        yield { type: "text_delta", delta: "ready" };
+        yield { type: "thought_delta", delta: "ready" };
         await new Promise<void>((_, reject) => {
           signal.addEventListener(
             "abort",

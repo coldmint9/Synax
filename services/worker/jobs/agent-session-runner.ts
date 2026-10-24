@@ -76,9 +76,14 @@ async function runStream(
     for await (const chunk of withinExecutionContext(
       input.executionContext,
       pickGenerator(mode, sessionId, input, abortController.signal),
+      { native: true, signal: abortController.signal },
     )) {
-      await agentRuntimeStore.flush();
-      await businessStore.flush();
+      // Display output must leave the worker before any persistence barrier.
+      const display = chunk.type === "message_delta" || chunk.type === "thought_delta" || chunk.type === "execution_status";
+      if (!display || process.env.SYNAX_DURABLE_DELTA_BUFFER === "0") {
+        await agentRuntimeStore.flush();
+        await businessStore.flush();
+      }
       if (chunk.type === "worker_yield") {
         sendAgentSessionToParent({ type: "stream:parked", sessionId, streamId });
         return;
@@ -91,6 +96,7 @@ async function runStream(
       });
     }
     await agentRuntimeStore.flush();
+    await businessStore.flush();
     sendAgentSessionToParent({ type: "stream:done", sessionId, streamId });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);

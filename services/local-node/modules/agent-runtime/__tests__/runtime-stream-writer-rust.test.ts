@@ -72,3 +72,26 @@ it('reports a failed Rust append at the completion boundary', async () => {
   await expect(writer.settled()).rejects.toThrow('disk unavailable');
   expect(transport.persistStreamHistory).not.toHaveBeenCalled();
 });
+
+
+it('delivers realtime text while durable storage is stalled, then waits for durability at finish', async () => {
+  const { RunRealtimeChannel } = await import('../run-realtime-channel.js');
+  const { DurableDeltaBuffer } = await import('../durable-delta-buffer.js');
+  let release!: () => void;
+  transport.appendStreamAuthoritative.mockImplementationOnce(() => new Promise<number>(resolve => { release = () => resolve(1); }));
+  const channel = new RunRealtimeChannel('r', 's');
+  const buffer = new DurableDeltaBuffer('s', 'r', () => true);
+  buffer.append({ type: 'step_started', step });
+  const chunk = channel.publish({ type: 'message_delta', runId: 'r', stepId: step.id, delta: 'visible' });
+  buffer.append(chunk);
+  const reader = channel.subscribe();
+  expect(await reader.next()).toMatchObject({ value: { chunk: { delta: 'visible' } } });
+  let complete = false;
+  const flush = buffer.flush().then(() => { complete = true; });
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+  expect(complete).toBe(false);
+  release(); await flush;
+  expect(transport.persistStreamHistory.mock.calls.flatMap((call: any[]) => call[1]).filter((chunk: any) => chunk.type === 'message_delta'))
+    .toEqual([expect.objectContaining({ delta: 'visible' })]);
+  channel.close(); await reader.return(undefined);
+});

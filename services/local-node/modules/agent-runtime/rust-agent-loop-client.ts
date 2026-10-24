@@ -33,6 +33,7 @@ export type RustAgentLoopProviderRequest = {
 };
 
 export type RustAgentLoopEvent = {
+  firstTokenTiming?: import("./contracts.js").FirstTokenTiming;
   phase?: "queued_resources" | "waiting_model";
   resource?: string;
   queuedAt?: number;
@@ -190,6 +191,7 @@ export async function* streamRustAgentLoop(
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as RustAgentLoopEvent;
+          if (event.firstTokenTiming) event.firstTokenTiming.nodeFirstTokenAt = Date.now();
           if (!Number.isSafeInteger(event.sequence) || event.sequence! < 1) throw new Error("Rust event has no valid cursor.");
           if (event.sequence! <= cursor) continue;
           if (event.sequence !== cursor + 1) throw new Error("Rust event replay has a cursor gap.");

@@ -61,6 +61,7 @@ export async function* coalesceLoopDeltas(
     bufferBytes = 0,
     events = 0,
     deadline = 0,
+    firstText = process.env.SYNAX_STREAM_FIRST_FLUSH !== "0",
     completed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   function drain(): Delta {
@@ -138,6 +139,8 @@ export async function* coalesceLoopDeltas(
           413,
         );
       if (!event.delta.length) continue;
+      const immediate = firstText && event.type === "text_delta";
+      if (immediate) firstText = false;
       reserve(incomingBytes);
       try {
         if (buffer && buffer.type !== event.type) yield drain();
@@ -160,7 +163,7 @@ export async function* coalesceLoopDeltas(
           offset = end;
           if (bufferBytes === BURST_BYTES) yield drain();
         }
-        if (buffer && ++events >= BURST_EVENTS) yield drain();
+        if (buffer && (immediate || ++events >= BURST_EVENTS)) yield drain();
       } finally {
         reservedBytes -= incomingBytes;
       }

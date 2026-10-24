@@ -1,3 +1,4 @@
+import { announceRunObservation } from "./runRealtime";
 import { historyWindowQuery } from "../../shared/lib/historyWindowCursor";
 export interface ToolExecutionProgress {
   phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
@@ -1045,19 +1046,23 @@ export const agentRuntimeApi = {
         body: JSON.stringify({}),
       },
     ),
-  submitRun: (
+  submitRun: async (
     sessionId: string,
     body: StreamTurnRequest,
     requestId: string,
     mode: "turn" | "continue" = "turn",
-  ) =>
-    request<{ run: AgentRun; reused: boolean }>(
+  ) => {
+    const result = await request<{ run: AgentRun; reused: boolean }>(
       `/sessions/${encodeURIComponent(sessionId)}/runs`,
       {
         method: "POST",
         body: JSON.stringify({ ...body, requestId, mode }),
       },
-    ),
+    );
+    announceRunObservation(sessionId, result.run.id);
+    window.dispatchEvent(new CustomEvent("synax:run-accepted", { detail: { sessionId, runId: result.run.id, requestId } }));
+    return result;
+  },
   listProfiles: () => request<{ items: AgentProfile[] }>("/profiles"),
   buildContext: (
     projectId: string,
@@ -1583,7 +1588,8 @@ async function submitAndObserveRun(
         cursor = next;
       }
       try {
-        onChunk(JSON.parse(event.data));
+        const payload = JSON.parse(event.data) as { chunk?: unknown };
+        onChunk(payload && typeof payload === "object" && "chunk" in payload ? payload.chunk : payload);
       } catch (error) {
         source.close();
         reject(error);

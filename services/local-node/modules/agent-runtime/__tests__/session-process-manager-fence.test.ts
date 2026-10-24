@@ -51,3 +51,35 @@ it('reports the ninth worker as queued and dispatches waiting sessions in order 
   expect(spawned).toEqual(['ninth', 'tenth']);
   progress.mockRestore(); hydrate.mockRestore();
 });
+
+it('ignores messages from a released generation even when they name a live stream', async () => {
+  const manager = new SessionProcessManager() as any;
+  const oldLease = manager.admission.lifecycle.start('s');
+  manager.admission.lifecycle.running(oldLease);
+  manager.admission.lifecycle.release(oldLease);
+  manager.admission.lifecycle.exited(oldLease);
+  manager.admission.lifecycle.recovered(oldLease);
+  const lease = manager.admission.lifecycle.start('s');
+  manager.admission.lifecycle.running(lease);
+  const queue = { push: vi.fn() };
+  const old = { lease: oldLease, child: { connected: true } };
+  const current = { lease, streams: new Map([['stream', { queue }]]) };
+  manager.children.set('s', current);
+  const message = { type: 'stream:chunk', sessionId: 's', streamId: 'stream',
+    chunk: { type: 'message_delta', runId: 'r', stepId: 'step', delta: 'stale' } };
+  await manager.handleChildMessage('s', message, old);
+  expect(queue.push).not.toHaveBeenCalled();
+  await manager.handleChildMessage('s', message, current);
+  expect(queue.push).toHaveBeenCalledOnce();
+});
+
+it('allows a new run to reuse an idle worker while deletion still requires physical exit', async () => {
+  const manager = new SessionProcessManager();
+  const internal = manager as any;
+  const lease = internal.admission.lifecycle.start('idle');
+  internal.admission.lifecycle.running(lease);
+  internal.admission.lifecycle.idle(lease);
+  internal.children.set('idle', { lease, child: { connected: true } });
+  await expect(manager.waitForWorkerRelease('idle')).resolves.toBeUndefined();
+  await expect(manager.waitForIdleSessions(['idle'], 0)).rejects.toMatchObject({ code: 'DELETE_TIMEOUT' });
+});

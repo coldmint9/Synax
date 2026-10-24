@@ -19,8 +19,9 @@ const native: BackendAdapter = {
         input,
         signal,
       );
-      // A goal may start its next round immediately. The previous worker must exit first.
-      await sessionProcessManager.waitForIdleSessions([sessionId]);
+      // A goal may continue immediately after execution releases its lease.
+      // Retained idle workers are reusable; terminating workers must exit first.
+      await sessionProcessManager.waitForWorkerRelease(sessionId);
     } else {
       ensureInProcessSessionReady(sessionId);
       yield* rustNativeBackend.stream(sessionId, mode, input, signal);

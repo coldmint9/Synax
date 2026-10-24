@@ -2,7 +2,7 @@
   "name": "synax",
   "productName": "Synax",
   "private": false,
-  "version": "2.15.0",
+  "version": "2.16.1",
   "license": "Apache-2.0",
   "author": "Synax",
   "description": "Synax AI coding workspace",

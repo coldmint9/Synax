@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import { getRunRealtimeChannel } from "../../modules/agent-runtime/run-realtime-channel.js";
 import { singleForkRequest } from "../../modules/agent-runtime/fork-request.js";
 import { Hono } from "hono";
 import { matchedRoutes } from 'hono/route';
@@ -1497,6 +1498,7 @@ function observeRunResponse(
   sessionId: string,
   runId: string,
   after = 0,
+  realtime = false,
 ) {
   return streamSSE(c, async (stream) => {
     const observer = new AbortController();
@@ -1511,19 +1513,29 @@ function observeRunResponse(
           .catch(detach);
     }, AGENT_RUNTIME_HEARTBEAT_MS);
     try {
-      for await (const record of runCoordinator.observeRun(
+      const channel = realtime ? getRunRealtimeChannel(sessionId, runId) : undefined;
+      if (realtime && !channel) {
+        await stream.writeSSE({ event: "realtime_reset", data: JSON.stringify({ runId, reason: "Realtime replay unavailable; recover from the session snapshot." }) });
+        return;
+      }
+      const source = channel ? channel.subscribe(after, observer.signal) : runCoordinator.observeRun(
         sessionId,
         runId,
         after,
         observer.signal,
-      )) {
+      );
+      for await (const record of source) {
         await stream.writeSSE({
           id: String(record.sequence),
-          data: JSON.stringify(record.chunk),
+          data: JSON.stringify(realtime ? record : record.chunk),
         });
       }
       if (!observer.signal.aborted) await stream.writeSSE({ data: "[DONE]" });
     } catch (error) {
+      if (realtime && !observer.signal.aborted) {
+        await stream.writeSSE({ event: "realtime_reset", data: JSON.stringify({ runId, reason: String(error) }) });
+        return;
+      }
       if (!observer.signal.aborted) throw error;
     } finally {
       detach();
@@ -1554,7 +1566,11 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
     const runId = c.req.param("runId");
-    {
+    const realtime = c.req.query("realtime") === "1";
+    // A channel exists only for a run admitted for this session. Avoid history
+    // hydration on its hot path; middleware still enforces session access.
+    const liveChannel = realtime && getRunRealtimeChannel(sessionId, runId);
+    if (!liveChannel) {
       const [snapshot, runs] = await Promise.all([
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
         runtimeFacade.listRunHistory(sessionId),
@@ -1581,7 +1597,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
       .min(0)
       .safeParse(c.req.query("after") ?? c.req.header("Last-Event-ID") ?? "0");
     if (!after.success) return validationError(c, after.error);
-    return observeRunResponse(c, sessionId, runId, after.data);
+    return observeRunResponse(c, sessionId, runId, after.data, realtime);
   } catch (error) {
     return runtimeError(c, error);
   }

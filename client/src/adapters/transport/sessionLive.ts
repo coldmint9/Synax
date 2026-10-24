@@ -1,3 +1,4 @@
+import { onRunObservation, observeRunRealtime, setRunRealtimeObservation } from "./runRealtime";
 import { RustRuntimeConnection, type RuntimeBootstrap } from './rustRuntimeConnection';
 import { useRuntimeConnectionStore } from '../../shared/state/runtimeConnectionStore';
 import type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
@@ -80,7 +81,49 @@ export type SessionLiveEvent =
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
 
+/** Give the run stream sole ownership of live projections. Session events
+ * still carry auxiliary domains and discover runs created by another client.
+ * On replay expiry, rebuild from one durable snapshot before accepting deltas. */
 export function sessionLiveStream(
+  sessionId: string, onEvent: (event: SessionLiveEvent) => void, onError?: (err: Event) => void,
+): () => void {
+  let activeRun: string | null = null;
+  let closed = false;
+  let stopRun: (() => void) | undefined;
+  let stopDurable: (() => void) | undefined;
+  const unavailable = new Set<string>();
+  const recover = () => {
+    if (closed) return;
+    if (activeRun) unavailable.add(activeRun);
+    activeRun = null;
+    setRunRealtimeObservation(sessionId, null);
+    stopRun?.(); stopRun = undefined;
+    stopDurable?.();
+    stopDurable = durableSessionLiveStream(sessionId, receive, onError);
+  };
+  const start = (runId: string | null) => {
+    if (!runId) { recover(); return; }
+    if (activeRun === runId || unavailable.has(runId)) return;
+    if (activeRun) unavailable.add(activeRun);
+    if (unavailable.size > 64) unavailable.delete(unavailable.values().next().value!);
+    stopRun?.(); activeRun = runId;
+    setRunRealtimeObservation(sessionId, runId);
+    stopRun = observeRunRealtime(sessionId, runId, onEvent, recover);
+  };
+  const core = new Set(['runtime_snapshot', 'runtime_state', 'message', 'event', 'permission_updated',
+    'execution_status', 'step_started', 'retry_status', 'message_delta', 'thought_delta', 'tool_call', 'tool_result']);
+  const receive = (event: SessionLiveEvent) => {
+    const run = event.type === 'runtime_snapshot' || event.type === 'runtime_state' ? event.run : undefined;
+    if (run && ['queued', 'running'].includes(run.status)) start(run.id);
+    if (activeRun && core.has(event.type)) return;
+    onEvent(event);
+  };
+  const unsubscribe = onRunObservation(sessionId, start);
+  stopDurable = durableSessionLiveStream(sessionId, receive, onError);
+  return () => { closed = true; setRunRealtimeObservation(sessionId, null); unsubscribe(); stopRun?.(); stopDurable?.(); };
+}
+
+function durableSessionLiveStream(
   sessionId: string,
   onEvent: (event: SessionLiveEvent) => void,
   onError?: (err: Event) => void,

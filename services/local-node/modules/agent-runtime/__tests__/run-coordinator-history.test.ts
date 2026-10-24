@@ -185,3 +185,39 @@ it("edits the first user message and keeps workspace files", async () => {
   expect(session.contextSnapshotId).toBeNull();
   expect(session.sessionMetadata?.nativeBackend).toBeNull();
 },30_000);
+
+it('delivers first text while the first durable stream append is blocked and settles identical history', async () => {
+  const { getRunRealtimeChannel } = await import('../run-realtime-channel.js');
+  const append = runtimeFacade.appendStreamAuthoritative.bind(runtimeFacade);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const stalled = vi.spyOn(runtimeFacade, 'appendStreamAuthoritative').mockImplementationOnce(async input => {
+    await gate;
+    return append(input);
+  });
+  try {
+    const accepted = await coordinator.submitAsync(sessionId, { message: 'Immediate response' }, 'realtime-stalled-write');
+    const channel = getRunRealtimeChannel(sessionId, accepted.run.id)!;
+    const published = vi.spyOn(channel, 'publish');
+    const controller = new AbortController();
+    const reader = channel.subscribe(0, controller.signal);
+    const first = (async () => {
+      for await (const record of reader) if (record.chunk.type === 'message_delta') return record.chunk.delta;
+      throw new Error('No text delivered');
+    })();
+    const text = await Promise.race([first, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Token waited for persistence')), 5000).unref())]);
+    expect(text).toBe('Reply 1');
+    expect(coordinator.isActive(sessionId)).toBe(true);
+    expect(published.mock.calls.some(([chunk]) => chunk.type === 'run_completed')).toBe(false);
+    release();
+    await coordinator.waitForIdle();
+    const messages = await runtimeFacade.listMessageHistory(sessionId) as Array<{ content: string; role: string }>;
+    expect(messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual([text]);
+    const replay = [];
+    for await (const record of channel.subscribe()) replay.push(record);
+    expect(replay.at(-1)?.chunk.type).toBe('done');
+    expect(replay.filter(record => record.chunk.type === 'message_delta')).toHaveLength(1);
+    expect(replay.map(record => record.sequence)).toEqual(replay.map((_, index) => index + 1));
+    controller.abort();
+  } finally { release(); stalled.mockRestore(); }
+}, 15_000);

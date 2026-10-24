@@ -548,11 +548,13 @@ async function startKernel(target: Options['target'], dataRoot: string, webPort:
 async function stopKernel(kernel: Kernel): Promise<void> {
   const { child } = kernel;
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
+  const closed = new Promise<void>(resolve => child.once('exit', () => resolve()));
   const force = setTimeout(() => child.kill('SIGKILL'), 15_000);
   child.kill('SIGTERM');
   await closed;
   clearTimeout(force);
+  child.stdout?.destroy();
+  child.stderr?.destroy();
 }
 
 function parseCpuTime(value: string): number {
@@ -651,6 +653,7 @@ class SessionSensor {
   private done = false;
   private lastSequence = 0;
   private ignoreThrough = 0;
+  private armedAt = Infinity;
   readonly problems: string[] = [];
   readonly recent: string[] = [];
   /** Sequence floor of everything already accounted for; new runs start above it. */
@@ -708,7 +711,7 @@ class SessionSensor {
         let record: {
           sequence?: number;
           runId?: string;
-          chunk?: { type?: string; execution?: { phase?: string } };
+          chunk?: { type?: string; run?: { startedAt?: string }; execution?: { phase?: string } };
         };
         try {
           record = JSON.parse(payload);
@@ -722,6 +725,11 @@ class SessionSensor {
         // everything the previous measured send already produced.
         if (sequence && sequence <= this.ignoreThrough) continue;
         const type = record.chunk?.type;
+        if (!this.timeline.runId) {
+          if (type !== 'run_started' || Date.parse(record.chunk?.run?.startedAt ?? '') < this.armedAt) continue;
+          this.timeline.runId = record.runId ?? '';
+        }
+        if (record.runId !== this.timeline.runId) continue;
         const now = Date.now();
         if (this.recent.length < 40) this.recent.push(`${sequence}:${type}`);
         else this.recent[this.recent.length - 1] = `${sequence}:${type}`;
@@ -744,6 +752,7 @@ class SessionSensor {
 
   reset(): void {
     this.ignoreThrough = this.lastSequence;
+    this.armedAt = Date.now();
     Object.assign(this.timeline, emptyTimeline());
   }
 
@@ -759,7 +768,7 @@ class SessionSensor {
   async dispose(): Promise<void> {
     this.done = true;
     this.controller.abort();
-    await this.reader?.cancel().catch(() => undefined);
+    await Promise.race([this.reader?.cancel().catch(() => undefined), new Promise(resolve => setTimeout(resolve, 1000))]);
   }
 }
 
@@ -787,6 +796,8 @@ type BrowserClient = {
   sensor: SessionSensor;
   openMs: number;
   sends: BrowserSend[];
+  problems: string[];
+  historyConflicts: string[];
 };
 
 /**
@@ -826,11 +837,18 @@ async function openClient(input: {
   });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
+  page.setDefaultTimeout(10_000);
   const problems: string[] = [];
-  page.on('console', message => {
-    if (message.type() === 'error') problems.push(`console: ${message.text()}`);
+  const historyConflicts: string[] = [];
+  page.on("response", response => {
+    if (response.status() === 409 && /\/(history-window|checkpoints)$/.test(new URL(response.url()).pathname)) {
+      void response.json().then(body => { if (body.code === "HISTORY_STALE") historyConflicts.push(response.url()); }).catch(() => undefined);
+    }
   });
-  page.on('pageerror', error => problems.push(`pageerror: ${error.message}`));
+  page.on('console', message => {
+    if (message.type() === 'error') problems.push(`console: ${message.text()} ${message.location().url}`);
+  });
+  page.on('pageerror', error => { problems.push(`pageerror: ${error.stack ?? error.message}`); console.error(`[bench] client ${input.index} page error: ${error.stack ?? error.message}`); });
   await page.addInitScript({ content: PROBE_SOURCE });
   const url = `${input.origin}/projects/${input.projectId}/sessions?session=${encodeURIComponent(input.sessionId)}`;
   const opened = performance.now();
@@ -887,6 +905,8 @@ async function openClient(input: {
     sensor,
     openMs: performance.now() - opened,
     sends: [],
+    problems,
+    historyConflicts,
   };
 }
 
@@ -898,6 +918,14 @@ type SendMetrics = {
   level: number;
   client: number;
   wave: number;
+  sendToProviderRequestMs: number;
+  providerToRustMs: number;
+  rustToNodeMs: number;
+  nodeToRealtimeMs: number;
+  realtimeToClientMs: number;
+  providerToClientMs: number;
+  clientToPaintMs: number;
+  firstTokenTiming: Record<string, number>;
   /** 浏览器：keydown -> 答案首字绘制 */
   sendToPaintMs: number;
   sendToSubmitMs: number;
@@ -940,6 +968,13 @@ type SendMetrics = {
 };
 
 async function readProbe(page: Page): Promise<{
+  providerFirstTokenAt: number;
+  rustFirstTokenAt: number;
+  nodeFirstTokenAt: number;
+  realtimeEnqueueAt: number;
+  clientReceivedAt: number;
+  clientPaintAt: number;
+  runId: string;
   sendAt: number;
   submitAt: number;
   generatingAt: number;
@@ -951,6 +986,13 @@ async function readProbe(page: Page): Promise<{
   return page.evaluate(`(() => {
     const state = window.__bench || {};
     return {
+      providerFirstTokenAt: Number(state.providerFirstTokenAt || 0),
+      rustFirstTokenAt: Number(state.rustFirstTokenAt || 0),
+      nodeFirstTokenAt: Number(state.nodeFirstTokenAt || 0),
+      realtimeEnqueueAt: Number(state.realtimeEnqueueAt || 0),
+      clientReceivedAt: Number(state.clientReceivedAt || 0),
+      clientPaintAt: Number(state.clientPaintAt || 0),
+      runId: String(state.runId || ""),
       sendAt: Number(state.sendAt || 0),
       submitAt: Number(state.submitAt || 0),
       generatingAt: Number(state.generatingAt || 0),
@@ -999,10 +1041,7 @@ async function sendWave(input: {
     }
     await composer.fill(messageFor(client));
     client.sensor.reset();
-    await client.page.evaluate('window.__bench.arm()');
-    await client.page.evaluate(
-      `window.__bench.watchStream(${JSON.stringify(client.sessionId)}, ${client.sensor.floor})`,
-    );
+    await client.page.evaluate(`window.__bench.arm(${JSON.stringify(client.sessionId)})`);
   }
   const startAt = Date.now() + 400;
   await Promise.all(
@@ -1029,16 +1068,17 @@ async function sendWave(input: {
     input.clients.map(async client => {
       // Wait inside the page: one round trip instead of a polling loop that
       // would steal CPU from the renderer and the runtime.
-      await client.page.evaluate(`new Promise(resolve => {
-        const deadline = Date.now() + ${input.options.sendTimeoutMs * 1000};
-        const tick = () => {
-          if (window.__bench.paintAt || Date.now() > deadline) return resolve(true);
-          setTimeout(tick, 20);
-        };
-        tick();
-      })`);
+      await client.page.waitForFunction('Boolean(window.__bench?.paintAt)', undefined,
+        { timeout: input.options.sendTimeoutMs * 1000 }).catch(async error => {
+          const probe = await readProbe(client.page);
+          throw new Error(`First paint timeout: ${JSON.stringify({ probe, problems: client.problems })}; ${String(error)}`);
+        });
       const probe = await readProbe(client.page);
       probes.set(client, probe);
+      // A durable run_completed record can precede coordinator finalization.
+      // Wait for the actual run observer to close before submitting next turn.
+      await client.page.waitForFunction('Boolean(window.__bench?.completedAt)', undefined,
+        { timeout: input.options.sendTimeoutMs * 1000 });
       const completed = await client.sensor.waitForCompletion(input.options.sendTimeoutMs * 1000);
       if (!completed)
         throw new Error(
@@ -1085,6 +1125,13 @@ async function sendWave(input: {
     };
     const prepPhases = steps.items?.[0]?.metadata?.requestPreparationTimingsMs ?? null;
     if (prepPhases) prepByClient.set(client, prepPhases);
+    const history = await (await api(input.kernel, `/api/agent-runtime/sessions/${client.sessionId}/messages`)).json() as {
+      items: Array<{ runId?: string; role?: string; content?: string }>;
+    };
+    const actual = history.items.filter(message => message.runId === runId && message.role === 'assistant')
+      .map(message => message.content ?? '').join('');
+    if (!input.options.externalBaseUrl && actual !== 'streamed token '.repeat(input.options.mockTokens))
+      throw new Error(`Realtime/durable text mismatch for ${runId}: ${JSON.stringify(actual)}`);
     if (!run.startedAt || !run.completedAt) continue;
     const stepStart = Date.parse(steps.items?.[0]?.startedAt ?? '');
     authoritative.set(client, {
@@ -1099,6 +1146,9 @@ async function sendWave(input: {
     const timeline = client.sensor.timeline;
     const call_ = pairs.get(client) ?? null;
     const record = authoritative.get(client);
+    if (probe.runId !== timeline.runId || !probe.clientReceivedAt || !probe.rustFirstTokenAt || !probe.nodeFirstTokenAt || !probe.realtimeEnqueueAt)
+      throw new Error(`Missing or mismatched first token telemetry: ${JSON.stringify({ probe, timeline })}`);
+    if (!call_?.firstByteAt) throw new Error('Provider first token was not observed.');
     const submitAt = probe.submitAt || probe.sendAt;
     const sendToPaintMs = probe.paintAt - probe.sendAt;
     if (!Number.isFinite(sendToPaintMs) || sendToPaintMs <= 0)
@@ -1120,9 +1170,19 @@ async function sendWave(input: {
       level: input.level,
       client: client.index,
       wave: input.wave,
+      sendToProviderRequestMs: call_.receivedAt - probe.sendAt,
+      providerToRustMs: probe.rustFirstTokenAt - call_.firstByteAt,
+      rustToNodeMs: probe.nodeFirstTokenAt - probe.rustFirstTokenAt,
+      nodeToRealtimeMs: probe.realtimeEnqueueAt - probe.nodeFirstTokenAt,
+      realtimeToClientMs: probe.clientReceivedAt - probe.realtimeEnqueueAt,
+      providerToClientMs: probe.clientReceivedAt - call_.firstByteAt,
+      clientToPaintMs: probe.clientPaintAt - probe.clientReceivedAt,
+      firstTokenTiming: { providerFirstTokenAt: call_.firstByteAt, rustFirstTokenAt: probe.rustFirstTokenAt,
+        nodeFirstTokenAt: probe.nodeFirstTokenAt, realtimeEnqueueAt: probe.realtimeEnqueueAt,
+        clientReceivedAt: probe.clientReceivedAt, clientPaintAt: probe.clientPaintAt },
       sendToPaintMs,
       sendToSubmitMs: submitAt - probe.sendAt,
-      sendToNodeFirstTokenMs: timeline.firstTokenAt ? timeline.firstTokenAt - probe.sendAt : 0,
+      sendToNodeFirstTokenMs: probe.nodeFirstTokenAt - probe.sendAt,
       submitToGeneratingMs: probe.generatingAt ? probe.generatingAt - submitAt : 0,
       sendToGeneratingMs: probe.generatingAt ? probe.generatingAt - probe.sendAt : 0,
       sendToDeltaFrameMs: probe.deltaAt ? probe.deltaAt - probe.sendAt : 0,
@@ -1130,9 +1190,9 @@ async function sendWave(input: {
       submitToRunStartedMs: runStart - submitAt,
       runStartToStepMs: stepStart - runStart,
       stepToProviderRequestMs: call_ ? call_.receivedAt - stepStart : 0,
-      providerToNodeTokenMs: call_ ? timeline.firstTokenAt - call_.receivedAt : 0,
-      nodeTokenToDeltaEmitMs: timeline.firstDeltaAt - timeline.firstTokenAt,
-      runStartToFirstTokenMs: timeline.firstTokenAt - runStart,
+      providerToNodeTokenMs: probe.nodeFirstTokenAt - call_.receivedAt,
+      nodeTokenToDeltaEmitMs: probe.realtimeEnqueueAt - probe.nodeFirstTokenAt,
+      runStartToFirstTokenMs: probe.nodeFirstTokenAt - runStart,
       runTotalMs: runEnd - runStart,
       sensorLagMs: record ? timeline.completedAt - runEnd : null,
       prepPhases: prepByClient.get(client) ?? null,
@@ -1273,6 +1333,18 @@ async function runLevel(input: {
       waveCores.push(Number((cpuSeconds / ((Date.now() - wallStart) / 1000)).toFixed(2)));
       await sleep(750);
     }
+    await writeFile(path.join(input.options.out, `level-${input.level}-sends.json`), JSON.stringify(sends, null, 2));
+    console.log(`[bench] level ${input.level}: verifying browser output`);
+    for (const client of clients) {
+      if (client.index === 0) await client.page.screenshot({ path: path.join(input.options.out, `level-${input.level}-client-${client.index}.png`), timeout: 10_000 });
+      const overlay = await client.page.locator('vite-error-overlay, #webpack-dev-server-client-overlay').count();
+      const unexpected = client.problems.filter(problem => !(problem.includes('409 (Conflict)') && client.historyConflicts.some(url => problem.includes(url))));
+      await writeFile(path.join(input.options.out, `level-${input.level}-client-${client.index}-console.json`), JSON.stringify({ problems: client.problems, expectedHistoryConflicts: client.historyConflicts }, null, 2));
+      if (overlay || unexpected.length) throw new Error(`Browser validation failed: ${JSON.stringify(unexpected)}`);
+    }
+    const slo = { transport: stat(sends.map(send => send.providerToClientMs)), paint: stat(sends.map(send => send.clientToPaintMs)) };
+    if ((slo.transport.p50 ?? Infinity) > 150 || (slo.transport.p95 ?? Infinity) > 300 || (slo.paint.p95 ?? Infinity) > 100)
+      throw new Error(`Realtime SLO failed at ${input.level}C: ${JSON.stringify(slo)}. Set SYNAX_RUN_REALTIME_CHANNEL=0 to roll back.`);
     return {
       level: input.level,
       kernelBootMs: Number(kernel.bootMs.toFixed(1)),
@@ -1284,11 +1356,12 @@ async function runLevel(input: {
       sends,
     };
   } finally {
+    console.log(`[bench] level ${input.level}: closing clients`);
     await Promise.all(clients.map(async client => {
       await client.sensor.dispose();
-      await client.browser.close().catch(() => undefined);
+      await Promise.race([client.browser.close().catch(() => undefined), sleep(5000)]);
     }));
-    await gateway?.close().catch(() => undefined);
+    await Promise.race([gateway?.close().catch(() => undefined), sleep(5000)]);
     if (input.options.kernelLog)
       await writeFile(path.join(input.options.out, `kernel-level${input.level}.log`), kernel.output()).catch(() => undefined);
     await stopKernel(kernel);
@@ -1308,7 +1381,7 @@ const round = (value: number | null | undefined, digits = 0): number | null =>
   value === null || value === undefined || !Number.isFinite(value) ? null : Number(value.toFixed(digits));
 
 const stat = (values: number[]) => {
-  const clean = values.filter(value => Number.isFinite(value) && value > 0);
+  const clean = values.filter(value => typeof value === "number" && Number.isFinite(value) && value >= 0);
   if (!clean.length) return { n: 0, p50: null, p95: null, max: null };
   return {
     n: clean.length,
@@ -1321,6 +1394,13 @@ const stat = (values: number[]) => {
 type MetricSpec = { key: keyof SendMetrics; label: string };
 
 const METRICS: MetricSpec[] = [
+  { key: 'sendToProviderRequestMs', label: '发送 → provider request' },
+  { key: 'providerToRustMs', label: 'provider 首 token → Rust' },
+  { key: 'rustToNodeMs', label: 'Rust → Node' },
+  { key: 'nodeToRealtimeMs', label: 'Node → realtime channel' },
+  { key: 'realtimeToClientMs', label: 'realtime channel → client' },
+  { key: 'providerToClientMs', label: 'provider → client（p50 ≤150ms / p95 ≤300ms）' },
+  { key: 'clientToPaintMs', label: 'client → paint（p95 ≤100ms）' },
   { key: 'sendToPaintMs', label: '① 前端：发送 → 首字渲染（M1 总延迟）' },
   { key: 'sendToSubmitMs', label: '② 前端：发送 → POST /runs 发出' },
   { key: 'submitToRunStartedMs', label: '③ 服务端：收到请求 → run 开始' },
@@ -1360,8 +1440,8 @@ function reportMarkdown(report: {
     `- 每个虚拟用户执行 ${report.options.sends} 次发送：第 1 次为会话内首次发送，其余为同一会话的热发送。`,
   );
   lines.push('- 模型是本地确定性 OpenAI 兼容服务，TTFT 与出词节奏固定，因此数据反映的是 Synax 自身开销；`providerToNodeTokenMs` 内含该固定 TTFT。');
-  lines.push('- 所有浏览器测量来自页面内 `performance.now()`：`sendAt` 取真实 keydown 捕获阶段，`paintAt` 取文本出现后的首个 `requestAnimationFrame`。');
-  lines.push('- `generating` 由 `rust-native-backend` 在收到上游首个 text/reasoning delta 时发出，作为“node 收到响应”的判定点。');
+  lines.push('- 所有分段时间使用同机 wall-clock 毫秒：`sendAt` 取真实 keydown 捕获阶段，`paintAt` 取文本出现后的首个 `requestAnimationFrame`。');
+  lines.push('- provider 时间取 mock 写出首 token；Rust/Node/realtime 时间随当前 run 的首文本 delta 传递；client 收包取应用实际 handler，paint 只检查该 step 的 DOM。');
   lines.push('');
   lines.push('## 结果');
   lines.push('');

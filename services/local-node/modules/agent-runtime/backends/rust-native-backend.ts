@@ -372,7 +372,8 @@ export class RustNativeBackend implements BackendAdapter {
             ? reportedTokens
             : countTokens(event.type === "text-delta" ? text : thought, selection.modelId);
           yield event.type === "text-delta"
-            ? { type: "message_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", outputTokens: telemetry }
+            ? { type: "message_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", outputTokens: telemetry,
+                ...(event.firstTokenTiming ? { firstTokenTiming: event.firstTokenTiming } : {}) }
             : { type: "thought_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", thinkingTokens: telemetry };
         } else if (event.type === "usage") {
           if (!step) throw new Error("Rust usage has no step.");
