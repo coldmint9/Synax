@@ -73,11 +73,126 @@
 .subagent-conversation-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; }
 .subagent-conversation-close:hover { background: var(--ui-panel-soft); }
 .subagent-conversation-close:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.side-chat-panel {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--work-line);
+  background: var(--background);
+}
+.side-chat-panel[data-resizing="true"] {
+  user-select: none;
+}
+.side-chat {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+.side-chat-header {
+  display: flex;
+  min-height: 3.5rem;
+  align-items: center;
+  gap: 0.55rem;
+  border-bottom: 1px solid var(--work-line);
+  padding: 0.65rem 0.75rem;
+  background: color-mix(in srgb, var(--ui-panel-soft) 72%, transparent);
+}
+.side-chat-header-icon,
+.side-chat-empty-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--ui-line));
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--accent) 10%, var(--ui-panel-soft));
+  color: var(--accent);
+}
+.side-chat-context-pill {
+  max-width: 8rem;
+  overflow: hidden;
+  flex: 0 1 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--ui-line));
+  border-radius: 999px;
+  padding: 0.2rem 0.45rem;
+  color: color-mix(in srgb, var(--accent) 82%, var(--ui-text));
+  font-size: 0.6rem;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-chat-close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.55rem;
+  color: var(--ui-subtle);
+}
+.side-chat-close:hover { background: var(--ui-panel-soft); color: var(--ui-text); }
+.side-chat-close:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.side-chat-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--background) 92%, var(--accent) 2%);
+}
+.side-chat-body > .session-workspace-scroll {
+  scrollbar-gutter: stable;
+}
+.side-chat-empty {
+  display: flex;
+  flex: 1;
+  min-height: 12rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 1.5rem;
+  flex-direction: column;
+  text-align: center;
+  color: var(--ui-text);
+}
+.side-chat-empty strong { font-size: 0.78rem; font-weight: 650; }
+.side-chat-empty p {
+  max-width: 18rem;
+  margin: 0;
+  color: var(--ui-subtle);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+.side-chat-empty-icon--error {
+  border-color: color-mix(in srgb, var(--destructive) 28%, var(--ui-line));
+  background: color-mix(in srgb, var(--destructive) 10%, var(--ui-panel-soft));
+  color: var(--destructive);
+}
+.side-chat-composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--work-line);
+  background: color-mix(in srgb, var(--background) 94%, var(--ui-panel-soft));
+}
+.side-chat-composer .agent-session-composer--footer {
+  padding: 0.55rem 0.65rem 0.65rem;
+}
+.side-chat-composer .agent-session-composer-shell {
+  border-radius: 0.75rem;
+}
 @media (max-width: 767px) {
   .work-page[data-subagent="true"] .work-session-layout:not([data-subagent-fullscreen="true"]) { flex-direction: column; }
   .subagent-conversation-panel { flex: 0 0 42%; width: 100%; max-height: 42%; border-left: 0; border-top: 1px solid var(--work-line); }
   .subagent-conversation-panel > .session-panel-resizer { display: none; }
   .work-page[data-subagent="true"] .agent-command-rail { bottom: calc(42% + 10px); }
+  .work-page[data-side-chat="true"] .work-session-layout:not([data-subagent-fullscreen="true"]) { flex-direction: column; }
+  .side-chat-panel { flex: 0 0 42%; width: 100% !important; max-height: 42%; border-left: 0; border-top: 1px solid var(--work-line); }
+  .side-chat-panel > .session-panel-resizer { display: none; }
+  .work-page[data-side-chat="true"] .agent-command-rail { bottom: calc(42% + 10px); }
 }
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */

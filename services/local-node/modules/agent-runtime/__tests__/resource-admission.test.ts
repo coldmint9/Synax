@@ -40,10 +40,10 @@ it("keeps a timed-out tool's lease until its cooperative cleanup settles", async
   await entered;
   await vi.advanceTimersByTimeAsync(100);
   expect(toolSignal?.aborted).toBe(true);
-  expect(operations).toEqual(["request"]);
+  expect(operations).toEqual(["wait"]);
   finish();
   await rejected;
-  expect(operations).toEqual(["request", "release"]);
+  expect(operations).toEqual(["wait", "release"]);
 });
 
 it("waits for the underlying tool to stop before releasing its lease", async () => {
@@ -60,9 +60,9 @@ it("waits for the underlying tool to stop before releasing its lease", async () 
   const pending = runWithExecutionContext(context, () => withToolResource({ id: "file.read", category: "read", mutability: "read" } as RegisteredTool,
     { ...input, abortSignal: abort.signal }, () => {}, async () => { entered(); await stopped; return "result"; }));
   await started; abort.abort();
-  expect(operations).toEqual(["request"]);
+  expect(operations).toEqual(["wait"]);
   stop(); await pending;
-  expect(operations).toEqual(["request", "release"]);
+  expect(operations).toEqual(["wait", "release"]);
 });
 
 it("does not reserve an execution slot while a parent waits for a child", async () => {

@@ -22,7 +22,6 @@ vi.mock('../../infrastructure/runtime/env.js', () => ({
 }));
 vi.mock('../../infrastructure/runtime/logger.js', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 vi.mock('../../modules/context/context-service.js', () => ({ contextService: {} }));
-vi.mock('../../infrastructure/database/index.js', () => ({ getRawSqlite: vi.fn() }));
 vi.mock('../../modules/agent-runtime/session-store.js', () => ({ agentRuntimeStore: { listSessions: isolation.listSessions, getRun: isolation.getRun } }));
 vi.mock('../../modules/git-session-index.js', () => ({ listGitSessions: () =>
   isolation.listSessions({ limit: Number.MAX_SAFE_INTEGER }).map((session: {

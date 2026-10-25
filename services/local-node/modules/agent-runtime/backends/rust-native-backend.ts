@@ -136,6 +136,7 @@ export class RustNativeBackend implements BackendAdapter {
         apiFormat: selection.apiFormat, adapter: selection.provider.npm, baseUrl: selection.config.baseUrl ?? selection.provider.api,
         providerId: selection.providerId, providerOptions: selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"],
         purpose: generationRequest.purpose, reasoningEffort: generationRequest.reasoningEffort, reasoningCapable: selection.modelDef.reasoning, temperature: input.temperature,
+        supportedReasoningEfforts: selection.modelDef.supportedReasoningEfforts,
         apiKey: selection.config.apiKey ?? selection.config.options?.apiKey as string | undefined
           ?? selection.provider.env.map(name => process.env[name]?.trim()).find(Boolean),
         headers: selection.config.options?.headers as Record<string, string> | undefined,

@@ -51,6 +51,7 @@ export interface ProviderRequest {
   purpose?: string;
   reasoningEffort?: string;
   reasoningCapable?: boolean;
+  supportedReasoningEfforts?: string[];
   responseOptions?: Record<string, unknown>;
   cachePolicy?: Record<string, unknown>;
   prompt: unknown[];

@@ -118,6 +118,7 @@ export async function executePipeline(
     maxOutputTokens: request.maxTokens, stopSequences: request.stop,
     temperature: request.temperature, purpose: request.purpose,
     reasoningEffort: request.reasoningEffort, reasoningCapable: selection.modelDef.reasoning,
+    supportedReasoningEfforts: selection.modelDef.supportedReasoningEfforts,
     responseOptions: request.responseOptions as Record<string, unknown> | undefined,
     providerOptions, maxRetries: mode.kind === "stream" ? mode.maxRetries ?? request.maxRetries : request.maxRetries,
     ...(mode.kind === "object" ? { responseFormat: { type: "json" as const, schema: z.toJSONSchema(mode.schema, { target: "draft-7", unrepresentable: "any" }) } } : {}),

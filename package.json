@@ -93,7 +93,6 @@
     "runtime-sidecar:rust-agent-loop-smoke": "npm run runtime-sidecar:build && node --import tsx/esm scripts/runtime-sidecar-rust-agent-loop-smoke.ts",
     "runtime-sidecar:external-provider-smoke": "node -e \"const missing=['SYNAX_EXTERNAL_PROVIDER_BASE_URL','SYNAX_EXTERNAL_PROVIDER_API_KEY','SYNAX_EXTERNAL_PROVIDER_MODEL'].filter((name)=>!process.env[name]?.trim()); if(missing.length){console.error('External provider smoke skipped: missing '+missing.join(', ')); process.exit(2)}\" && npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-external-provider-smoke.ts",
     "runtime-sidecar:physical-enospc-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-sidecar-physical-enospc-smoke.ts",
-    "runtime-sidecar:cutover-smoke": "tsx scripts/runtime-sidecar-cutover-smoke.ts",
     "runtime:e2e": "npm run runtime-sidecar:build && tsx scripts/runtime-v2-main-path-e2e.ts",
     "runtime:repository-smoke": "npm run runtime-sidecar:build && tsx scripts/runtime-repository-smoke.ts",
     "test:conversation-git": "tsx scripts/conversation-git-smoke.ts"

@@ -1,6 +1,10 @@
 import type { AgentRunStreamChunk } from "./contracts.js";
 import type { RuntimeStreamRecord } from "./runtime-journal.js";
 import { normalizeAgentSessionStatus } from "./session-projection.js";
+import { StreamByteBudget } from './stream-queue.js';
+
+const replayBudget = new StreamByteBudget(64 * 1024 * 1024);
+const replayChannels = new Set<RunRealtimeChannel>();
 
 export const runRealtimeEnabled = () => process.env.SYNAX_RUN_REALTIME_CHANNEL !== "0";
 export class RealtimeReplayGap extends Error {
@@ -9,9 +13,9 @@ export class RealtimeReplayGap extends Error {
 
 /** A bounded, run-local broadcast log. Publishing never awaits readers or storage.
  * Slow readers fail explicitly and recover from a durable snapshot, never skip text.
- * The terminal record stays in the log until the registry retention expires. */
+ * Evicted records, including terminal records under global memory pressure, require durable replay. */
 export class RunRealtimeChannel {
-  private records: Array<{ record: RuntimeStreamRecord; bytes: number }> = [];
+  private records: Array<{ record: RuntimeStreamRecord; bytes: number; release: () => void }> = [];
   private bytes = 0;
   private sequence = 0;
   private closed = false;
@@ -20,7 +24,7 @@ export class RunRealtimeChannel {
   private state: RuntimeStreamRecord["state"];
   get isClosed(): boolean { return this.closed; }
   constructor(readonly runId: string, readonly sessionId: string,
-    private readonly maxBytes = 8 * 1024 * 1024, private readonly maxRecords = 4096) {
+    private readonly maxBytes = 2 * 1024 * 1024, private readonly maxRecords = 4096) {
     this.state = { status: "running", activeRunId: runId, pendingResumeToken: null,
       blockedReason: null, updatedAt: new Date().toISOString() };
   }
@@ -43,22 +47,38 @@ export class RunRealtimeChannel {
     const record = { sequence: this.sequence, runId: this.runId, sessionId: this.sessionId,
       chunk: stamped, state: { ...this.state } };
     const bytes = Buffer.byteLength(JSON.stringify(record));
-    this.records.push({ record, bytes });
+    if (bytes > this.maxBytes || bytes > replayBudget.capacity) {
+      this.clearReplay(); this.wake();
+      return stamped; // Observers see a replay gap; execution still persists the complete chunk.
+    }
+    while (this.records.length && (this.bytes + bytes > this.maxBytes || this.records.length >= this.maxRecords)) this.evictOne();
+    let release = replayBudget.tryAcquire(bytes);
+    while (!release) {
+      const oldest = replayChannels.values().next().value;
+      if (!oldest) throw new Error('Realtime replay budget accounting failed.');
+      oldest.evictOne(); oldest.wake();
+      release = replayBudget.tryAcquire(bytes);
+    }
+    this.records.push({ record, bytes, release });
     this.bytes += bytes;
-    // Always retain the newest record (including done), even if it is large.
-    while (this.records.length > 1 && (this.bytes > this.maxBytes || this.records.length > this.maxRecords))
-      this.bytes -= this.records.shift()!.bytes;
+    replayChannels.add(this);
     this.wake();
     return stamped;
   }
 
   close(reason?: string): void { this.closed = true; this.failure ??= reason; this.wake(); }
+  private evictOne(): void {
+    const item = this.records.shift();
+    if (item) { this.bytes -= item.bytes; item.release(); }
+    if (!this.records.length) replayChannels.delete(this);
+  }
+  clearReplay(): void { while (this.records.length) this.evictOne(); this.wake(); }
   private wake(): void { for (const wake of [...this.waiters]) wake(); }
   async *subscribe(after = 0, signal?: AbortSignal): AsyncGenerator<RuntimeStreamRecord> {
     let cursor = after;
     if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > this.sequence) throw new RealtimeReplayGap();
     while (!signal?.aborted) {
-      if (cursor < (this.records[0]?.record.sequence ?? 1) - 1) throw new RealtimeReplayGap();
+      if (cursor < (this.records[0]?.record.sequence ?? this.sequence + 1) - 1) throw new RealtimeReplayGap();
       const next = this.records.find(item => item.record.sequence > cursor)?.record;
       if (next) { cursor = next.sequence; yield next; continue; }
       if (this.closed) { if (this.failure) throw new Error(this.failure); return; }
@@ -81,6 +101,7 @@ export function createRunRealtimeChannel(sessionId: string, runId: string): RunR
   retention.delete(runId);
   if (old && !old.isClosed) return old;
   old?.close();
+  old?.clearReplay();
   const channel = new RunRealtimeChannel(runId, sessionId);
   channels.set(runId, channel);
   return channel;
@@ -94,6 +115,7 @@ export function closeRunRealtimeChannel(channel: RunRealtimeChannel, waiting = f
   if (channels.get(channel.runId) !== channel) return;
   const timer = setTimeout(() => {
     channel.close();
+    channel.clearReplay();
     if (channels.get(channel.runId) === channel) channels.delete(channel.runId);
     retention.delete(channel.runId);
   }, 60_000);
@@ -104,6 +126,6 @@ export function closeRunRealtimeChannel(channel: RunRealtimeChannel, waiting = f
   while (retention.size > 64) {
     const id = retention.keys().next().value!;
     clearTimeout(retention.get(id)); retention.delete(id);
-    channels.get(id)?.close(); channels.delete(id);
+    channels.get(id)?.close(); channels.get(id)?.clearReplay(); channels.delete(id);
   }
 }

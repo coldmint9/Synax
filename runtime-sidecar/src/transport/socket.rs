@@ -45,6 +45,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "append_stream",
     "append_receipts",
     "control_multiplex",
+    "critical_control_connection",
+    "resource_wait",
     "snapshot",
     "replay",
     "subscribe",

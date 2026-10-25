@@ -28,6 +28,7 @@ vi.mock("../../../shared/ui/file-viewer/monacoRuntime", async () => {
   return {
     monaco: holder.harness.monaco,
     languageForPath: async () => "typescript",
+    applyMonacoTheme: vi.fn(),
   };
 });
 vi.mock("../codeHighlight", () => ({

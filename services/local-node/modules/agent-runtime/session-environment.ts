@@ -117,6 +117,9 @@ export interface SessionEnvironmentFileView {
   kind: "diff" | "input";
   content: string;
   truncated: boolean;
+  /** Full text models for Monaco's native diff editor when both sides are text. */
+  originalContent?: string;
+  modifiedContent?: string;
 }
 
 export interface SessionEnvironmentFileMedia {
@@ -356,6 +359,8 @@ export async function getSessionEnvironmentFile(
   const absolutePath = resolveSafeFile(workspacePath, cleanPath);
   let content = "";
   let truncated = false;
+  let originalContent: string | undefined;
+  let modifiedContent: string | undefined;
 
   if (kind === "diff") {
     const trackedDiff = await readWorkspaceGit(workspacePath, [
@@ -379,6 +384,31 @@ export async function getSessionEnvironmentFile(
         absolutePath,
       ]);
     }
+    if (content.trim() && !/^Binary files /m.test(content)) {
+      const renameFrom = content.match(/^rename from (.+)$/m)?.[1]?.trim();
+      const originalPath = renameFrom || cleanPath;
+      const originalBytes = Number(
+        (
+          await readWorkspaceGit(workspacePath, [
+            "cat-file",
+            "-s",
+            `HEAD:${originalPath}`,
+          ])
+        ).trim(),
+      );
+      if (Number.isFinite(originalBytes) && originalBytes <= MAX_FILE_BYTES) {
+        originalContent = await readWorkspaceGit(workspacePath, [
+          "show",
+          `HEAD:${originalPath}`,
+        ]);
+      }
+      if (fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile()) {
+        const preview = await readWorkspacePreview(absolutePath, MAX_FILE_BYTES);
+        if (!preview.truncated) modifiedContent = previewText(preview.bytes, false);
+      } else {
+        modifiedContent = "";
+      }
+    }
   } else {
     if (!fs.existsSync(absolutePath)) {
       throw new AgentValidationError(`File not found: ${cleanPath}`);
@@ -391,7 +421,7 @@ export async function getSessionEnvironmentFile(
     content = previewText(preview.bytes, truncated);
   }
 
-  return {
+  const result: SessionEnvironmentFileView = {
     sessionId,
     path: cleanPath,
     kind,
@@ -399,4 +429,7 @@ export async function getSessionEnvironmentFile(
     content,
     truncated,
   };
+  if (originalContent !== undefined) result.originalContent = originalContent;
+  if (modifiedContent !== undefined) result.modifiedContent = modifiedContent;
+  return result;
 }

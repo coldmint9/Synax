@@ -4,6 +4,24 @@ import type { AgentRunStreamChunk } from '../contracts.js';
 const delta = (text: string): AgentRunStreamChunk => ({ type: 'message_delta', runId: 'r', stepId: 'step', delta: text });
 const collect = async (source: AsyncIterable<unknown>) => { const out = []; for await (const value of source) out.push(value); return out; };
 describe('run realtime channel', () => {
+  it('turns an oversized preview into an explicit replay gap without blocking execution', async () => {
+    const channel = new RunRealtimeChannel('r', 's', 1024);
+    expect(channel.publish(delta('x'.repeat(2048)))).toMatchObject({ realtimeSequence: 1 });
+    await expect(channel.subscribe().next()).rejects.toBeInstanceOf(RealtimeReplayGap);
+    channel.publish(delta('next')); channel.close();
+    expect(await collect(channel.subscribe(1))).toHaveLength(1);
+    channel.clearReplay();
+  });
+  it('evicts replay across channels when the shared 64 MiB payload budget fills', async () => {
+    const channels = Array.from({ length: 36 }, () => new RunRealtimeChannel('r', 's'));
+    const text = 'x'.repeat(1_900_000);
+    try {
+      for (const channel of channels) channel.publish(delta(text));
+      await expect(channels[0].subscribe().next()).rejects.toBeInstanceOf(RealtimeReplayGap);
+      channels.at(-1)!.close();
+      expect(await collect(channels.at(-1)!.subscribe())).toHaveLength(1);
+    } finally { for (const channel of channels) { channel.close(); channel.clearReplay(); } }
+  });
   it('publishes immediately, sequences replay once, and retains terminal for late subscribers', async () => {
     const channel = new RunRealtimeChannel('r', 's');
     const reader = channel.subscribe();

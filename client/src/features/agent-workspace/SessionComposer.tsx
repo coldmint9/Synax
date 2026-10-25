@@ -93,6 +93,7 @@ interface Props {
   projectId: string;
   session?: AgentSession;
   layout?: "footer" | "centered" | "focusRail";
+  onOpenSideChat?: () => void;
   /** Rendered directly above the input pill (e.g. the file-change island). */
   statusSlot?: React.ReactNode;
   readingHistory?: boolean;
@@ -102,6 +103,7 @@ export function SessionComposer({
   session,
   projectId,
   layout = "footer",
+  onOpenSideChat,
   statusSlot,
   readingHistory = false,
 }: Props) {
@@ -574,6 +576,7 @@ export function SessionComposer({
 
   const commands = useComposerCommands({
     onAttachFiles: media.add,
+    onOpenSideChat,
     projectId,
     sessionId,
     backendId,

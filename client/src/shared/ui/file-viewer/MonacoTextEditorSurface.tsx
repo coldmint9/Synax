@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { monaco, languageForPath } from "./monacoRuntime";
+import { applyMonacoTheme, monaco, languageForPath } from "./monacoRuntime";
 import type { MonacoTextEditorProps } from "./MonacoTextEditor";
 
 export default function MonacoTextEditorSurface(props: MonacoTextEditorProps) {
@@ -128,20 +128,13 @@ export default function MonacoTextEditorSurface(props: MonacoTextEditorProps) {
         }),
       );
       const applyTheme = () => {
-        const color = getComputedStyle(host.current!)
-          .getPropertyValue("--theme-text")
-          .trim();
-        const dark =
-          document.documentElement.classList.contains("dark") ||
-          document.documentElement.dataset.theme === "dark" ||
-          (color.startsWith("#") && parseInt(color.slice(1, 3), 16) > 160);
-        monaco.editor.setTheme(dark ? "vs-dark" : "vs");
+        applyMonacoTheme(host.current ?? undefined);
       };
       applyTheme();
       theme = new MutationObserver(applyTheme);
       theme.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "data-theme", "style"],
+        attributeFilter: ["class", "data-theme", "data-color-scheme", "style"],
       });
       if (typeof ResizeObserver !== "undefined") {
         observer = new ResizeObserver(layout);

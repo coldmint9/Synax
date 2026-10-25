@@ -71,6 +71,7 @@ export function useComposerCommands({
   onModeChange,
   disabled,
   onAttachFiles,
+  onOpenSideChat,
 }: {
   projectId: string;
   sessionId?: string;
@@ -85,6 +86,7 @@ export function useComposerCommands({
   onModeChange: (value: AgentSessionMode) => Promise<void>;
   disabled: boolean;
   onAttachFiles?: (files: File[]) => void;
+  onOpenSideChat?: () => void;
 }) {
   const { locale } = useLocale(),
     zh = locale === "zh";
@@ -323,6 +325,7 @@ export function useComposerCommands({
       onOpenChange={setContextOpen}
       onOpen={() => setQuery(null)}
       onAttachFiles={onAttachFiles}
+      onOpenSideChat={onOpenSideChat}
       mode={native ? mode : undefined}
       modeDisabled={!modeEnabled}
       onModeChange={(value) => {

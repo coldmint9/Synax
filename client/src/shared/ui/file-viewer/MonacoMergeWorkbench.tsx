@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, LoaderCircle, X } from "lucide-react";
 import { Dialog, DialogPanel, DialogTitle } from "../ui/Dialog";
 import type { MergeFileViewerProps } from "./MergeFileViewer";
-import { languageForPath, monaco } from "./monacoRuntime";
+import { applyMonacoTheme, languageForPath, monaco } from "./monacoRuntime";
 import {
   mapMergeLine,
   type MergeAnalysis,
@@ -449,20 +449,13 @@ export default function MonacoMergeWorkbench(props: MergeFileViewerProps) {
         });
       }
       const applyTheme = () => {
-        const color = getComputedStyle(root.current!)
-          .getPropertyValue("--theme-text")
-          .trim();
-        const dark =
-          document.documentElement.classList.contains("dark") ||
-          document.documentElement.dataset.theme === "dark" ||
-          (color.startsWith("#") && parseInt(color.slice(1, 3), 16) > 160);
-        monaco.editor.setTheme(dark ? "vs-dark" : "vs");
+        applyMonacoTheme(root.current ?? undefined);
       };
       applyTheme();
       themeObserver = new MutationObserver(applyTheme);
       themeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "data-theme", "style"],
+        attributeFilter: ["class", "data-theme", "data-color-scheme", "style"],
       });
       markerDecorations = createdEditors.result.createDecorationsCollection();
       disposables.push(

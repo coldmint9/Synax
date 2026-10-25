@@ -13,7 +13,11 @@ use crate::transport::protocol::{
 };
 use crate::transport::socket::{MAX_FRAME_BYTES, TransportError, read_frame, write_frame};
 
-const PER_CONNECTION: usize = 32;
+const PER_CONNECTION: usize = 64;
+const NORMAL_REQUEST_LIMIT: usize = 512;
+const CRITICAL_REQUEST_LIMIT: usize = 64;
+const NORMAL_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+const CRITICAL_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -26,10 +30,10 @@ pub struct ControlBudget {
 impl ControlBudget {
     pub fn new() -> Self {
         Self {
-            requests: Arc::new(Semaphore::new(128)),
-            response_bytes: Arc::new(Semaphore::new(8 * 1024 * 1024)),
-            critical_requests: Arc::new(Semaphore::new(16)),
-            critical_bytes: Arc::new(Semaphore::new(2 * 1024 * 1024)),
+            requests: Arc::new(Semaphore::new(NORMAL_REQUEST_LIMIT)),
+            response_bytes: Arc::new(Semaphore::new(NORMAL_RESPONSE_BYTES)),
+            critical_requests: Arc::new(Semaphore::new(CRITICAL_REQUEST_LIMIT)),
+            critical_bytes: Arc::new(Semaphore::new(CRITICAL_RESPONSE_BYTES)),
         }
     }
 }
@@ -108,9 +112,9 @@ where
             }
         }
         let critical = match &request.body {
-            Some(wire_envelope::Body::Health(_) | wire_envelope::Body::Snapshot(_)) => true,
+            Some(wire_envelope::Body::Health(_)) => true,
             // Lease probes are small, frequent and already fail closed on
-            // errors. Keep them out of the 16-slot critical lane so snapshots
+            // errors. Keep them out of the critical lane so snapshots
             // and execution-open/close controls cannot make the first token
             // wait behind a burst of revalidation checks.
             Some(wire_envelope::Body::ControlCommand(command)) => matches!(
@@ -118,9 +122,9 @@ where
                 "execution_open"
                     | "execution_close"
                     | "stop_begin"
+                    | "stop_cancel"
                     | "stop_unconfirmed"
                     | "resume"
-                    | "read"
             ),
             _ => false,
         };
@@ -132,6 +136,23 @@ where
         .clone()
         .try_acquire_owned()
         .ok();
+        let operation = match &request.body {
+            Some(wire_envelope::Body::ControlCommand(command)) => command.operation.clone(),
+            Some(wire_envelope::Body::Snapshot(_)) => "snapshot".into(),
+            Some(wire_envelope::Body::Health(_)) => "health".into(),
+            _ => "ordinary_rpc".into(),
+        };
+        let lane = if critical { "critical" } else { "normal" };
+        let active = if critical {
+            CRITICAL_REQUEST_LIMIT - budget.critical_requests.available_permits()
+        } else {
+            NORMAL_REQUEST_LIMIT - budget.requests.available_permits()
+        };
+        let response_bytes = if critical {
+            CRITICAL_RESPONSE_BYTES - budget.critical_bytes.available_permits()
+        } else {
+            NORMAL_RESPONSE_BYTES - budget.response_bytes.available_permits()
+        };
         let response_budget = if critical {
             &budget.critical_bytes
         } else {
@@ -143,7 +164,8 @@ where
         jobs.spawn(async move {
             let (response, shutdown) = if global.is_none() {
                 tracing::warn!(event = "transport.backpressure", request_id = %request.request_id,
-                    session_id = %request.session_id, "Control execution budget exhausted");
+                    session_id = %request.session_id, operation, lane, active, response_bytes,
+                    "Control execution budget exhausted");
                 (
                     WireEnvelope {
                         request_id: request.request_id,
@@ -301,6 +323,50 @@ mod tests {
         assert_eq!(decode_wire(&slow).unwrap().request_id, "slow");
         let stopped = read_frame(&mut client).await.unwrap();
         assert_eq!(decode_wire(&stopped).unwrap().request_id, "stop");
+        task.await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn ordinary_saturation_does_not_consume_critical_execution_or_response_budget() {
+        let budget = Arc::new(ControlBudget::new());
+        let _occupied = budget
+            .requests
+            .clone()
+            .acquire_many_owned(NORMAL_REQUEST_LIMIT as u32)
+            .await
+            .unwrap();
+        let _bytes = budget
+            .response_bytes
+            .clone()
+            .acquire_many_owned(NORMAL_RESPONSE_BYTES as u32)
+            .await
+            .unwrap();
+        let (server, mut client) = tokio::io::duplex(64 * 1024);
+        let (shutdown, _) = watch::channel(false);
+        let task = tokio::spawn(run(server, shutdown, budget, |request| async move {
+            (
+                WireEnvelope {
+                    request_id: request.request_id,
+                    body: Some(wire_envelope::Body::HealthResponse(WireHealthResponse {
+                        ok: true,
+                        protocol: "test".into(),
+                    })),
+                    ..Default::default()
+                },
+                false,
+            )
+        }));
+        write_frame(&mut client, &encode_wire(&request("health-under-load")))
+            .await
+            .unwrap();
+        let response = timeout(Duration::from_secs(1), read_frame(&mut client))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            decode_wire(&response).unwrap().body,
+            Some(wire_envelope::Body::HealthResponse(_))
+        ));
+        drop(client);
         task.await.unwrap().unwrap();
     }
 }

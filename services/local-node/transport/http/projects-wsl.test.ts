@@ -15,7 +15,6 @@ vi.mock("../../infrastructure/runtime/logger.js", () => ({
 vi.mock("../../modules/context/context-service.js", () => ({
   contextService: {},
 }));
-vi.mock("../../infrastructure/database/index.js", () => ({ getRawSqlite: vi.fn() }));
 vi.mock("../../modules/agent-runtime/session-store.js", () => ({
   agentRuntimeStore: { listSessions: () => [] },
 }));

@@ -24,6 +24,7 @@ import {
   Loader2,
   FileText,
   Plus,
+  PanelRightOpen,
   Plug,
   Sparkles,
 } from "lucide-react";
@@ -56,6 +57,7 @@ interface Props {
   onOpen: () => void;
   onOpenChange?: (open: boolean) => void;
   onAttachFiles?: (files: File[]) => void;
+  onOpenSideChat?: () => void;
   mode?: AgentSessionMode | "plan_node";
   modeDisabled?: boolean;
   onModeChange?: (mode: AgentSessionMode) => void;
@@ -84,13 +86,14 @@ function ContextPickerContent({
   onOpen,
   onOpenChange,
   onAttachFiles,
+  onOpenSideChat,
   mode,
   modeDisabled = false,
   onModeChange,
   open,
   close,
 }: Props & { open: boolean; close: () => void }) {
-  const { locale } = useLocale(),
+  const { locale, t } = useLocale(),
     zh = locale === "zh";
   const attachmentInput = useRef<HTMLInputElement>(null);
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
@@ -285,6 +288,7 @@ function ContextPickerContent({
             ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
             : undefined
         }
+        data-side-chat-trigger={onOpenSideChat ? "true" : undefined}
         className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
       >
         <Plus size={16} aria-hidden="true" />
@@ -407,6 +411,22 @@ function ContextPickerContent({
           </Combobox>
         ) : (
           <>
+            {onOpenSideChat && sessionId && (
+              <button
+                type="button"
+                className="session-context-picker-option session-context-picker-option--featured"
+                onClick={() => {
+                  close();
+                  onOpenSideChat();
+                }}
+              >
+                <PanelRightOpen size={15} aria-hidden="true" />
+                <span>
+                  {t("sideChatMenuLabel")}
+                  <small>{t("sideChatMenuDescription")}</small>
+                </span>
+              </button>
+            )}
             {onAttachFiles && (
               <button
                 type="button"

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 
 const getSessionEnvironmentFile = vi.fn();
-const highlightLines = vi.fn();
 
 vi.mock("../../../adapters/transport/agentRuntime", () => ({
   agentRuntimeApi: {
@@ -11,10 +10,21 @@ vi.mock("../../../adapters/transport/agentRuntime", () => ({
   },
 }));
 
-// The real highlighter loads a shiki grammar; the viewer only needs to know the
-// per-line HTML it gets back, so stub it and assert on the injected markup.
-vi.mock("../codeHighlight", () => ({
-  highlightLines: (...args: unknown[]) => highlightLines(...args),
+vi.mock("../../../shared/ui/file-viewer/MonacoDiffEditor", () => ({
+  default: ({ original, modified, path }: any) => (
+    <div
+      data-testid="monaco-diff-editor"
+      data-path={path}
+      data-original={original}
+      data-modified={modified}
+    />
+  ),
+}));
+
+vi.mock("../../../shared/ui/file-viewer/MonacoTextEditor", () => ({
+  MonacoTextEditor: ({ content }: { content: string }) => (
+    <pre className="diff-raw">{content}</pre>
+  ),
 }));
 
 const { DiffViewer } = await import("../DiffViewer");
@@ -34,13 +44,14 @@ const PATCH = [
   "",
 ].join("\n");
 
-function fileView(content: string) {
+function fileView(content: string, extra: Record<string, unknown> = {}) {
   return {
     sessionId: "sess-1",
     path: "src/app.ts",
     kind: "diff",
     content,
     truncated: false,
+    ...extra,
   };
 }
 
@@ -55,73 +66,51 @@ async function renderViewer(path = "src/app.ts") {
 describe("DiffViewer", () => {
   beforeEach(() => {
     getSessionEnvironmentFile.mockReset();
-    highlightLines.mockReset();
-    highlightLines.mockImplementation(async (code: string) =>
-      code.split("\n").map((line) => `<span class="tok">${line}</span>`),
-    );
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("marks added and removed rows so the change reads at a glance", async () => {
+  it("uses Monaco's native diff surface and keeps change stats", async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView(PATCH));
     const { container } = await renderViewer();
 
-    const added = container.querySelectorAll(".diff-row--add");
-    const removed = container.querySelectorAll(".diff-row--del");
-    const context = container.querySelectorAll(".diff-row--ctx");
-    expect(
-      container.querySelector('[data-file-type-icon="app.ts"]'),
-    ).not.toBeNull();
-    expect(added).toHaveLength(2);
-    expect(removed).toHaveLength(1);
-    expect(context).toHaveLength(3);
-
-    // Line numbers still track both sides of the hunk.
-    expect(added[0].querySelector(".diff-num--new")?.textContent).toBe("2");
-    expect(added[0].querySelector(".diff-num--old")?.textContent).toBe("");
-    expect(removed[0].querySelector(".diff-num--old")?.textContent).toBe("2");
-    expect(removed[0].querySelector(".diff-marker")?.textContent).toBe("-");
-
-    // Hunk header and header stats.
-    expect(container.querySelector(".diff-band--hunk")?.textContent).toBe(
-      "@@ -1,4 +1,5 @@",
-    );
+    expect(container.querySelector('[data-file-type-icon="app.ts"]')).not.toBeNull();
     expect(container.querySelector(".diff-stat--add")?.textContent).toBe("+2");
     expect(container.querySelector(".diff-stat--del")?.textContent).toBe("-1");
+    await waitFor(() => {
+      expect(screen.getByTestId("monaco-diff-editor")).toBeTruthy();
+    });
+    const editor = screen.getByTestId("monaco-diff-editor");
+    expect(editor.getAttribute("data-path")).toBe("src/app.ts");
+    expect(editor.getAttribute("data-original")).toContain("const x = 1");
+    expect(editor.getAttribute("data-modified")).toContain("const x = 2");
   });
 
-  it("injects syntax-highlighted HTML into each changed row", async () => {
-    getSessionEnvironmentFile.mockResolvedValue(fileView(PATCH));
-    const { container } = await renderViewer();
+  it("prefers full text models returned by the runtime", async () => {
+    getSessionEnvironmentFile.mockResolvedValue(
+      fileView(PATCH, {
+        originalContent: 'export const before = "atom";\n',
+        modifiedContent: 'export const after = "atom";\n',
+      }),
+    );
+    await renderViewer();
 
-    await waitFor(() => {
-      expect(
-        container.querySelectorAll(".diff-text .tok").length,
-      ).toBeGreaterThan(0);
-    });
-    const addedRow = container.querySelector(".diff-row--add");
-    expect(addedRow?.querySelector(".tok")?.textContent).toBe("const x = 2");
-
-    // Both sides of the hunk are highlighted, deleted rows included.
-    const oldSide =
-      'import { a } from "b"\nconst x = 1\n\nexport function f() {';
-    const newSide =
-      'import { a } from "b"\nconst x = 2\nconst y = 3\n\nexport function f() {';
-    expect(highlightLines).toHaveBeenCalledWith(oldSide, "src/app.ts");
-    expect(highlightLines).toHaveBeenCalledWith(newSide, "src/app.ts");
+    await waitFor(() => expect(screen.getByTestId("monaco-diff-editor")).toBeTruthy());
+    const editor = screen.getByTestId("monaco-diff-editor");
+    expect(editor.getAttribute("data-original")).toBe('export const before = "atom";\n');
+    expect(editor.getAttribute("data-modified")).toBe('export const after = "atom";\n');
   });
 
   it("explains an empty diff instead of rendering a blank surface", async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView(""));
     await renderViewer();
 
-    expect(screen.getByText("该文件与 HEAD 相比没有差异")).toBeTruthy();
+    expect(screen.getByText("该文件与 HEAD 相比没有可显示的文本差异")).toBeTruthy();
   });
 
-  it("names both paths when the file was renamed", async () => {
+  it("keeps the old and new paths visible for a rename", async () => {
     const renamed = [
       "diff --git a/src/old.ts b/src/new.ts",
       "similarity index 90%",
@@ -137,12 +126,12 @@ describe("DiffViewer", () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView(renamed));
     const { container } = await renderViewer();
 
-    expect(container.querySelector(".diff-band--file")?.textContent).toBe(
+    expect(container.querySelector(".diff-rename-label")?.textContent).toBe(
       "src/old.ts → src/new.ts",
     );
   });
 
-  it("does not claim a rename for an untracked file", async () => {
+  it("shows untracked files as additions", async () => {
     const untracked = [
       "diff --git a/abs/new-file.ts b/abs/new-file.ts",
       "new file mode 100644",
@@ -157,8 +146,9 @@ describe("DiffViewer", () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView(untracked));
     const { container } = await renderViewer();
 
-    expect(container.querySelector(".diff-band--file")).toBeNull();
-    expect(container.querySelectorAll(".diff-row--add")).toHaveLength(2);
+    expect(container.querySelector(".diff-stat--add")?.textContent).toBe("+2");
+    await waitFor(() => expect(screen.getByTestId("monaco-diff-editor")).toBeTruthy());
+    expect(screen.getByTestId("monaco-diff-editor").getAttribute("data-original")).toBe("");
   });
 
   it("surfaces read failures", async () => {
@@ -168,12 +158,14 @@ describe("DiffViewer", () => {
     expect(screen.getByText("boom")).toBeTruthy();
   });
 
-  it("falls back to raw text when the patch cannot be parsed", async () => {
+  it("uses the shared Monaco text surface for an unparseable patch", async () => {
     getSessionEnvironmentFile.mockResolvedValue(fileView("not a patch at all"));
-    const { container } = await renderViewer();
+    await renderViewer();
 
-    expect(container.querySelector(".diff-raw")?.textContent).toBe(
-      "not a patch at all",
-    );
+    expect(containerText(".diff-raw")).toBe("not a patch at all");
   });
 });
+
+function containerText(selector: string): string | undefined {
+  return document.querySelector(selector)?.textContent ?? undefined;
+}

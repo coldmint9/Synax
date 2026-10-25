@@ -9,6 +9,9 @@ export class DurableDeltaBuffer {
     this.writer = new RuntimeStreamWriter(sessionId, runId, current);
   }
   append(chunk: AgentRunStreamChunk): void { this.writer.write(chunk); }
+  appendWithBackpressure(chunk: AgentRunStreamChunk, signal?: AbortSignal): Promise<void> {
+    return this.writer.writeWithBackpressure(chunk, signal);
+  }
   async flush(runId = this.runId): Promise<void> {
     if (runId !== this.runId) throw new Error("Durable buffer belongs to another run.");
     this.writer.flush();

@@ -77,7 +77,7 @@ export const PERMISSION_TIMEOUT_MS = Number(
 
 /** Max concurrent root agent session child processes. */
 export const MAX_AGENT_SESSION_PROCESSES = Number(
-  env("MAX_AGENT_SESSION_PROCESSES", "8"),
+  env("MAX_AGENT_SESSION_PROCESSES", "16"),
 );
 
 /**

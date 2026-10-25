@@ -31,8 +31,8 @@ let exitCode = 0;
   const baselineCss = baseline
     ? [
         "client/src/index.css",
-        "client/src/react/features/agent-workspace/agentControls.css",
-        "client/src/react/features/agent-workspace/workPage.css",
+        "client/src/features/agent-workspace/agentControls.css",
+        "client/src/features/agent-workspace/workPage.css",
       ]
         .map((file) =>
           execFileSync("git", ["show", `HEAD:${file}`], {

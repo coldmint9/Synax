@@ -1,6 +1,7 @@
 //! Process-local model/tool execution. The host drains a pending delivery
 //! queue; committed conversation history is owned by the session store.
 
+use super::event_budget::{self, EventBudget, EventPermit, TERMINAL_RESERVE};
 use crate::agent::context::{self as loop_context, Compaction, ContextAction, ContextPolicy};
 use crate::agent::policy::{self as loop_policy, Decision, Disposition, RuntimeBinding};
 use crate::llm::errors::InvalidToolArguments;
@@ -14,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, MutexGuard, watch};
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -158,6 +159,7 @@ struct ExecutionState {
 }
 
 struct LoopState {
+    version: u64,
     execution: ExecutionState,
     events: VecDeque<LoopEvent>,
     acknowledged: u64,
@@ -172,6 +174,7 @@ struct LoopState {
 struct LoopEvent {
     sequence: u64,
     bytes: Arc<[u8]>,
+    _budget: Option<Arc<EventPermit>>,
 }
 
 impl LoopEvent {
@@ -184,6 +187,7 @@ impl LoopEvent {
         Ok(Self {
             sequence,
             bytes: bytes.into(),
+            _budget: None,
         })
     }
 }
@@ -217,6 +221,7 @@ impl LoopState {
 }
 
 struct LoopHandle {
+    budget: Arc<EventBudget>,
     id: String,
     store: Option<Arc<HotStore>>,
     router: Option<Arc<SessionShardRouter>>,
@@ -226,66 +231,118 @@ struct LoopHandle {
 }
 
 impl LoopHandle {
-    /// Publish process-local state; the host acknowledges durable transcript
-    /// writes independently. A restarted executor never reloads this state.
-    async fn commit(
-        &self,
-        state: &mut LoopState,
+    /// Waiting drops the state lock so durable ACKs and cancellation can make progress.
+    async fn commit<'a>(
+        &'a self,
+        mut state: MutexGuard<'a, LoopState>,
         mut next: ExecutionState,
         events: Vec<Value>,
         terminal: bool,
-    ) -> Result<(), LoopError> {
-        if let Some(error) = &state.failure {
-            return Err(error.clone().into());
-        }
+    ) -> Result<MutexGuard<'a, LoopState>, LoopError> {
         let mut published = Vec::with_capacity(events.len());
-        let mut pending_bytes = state.pending_bytes;
-        for event in events {
+        for value in events {
             next.sequence += 1;
-            let event = LoopEvent::encode(&self.id, next.sequence, event)?;
-            pending_bytes += event.bytes.len();
-            if !terminal && pending_bytes > MAX_PENDING_EVENT_BYTES {
-                return Err("agent loop pending event capacity exceeded".into());
+            published.push(LoopEvent::encode(&self.id, next.sequence, value)?);
+        }
+        let bytes = published.iter().map(|e| e.bytes.len()).sum::<usize>();
+        let limit = if terminal {
+            TERMINAL_RESERVE
+        } else {
+            MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE
+        };
+        if bytes > limit {
+            return Err("agent loop event exceeds delivery byte budget".into());
+        }
+        let version = state.version;
+        let mut local = self.changed.subscribe();
+        let mut global = self.budget.changed.subscribe();
+        let mut cancel = self.cancel.subscribe();
+        loop {
+            if let Some(error) = &state.failure {
+                return Err(error.clone().into());
             }
-            published.push(event);
+            if !terminal && state.execution.cancel_requested {
+                return Ok(state);
+            }
+            if state.version != version {
+                return Err("execution changed while waiting for delivery capacity; refusing a stale state update".into());
+            }
+            let room = state.pending_bytes + bytes <= MAX_PENDING_EVENT_BYTES
+                && (terminal
+                    || state.pending_bytes + bytes <= MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE);
+            if bytes == 0 || room {
+                let permit = self.budget.try_reserve(bytes, terminal);
+                if bytes == 0 || permit.is_some() {
+                    for event in &mut published {
+                        event._budget = permit.clone();
+                    }
+                    if terminal {
+                        next.terminal_at = Some(now_ms());
+                    }
+                    state.execution = next;
+                    state.version += 1;
+                    state.pending_bytes += bytes;
+                    state.events.extend(published);
+                    self.changed.send_modify(|revision| *revision += 1);
+                    return Ok(state);
+                }
+            }
+            drop(state);
+            tokio::select! {
+                _=local.changed()=>{},
+                _=global.changed()=>{},
+                _=cancel.changed(),if !terminal=>{},
+            }
+            state = self.state.lock().await;
         }
-        if terminal {
-            next.terminal_at = Some(now_ms());
-        }
-        state.execution = next;
-        state.pending_bytes = pending_bytes;
-        state.events.extend(published);
-        self.changed.send_modify(|revision| *revision += 1);
-        Ok(())
     }
 
     async fn emit(&self, event: Value, terminal: bool) -> Result<(), LoopError> {
-        let mut state = self.state.lock().await;
-        if state.execution.terminal_at.is_some() {
-            return Err("agent loop is already terminal".into());
+        let mut local = self.changed.subscribe();
+        let mut global = self.budget.changed.subscribe();
+        let mut cancel = self.cancel.subscribe();
+        loop {
+            let mut state = self.state.lock().await;
+            if state.execution.terminal_at.is_some() {
+                return Err("agent loop is already terminal".into());
+            }
+            if let Some(error) = &state.failure {
+                return Err(error.clone().into());
+            }
+            if !terminal && state.execution.cancel_requested {
+                return Ok(());
+            }
+            let sequence = state.execution.sequence + 1;
+            let mut encoded = LoopEvent::encode(&self.id, sequence, event.clone())?;
+            let bytes = encoded.bytes.len();
+            let limit = if terminal {
+                TERMINAL_RESERVE
+            } else {
+                MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE
+            };
+            if bytes > limit {
+                return Err("agent loop event exceeds delivery byte budget".into());
+            }
+            let room = state.pending_bytes + bytes <= MAX_PENDING_EVENT_BYTES
+                && (terminal
+                    || state.pending_bytes + bytes <= MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE);
+            if room {
+                if let Some(permit) = self.budget.try_reserve(bytes, terminal) {
+                    encoded._budget = Some(permit);
+                    state.execution.sequence = sequence;
+                    state.version += 1;
+                    state.pending_bytes += bytes;
+                    if terminal {
+                        state.execution.terminal_at = Some(now_ms());
+                    }
+                    state.events.push_back(encoded);
+                    self.changed.send_modify(|revision| *revision += 1);
+                    return Ok(());
+                }
+            }
+            drop(state);
+            tokio::select! {_=local.changed()=>{},_=global.changed()=>{},_=cancel.changed(),if !terminal=>{}}
         }
-        if let Some(error) = &state.failure {
-            return Err(error.clone().into());
-        }
-        // Stream events are emitted for every provider delta. Do not route
-        // this through `commit`: cloning `ExecutionState` also clones the
-        // complete provider prompt, tool definitions and accumulated tool
-        // results. With a long prompt, five concurrent sessions turn a small
-        // delta into a large transient allocation on every token.
-        let sequence = state.execution.sequence + 1;
-        let event = LoopEvent::encode(&self.id, sequence, event)?;
-        let pending_bytes = state.pending_bytes + event.bytes.len();
-        if !terminal && pending_bytes > MAX_PENDING_EVENT_BYTES {
-            return Err("agent loop pending event capacity exceeded".into());
-        }
-        state.execution.sequence = sequence;
-        state.pending_bytes = pending_bytes;
-        if terminal {
-            state.execution.terminal_at = Some(now_ms());
-        }
-        state.events.push_back(event);
-        self.changed.send_modify(|revision| *revision += 1);
-        Ok(())
     }
 }
 
@@ -478,8 +535,6 @@ impl AgentLoopManager {
             if state.execution.initial_hash != initial_hash {
                 return Err("requestId was already used for different loop input".into());
             }
-            let next = state.execution.clone();
-            handle.commit(&mut state, next, Vec::new(), false).await?;
             let launch = !state.running && state.execution.terminal_at.is_none();
             if launch {
                 state.execution.request.provider.api_key = request.provider.api_key;
@@ -530,12 +585,14 @@ impl AgentLoopManager {
         let (cancel, _) = watch::channel(false);
         let initial_phase = next_phase(&request, 1);
         let handle = Arc::new(LoopHandle {
+            budget: event_budget::shared(),
             id: id.clone(),
             store: self.store.clone(),
             router: self.router.clone(),
             changed,
             cancel,
             state: Mutex::new(LoopState {
+                version: 0,
                 execution: ExecutionState {
                     initial_hash,
                     request,
@@ -601,11 +658,18 @@ impl AgentLoopManager {
         if let Some(error) = &state.failure {
             return Err(error.clone().into());
         }
+        if state.running
+            && state.execution.request.execution_context == input.request.execution_context
+            && state.execution.request.provider.api_key == supplied.api_key
+            && state.execution.request.provider.headers == supplied.headers
+        {
+            return Ok(());
+        }
         let mut next = state.execution.clone();
         next.request.execution_context = input.request.execution_context;
         next.request.provider.api_key = supplied.api_key;
         next.request.provider.headers = supplied.headers;
-        handle.commit(&mut state, next, Vec::new(), false).await?;
+        state = handle.commit(state, next, Vec::new(), false).await?;
         if state.running {
             return Ok(());
         }
@@ -646,7 +710,9 @@ impl AgentLoopManager {
                 return Err("event acknowledgement requires the execution owner".into());
             }
         }
-        state.acknowledge(through)
+        state.acknowledge(through)?;
+        handle.changed.send_modify(|revision| *revision += 1);
+        Ok(())
     }
 
     pub(crate) async fn send_tool_result(
@@ -655,7 +721,7 @@ impl AgentLoopManager {
     ) -> Result<(), LoopError> {
         let handle = self.get(&request.loop_id).await?;
         check_execution(&handle, request.execution_context.as_ref()).await?;
-        let mut state = handle.state.lock().await;
+        let state = handle.state.lock().await;
         if let Some(saved) = state.terminal_results.get(&request.tool_call_id) {
             return if saved == &request.fingerprint() {
                 Ok(())
@@ -667,10 +733,11 @@ impl AgentLoopManager {
         let tool_call_id = request.tool_call_id.clone();
         let is_error = request.is_error;
         if let Some(previous) = next.results.get(&request.tool_call_id) {
-            // Even duplicate acknowledgements go through the WAL barrier.
+            // This executor is process-local; an identical delivery is already applied.
             if previous.result != request.result || previous.is_error != request.is_error {
                 return Err("conflicting tool result".into());
             }
+            return Ok(());
         } else {
             if next.terminal_at.is_some() || next.cancel_requested {
                 return Err("agent loop is closed".into());
@@ -681,7 +748,7 @@ impl AgentLoopManager {
             next.request.execution_context = request.execution_context.clone();
             next.results.insert(request.tool_call_id.clone(), request);
         }
-        handle.commit(&mut state, next, Vec::new(), false).await?;
+        drop(handle.commit(state, next, Vec::new(), false).await?);
         tracing::info!(event = "agent.tool_result", loop_id = %handle.id, tool_call_id,
             is_error, "Tool result committed");
         Ok(())
@@ -690,14 +757,17 @@ impl AgentLoopManager {
     pub(crate) async fn set_context(&self, input: StepContextRequest) -> Result<(), LoopError> {
         let handle = self.get(&input.loop_id).await?;
         check_execution(&handle, input.execution_context.as_ref()).await?;
-        let mut state = handle.state.lock().await;
+        let state = handle.state.lock().await;
         let mut next = state.execution.clone();
         if let Some(previous) = &next.step_context {
             if previous.context_id == input.context_id {
-                if previous.system_prompt != input.system_prompt || previous.tools != input.tools || previous.prompt != input.prompt {
+                if previous.system_prompt != input.system_prompt
+                    || previous.tools != input.tools
+                    || previous.prompt != input.prompt
+                {
                     return Err("conflicting step context".into());
                 }
-                return handle.commit(&mut state, next, Vec::new(), false).await;
+                return Ok(());
             }
         }
         if !matches!(&next.phase, Phase::Context { context_id, .. } if context_id == &input.context_id)
@@ -707,7 +777,10 @@ impl AgentLoopManager {
             return Err("step context is not pending".into());
         }
         next.step_context = Some(input);
-        handle.commit(&mut state, next, Vec::new(), false).await
+        handle
+            .commit(state, next, Vec::new(), false)
+            .await
+            .map(drop)
     }
 
     pub(crate) async fn cancel(&self, id: &str) -> Result<(), LoopError> {
@@ -719,25 +792,27 @@ impl AgentLoopManager {
         let handle = self.get(id).await?;
         let mut changed = handle.changed.subscribe();
         {
-            let mut state = handle.state.lock().await;
+            let state = handle.state.lock().await;
             if state.execution.terminal_at.is_some() {
                 return Ok(());
             }
             let mut next = state.execution.clone();
             next.cancel_requested = true;
             let running = state.running;
-            handle
-                .commit(
-                    &mut state,
-                    next,
-                    if running {
-                        Vec::new()
-                    } else {
-                        vec![json!({"type":"cancelled"})]
-                    },
-                    !running,
-                )
-                .await?;
+            drop(
+                handle
+                    .commit(
+                        state,
+                        next,
+                        if running {
+                            Vec::new()
+                        } else {
+                            vec![json!({"type":"cancelled"})]
+                        },
+                        !running,
+                    )
+                    .await?,
+            );
             handle.cancel.send_replace(true);
         }
         loop {
@@ -881,32 +956,32 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     if let Decision::Finish(disposition) =
                         loop_policy::before_model(&session, &root, &run)
                     {
-                        let mut state = handle.state.lock().await;
+                        let state = handle.state.lock().await;
                         let mut next = state.execution.clone();
                         next.phase = Phase::Finish {
                             step: step.saturating_sub(1),
                             disposition: Some(disposition),
                         };
-                        handle.commit(&mut state, next, Vec::new(), false).await?;
+                        drop(handle.commit(state, next, Vec::new(), false).await?);
                         continue;
                     }
                 }
                 let context_id = format!("{}:{step}", handle.id);
-                let mut state = handle.state.lock().await;
+                let state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 next.phase = Phase::Context {
                     step,
                     context_id: context_id.clone(),
                 };
                 next.step_context = None;
-                handle
+                drop(handle
                     .commit(
-                        &mut state,
+                        state,
                         next,
                         vec![json!({"type":"context-request","contextId":context_id,"step":step,"contextCorrection":execution.context_correction})],
                         false,
                     )
-                    .await?;
+                    .await?);
             }
             Phase::Context { step, context_id } => {
                 let mut changed = handle.changed.subscribe();
@@ -926,7 +1001,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     drop(state);
                     changed.changed().await?;
                 };
-                let mut state = handle.state.lock().await;
+                let state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 if let Some(prompt) = prepared.prompt {
                     next.request.provider.prompt = prompt;
@@ -942,7 +1017,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     .insert(0, json!({"role":"system","content":prepared.system_prompt}));
                 next.request.provider.tools = prepared.tools;
                 next.phase = Phase::Model { step, attempt: 0 };
-                handle.commit(&mut state, next, Vec::new(), false).await?;
+                drop(handle.commit(state, next, Vec::new(), false).await?);
             }
 
             Phase::Compact { step, mut plan } => {
@@ -954,42 +1029,46 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 if plan.offset == plan.source.len() {
                     let (prompt, composition) =
                         plan.complete(&execution.request.provider, policy)?;
-                    let mut state = handle.state.lock().await;
+                    let state = handle.state.lock().await;
                     let mut next = state.execution.clone();
                     next.request.provider.prompt = prompt;
                     next.compacted_step = Some(step);
                     next.phase = Phase::Model { step, attempt: 0 };
-                    handle
-                        .commit(
-                            &mut state,
-                            next,
-                            vec![json!({"type":"context-compacted","step":step,
+                    drop(
+                        handle
+                            .commit(
+                                state,
+                                next,
+                                vec![json!({"type":"context-compacted","step":step,
                         "originalTokens":plan.original_tokens,"compressedTokens":composition.total,
                         "messageCount":plan.message_count,"summary":plan.summary,
                         "composition":composition})],
-                            false,
-                        )
-                        .await?;
+                                false,
+                            )
+                            .await?,
+                    );
                     continue;
                 }
                 plan.attempt += 1;
                 let request_id = format!("{}:compact:{step}:{}", handle.id, plan.attempt);
                 {
-                    let mut state = handle.state.lock().await;
+                    let state = handle.state.lock().await;
                     let mut next = state.execution.clone();
                     next.phase = Phase::Compact {
                         step,
                         plan: plan.clone(),
                     };
-                    handle
-                        .commit(
-                            &mut state,
-                            next,
-                            vec![json!({"type":"compaction-call-started","step":step,
+                    drop(
+                        handle
+                            .commit(
+                                state,
+                                next,
+                                vec![json!({"type":"compaction-call-started","step":step,
                         "requestId":request_id,"startedAt":chrono::Utc::now().to_rfc3339()})],
-                            false,
-                        )
-                        .await?;
+                                false,
+                            )
+                            .await?,
+                    );
                 }
                 let (request, through) = plan.request(&execution.request.provider, policy)?;
                 let mut stream = provider_events(request);
@@ -1033,12 +1112,12 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 plan.summary = summary;
                 plan.offset = through;
                 plan.chunk += 1;
-                let mut state = handle.state.lock().await;
+                let state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 let event = json!({"type":"compaction-call-finished","step":step,
                     "chunk":plan.chunk,"requestId":request_id,"usage":usage});
                 next.phase = Phase::Compact { step, plan };
-                handle.commit(&mut state, next, vec![event], false).await?;
+                drop(handle.commit(state, next, vec![event], false).await?);
             }
             Phase::Finish { step, disposition } => return Ok(LoopFinish::Done(step, disposition)),
             Phase::Model { step, attempt } => {
@@ -1050,13 +1129,13 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     if let Decision::Finish(disposition) =
                         loop_policy::before_model(&session, &root, &run)
                     {
-                        let mut state = handle.state.lock().await;
+                        let state = handle.state.lock().await;
                         let mut next = state.execution.clone();
                         next.phase = Phase::Finish {
                             step: step.saturating_sub(1),
                             disposition: Some(disposition),
                         };
-                        handle.commit(&mut state, next, Vec::new(), false).await?;
+                        drop(handle.commit(state, next, Vec::new(), false).await?);
                         continue;
                     }
                 }
@@ -1080,17 +1159,17 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                             }
                             ContextAction::Compact(plan) => {
                                 let event = json!({"type":"context-compaction-started","step":step,"originalTokens":plan.original_tokens,"source":plan.source});
-                                let mut state = handle.state.lock().await;
+                                let state = handle.state.lock().await;
                                 let mut next = state.execution.clone();
                                 next.phase = Phase::Compact { step, plan };
-                                handle.commit(&mut state, next, vec![event], false).await?;
+                                drop(handle.commit(state, next, vec![event], false).await?);
                                 continue;
                             }
                         }
                     }
                 }
                 {
-                    let mut state = handle.state.lock().await;
+                    let state = handle.state.lock().await;
                     let mut next = state.execution.clone();
                     next.phase = Phase::Model {
                         step,
@@ -1108,7 +1187,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         event["attempt"] = json!(retry.attempt);
                         event["maxRetries"] = json!(MAX_MODEL_RETRIES);
                     }
-                    handle.commit(&mut state, next, vec![event], false).await?;
+                    drop(handle.commit(state, next, vec![event], false).await?);
                 }
                 let mut events = provider_events(model_request);
                 check_execution(handle, execution.request.execution_context.as_ref()).await?;
@@ -1175,22 +1254,35 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 if let Some(error) = failure {
                     drop(events);
                     let message = error.to_string().to_ascii_lowercase();
-                    let context_overflow = ["context_length_exceeded", "maximum context length", "prompt is too long", "input is too long"]
-                        .iter().any(|text| message.contains(text));
-                    if !delivered && context_overflow && execution.context_repair_step != Some(step)
-                        && execution.request.provider.max_retries != Some(0) && execution.request.runtime_binding.is_some()
+                    let context_overflow = [
+                        "context_length_exceeded",
+                        "maximum context length",
+                        "prompt is too long",
+                        "input is too long",
+                    ]
+                    .iter()
+                    .any(|text| message.contains(text));
+                    if !delivered
+                        && context_overflow
+                        && execution.context_repair_step != Some(step)
+                        && execution.request.provider.max_retries != Some(0)
+                        && execution.request.runtime_binding.is_some()
                     {
                         if let Some(policy) = execution.request.context_policy.as_ref() {
                             let budget = policy.input_budget() * 3 / 4;
                             let context_id = format!("{}:{step}:budget-repair", handle.id);
-                            let mut state = handle.state.lock().await;
+                            let state = handle.state.lock().await;
                             let mut next = state.execution.clone();
                             next.context_repair_step = Some(step);
-                            next.request.context_policy.as_mut().unwrap().input_limit = Some(budget);
+                            next.request.context_policy.as_mut().unwrap().input_limit =
+                                Some(budget);
                             next.step_context = None;
-                            next.phase = Phase::Context { step, context_id: context_id.clone() };
-                            handle.commit(&mut state, next, vec![json!({"type":"context-request","step":step,
-                                "contextId":context_id,"inputBudget":budget,"reason":"provider-context-overflow","contextCorrection":execution.context_correction})], false).await?;
+                            next.phase = Phase::Context {
+                                step,
+                                context_id: context_id.clone(),
+                            };
+                            drop(handle.commit(state, next, vec![json!({"type":"context-request","step":step,
+                                "contextId":context_id,"inputBudget":budget,"reason":"provider-context-overflow","contextCorrection":execution.context_correction})], false).await?);
                             continue;
                         }
                     }
@@ -1225,7 +1317,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         "Model step failed before delivering content; backing off"
                     );
                     {
-                        let mut state = handle.state.lock().await;
+                        let state = handle.state.lock().await;
                         let mut next = state.execution.clone();
                         next.model_retry = Some(ModelRetry {
                             attempt: retries + 1,
@@ -1240,14 +1332,16 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                             "attempt":retries + 1,"maxRetries":MAX_MODEL_RETRIES,
                             "nextRetryAt":chrono::Utc::now().timestamp_millis() + delay.as_millis() as i64,
                             "error":error_text.chars().take(1000).collect::<String>()});
-                        handle
-                            .commit(
-                                &mut state,
-                                next,
-                                vec![json!({"type":"retry_status","step":step,"retry":retry})],
-                                false,
-                            )
-                            .await?;
+                        drop(
+                            handle
+                                .commit(
+                                    state,
+                                    next,
+                                    vec![json!({"type":"retry_status","step":step,"retry":retry})],
+                                    false,
+                                )
+                                .await?,
+                        );
                     }
                     // Dropping the failed stream released its body; the sleep
                     // is cancelled with the loop, never left behind.
@@ -1269,7 +1363,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     let reason = format!(
                         "{error}. No tools from this response were executed. Retry the intended tool calls using a complete JSON object matching each tool's schema, with properly escaped strings and no Markdown fences. If the response was truncated, use smaller calls."
                     );
-                    let mut state = handle.state.lock().await;
+                    let state = handle.state.lock().await;
                     let mut next = state.execution.clone();
                     next.tool_argument_retry = Some(ToolArgumentRetry {
                         attempt: retries + 1,
@@ -1281,14 +1375,18 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         .provider
                         .prompt
                         .push(json!({"role":"user","content":[{"type":"text","text":reason}]}));
-                    handle
-                        .commit(
-                            &mut state,
-                            next,
-                            vec![json!({"type":"policy-correction","step":step,"reason":reason})],
-                            false,
-                        )
-                        .await?;
+                    drop(
+                        handle
+                            .commit(
+                                state,
+                                next,
+                                vec![
+                                    json!({"type":"policy-correction","step":step,"reason":reason}),
+                                ],
+                                false,
+                            )
+                            .await?,
+                    );
                     continue;
                 }
                 let assistant =
@@ -1318,7 +1416,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     Decision::Continue
                 };
                 let invalid_batch = loop_policy::validate_tool_batch(&final_events);
-                let mut state = handle.state.lock().await;
+                let state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 next.tool_argument_retry = None;
                 next.context_correction = None;
@@ -1385,7 +1483,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                         }
                     };
                 }
-                handle.commit(&mut state, next, final_events, false).await?;
+                drop(handle.commit(state, next, final_events, false).await?);
             }
             Phase::Tools { step, calls } => {
                 let waiting = std::time::Instant::now();
@@ -1434,7 +1532,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     parts.push(json!({"type":"tool-result","toolCallId":result.tool_call_id,"output":result.result,"isError":result.is_error}));
                 }
                 events.push(json!({"type":"step-completed","step":step}));
-                let mut state = handle.state.lock().await;
+                let state = handle.state.lock().await;
                 let mut next = state.execution.clone();
                 next.request
                     .provider
@@ -1448,7 +1546,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                 } else {
                     next_phase(&next.request, step + 1)
                 };
-                handle.commit(&mut state, next, events, false).await?;
+                drop(handle.commit(state, next, events, false).await?);
             }
         }
     }
@@ -1465,12 +1563,14 @@ mod tests {
         let (changed, _) = watch::channel(0);
         let (cancel, _) = watch::channel(false);
         Arc::new(LoopHandle {
+            budget: event_budget::shared(),
             id: id.into(),
             store: None,
             router: None,
             changed,
             cancel,
             state: Mutex::new(LoopState {
+                version: 0,
                 execution: ExecutionState {
                     initial_hash: String::new(),
                     request: request(),
@@ -1598,32 +1698,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pending_capacity_failure_does_not_publish_a_sequence_gap() {
+    async fn slow_consumer_backpressures_until_ack_without_sequence_gaps() {
+        let loops = AgentLoopManager::default();
         let handle = pending_loop("capacity");
-        handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES;
-        assert!(
-            handle
-                .emit(json!({"type":"text-delta","delta":"full"}), false)
-                .await
-                .is_err()
-        );
-        {
-            let mut state = handle.state.lock().await;
-            let next = state.execution.clone();
-            assert!(
-                handle
-                    .commit(&mut state, next, vec![json!({"type":"tool-call"})], false)
-                    .await
-                    .is_err()
-            );
-            assert_eq!(state.execution.sequence, 0);
-            assert!(state.events.is_empty());
-        }
+        loops
+            .loops
+            .lock()
+            .await
+            .insert(handle.id.clone(), handle.clone());
         handle
-            .emit(json!({"type":"error","error":"delivery stalled"}), true)
+            .emit(json!({"type":"text-delta","delta":"first"}), false)
             .await
             .unwrap();
-        assert_eq!(handle.state.lock().await.execution.sequence, 1);
+        // Fill the logical per-loop budget without allocating a 32 MiB test fixture.
+        handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE;
+        let pending = {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                handle
+                    .emit(json!({"type":"text-delta","delta":"next"}), false)
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished());
+        {
+            let mut state = handle.state.lock().await;
+            state.pending_bytes = state.events.iter().map(|e| e.bytes.len()).sum();
+        }
+        loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let state = handle.state.lock().await;
+        assert_eq!(state.execution.sequence, 2);
+        assert_eq!(state.events.len(), 1);
     }
 
     #[tokio::test]
@@ -1735,5 +1846,109 @@ mod tests {
             let id = loops.start(req).await.unwrap();
             loops.cancel(&id).await.unwrap();
         }
+    }
+    #[tokio::test]
+    async fn global_pending_budget_wakes_another_loop_after_ack() {
+        let budget = Arc::new(EventBudget::new(200, TERMINAL_RESERVE));
+        let mut first = pending_loop("one");
+        let mut second = pending_loop("two");
+        Arc::get_mut(&mut first).unwrap().budget = budget.clone();
+        Arc::get_mut(&mut second).unwrap().budget = budget;
+        let loops = AgentLoopManager::default();
+        loops
+            .loops
+            .lock()
+            .await
+            .insert(first.id.clone(), first.clone());
+        first
+            .emit(json!({"type":"text-delta","delta":"x".repeat(80)}), false)
+            .await
+            .unwrap();
+        let waiting = {
+            let second = second.clone();
+            tokio::spawn(async move {
+                second
+                    .emit(json!({"type":"text-delta","delta":"x".repeat(80)}), false)
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        loops.acknowledge_events(&first.id, 1, None).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.state.lock().await.execution.sequence, 1);
+    }
+
+    #[tokio::test]
+    async fn a_blocked_transaction_does_not_hold_the_ack_lock() {
+        let loops = AgentLoopManager::default();
+        let handle = pending_loop("commit-wait");
+        loops
+            .loops
+            .lock()
+            .await
+            .insert(handle.id.clone(), handle.clone());
+        handle
+            .emit(json!({"type":"text-delta","delta":"first"}), false)
+            .await
+            .unwrap();
+        handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE;
+        let waiting = {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                let state = handle.state.lock().await;
+                let next = state.execution.clone();
+                handle
+                    .commit(state, next, vec![json!({"type":"step-completed"})], false)
+                    .await
+                    .map(drop)
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        {
+            let mut state = handle.state.lock().await;
+            state.pending_bytes = state.events.iter().map(|event| event.bytes.len()).sum();
+        }
+        loops.acknowledge_events(&handle.id, 1, None).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(handle.state.lock().await.execution.sequence, 2);
+    }
+
+    #[tokio::test]
+    async fn cancellation_unblocks_a_full_delivery_queue_and_keeps_a_terminal_slot() {
+        let handle = pending_loop("cancel-full");
+        handle.state.lock().await.pending_bytes = MAX_PENDING_EVENT_BYTES - TERMINAL_RESERVE;
+        let waiting = {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                handle
+                    .emit(json!({"type":"text-delta","delta":"blocked"}), false)
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished());
+        handle.state.lock().await.execution.cancel_requested = true;
+        handle.cancel.send_replace(true);
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(handle.state.lock().await.execution.sequence, 0);
+        handle
+            .emit(json!({"type":"cancelled"}), true)
+            .await
+            .unwrap();
+        assert_eq!(handle.state.lock().await.execution.sequence, 1);
     }
 }

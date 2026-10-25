@@ -42,6 +42,7 @@ export interface ModelsDevProvider {
 }
 
 export interface RuntimeModel {
+  supportedReasoningEfforts?: string[];
   inputModalities?: InputModality[];
   outputModalities?: string[];
   id: string;

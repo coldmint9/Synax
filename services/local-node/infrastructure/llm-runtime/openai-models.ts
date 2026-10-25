@@ -30,8 +30,13 @@ export function openAIModelContract(
       inputLimit: 922_000,
       maxTokens: 128_000,
       reasoning: true,
+      // Conservative utility-call policy for gateways resolving this alias to gpt-6.1-sol.
+      ...(id === "gpt-6-sol" ? { supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"] } : {}),
       toolCall: true,
     };
+  }
+  if (id === "gpt-6.1-sol") {
+    return { reasoning: true, supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"] };
   }
   if (GPT_IMAGE_MODELS.includes(id as (typeof GPT_IMAGE_MODELS)[number])) {
     return {

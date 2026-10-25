@@ -26,9 +26,15 @@ export async function resourceRequest<T>(operation: string, body: unknown, signa
     try {
       const response = await fetch(`http://127.0.0.1:${port}/resources/${operation}`, {
         method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000),
+        body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(operation === "wait" ? 30_000 : 5_000)]) : AbortSignal.timeout(operation === "wait" ? 30_000 : 5_000),
       });
-      if (!response.ok) throw Object.assign(new Error(`Resource admission failed: ${await response.text()}`), { permanent: response.status < 500 });
+      if (!response.ok) {
+        const detail = await response.text();
+        const message = operation === "wait" && detail.includes("unknown resource operation")
+          ? "Rust runtime does not support resource_wait; rebuild and restart the matching host and sidecar."
+          : `Resource admission failed: ${detail}`;
+        throw Object.assign(new Error(message), { permanent: response.status < 500 });
+      }
       return await response.json() as T;
     } catch (error) {
       last = error;
@@ -76,8 +82,7 @@ export async function withToolResource<T>(tool: RegisteredTool, input: ToolExecu
     let status: LeaseStatus;
     do {
       signal.throwIfAborted();
-      status = await resourceRequest<LeaseStatus>("request", { request, executionContext }, signal);
-      if (status.state === "queued") await delay(200, undefined, { signal });
+      status = await resourceRequest<LeaseStatus>("wait", { request, executionContext, waitMs: 25_000 }, signal);
     } while (status.state === "queued");
     if (status.state !== "running" || !status.startedAt || !status.deadline) throw new Error(`Resource request ended: ${status.state}`);
     progress = { ...progress, phase: "executing_tool", startedAt: new Date(status.startedAt).toISOString(),

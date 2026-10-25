@@ -60,6 +60,7 @@ export interface TitleGenerator {
 const registry = new Map<string, TitleGenerator>();
 const titleGenerationInFlight = new Map<string, Promise<void>>();
 const titleGenerationQueued = new Set<string>();
+const titleOutputSeen = new Set<string>();
 
 /**
  * Schedule session-title generation off the caller's critical path.
@@ -73,7 +74,7 @@ const titleGenerationQueued = new Set<string>();
 function scheduleSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: "run_started" | "stream_done",
+  trigger: "first_output" | "stream_done",
 ): void {
   if (titleGenerationInFlight.has(sessionId)) {
     // A generation is already running; re-check once it settles so a title
@@ -96,7 +97,7 @@ function scheduleSessionTitleGeneration(
 async function runDeferredSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: "run_started" | "stream_done",
+  trigger: "first_output" | "stream_done",
 ): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
   await runSessionTitleGeneration(sessionId, runId, trigger);
@@ -196,7 +197,7 @@ function resolveFinalSessionTitle(
 async function applyGeneratedSessionTitle(
   session: AgentSession,
   userInput: string,
-  trigger: "run_started" | "stream_done",
+  trigger: "first_output" | "stream_done",
   runId?: string,
 ): Promise<void> {
   const llmTitle = await resolveSessionTitleText(
@@ -287,25 +288,26 @@ export function needsGeneratedSessionTitle(session: AgentSession): boolean {
   return !session.title?.trim();
 }
 
-/**
- * Start title generation together with the first turn instead of waiting
- * for the stream to finish, so the session gets its name while the
- * conversation is still streaming. The call stays deferred and coalesced
- * by scheduleSessionTitleGeneration, so it never blocks the turn itself.
- */
+/** Schedule only after useful model output; startup must belong to the foreground request. */
 export function maybeScheduleSessionTitleFromStreamChunk(
   sessionId: string,
   chunk: AgentRunStreamChunk,
 ): void {
-  if (chunk.type !== "run_started") return;
-  scheduleSessionTitleGeneration(sessionId, chunk.run.id, "run_started");
+  if (chunk.type === 'run_started') { titleOutputSeen.delete(sessionId); return; }
+  if (titleOutputSeen.has(sessionId) || titleGenerationInFlight.has(sessionId)) return;
+  const useful = ((chunk.type === "message_delta" || chunk.type === "thought_delta") && chunk.delta.length > 0)
+    || chunk.type === "tool_call"
+    || (chunk.type === "message" && chunk.message.role === "assistant" && chunk.message.content.length > 0);
+  if (!useful) return;
+  titleOutputSeen.add(sessionId);
+  if (titleOutputSeen.size > 1024) titleOutputSeen.delete(titleOutputSeen.values().next().value!);
+  const session = agentRuntimeStore.tryGetSession(sessionId);
+  if (!session || !needsGeneratedSessionTitle(session)) return;
+  scheduleSessionTitleAfterFirstOutput(sessionId, "runId" in chunk ? chunk.runId : undefined);
 }
 
-export function scheduleSessionTitleAfterRunStart(
-  sessionId: string,
-  runId: string,
-): void {
-  scheduleSessionTitleGeneration(sessionId, runId, "run_started");
+export function scheduleSessionTitleAfterFirstOutput(sessionId: string, runId?: string): void {
+  scheduleSessionTitleGeneration(sessionId, runId, "first_output");
 }
 
 /** Reliable fallback: generate title after a streamed turn completes. */
@@ -316,7 +318,7 @@ export function ensureSessionTitleGenerated(sessionId: string): void {
 async function runSessionTitleGeneration(
   sessionId: string,
   runId: string | undefined,
-  trigger: "run_started" | "stream_done",
+  trigger: "first_output" | "stream_done",
 ): Promise<void> {
   try {
     const session = agentRuntimeStore.tryGetSession(sessionId);
@@ -334,9 +336,9 @@ async function runSessionTitleGeneration(
       );
       return;
     }
-    if (session.activeRunId && trigger !== "run_started") {
+    if (session.activeRunId && trigger !== "first_output") {
       // A late fallback fired while the run is still in flight (for example
-      // the client stream ended before the run did). The run-start trigger
+      // the client stream ended before the run did). The first-output trigger
       // is intentionally allowed to overlap the first turn.
       logger.debug(
         { sessionId, trigger, activeRunId: session.activeRunId },
@@ -447,9 +449,10 @@ async function resolveTitleTextWithLlm(
           ].join("\n"),
         },
       ],
-      maxTokens: 128,
+      maxTokens: 2048,
+      maxRetries: 0,
       temperature: 0.3,
-    });
+    }, AbortSignal.timeout(22_000));
 
     finishAuxUsage(usageId, normalizeResultUsage(result));
     const title = (result.text ?? "").trim().slice(0, 50);
@@ -472,16 +475,6 @@ async function resolveTitleTextWithLlm(
  * duplicate the model call.
  */
 export function registerSessionTitleHooks(): void {
-  sessionHooks.register({
-    id: "session-title-after-run-start",
-    filter: { eventTypes: ["run:started"] },
-    handler: (event) => {
-      if (event.type !== "run:started") return;
-      const session = agentRuntimeStore.tryGetSession(event.sessionId);
-      if (!session?.parentSessionId) return;
-      scheduleSessionTitleAfterRunStart(event.sessionId, event.runId);
-    },
-  });
   sessionHooks.register({
     id: "session-title-after-run",
     filter: { eventTypes: ["run:completed"] },

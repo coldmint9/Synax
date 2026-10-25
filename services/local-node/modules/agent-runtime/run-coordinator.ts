@@ -438,13 +438,13 @@ export class RunCoordinator {
       // done is emitted after the durable barrier, so clients cannot mistake a
       // successful transport for a successful durable completion.
       if (chunk.type === "done") {
-        buffer.append(chunk);
+        await buffer.appendWithBackpressure(chunk);
         await buffer.flush();
         return;
       }
       if (chunk.type === "run_completed" || chunk.type === "run_failed") {
         agentRuntimeStore.acceptRunProjection(chunk.run);
-        buffer.append(chunk);
+        await buffer.appendWithBackpressure(chunk);
         await buffer.flush();
         await agentRuntimeStore.flushSession(sessionId);
         terminalChunk = chunk;
@@ -453,7 +453,7 @@ export class RunCoordinator {
       chunk = owner.realtime?.publish(chunk) ?? chunk;
       if ("run" in chunk && chunk.run)
         agentRuntimeStore.acceptRunProjection(chunk.run);
-      buffer.append(chunk);
+      await buffer.appendWithBackpressure(chunk, owner.controller.signal);
       if (process.env.SYNAX_DURABLE_DELTA_BUFFER === "0") {
         await agentRuntimeStore.flushSession(sessionId);
         await buffer.flush();

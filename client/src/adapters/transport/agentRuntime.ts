@@ -830,6 +830,8 @@ export interface SessionEnvironmentFileView {
   kind: "diff" | "input";
   content: string;
   truncated: boolean;
+  originalContent?: string;
+  modifiedContent?: string;
 }
 
 export interface SessionGitCommitResult {
@@ -1573,7 +1575,7 @@ async function submitAndObserveRun(
   );
   await new Promise<void>((resolve, reject) => {
     const source = new AuthenticatedEventSource(
-      `${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream`,
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream?realtime=1`,
     );
     let cursor = 0;
     source.onmessage = (event) => {

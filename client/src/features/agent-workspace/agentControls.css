@@ -1210,6 +1210,14 @@ textarea.agent-request-input {
 .session-context-picker-heading > button:hover {
   background: hsl(var(--primary) / 0.12);
 }
+.session-context-picker-option--featured {
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--ui-line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--ui-panel-soft));
+}
+.session-context-picker-option--featured:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--ui-line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--ui-panel-soft));
+}
 .session-context-picker :is(button, input):focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: -2px;

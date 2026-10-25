@@ -15,6 +15,7 @@ vi.mock("./monacoRuntime", async () => {
   return {
     monaco: holder.harness.monaco,
     languageForPath: async () => "typescript",
+    applyMonacoTheme: vi.fn(),
   };
 });
 import MonacoMergeWorkbench from "./MonacoMergeWorkbench";

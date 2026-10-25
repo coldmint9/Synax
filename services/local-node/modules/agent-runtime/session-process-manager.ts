@@ -1,3 +1,4 @@
+import { StreamQueue } from "./stream-queue.js";
 import {
   prepareOwnedProcess,
   recordOwnedPid,
@@ -67,44 +68,6 @@ function prepareWorkerMetadata(): Promise<void> {
     skillSourceService.ensureDefaultSources();
     await businessStore.flush(["skill-sources"]);
   }).finally(() => { preparingWorkerMetadata = undefined; });
-}
-
-type StreamQueueItem =
-  | { kind: "parked" }
-  | { kind: "chunk"; chunk: AgentRunStreamChunk }
-  | { kind: "done" }
-  | { kind: "error"; error: string; code?: string };
-
-class StreamQueue {
-  private readonly pending: StreamQueueItem[] = [];
-  private resolvers: Array<(item: StreamQueueItem) => void> = [];
-  private closed = false;
-
-  push(item: StreamQueueItem): void {
-    const resolve = this.resolvers.shift();
-    if (resolve) {
-      resolve(item);
-      return;
-    }
-    this.pending.push(item);
-  }
-
-  async next(): Promise<StreamQueueItem> {
-    const pending = this.pending.shift();
-    if (pending) return pending;
-    if (this.closed) return { kind: "done" };
-    return new Promise<StreamQueueItem>((resolve) => {
-      this.resolvers.push(resolve);
-    });
-  }
-
-  close(): void {
-    this.closed = true;
-    for (const resolve of this.resolvers) {
-      resolve({ kind: "done" });
-    }
-    this.resolvers = [];
-  }
 }
 
 interface ActiveStream {
@@ -320,6 +283,7 @@ export class SessionProcessManager {
 
       childState.child.send?.({
         type: "stream:start",
+        flowControl: "byte-credit-v1",
         streamId,
         mode,
         input,
@@ -352,7 +316,7 @@ export class SessionProcessManager {
           this.pendingStarts.remove(sessionId);
           childState.streams.set(streamId, { streamId, queue });
           input = { ...input, acceptedRunId: runId, resumeExecution: true };
-          childState.child.send?.({ type: "stream:start", streamId, mode: "resume", input });
+          childState.child.send?.({ type: "stream:start", flowControl: "byte-credit-v1", streamId, mode: "resume", input });
           continue;
         }
         if (item.kind === "error") {
@@ -365,6 +329,7 @@ export class SessionProcessManager {
         break;
       }
     } finally {
+      queue.dispose();
       this.pendingStarts.remove(sessionId);
       this.streamControllers.delete(sessionId);
       if (onAbort) {
@@ -971,10 +936,26 @@ export class SessionProcessManager {
       return;
     }
 
+    if (message.type === "stream:reserve") {
+      const stream = state.streams.get(message.streamId);
+      try {
+        if (!stream) throw new Error("Stream is no longer active.");
+        await stream.queue.reserve(message.deliveryId, message.bytes);
+        state.child.send?.({ type: "stream:credit", deliveryId: message.deliveryId });
+      } catch (error) {
+        if (state.child.connected) state.child.send?.({ type: "stream:credit", deliveryId: message.deliveryId, error: String(error) });
+      }
+      return;
+    }
+
     if (message.type === "stream:chunk") {
       const stream = state.streams.get(message.streamId);
       if (!stream) return;
-      stream.queue.push({ kind: "chunk", chunk: message.chunk });
+      try { stream.queue.push({ kind: "chunk", chunk: message.chunk }, message.deliveryId); }
+      catch (error) {
+        this.streamControllers.get(sessionId)?.abort(error);
+        return;
+      }
       maybeScheduleSessionTitleFromStreamChunk(sessionId, message.chunk);
       forwardChunkToLiveBus(sessionId, message.chunk);
       return;

@@ -119,7 +119,7 @@ async fn handle_connection(
         let input: Value = serde_json::from_slice(&request.body)?;
         let scheduler = crate::runtime::resources::shared();
         let result: Result<Value, String> = match request.path.as_str() {
-            "/resources/request" => {
+            "/resources/request" | "/resources/wait" => {
                 let resource: Result<crate::runtime::resources::ResourceRequest, _> =
                     serde_json::from_value(input["request"].clone());
                 let context: Result<crate::runtime::execution::ExecutionLease, _> =
@@ -133,7 +133,29 @@ async fn handle_connection(
                         match loops.check_resource(&context).await {
                             Ok(root) => {
                                 resource.root_session_id = root;
-                                scheduler.request(resource).map(|s| json!(s))
+                                if request.path == "/resources/wait" {
+                                    let wait_ms =
+                                        input["waitMs"].as_u64().unwrap_or(25_000).clamp(1, 25_000);
+                                    let mut disconnected = [0u8; 1];
+                                    tokio::select! {
+                                        _ = stream.read(&mut disconnected) => return Ok(()),
+                                        status = scheduler.wait(resource.clone(), wait_ms) => match status {
+                                            Ok(status) if status.state == "running" && status.queue_wait_ms > 0 => {
+                                                // A long wait may outlive its execution owner. No tool has started yet.
+                                                match loops.check_resource(&context).await {
+                                                    Ok(_) => Ok(json!(status)),
+                                                    Err(error) => {
+                                                        let _ = scheduler.release(&resource.id, &resource.owner_id);
+                                                        Err(error.to_string())
+                                                    }
+                                                }
+                                            }
+                                            other => other.map(|status| json!(status)),
+                                        },
+                                    }
+                                } else {
+                                    scheduler.request(resource).map(|s| json!(s))
+                                }
                             }
                             Err(error) => Err(error.to_string()),
                         }

@@ -7,7 +7,7 @@ export function createMonacoHarness() {
     Uri: { from: (value: unknown) => value }, Range: class { constructor(public startLineNumber: number, public startColumn: number, public endLineNumber: number, public endColumn: number) {} },
     KeyMod: { CtrlCmd: 1, Shift: 2 }, KeyCode: { KeyS: 4, F8: 8 },
     editor: {
-      OverviewRulerLane: { Full: 1 }, setTheme: vi.fn(),
+      OverviewRulerLane: { Full: 1 }, defineTheme: vi.fn(), setTheme: vi.fn(),
       createModel(value: string) {
         let text = value, version = 1;
         const callbacks = new Set<() => void>();
@@ -21,6 +21,16 @@ export function createMonacoHarness() {
         const change = options.model.onDidChangeContent(() => { textarea.value = options.model.getValue(); });
         const editor = { model: options.model, textarea, actions, layout: vi.fn(), updateOptions: vi.fn((next: any) => { textarea.readOnly = next.readOnly; }), createDecorationsCollection: () => ({ set: vi.fn(), clear: vi.fn() }), addAction: ({ id, run }: any) => { actions.set(id, run); return { dispose: () => actions.delete(id) }; }, onDidBlurEditorWidget: (callback: () => void) => { textarea.addEventListener("blur", callback); return { dispose: () => textarea.removeEventListener("blur", callback) }; }, saveViewState: vi.fn(() => ({})), restoreViewState: vi.fn(), onDidScrollChange: () => ({ dispose: vi.fn() }), getVisibleRanges: () => [{ startLineNumber: 1 }], getScrollTop: () => 0, getTopForLineNumber: (line: number) => line * 21, setScrollTop: vi.fn(), revealLineInCenter: vi.fn(), setPosition: vi.fn(), focus: vi.fn(), dispose: vi.fn(() => { change.dispose(); textarea.removeEventListener("input", input); textarea.remove(); }) };
         editors.push(editor); return editor;
+      },
+      createDiffEditor(host: HTMLElement, options: any) {
+        const editor = {
+          setModel: vi.fn(),
+          layout: vi.fn(),
+          dispose: vi.fn(() => { host.replaceChildren(); }),
+          options,
+        };
+        editors.push(editor);
+        return editor;
       },
     },
   };

@@ -26,6 +26,8 @@ pub(crate) struct ProviderRequest {
     pub(crate) reasoning_effort: Option<String>,
     #[serde(default, rename = "reasoningCapable")]
     pub(crate) reasoning_capable: bool,
+    #[serde(default, rename = "supportedReasoningEfforts")]
+    pub(crate) supported_reasoning_efforts: Vec<String>,
     #[serde(default, rename = "responseOptions")]
     pub(crate) response_options: Value,
     #[serde(default, rename = "cachePolicy")]

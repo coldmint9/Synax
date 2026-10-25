@@ -56,7 +56,6 @@ const { agentRuntimeStore } =
   await import("../services/local-node/modules/agent-runtime/session-store.js");
 const { persistInlineVisualization } =
   await import("../services/local-node/modules/agent-runtime/visualization-integration.js");
-const { closeDb } = await import("../services/local-node/infrastructure/database/index.js");
 const session = agentSessionRuntime.create({
   projectId: "visualization-app",
   profileId: "executor",
@@ -101,8 +100,6 @@ else {
   assert.ok(message.metadata.visualization);
   assert.deepEqual(await fs.readdir(workspace), []);
 }
-
-closeDb();
 
 async function freePort() {
   const server = http.createServer();

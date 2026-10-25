@@ -20,6 +20,7 @@ export type RustAgentLoopProviderRequest = {
   purpose?: string;
   reasoningEffort?: string;
   reasoningCapable?: boolean;
+  supportedReasoningEfforts?: string[];
   cachePolicy?: Record<string, unknown>;
   prompt: unknown[];
   tools?: unknown[];

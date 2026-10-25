@@ -1,3 +1,4 @@
+import { WorkerStreamCredits } from "../../local-node/infrastructure/runtime/ipc/stream-credit.js";
 import { createWorkerShutdown, startExitWatchdog } from "./worker-shutdown.js";
 import { withinExecutionContext } from "../../local-node/infrastructure/runtime/execution-context.js";
 import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
@@ -26,6 +27,7 @@ const activeStreams = new Map<string, AbortController>();
 const activeCompactions = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
 let yieldWorkerRequested = false;
+const streamCredits = new WorkerStreamCredits();
 
 function pickGenerator(
   mode: AgentSessionStreamMode,
@@ -65,6 +67,7 @@ async function runStream(
   streamId: string,
   mode: AgentSessionStreamMode,
   input: StreamTurnRequest,
+  flowControl?: "byte-credit-v1",
 ): Promise<void> {
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
@@ -88,8 +91,11 @@ async function runStream(
         sendAgentSessionToParent({ type: "stream:parked", sessionId, streamId });
         return;
       }
+      const deliveryId = flowControl ? await streamCredits.reserve(streamId, chunk, abortController.signal,
+        message => sendAgentSessionToParent({ ...message, sessionId })) : undefined;
       sendAgentSessionToParent({
         type: "stream:chunk",
+        deliveryId,
         sessionId,
         streamId,
         chunk,
@@ -209,6 +215,7 @@ function main(): void {
       return;
     }
     if (!initialized) return;
+    if (message.type === "stream:credit") { streamCredits.grant(message.deliveryId, message.error); return; }
     if (message.type === "runtime:notify") { runtimeBus.emit(message.event); return; }
     if (message.type === "stream:yield-request") { yieldWorkerRequested = message.requested; return; }
     if (message.type === "context:cancel") {
@@ -227,6 +234,7 @@ function main(): void {
         message.streamId,
         message.mode,
         message.input,
+        message.flowControl,
       );
       runningTasks.add(task);
       void task.finally(() => runningTasks.delete(task));

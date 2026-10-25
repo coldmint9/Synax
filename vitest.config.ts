@@ -20,7 +20,6 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "**/.claude/worktrees/**",
-      "client/src/react/features/**/*.test.tsx",
     ],
   },
 });

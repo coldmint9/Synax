@@ -3,7 +3,7 @@ import {
   resolveInitialSessionTitle,
   shortSessionTitle,
   generateSessionTitle,
-  scheduleSessionTitleAfterRunStart,
+  scheduleSessionTitleAfterFirstOutput,
   maybeScheduleSessionTitleFromStreamChunk,
   ensureSessionTitleGenerated,
   isValidGeneratedSessionTitle,
@@ -153,7 +153,7 @@ describe("session title after first run", () => {
     for (const session of sessions) {
       const runId = `run_${session.id}`;
       agentRuntimeStore.updateSession(session.id, { activeRunId: runId });
-      scheduleSessionTitleAfterRunStart(session.id, runId);
+      scheduleSessionTitleAfterFirstOutput(session.id, runId);
     }
     expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
     await vi.waitFor(() => {
@@ -195,7 +195,7 @@ describe("session title after first run", () => {
     );
   });
 
-  it("generates the title on run_started while the first turn is still running", async () => {
+  it("waits for model output before generating a title during the first turn", async () => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -225,6 +225,11 @@ describe("session title after first run", () => {
     maybeScheduleSessionTitleFromStreamChunk(session.id, {
       type: "run_started",
       run,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+    maybeScheduleSessionTitleFromStreamChunk(session.id, {
+      type: "message_delta", runId: run.id, stepId: "step", delta: "你好",
     });
 
     await vi.waitFor(() => {
@@ -268,7 +273,7 @@ describe("session title after first run", () => {
     })).toBe(false);
   });
 
-  it("scheduleSessionTitleAfterRunStart generates title for placeholder sessions", async () => {
+  it("scheduleSessionTitleAfterFirstOutput generates title for placeholder sessions", async () => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -293,7 +298,7 @@ describe("session title after first run", () => {
       metadata: {},
     });
 
-    scheduleSessionTitleAfterRunStart(session.id, run.id);
+    scheduleSessionTitleAfterFirstOutput(session.id, run.id);
 
     await vi.waitFor(() => {
       expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");
