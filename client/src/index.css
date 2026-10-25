@@ -5279,18 +5279,6 @@ input[type="radio"] {
   cursor: default;
 }
 
-/* The workspace panel is now content-only; controls live in the island. */
-.session-workspace-sidebar--dock {
-  align-self: flex-start;
-  height: calc(100% - 4px);
-  margin: -6px 10px 10px 0;
-  overflow: visible;
-}
-
-.session-workspace-sidebar--focus {
-  background: var(--background);
-}
-
 .session-workspace-panel {
   display: flex;
   height: 100%;

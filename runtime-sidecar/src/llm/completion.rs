@@ -98,7 +98,7 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
         // already read and end the step as a length stop. A turn that produced
         // nothing at all stays an error, so the loop never retries it forever.
         let truncated =
-            truncation_reason(response.error.as_deref(), !response.choice.is_empty())
+            truncation_reason(response.error.as_deref(), !response.choice.is_empty() || response.usage.output_tokens.is_some_and(|tokens| tokens > 0))
                 .map(str::to_owned);
         if let Some(reason) = &truncated {
             tracing::warn!(event = "provider.incomplete", reason = %reason,
@@ -117,6 +117,15 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
             yield json!({"type":"structured-output","value":value});
         }
         let limit_reached = truncated.is_some();
+        let usage = &response.usage;
+        yield json!({"type":"raw","rawValue":response.raw});
+        yield json!({"type":"usage","usage":{"source":"native","protocol":input.api_format,"adapter":input.adapter,
+            "inputTokens":usage.input_tokens,"outputTokens":usage.output_tokens,
+            "cachedInputTokens":usage.cached_input_tokens,"cacheWriteTokens":usage.cache_creation_input_tokens,"reasoningTokens":usage.reasoning_tokens,
+            "raw":response.raw.get("usage")}});
+        let message = response.message().unwrap_or_else(|| Message::Assistant(AssistantMessage::new(vec![])));
+        let content: Vec<Value> = response.choice.iter().map(display_block).collect();
+        yield json!({"type":"assistant-message","message":{"role":"assistant","content":content,"rigMessage":message}});
         let mut ids = HashSet::new();
         let mut calls = Vec::new();
         for call in response.tool_calls() {
@@ -135,17 +144,6 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
             };
             calls.push(json!({"type":"tool-call","toolCallId":id,"toolName":runtime_name,"input":arguments}));
         }
-        let usage = &response.usage;
-        yield json!({"type":"raw","rawValue":response.raw});
-        yield json!({"type":"usage","usage":{"source":"native","protocol":input.api_format,"adapter":input.adapter,
-            "inputTokens":usage.input_tokens,"outputTokens":usage.output_tokens,
-            "cachedInputTokens":usage.cached_input_tokens,"cacheWriteTokens":usage.cache_creation_input_tokens,"reasoningTokens":usage.reasoning_tokens,
-            "raw":response.raw.get("usage")}});
-        let message = response.message().unwrap_or_else(|| Message::Assistant(AssistantMessage::new(vec![])));
-        // Legacy display blocks keep the public event stable. rigMessage carries
-        // all original items, signatures, origin and ordering without loss.
-        let content: Vec<Value> = response.choice.iter().map(display_block).collect();
-        yield json!({"type":"assistant-message","message":{"role":"assistant","content":content,"rigMessage":message}});
         for call in calls { yield call; }
         let (reason, raw) = match response.finish_reason() {
             Some(FinishReason::Stop) => ("stop", "stop".to_owned()),
@@ -179,7 +177,8 @@ fn truncation_reason<'a>(error: Option<&'a str>, has_answer: bool) -> Option<&'a
     if !has_answer {
         return None;
     }
-    error.and_then(incomplete_reason)
+    error.and_then(incomplete_reason).filter(|reason| matches!(*reason,
+        "length" | "max_output_tokens" | "max_tokens" | "max_completion_tokens"))
 }
 
 fn display_block(block: &AssistantContent) -> Value {
@@ -212,11 +211,11 @@ mod tests {
         );
         assert_eq!(
             truncation_reason(Some("Response incomplete: max_tool_calls"), true),
-            Some("max_tool_calls")
+            None
         );
         assert_eq!(
             truncation_reason(Some("Response incomplete without a provider reason"), true),
-            Some("without a provider reason")
+            None
         );
     }
 

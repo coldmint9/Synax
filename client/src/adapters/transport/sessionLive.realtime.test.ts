@@ -8,7 +8,7 @@ vi.mock('./authenticatedEventSource', () => ({ AuthenticatedEventSource: class {
   addEventListener(type: string, handler: any) { this.handlers.set(type, handler); }
 } }));
 import { sessionLiveStream } from './sessionLive';
-import { announceRunObservation } from './runRealtime';
+import { announceRunObservation, hasRunRealtimeObservation } from './runRealtime';
 afterEach(() => { sources.length = 0; vi.restoreAllMocks(); });
 const run = { id: 'r', sessionId: 's', status: 'running' };
 const state = { status: 'running', activeRunId: 'r' };
@@ -53,5 +53,44 @@ it('does not let delayed discovery of a finished run replace the current run str
     cursor: 10, liveChunks: [], completedStepIds: [] }) });
   expect(sources).toHaveLength(3);
   expect(sources[2].close).not.toHaveBeenCalled();
+  close();
+});
+
+it('forwards the durable terminal state after realtime ownership ends', () => {
+  const events = vi.fn();
+  const close = sessionLiveStream('s', events);
+  announceRunObservation('s', 'r');
+  const [durable, realtime] = sources;
+  durable.handlers.get('snapshot')({ data: JSON.stringify({
+    session: { id: 's', ...state },
+    run,
+    cursor: 0,
+    liveChunks: [],
+    completedStepIds: [],
+  }) });
+
+  const message = {
+    id: 'm',
+    sessionId: 's',
+    runId: 'r',
+    stepId: null,
+    role: 'assistant',
+    content: 'done',
+    createdAt: '2026-10-25T00:00:00Z',
+  } as never;
+  durable.handlers.get('chunk')({ data: JSON.stringify({
+    sequence: 1,
+    sessionId: 's',
+    runId: 'r',
+    state: { status: 'completed', activeRunId: null },
+    chunk: { type: 'run_completed', message },
+  }) });
+
+  expect(events.mock.calls.map(([event]) => event.type)).toEqual([
+    'runtime_state',
+    'message',
+  ]);
+  expect(hasRunRealtimeObservation('s')).toBe(false);
+  expect(realtime.close).toHaveBeenCalledOnce();
   close();
 });

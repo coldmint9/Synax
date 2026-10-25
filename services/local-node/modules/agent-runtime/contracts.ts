@@ -568,7 +568,7 @@ export const streamTurnRequestSchema = z.object({
   model: z.string().min(1).max(256).optional(),
   purpose: z.string().min(1).max(64).optional(),
   temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().positive().max(200_000).optional(),
+  maxTokens: z.number().int().positive().max(10_000_000).optional(),
   maxSteps: z
     .number()
     .int()

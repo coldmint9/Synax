@@ -111,6 +111,9 @@ pub enum AuxRecord {
     /// A copied log preserves all historical records, but exposes only the
     /// source's committed visible head after its one-pass replay.
     RebuildHead(HistoryHead),
+    /// Destructive transcript edit: rebuild visibility and discard the old
+    /// generation's change feed and retrieval hints during replay as well.
+    TruncateHead(HistoryHead),
     Generation(u64),
     /// The visible-index generation, used as the `history_sync` epoch.
     IndexGeneration(u64),
@@ -321,6 +324,24 @@ impl SessionIndex {
                         let objects = self.objects.clone();
                         self.rebuild(root, &mut |id| objects.get(id).cloned())?;
                     }
+                    self.head = head;
+                }
+                AuxRecord::TruncateHead(head) => {
+                    if let Some(root) = head.object_id.as_deref() {
+                        let objects = self.objects.clone();
+                        self.rebuild(root, &mut |id| objects.get(id).cloned())?;
+                    }
+                    self.changes.clear();
+                    let hints: Vec<_> = self.aux_entries("context\0hint\0")
+                        .map(|(key, value)| {
+                            let retained: Vec<_> = value.as_array().into_iter().flatten()
+                                .filter(|hint| hint["id"].as_str().is_some_and(|id|
+                                    self.identity.contains_key(&identity_key("message", &head.session_id, id))))
+                                .cloned().collect();
+                            (key.clone(), serde_json::json!(retained))
+                        }).collect();
+                    for (key, value) in hints { self.aux.insert(key, Some(value)); }
+                    self.current_head_revision = head.revision;
                     self.head = head;
                 }
                 AuxRecord::Generation(generation) => self.generation = generation,
@@ -770,6 +791,9 @@ fn now_iso() -> String {
 }
 
 fn convert_io(error: crate::storage::jsonl::error::JsonlError) -> HistoryError {
+    if matches!(error, crate::storage::jsonl::error::JsonlError::Runtime(crate::runtime::actor::RuntimeError::SessionDeleted)) {
+        return HistoryError::SessionDeleted;
+    }
     HistoryError::InvalidCommand(error.to_string())
 }
 

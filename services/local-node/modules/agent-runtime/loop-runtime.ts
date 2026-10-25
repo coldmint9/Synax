@@ -127,6 +127,7 @@ import { waitForChildSessions } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
+import { resolveOutputReserve } from "../../infrastructure/llm-runtime/model-output-limits.js";
 import {
   mapThinkingModeToReasoningEffort,
   type ReasoningEffort,
@@ -735,8 +736,8 @@ export class AgentLoopRuntime {
           modelCapabilities = {
             reasoning: selection.modelDef.reasoning ?? false,
           };
-          runOutputReserve =
-            input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
+          runOutputReserve = resolveOutputReserve(selection.modelDef,
+            input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode), input.maxTokens ?? selection.config.maxOutputTokens);
           if (
             typeof selection.modelDef.contextLimit === "number" &&
             selection.modelDef.contextLimit > 0

@@ -4,6 +4,14 @@ import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import { hasRunRealtimeObservation } from "../../adapters/transport/runRealtime";
 
+function isTerminalSessionStatus(status: AgentSession["status"] | undefined): boolean {
+  return status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "interrupted" ||
+    status === "paused";
+}
+
 export function isTitleOnlyPatch(
   patch: Partial<AgentSession>,
   previous?: AgentSession,
@@ -71,7 +79,11 @@ export function useRuntimeSSE() {
           const titleOnly = isTitleOnlyPatch(data.patch, previous);
           const realtime = hasRunRealtimeObservation(data.sessionId);
           const patch = { ...data.patch };
-          if (realtime) {
+          // The run stream owns intermediate lifecycle transitions, but the
+          // terminal session patch is the durable completion barrier. Keep it
+          // visible to the list so a finished reply can stop its loader even
+          // when the run realtime channel has not closed yet.
+          if (realtime && !isTerminalSessionStatus(data.patch.status)) {
             // Run transport owns lifecycle until durable finalization. A
             // session-wide hint must not expose an early completed state or
             // start a competing full-history hydration for every token tick.

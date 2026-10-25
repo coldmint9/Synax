@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
-import { updateGlobalConfig } from "../../../infrastructure/runtime/config/config-store.js";
+import { getGlobalConfigForRuntime, updateGlobalConfig } from "../../../infrastructure/runtime/config/config-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
@@ -40,7 +40,7 @@ let requests: Array<Record<string, unknown>>;
 let sessionId: string;
 let multiple = false;
 let askHuman = false;
-let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" | "overflow" | "active-compact" = "normal";
+let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" | "overflow" | "active-compact" | "length" | "length-loop" = "normal";
 let rejectedContextRequests = 0;
 let mediaAssetId: string;
 let longToolRounds = 34;
@@ -151,6 +151,17 @@ beforeEach(async () => {
     let body = "";
     for await (const chunk of request) body += chunk;
     requests.push(JSON.parse(body));
+    if (request.url?.endsWith("/responses")) {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      const event = (type: string, payload: object) => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`);
+      const item = { id: "msg_fixture", type: "message", role: "assistant", content: [] };
+      event("response.output_item.added", { output_index: 0, item });
+      event("response.output_text.delta", { output_index: 0, item_id: item.id, content_index: 0, delta: "Final response." });
+      event("response.output_item.done", { output_index: 0, item: { ...item, status: "completed", content: [{ type: "output_text", text: "Final response.", annotations: [] }] } });
+      event("response.completed", { response: { usage: { input_tokens: 10, output_tokens: 4 } } });
+      response.end();
+      return;
+    }
     if (scenario === "overflow" && !body.includes("Maintain a structured conversation checkpoint") && rejectedContextRequests++ === 0) {
       response.writeHead(400, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { code: "context_length_exceeded", message: "maximum context length exceeded" } }));
@@ -161,7 +172,10 @@ beforeEach(async () => {
     const chunk = (delta: object, finish_reason: string | null = null) => response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
     response.writeHead(200, { "content-type": "text/event-stream" });
     const call = (index: number, name: string, args: unknown) => chunk({ tool_calls: [{ index, id: `provider-call-${requests.length}-${index}`, type: "function", function: { name: name.replaceAll(".", "_"), arguments: JSON.stringify(args) } }] });
-    if (scenario === "active-compact" && !body.includes("Maintain a structured conversation checkpoint")) {
+    if (scenario === "length" || scenario === "length-loop") {
+      chunk({ content: scenario === "length-loop" ? `Segment ${requests.length}. ` : requests.length === 1 ? "First part. " : "Second part." });
+      chunk({}, scenario === "length-loop" || requests.length === 1 ? "length" : "stop");
+    } else if (scenario === "active-compact" && !body.includes("Maintain a structured conversation checkpoint")) {
       const mainRequests = requests.filter(item => !JSON.stringify(item).includes("Maintain a structured conversation checkpoint"));
       if (mainRequests.length <= 3) {
         chunk({ content: "Historical observation USER_INVARIANT. ".repeat(6000) });
@@ -502,6 +516,72 @@ it("interrupts an active run after Rust is killed and starts a new run only on u
   expect(store.getRun(next.run.id).status).toBe("completed");
   expect(requests).toHaveLength(2);
 }, 15_000);
+
+it("renews a configured output cap in one message and replays its full history on the next turn", async () => {
+  scenario = "length";
+  const connection = getGlobalConfigForRuntime().providerConnections.openai;
+  updateGlobalConfig({ providerConnections: { openai: { ...connection, extra: { ...connection.extra, maxOutputTokens: 512 } } } }, "output-cap-test");
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Give the full answer" }, "length-renewal");
+  await coordinator.waitForIdle();
+  expect(store.getRun(accepted.run.id).status).toBe("completed");
+  expect(store.listRunSteps(accepted.run.id)).toHaveLength(1);
+  expect(store.listRunSteps(accepted.run.id)[0].metadata.usage).toMatchObject({ inputTokens: 20, outputTokens: 8, providerRequestCount: 2 });
+  expect(requests.map(body => body.max_tokens ?? body.max_completion_tokens)).toEqual([512, 512]);
+  const replies = store.listMessages(sessionId).filter(message => message.role === "assistant");
+  expect(replies.map(message => message.content)).toEqual(["First part. Second part."]);
+  expect((replies[0].metadata.rustMessage as { continuationMessages: unknown[] }).continuationMessages).toHaveLength(3);
+  await store.flushSession(sessionId);
+  await store.hydrateSession(sessionId, true);
+  scenario = "compact";
+  updateGlobalConfig({ providerConnections: { openai: connection } }, "clear-output-cap-test");
+  await coordinator.submitAsync(sessionId, { message: "Follow up" }, "after-length-renewal");
+  await coordinator.waitForIdle();
+  expect(requests).toHaveLength(3);
+  expect(requests[2]).not.toHaveProperty("max_tokens");
+  expect(JSON.stringify(requests[2])).toContain("First part.");
+  expect(JSON.stringify(requests[2])).toContain("Second part.");
+  expect(JSON.stringify(requests[2])).not.toContain("continuationMessages");
+  expect(store.listMessages(sessionId).filter(message => message.role === "user")).toHaveLength(2);
+}, 20_000);
+
+it("retains streamed text when the bounded renewal limit is exhausted", async () => {
+  scenario = "length-loop";
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Give the full answer" }, "length-exhausted");
+  await coordinator.waitForIdle();
+  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "failed", stopReason: expect.stringContaining("OUTPUT_CONTINUATION_LIMIT") });
+  expect(requests).toHaveLength(9);
+  const reply = store.listMessages(sessionId).find(message => message.role === "assistant")!;
+  expect(reply.content).toContain("Segment 9.");
+  expect(reply.metadata.partial).toBe(true);
+}, 20_000);
+
+it.each([
+  { apiFormat: "openai", modelLimit: undefined, requestedLimit: undefined, reserve: 8192 },
+  { apiFormat: "openai-responses", modelLimit: undefined, requestedLimit: undefined, reserve: 8192 },
+  { apiFormat: "openai", modelLimit: 65536, requestedLimit: undefined, reserve: 65536 },
+  { apiFormat: "openai-responses", modelLimit: 65536, requestedLimit: undefined, reserve: 65536 },
+  { apiFormat: "openai", modelLimit: 65536, requestedLimit: 1024, reserve: 1024 },
+  { apiFormat: "openai-responses", modelLimit: 65536, requestedLimit: 1024, reserve: 1024 },
+] as const)("keeps context reservations out of $apiFormat output limits (model=$modelLimit, request=$requestedLimit)", async ({ apiFormat, modelLimit, requestedLimit, reserve }) => {
+  scenario = "compact";
+  const gateway = await import("../../../infrastructure/llm-runtime/gateway.js");
+  const actual = gateway.resolveGatewaySelection;
+  const selection = vi.spyOn(gateway, "resolveGatewaySelection").mockImplementation(async (...args) => {
+    const resolved = await actual(...args);
+    return { ...resolved, apiFormat, modelDef: { ...resolved.modelDef, contextLimit: 200_000, maxTokens: modelLimit } };
+  });
+  try {
+    const accepted = await coordinator.submitAsync(sessionId, { message: "Give a final answer", maxTokens: requestedLimit }, "output-defaults");
+    await coordinator.waitForIdle();
+    const run = store.getRun(accepted.run.id);
+    expect(run.status, JSON.stringify(run)).toBe("completed");
+    expect(run.metadata).toMatchObject({ outputReserve: reserve, inputBudget: 200_000 - reserve });
+    expect(requests).toHaveLength(1);
+    const limits = ["max_tokens", "max_completion_tokens", "max_output_tokens"].filter(key => key in requests[0]);
+    expect(limits.map(key => requests[0][key])).toEqual(requestedLimit === undefined ? [] : [requestedLimit]);
+    expect(store.listMessages(sessionId).some(message => message.content === "Final response.")).toBe(true);
+  } finally { selection.mockRestore(); }
+});
 
 it("persists Rust compaction checkpoints and accounts for auxiliary requests once", async () => {
   scenario = "compact";

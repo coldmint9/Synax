@@ -3,6 +3,7 @@ use super::contract::ProviderRequest;
 use serde_json::{Value, json};
 
 pub(crate) fn prepare(mut input: ProviderRequest) -> ProviderRequest {
+    input.prompt = super::expanded_messages(&input.prompt).into_iter().cloned().collect();
     super::cache::prepare(&mut input);
     // Volatile runtime reminders belong to the input tail, outside the stable
     // system instructions. Keep original text and per-block metadata intact.

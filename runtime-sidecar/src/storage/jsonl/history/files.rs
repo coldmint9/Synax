@@ -988,7 +988,9 @@ impl FileStore {
                 if ctx.index.aux_value(&claim_key(&file)).is_some() {
                     return Err(busy("a file has an active writer"));
                 }
-                if !same(&self.file_snapshot(&file, false)?, &change.after) {
+                if value["force"].as_bool() != Some(true)
+                    && !same(&self.file_snapshot(&file, false)?, &change.after)
+                {
                     return Err(busy(format!("independent change at {}", file.display())));
                 }
             }

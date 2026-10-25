@@ -59,6 +59,8 @@ export interface ProviderRequest {
   toolChoice?: unknown;
   maxRetries?: number;
   maxOutputTokens?: number;
+  requiredMaxOutputTokens?: number;
+  outputTokenParameter?: "max_completion_tokens";
   temperature?: number;
   topP?: number;
   topK?: number;

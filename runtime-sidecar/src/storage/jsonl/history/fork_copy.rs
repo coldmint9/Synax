@@ -88,6 +88,11 @@ impl Remap {
                 head.object_id = head.object_id.map(|id| self.objects.get(&id).cloned().ok_or_else(|| invalid("fork head missing"))).transpose()?;
                 Record::HistoryAux(AuxRecord::RebuildHead(head))
             }
+            Record::HistoryAux(AuxRecord::TruncateHead(mut head)) => {
+                head.session_id = self.target.clone();
+                head.object_id = head.object_id.map(|id| self.objects.get(&id).cloned().ok_or_else(|| invalid("fork head missing"))).transpose()?;
+                Record::HistoryAux(AuxRecord::TruncateHead(head))
+            }
             Record::HistoryAux(AuxRecord::Set(mut key, mut value)) => {
                 if key == "context\0active" || key.starts_with("file\0restore") || key.starts_with("file\0pending") || key.starts_with("file\0claim") || key.starts_with("file\0mutation") {
                     // A copy inherits historical outcomes, never an active
@@ -160,6 +165,7 @@ impl HistoryTask {
                 let expected = required_u64(value, "expectedRevision")?;
                 if expected != head.revision { return Err(HistoryError::RevisionConflict { expected, actual: head.revision }); }
             }
+            if value["fullHistory"] != true {
             let pin = required_string(value, "checkpointId")?;
             let saved = guard.index.aux_value(&format!("pin\0{pin}")).ok_or_else(|| HistoryError::ObjectMissing(pin.into()))?;
             let message_id = saved["metadata"]["messageId"].as_str().ok_or_else(|| invalid("fork checkpoint has no message"))?;
@@ -167,6 +173,7 @@ impl HistoryTask {
             let boundary = guard.index.aux_value("context\0current").and_then(|v| v["throughRevision"].as_u64());
             if boundary.is_some_and(|boundary| guard.index.first_revision.get(&key).is_some_and(|r| *r <= boundary)) {
                 return Err(HistoryError::ReadOnlyHistory);
+            }
             }
             let path = history_path(self.root(), source_id)?.join("history.000000");
             let legacy = if path.exists() { let file = File::open(path)?; let length = file.metadata()?.len(); Some((file, length)) } else { None };
@@ -178,6 +185,7 @@ impl HistoryTask {
             (guard.index.clone(), guard.file.handle(), guard.file.len(), legacy, resources)
         };
         let mut guard = target.lock.lock();
+        layout::ensure_not_deleted(self.root(), target_id).map_err(convert_io)?;
         if let Some(receipt) = guard.index.receipts.get(&receipt_key) {
             if receipt.identity != identity { return Err(HistoryError::RequestConflict); }
             return Ok(receipt.result.clone());

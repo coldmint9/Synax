@@ -30,7 +30,7 @@ import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
 import { historyPages, hydrateHistoryValues, readHistoryList, readSessionList } from './history-pages.js';
-import { fileCommand, previewRuntimeFiles, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
+import { fileCommand, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
 export type RuntimeSidecarStreamMode = "authoritative";
 const HISTORY_ENTITY_PAGE_BYTES = 768 * 1024;
 function streamMode(): RuntimeSidecarStreamMode {
@@ -1353,9 +1353,19 @@ export class RuntimeFacade {
     if(checkpoint.metadata.readOnly === true) throw new AgentRuntimeError('This history was sealed by context compaction.','READ_ONLY_HISTORY',409);
     const index=messages.findIndex(item=>item.id===checkpoint.metadata.messageId);
     if(index<0)throw new AgentRuntimeError('History checkpoint message was not found.','CHECKPOINT_NOT_FOUND',404);
-    const files=includeFiles?await previewRuntimeFiles(sessionId,checkpointId):{files:[] as RuntimeFileChange[],conflicts:[] as RuntimeFileConflict[],preservedFiles:[] as RuntimeFileConflict[],warnings:[] as string[]};
-    return {checkpointId,revision:head.revision,removedMessages:Math.max(0,messages.length-index-(checkpoint.metadata.kind==='input'?0:1)),...files,
-      canApply:files.conflicts.length===0,exclusions:FILE_EXCLUSIONS};
+    if (index === messages.length - 1)
+      throw new AgentRuntimeError('The latest history node cannot be rolled back.','HISTORY_LATEST_NODE',409);
+    const files=includeFiles
+      ? {
+          ...(await fileCommand<{files: RuntimeFileChange[]; warnings: string[]}>(sessionId, 'file_preview', { checkpointId })),
+          conflicts: [] as RuntimeFileConflict[],
+          preservedFiles: [] as RuntimeFileConflict[],
+        }
+      : {files:[] as RuntimeFileChange[],conflicts:[] as RuntimeFileConflict[],preservedFiles:[] as RuntimeFileConflict[],warnings:[] as string[]};
+    return {checkpointId,revision:head.revision,removedMessages:Math.max(0,messages.length-index-1),...files,
+      // Truncation deliberately discards independent workspace edits; the
+      // preview is informational and must not block the operation.
+      canApply:true,exclusions:FILE_EXCLUSIONS};
   }
   private async writeHistoryRootRefs(
     sessionId: string,
@@ -1572,6 +1582,37 @@ export class RuntimeFacade {
       throw error;
     }
   }
+  async truncateHistoryAuthoritative(input: {sessionId:string;checkpointId:string;revision:number;requestId:string;mode:'session'|'session_and_workspace'}) {
+    await this.assertHistoryIdle(input.sessionId);
+    const checkpoint = await this.historyCheckpointById(input.sessionId, input.checkpointId);
+    const messages = await this.listMessageHistory(input.sessionId) as AgentRuntimeMessage[];
+    const index = messages.findIndex(item => item.id === checkpoint.metadata.messageId);
+    if (index < 0) throw new AgentRuntimeError('History checkpoint message was not found.', 'CHECKPOINT_NOT_FOUND', 404);
+    if (index === messages.length - 1) throw new AgentRuntimeError('The latest history node cannot be rolled back.', 'HISTORY_LATEST_NODE', 409);
+    const head = await this.historyHeadAuthoritative(input.sessionId);
+    if (head.revision !== input.revision) throw new AgentRuntimeError('Conversation changed. Refresh history.', 'HISTORY_STALE', 409);
+    const requestId = `history-truncate:${input.requestId}`;
+    if (input.mode === 'session_and_workspace') {
+      // The existing checkpoint restore switches the transcript head and the
+      // workspace together; force mode deliberately skips independent-change
+      // preservation. It also remains recoverable through the file restore
+      // marker if the acknowledgement is interrupted.
+      const restored = await fileCommand<{ revision: number }>(input.sessionId, 'restore_checkpoint', {
+        checkpointId: input.checkpointId, expectedRevision: input.revision,
+        includeFiles: true, force: true, preservePaths: [],
+      }, requestId);
+      await fileCommand(input.sessionId, 'file_restore_ack', { requestId }, `history-ack:${requestId}`);
+      await agentRuntimeStore.hydrateSession(input.sessionId, true);
+      return { sessionId: input.sessionId, revision: restored.revision };
+    }
+    const restored = await this.historyCommand({
+      sessionId: input.sessionId, requestId, operation: 'truncate_history',
+      payload: { messageId: checkpoint.metadata.messageId, expectedRevision: input.revision,
+        metadata: { ...checkpoint.metadata, historyFields: checkpoint.metadata.historyFields ?? {} } },
+    }) as { revision: number };
+    await agentRuntimeStore.hydrateSession(input.sessionId, true);
+    return { sessionId: input.sessionId, revision: restored.revision };
+  }
   async recoverHistoryAuthoritative(sessionId: string): Promise<void> {
     const control=await this.controlState(sessionId) as {runtimeControl?:{historyRequestId?:string}};
     const pending=(await pendingRuntimeFiles()).restores.find(item=>item.sessionId===sessionId);
@@ -1589,7 +1630,8 @@ export class RuntimeFacade {
   async cloneHistoryAuthoritative(input: {
     sourceSessionId: string;
     targetSessionId: string;
-    checkpointId: string;
+    checkpointId?: string;
+    fullHistory?: boolean;
     revision: number;
     requestId: string;
     allowSourceChanges?: boolean;
@@ -1608,6 +1650,7 @@ export class RuntimeFacade {
       requestId: `history-fork-copy:${input.requestId}`,
       operation: "fork_copy",
       payload: { sourceSessionId: input.sourceSessionId, checkpointId: input.checkpointId,
+        fullHistory: input.fullHistory ?? false,
         expectedRevision: input.revision, allowSourceChanges: input.allowSourceChanges ?? false,
         sessionMetadata: input.sessionMetadata ?? {} },
     }) as { revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> };
@@ -1633,6 +1676,14 @@ export class RuntimeFacade {
   async releaseForkAssets(sessionId: string): Promise<void> {
     await this.historyCommandGlobal({ scopeId: "assets", requestId: `fork-assets-release:${sessionId}:${randomUUID()}`,
       operation: "asset_release_bindings", payload: { sessionId } });
+  }
+  async purgeSessionAuthoritative(sessionId: string): Promise<void> {
+    await this.historyCommandGlobal({ scopeId: sessionId, requestId: `purge:${sessionId}`,
+      operation: "session_purge", payload: {} });
+    const result = await this.historyCommandGlobal({ scopeId: "assets", requestId: `purge-assets:${sessionId}`,
+      operation: "asset_purge_session", payload: { sessionId } }) as { deletedAssetIds: string[] };
+    const { forgetDeletedSessionAssets } = await import("../media-assets.js");
+    forgetDeletedSessionAssets(sessionId, result.deletedAssetIds);
   }
   async historyHeadAuthoritative(sessionId: string): Promise<{
     revision: number;

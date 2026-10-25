@@ -101,6 +101,7 @@ async function readAll<T extends readonly unknown[]>(reads: { [K in keyof T]: Pr
  * executing and await flush before acknowledging commands or yielding worker IPC. */
 export class AgentRuntimeStore {
   private sessions = new Map<string, AgentSession>();
+  private deletedSessions = new Set<string>();
   private entities = new Map<string, Map<string, Entity>>();
   private tails = new Map<string, Promise<void>>();
   private failures = new Map<string, unknown>();
@@ -212,7 +213,7 @@ export class AgentRuntimeStore {
     this.listing = (async () => {
       for await (const items of sessionPages<AgentSession>(runtimeClient(), signal)) {
         for (const session of items) {
-          if (!session || typeof session.id !== 'string') continue;
+          if (!session || typeof session.id !== 'string' || this.deletedSessions.has(session.id)) continue;
           // Background list pages must not overwrite a newly admitted run or
           // local edits made while the index was still replaying old sessions.
           if (this.sessions.get(session.id) === previous.get(session.id)) this.sessions.set(session.id, copy(session));
@@ -226,6 +227,7 @@ export class AgentRuntimeStore {
     refresh = false,
     options: { include?: readonly (keyof typeof collections)[]; execution?: boolean } = {},
   ): Promise<void> {
+    if (this.deletedSessions.has(sessionId)) throw new AgentNotFoundError(sessionId);
     this.summaryLeases.delete(sessionId);
     const kinds = options.include?.length
       ? [...new Set(options.include)].filter(kind => kind in collections)
@@ -288,6 +290,7 @@ export class AgentRuntimeStore {
       for (const permission of control.permissions as PermissionDecision[]) incoming.get("permission")?.set(permission.id, permission);
       for (const interaction of control.interactions as Entity[]) incoming.get("interaction")?.set(interaction.id, interaction);
       await (await import("./media-assets.js")).hydrateSessionAssets(sessionId);
+      if (this.deletedSessions.has(sessionId)) throw new AgentNotFoundError(sessionId);
       // Publish after every read succeeds. Readers must never see an empty
       // collection between deletion and an awaited history page. A local
       // update made during the read keeps its identity and pending WAL write.
@@ -404,6 +407,7 @@ export class AgentRuntimeStore {
     } while (cursor);
     const previousSession = this.sessions.get(sessionId);
     const [snapshotBytes, control] = await readAll([runtimeClient().uiSnapshot(sessionId), patchRuntime(sessionId, "read", {})]);
+    if (this.deletedSessions.has(sessionId)) throw new AgentNotFoundError(sessionId);
     const snapshot = decode<{ session: AgentSession; run: AgentRun | null }>(snapshotBytes);
     for (const item of updates.values()) {
       const collection = this.collection(item.kind);
@@ -452,6 +456,7 @@ export class AgentRuntimeStore {
   }
   /** Refresh the small projection at request boundaries without loading history. */
   async hydrateSessionSummary(sessionId: string, force = false): Promise<void> {
+    if (this.deletedSessions.has(sessionId)) throw new AgentNotFoundError(sessionId);
     const lease = this.summaryLeases.get(sessionId);
     if (!force && lease && Date.now() - lease.at < AgentRuntimeStore.SUMMARY_LEASE_MS)
       return lease.task;
@@ -471,6 +476,7 @@ export class AgentRuntimeStore {
     await this.flushSession(sessionId);
     const previous = this.sessions.get(sessionId);
     const snapshot = decode<{ session: AgentSession }>(await runtimeClient().uiSnapshot(sessionId));
+    if (this.deletedSessions.has(sessionId)) throw new AgentNotFoundError(sessionId);
     if (this.sessions.get(sessionId) === previous) this.sessions.set(sessionId, snapshot.session);
   }
   private collection(kind: string): Map<string, Entity> {
@@ -806,12 +812,21 @@ export class AgentRuntimeStore {
       this.updateSession(s.id, {
         sessionMetadata: { ...s.sessionMetadata, deletedAt: nowIso() },
       });
-      sessionLiveBus.cleanup(s.id);
-      emitRuntimeBusEvent({ type: "session_deleted", sessionId: s.id });
     }
-    // DELETE is a physical in-process removal. Rust keeps the tombstoned
-    // projection for durable not-found semantics, while this cache must stop
-    // returning the deleted session's messages, runs and artifacts.
+    this.forgetDeletedSessions([...deletedIds]);
+    return items.map((s) => s.id);
+  }
+  /** Drop cache entries after authoritative deletion or a legacy tombstone. */
+  forgetDeletedSessions(sessionIds: string[]): void {
+    const deletedIds = new Set(sessionIds);
+    for (const sessionId of deletedIds) {
+      this.deletedSessions.add(sessionId);
+      this.summaryLeases.delete(sessionId);
+      sessionLiveBus.cleanup(sessionId);
+      emitRuntimeBusEvent({ type: "session_deleted", sessionId });
+    }
+    // Drop every cached payload as well as the summary so a deleted
+    // conversation cannot remain readable through the compatibility mirror.
     for (const records of this.entities.values())
       for (const [recordId, record] of records)
         if (record.sessionId && deletedIds.has(record.sessionId))
@@ -826,7 +841,6 @@ export class AgentRuntimeStore {
       this.tails.delete(sessionId);
       this.failures.delete(sessionId);
     }
-    return items.map((s) => s.id);
   }
   /** Accept an already-committed message returned by a scoped Rust command. */
   acceptMessageProjection(message: AgentRuntimeMessage & { sequence?: number }): void {
@@ -1182,6 +1196,7 @@ export class AgentRuntimeStore {
     return sessions.length;
   }
   reset(): void {
+    this.deletedSessions.clear();
     this.sessions.clear();
     this.entities.clear();
     this.loaded.clear();

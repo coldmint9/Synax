@@ -60,51 +60,56 @@
   white-space: nowrap;
 }
 .subagent-task-card .bui-task-open { flex-shrink: 0; }
-.subagent-task-result {
+.subagent-task-card .subagent-task-result {
+  max-height: none;
   margin: 0 0.65rem 0.55rem;
   padding: 0.55rem 0 0.1rem;
   border-top: 1px solid color-mix(in srgb, var(--ui-line) 72%, transparent);
   background: none;
 }
-.subagent-task-summary {
-  margin: 0;
+.subagent-interactions-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-block: 0.2rem 0.65rem;
   color: var(--ui-subtle);
   font-size: 0.72rem;
-  line-height: 1.5;
 }
-/* In-flight placeholder: reads as a status chip with a live sweep, never as
-   the child's answer text. */
-.subagent-task-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  padding: 0.1rem 0.5rem;
-  color: color-mix(in srgb, var(--accent) 82%, var(--ui-text));
-  font-size: 0.68rem;
-  font-weight: 500;
+.subagent-interactions-heading strong { color: var(--ui-text); font-weight: 600; }
+.subagent-exchanges { margin: 0; padding: 0; list-style: none; }
+.subagent-exchange {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding-block: 0.65rem;
 }
-.subagent-task-badge::before {
-  content: "";
-  width: 0.3rem;
-  height: 0.3rem;
-  flex-shrink: 0;
-  border-radius: 999px;
-  background: currentColor;
-  animation: subagent-task-pulse 1.2s ease-in-out infinite;
+.subagent-exchange + .subagent-exchange { border-top: 1px solid color-mix(in srgb, var(--ui-line) 45%, transparent); }
+.subagent-exchange-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 1.5rem;
+  height: 1.5rem;
+  border-radius: 6px;
+  background: var(--ui-panel-soft);
+  color: var(--ui-subtle);
 }
-@keyframes subagent-task-pulse {
-  0%,
-  100% { opacity: 0.35; }
-  50% { opacity: 1; }
+.subagent-exchange[data-direction="child"] .subagent-exchange-icon {
+  color: var(--ui-text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--ui-panel-soft));
 }
-@media (prefers-reduced-motion: reduce) {
-  .subagent-task-badge::before {
-    animation: none;
-    opacity: 0.8;
-  }
+.subagent-exchange-copy { min-width: 0; flex: 1; }
+.subagent-exchange-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; font-size: 0.7rem; line-height: 1.5; }
+.subagent-exchange-direction { color: var(--ui-text); font-weight: 550; }
+.subagent-exchange-kind, .subagent-exchange-heading time { color: var(--ui-subtle); }
+.subagent-exchange-heading time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.subagent-exchange-content { margin: 0.35rem 0 0; color: var(--ui-text); font-size: 0.76rem; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.subagent-exchange-more { min-height: 1.5rem; padding: 0.15rem 0; color: var(--ui-subtle); font-size: 0.72rem; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+.subagent-exchange-more:hover { color: var(--ui-text); }
+.subagent-interactions-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.5rem 0 0; color: var(--ui-subtle); font-size: 0.72rem; line-height: 1.5; }
+@media (max-width: 640px) {
+  .subagent-task-card .bui-task-header { flex-wrap: wrap; }
+  .subagent-task-card .bui-task-trigger { flex-basis: 100%; }
+  .subagent-task-card .subagent-identity { max-width: 42%; }
 }
 .subagent-task-instructions {
   margin: 0 0.75rem;

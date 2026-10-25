@@ -268,6 +268,31 @@ describe("providerPresets model metadata", () => {
     expect(connection.extra?.model).toBe("deepseek-chat");
   });
 
+  it("preserves discovered input/output limits through save and reload", () => {
+    const provider = makeProvider();
+    const draft = buildApiDrafts(makeConfig(provider), [provider]).find(item => item.id === provider.id)!;
+    draft.modelMeta["deepseek-chat"] = { contextLimit: 1_000_000, inputLimit: 900_000, outputLimit: 393_216 };
+    const saved = draftToProviderDef(draft);
+    expect(saved.models.find(item => item.id === "deepseek-chat"))
+      .toMatchObject({ contextLimit: 1_000_000, inputLimit: 900_000, maxTokens: 393_216 });
+    const reloaded = buildApiDrafts(makeConfig(saved), [saved]).find(item => item.id === provider.id)!;
+    expect(reloaded.modelMeta["deepseek-chat"]).toMatchObject({ inputLimit: 900_000, outputLimit: 393_216 });
+  });
+
+  it("round-trips an optional request cap independently from model capabilities", () => {
+    const provider = makeProvider();
+    const draft = buildApiDrafts(makeConfig(provider), [provider]).find(item => item.id === provider.id)!;
+    expect(draft.maxOutputTokens).toBe("");
+    expect(draftToConnection(draft).extra).not.toHaveProperty("maxOutputTokens");
+    draft.maxOutputTokens = "65536";
+    expect(draftToConnection(draft).extra?.maxOutputTokens).toBe(65_536);
+    expect(buildApiDrafts(makeConfig(provider, { maxOutputTokens: 65_536 }), [provider]).find(item => item.id === provider.id)?.maxOutputTokens).toBe("65536");
+    draft.maxOutputTokens = "";
+    expect(draftToConnection(draft).extra).not.toHaveProperty("maxOutputTokens");
+    for (const value of ["0", "-1", "1.5", "NaN", "10000001"])
+      expect(validateProviderDraft({ ...draft, maxOutputTokens: value })).toEqual(expect.arrayContaining([expect.objectContaining({ field: "maxOutputTokens" })]));
+  });
+
   it("falls back to a legacy single default effort and to all levels when unrestricted", () => {
     const provider = makeProvider();
     const config = makeConfig(provider, { defaultReasoningEffort: "high" });

@@ -151,6 +151,10 @@ export function detectMediaType(
 }
 const assets = new Map<string, RuntimeAsset>();
 const bindings = new Map<string, Set<string>>();
+export function forgetDeletedSessionAssets(sessionId: string, deletedAssetIds: string[]): void {
+  bindings.delete(sessionId);
+  for (const id of deletedAssetIds) assets.delete(id);
+}
 /** Metadata cache only. Asset bytes and binding authority are owned by Rust. */
 export async function hydrateRuntimeAssets(sessionIds: string[] = []): Promise<void> {
   let after: string | undefined;

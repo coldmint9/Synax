@@ -6,6 +6,7 @@ import { useLocale } from "../../shared/hooks/useLocale";
 import { SynaxWordmark } from "./SynaxWordmark";
 import { SessionTreeItem } from "./SessionTreeItem";
 import type { TimeGroup } from "./useSessionList";
+import type { SessionAction, SessionActionTarget } from "./SessionActionsDialog";
 
 interface Props {
   groups: TimeGroup[];
@@ -23,6 +24,7 @@ interface Props {
   onLoadMore: () => void | Promise<void>;
   onDelete: (id: string) => void;
   onTogglePin?: (id: string) => Promise<void>;
+  onSessionAction?: (kind: SessionAction, session: SessionActionTarget) => void;
 }
 
 /** Initial rows do not animate; a newly mounted page expands only once. */
@@ -65,6 +67,7 @@ export function SessionTimeGroups({
   onLoadMore,
   onDelete,
   onTogglePin,
+  onSessionAction,
 }: Props) {
   const { locale } = useLocale();
   const groupId = useId();
@@ -203,6 +206,7 @@ export function SessionTimeGroups({
                       onToggleExpand={onToggleExpand}
                       onDelete={onDelete}
                       onTogglePin={onTogglePin}
+                      onSessionAction={onSessionAction}
                     />
                   </SessionListReveal>
                 ))}

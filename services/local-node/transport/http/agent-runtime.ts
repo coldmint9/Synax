@@ -1,13 +1,14 @@
 import type { Context } from "hono";
 import { getRunRealtimeChannel } from "../../modules/agent-runtime/run-realtime-channel.js";
 import { singleForkRequest } from "../../modules/agent-runtime/fork-request.js";
+import { forkSessionTitle } from "../../modules/agent-runtime/session-title-service.js";
 import { Hono } from "hono";
 import { matchedRoutes } from 'hono/route';
 import { createConversationGitRoutes } from './conversation-git.js';
 import { createRemotePrRoutes } from './remote-pr.js';
 import { streamSSE } from "hono/streaming";
 import { BoundedEventWriter } from '../../modules/realtime/bounded-event-writer.js';
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as z from "zod/v4";
 import { assertLlmProviderConfigured } from "../../infrastructure/llm-runtime/provider-check.js";
 import {
@@ -191,6 +192,9 @@ agentRuntimeRoutes.use('*', async (c, next) => {
     // execution working set here would drain every history page before paging.
     const historyRead = (c.req.method === 'GET' || c.req.method === 'POST' && c.req.path.endsWith('/checkpoints')) && /\/(summary|history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
+    // Permanent deletion owns its hydration: retries must also reach archived
+    // or already removed roots to finish any interrupted cleanup.
+    if (c.req.method === 'POST' && c.req.path.endsWith('/delete-permanently')) { await next(); return; }
     if (id && !['search', 'badges'].includes(id)) {
       await ensureSessionRecovered(id);
       // Metadata-only mutations (pin / mode / permission rules) never read the
@@ -199,7 +203,8 @@ agentRuntimeRoutes.use('*', async (c, next) => {
       // refreshes the summary, so the separate summary read is only needed
       // when the working set is skipped.
       const metadataOnly =
-        c.req.method === 'PATCH' && /\/(pin|mode|permissions)$/.test(c.req.path);
+        (c.req.method === 'PATCH' && /\/(title|pin|mode|permissions)$/.test(c.req.path)) ||
+        (c.req.method === 'POST' && c.req.path.endsWith('/fork'));
       const loadsWorkingSet =
         c.req.method !== 'GET' &&
         !metadataOnly &&
@@ -213,7 +218,7 @@ agentRuntimeRoutes.use('*', async (c, next) => {
           await agentRuntimeStore.hydrateExecutionSession(id);
         else await agentRuntimeStore.hydrateSession(id);
       }
-      if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
+      if (/\/(cancel|archive|delete-permanently)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
     } else if (c.req.method !== 'GET' && /\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
       // Collection reads use the authoritative summary index directly. Loading
       // the execution mirror first would walk the same index a second time.
@@ -384,6 +389,7 @@ agentRuntimeRoutes.post(
 );
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
+    if (c.req.method === 'POST' && c.req.path.endsWith('/delete-permanently')) return next();
     const id = c.req.param("sessionId");
     if (id) {
       {
@@ -1132,6 +1138,23 @@ agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
     return runtimeError(c, error);
   }
 });
+async function permanentlyDeleteSessions(sessionIds: string[], parentId: string | null = null) {
+  for (const id of sessionIds) await agentRuntimeStore.flushSession(id);
+  if (parentId && !sessionIds.includes(parentId)) {
+    const parent = agentRuntimeStore.getSession(parentId);
+    await runtimeFacade.sessionPatch(parentId, `unlink-deleted:${randomUUID()}`, {
+      childSessionIds: parent.childSessionIds.filter((id) => !sessionIds.includes(id)),
+    });
+    await agentRuntimeStore.hydrateSessionSummary(parentId, true);
+    invalidateSessionEnvironment(parentId);
+  }
+  // Remove descendants first, keeping the root addressable if cleanup fails.
+  for (const id of [...sessionIds].reverse()) {
+    await runtimeFacade.purgeSessionAuthoritative(id);
+    agentRuntimeStore.forgetDeletedSessions([id]);
+    invalidateSessionEnvironment(id);
+  }
+}
 agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
   try {
     {
@@ -1145,17 +1168,7 @@ agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
         );
       if (!archived.some((session) => session.id === batchId))
         throw new AgentNotFoundError(batchId);
-      const deletedAt = new Date().toISOString();
-      await Promise.all(
-        archived.map((session) =>
-          runtimeFacade.sessionPatch(
-            session.id,
-            `archive-delete:${batchId}:${session.id}`,
-            { sessionMetadata: { deletedAt } },
-          ),
-        ),
-      );
-      for (const session of archived) invalidateSessionEnvironment(session.id);
+      await permanentlyDeleteSessions([batchId, ...archived.filter((session) => session.id !== batchId).map((session) => session.id)]);
       return c.json({
         ok: true,
         deletedSessionIds: archived.map((session) => session.id),
@@ -1252,6 +1265,30 @@ async function archiveSessionRoute(c: Context) {
 agentRuntimeRoutes.post("/sessions/:sessionId/archive", archiveSessionRoute);
 // Compatibility: old clients must archive, never physically delete.
 agentRuntimeRoutes.delete("/sessions/:sessionId", archiveSessionRoute);
+agentRuntimeRoutes.post("/sessions/:sessionId/delete-permanently", async (c) => {
+  try {
+    const id = c.req.param("sessionId");
+    let summary: AgentSession;
+    try { summary = await runtimeFacade.sessionSummaryAuthoritative(id); }
+    catch (error) {
+      if (!(error instanceof RuntimeSidecarError) || error.code !== "NOT_FOUND") throw error;
+      await runtimeFacade.purgeSessionAuthoritative(id);
+      agentRuntimeStore.forgetDeletedSessions([id]);
+      return c.json({ ok: true, deletedSessionIds: [id] });
+    }
+    await agentRuntimeStore.hydrateSessions();
+    if (summary.sessionMetadata?.archivedAt) {
+      const ids = ((await runtimeFacade.listSessionProjection()) as AgentSession[])
+        .filter((session) => session.id === id || session.sessionMetadata?.archiveBatchId === id).map((session) => session.id);
+      await permanentlyDeleteSessions([id, ...ids.filter((value) => value !== id)]);
+      return c.json({ ok: true, deletedSessionIds: ids });
+    }
+    await agentRuntimeStore.hydrateSession(id);
+    const result = await archiveSessionAfterShutdown(id);
+    await permanentlyDeleteSessions(result.archivedSessionIds, result.parentId);
+    return c.json({ ok: true, deletedSessionIds: result.archivedSessionIds });
+  } catch (error) { return runtimeError(c, error); }
+});
 async function archiveInactiveSessionsRoute(c: Context) {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2866,6 +2903,26 @@ agentRuntimeRoutes.post(
     }
   },
 );
+agentRuntimeRoutes.patch("/sessions/:sessionId/title", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({ title: z.string().trim().min(1).max(200) }).strict().safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const id = c.req.param("sessionId");
+    await agentRuntimeStore.hydrateSessionSummary(id, true);
+    const current = agentRuntimeStore.getSession(id);
+    // Publish the manual-title fence before yielding to an in-flight title
+    // generator. The store persists both changes in the same ordered queue.
+    agentRuntimeStore.updateSession(id, {
+      title: parsed.data.title,
+      sessionMetadata: { ...current.sessionMetadata, titleSource: "user", titleSummarized: true },
+    });
+    await agentRuntimeStore.flushSession(id);
+    const session = await runtimeFacade.sessionSummaryAuthoritative(id);
+    return c.json({ session: projectSessionSummary(projectSessionState(session as never)) });
+  } catch (error) { return runtimeError(c, error); }
+});
 agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2996,10 +3053,18 @@ const historyActionSchema = z.object({
   includeFiles: z.boolean().default(true),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
+const truncateHistorySchema = z.object({
+  checkpointId: z.string().min(1).max(160),
+  revision: z.number().int().nonnegative(),
+  requestId: z.string().min(1).max(128),
+  mode: z.enum(["session", "session_and_workspace"]).default("session"),
+});
 const forkActionSchema = historyActionSchema.extend({
   includeFiles: z.literal(false).default(false),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]),
 });
+const fullForkActionSchema = forkActionSchema.omit({ checkpointId: true, revision: true }).strict()
+  .transform((input) => ({ ...input, checkpointId: undefined, revision: 0 }));
 agentRuntimeRoutes.on(["GET", "POST"], "/sessions/:sessionId/checkpoints", async (c) => {
   let encoded = c.req.query("messageIds");
   if (c.req.method === "POST") {
@@ -3061,10 +3126,19 @@ agentRuntimeRoutes.on(["GET", "POST"], "/sessions/:sessionId/checkpoints", async
                 ? checkpoint.metadata.stepId
                 : null,
             available: checkpoint.metadata.readOnly !== true,
-            canRollback: checkpoint.metadata.readOnly !== true,
-            reason: checkpoint.metadata.readOnly === true ? "READ_ONLY_HISTORY: this history was sealed by context compaction." : null,
+            canRollback:
+              checkpoint.metadata.readOnly !== true &&
+              checkpoint.metadata.messageId !== bounds.lastMessageId,
+            reason:
+              checkpoint.metadata.readOnly === true
+                ? "READ_ONLY_HISTORY: this history was sealed by context compaction."
+                : checkpoint.metadata.messageId === bounds.lastMessageId
+                  ? "HISTORY_LATEST_NODE: the latest history node cannot be rolled back."
+                  : null,
             transcriptOnly: checkpoint.metadata.transcriptOnly === true,
-            destructive: true,
+            // Rollback is confirmed through the explicit scope dialog; it is
+            // not the legacy irreversible-trim action.
+            destructive: false,
             hasLaterHistory: checkpoint.metadata.messageId !== bounds.lastMessageId,
             initialInput:
               checkpoint.metadata.kind === "input" &&
@@ -3082,7 +3156,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
   const parsed = z
     .object({
       checkpointId: z.string().min(1),
-      action: z.enum(["rollback", "fork"]),
+      action: z.enum(["rollback", "truncate_history", "fork"]),
+      mode: z.enum(["session", "session_and_workspace"]).optional(),
       workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
       includeFiles: z.boolean().default(true),
     })
@@ -3106,6 +3181,13 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
             "The fork copies the immutable Rust history head. Workspace files are copied only when a new worktree is selected.",
           ],
         });
+      }
+      if (parsed.data.action === "truncate_history") {
+        return c.json(await runtimeFacade.previewHistoryAuthoritative(
+          sessionId,
+          parsed.data.checkpointId,
+          parsed.data.mode === "session_and_workspace",
+        ));
       }
       return c.json(
         await runtimeFacade.previewHistoryAuthoritative(
@@ -3139,21 +3221,21 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/edit", async (c) => {
     return runtimeError(c, error);
   }
 });
-for (const action of ["rollback", "fork"] as const) {
+for (const action of ["rollback", "fork", "fork-full"] as const) {
   agentRuntimeRoutes.post(
-    `/sessions/:sessionId/history/${action}`,
+    action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
       const parsed = (
-        action === "fork" ? forkActionSchema : historyActionSchema
+        action === "fork-full" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
       ).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
         {
-          if (action === "fork") {
+          if (action !== "rollback") {
             const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId])).digest("hex");
             const targetId = `ars_fork_${forkIdentity.slice(0, 32)}`;
             return (await singleForkRequest(targetId, JSON.stringify([sessionId, input.checkpointId, input.workspaceMode]), async () => {
@@ -3167,7 +3249,7 @@ for (const action of ["rollback", "fork"] as const) {
               return c.json({ sessionId: targetId, workspaceMode: input.workspaceMode, rollbackEnabled: true,
                 revision: (await runtimeFacade.historyHeadAuthoritative(targetId)).revision, session: existing }, 201);
             }
-            await runtimeFacade.historyCheckpointById(sessionId, input.checkpointId);
+            if (input.checkpointId) await runtimeFacade.historyCheckpointById(sessionId, input.checkpointId);
             const source = agentRuntimeStore.getSession(sessionId);
             const sourceBackend = (source.sessionMetadata?.backend ?? {}) as {
               id?: string;
@@ -3210,7 +3292,8 @@ for (const action of ["rollback", "fork"] as const) {
             }
             if (existing) sessionMetadata = { ...existing.sessionMetadata };
             for (const key of ["runtimeControl", "executionLease", "nativeBackend", "contextCompaction", "inputQueue", "inputForceInjectId",
-              "lastHistoryEdit", "lastHistoryRestore", "lastAcceptedRun", "deletedAt", "archivedAt"]) delete sessionMetadata[key];
+              "lastHistoryEdit", "lastHistoryRestore", "lastAcceptedRun", "deletedAt", "archivedAt", "archiveBatchId", "pinned",
+              "forkCopyComplete", "forkInterrupted", "titleSource", "titleSummarized"]) delete sessionMetadata[key];
             sessionMetadata.forkPreparing = true;
             sessionMetadata.forkRequestFingerprint = forkFingerprint;
             sessionMetadata.forkRequestId = input.requestId;
@@ -3229,12 +3312,32 @@ for (const action of ["rollback", "fork"] as const) {
               mcpServerIds: source.mcpServerIds,
               sessionMetadata,
             }, { id: targetId, forkPreparing: true });
+            // The fork inherits the source prompt, so its initial title would
+            // duplicate the source. Number it before the copy is reported.
+            // Read the authoritative projection: the local cache can still
+            // show a sibling fork's pre-suffix title.
+            const siblingTitles = (
+              (await runtimeFacade.listSessionProjection()) as AgentSession[]
+            )
+              .filter(
+                (sibling) =>
+                  sibling.id !== target.id &&
+                  sibling.projectId === source.projectId &&
+                  !sibling.sessionMetadata?.deletedAt &&
+                  !sibling.sessionMetadata?.archivedAt,
+              )
+              .map((sibling) => sibling.title);
+            const forkTitle = forkSessionTitle({
+              sourceTitle: source.title ?? target.title,
+              existingTitles: siblingTitles,
+            });
             await runtimeFacade.ensureUiProjection(target.id);
             await agentRuntimeStore.flushSession(target.id);
             const forked = await runtimeFacade.cloneHistoryAuthoritative({
               sourceSessionId: sessionId,
               targetSessionId: target.id,
               checkpointId: input.checkpointId,
+              fullHistory: action === "fork-full",
               revision: input.revision,
               requestId: input.requestId,
               sessionMetadata: target.sessionMetadata ?? {},
@@ -3250,6 +3353,7 @@ for (const action of ["rollback", "fork"] as const) {
                 completedAt: null,
                 resultSummary: null,
                 updatedAt: new Date().toISOString(),
+                ...(forkTitle ? { title: forkTitle } : {}),
                 sessionMetadata: {
                   ...forked.sessionMetadata,
                   forkPreparing: false,
@@ -3276,7 +3380,7 @@ for (const action of ["rollback", "fork"] as const) {
           }
           const result = await runtimeFacade.applyHistoryAuthoritative({
             sessionId,
-            checkpointId: input.checkpointId,
+            checkpointId: input.checkpointId!,
             revision: input.revision,
             requestId: input.requestId,
             action,
@@ -3295,6 +3399,21 @@ for (const action of ["rollback", "fork"] as const) {
     },
   );
 }
+agentRuntimeRoutes.post("/sessions/:sessionId/history/truncate_history", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = truncateHistorySchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const result = await runtimeFacade.truncateHistoryAuthoritative({
+      sessionId: c.req.param("sessionId"),
+      ...parsed.data,
+    });
+    return c.json(result);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   try {
     await runtimeFacade.recoverHistoryAuthoritative(c.req.param('sessionId'));

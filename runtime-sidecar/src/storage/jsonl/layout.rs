@@ -76,6 +76,18 @@ pub fn session_dir(root: &Path, session_id: &str) -> JsonlResult<PathBuf> {
         .join(session_id))
 }
 
+/// A content-free fence survives physical removal and rejects late writers.
+pub fn deletion_marker(root: &Path, session_id: &str) -> PathBuf {
+    root.join("deleted-sessions").join(sha256_hex(session_id.as_bytes()))
+}
+
+pub fn ensure_not_deleted(root: &Path, session_id: &str) -> JsonlResult<()> {
+    if deletion_marker(root, session_id).try_exists()? {
+        return Err(JsonlError::Runtime(crate::runtime::actor::RuntimeError::SessionDeleted));
+    }
+    Ok(())
+}
+
 /// `000001`: the directory that holds a segment number's segment files.
 pub fn segment_dir(session_dir: &Path, segment: u64) -> PathBuf {
     session_dir.join(format!("{segment:06}"))

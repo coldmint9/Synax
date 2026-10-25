@@ -5,6 +5,7 @@ import { logger } from "../runtime/logger.js";
 import { isProviderSupported } from "./catalog-capabilities.js";
 import { LLM_CATALOG_SNAPSHOT } from "./snapshot.js";
 import { openAIModelContract } from "./openai-models.js";
+import { withPublishedOutputLimits } from "./model-output-limits.js";
 import type {
   ModelsDevProvider,
   RuntimeCatalog,
@@ -131,7 +132,7 @@ function createCatalogFromProviders(
 
 function toRuntimeProvider(provider: ModelsDevProvider): RuntimeProvider {
   const models = Object.values(provider.models ?? {})
-    .map<RuntimeModel>((model) => ({
+    .map<RuntimeModel>((model) => withPublishedOutputLimits({
       id: model.id,
       inputModalities: model.modalities?.input
         ?.map((m) => (String(m) === "pdf" ? "file" : m))

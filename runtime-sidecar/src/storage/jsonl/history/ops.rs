@@ -29,6 +29,8 @@ use crate::storage::session_cache::SessionCache;
 mod context;
 #[path = "fork_copy.rs"]
 mod fork_copy;
+#[path = "purge.rs"]
+mod purge;
 
 /// Objects are referenced by content hash and fully contained in their bytes.
 const OBJECT_DIGEST: &str = "sha256";
@@ -217,6 +219,7 @@ impl HistoryTask {
     }
 
     fn session(&self, session_id: &str) -> Result<Arc<HistorySession>, HistoryError> {
+        layout::ensure_not_deleted(self.root(), session_id).map_err(convert_io)?;
         let session = self.sessions.get_or_try_init(session_id, || {
             HistorySession::open(self.root(), session_id).map(Arc::new)
         })?;
@@ -253,6 +256,9 @@ impl HistoryTask {
             serde_json::from_slice(payload)
                 .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?
         };
+        if operation == "session_purge" {
+            return self.purge_session(session_id);
+        }
         if operation == "fork_copy" {
             return self.fork_copy(session_id, request_id, &value);
         }
@@ -289,6 +295,7 @@ impl HistoryTask {
             .map(|actor| context::configuration_fingerprint(actor)).transpose()?;
         let session = self.session(session_id)?;
         let mut guard = session.lock.lock();
+        layout::ensure_not_deleted(self.root(), session_id).map_err(convert_io)?;
         if !readonly {
             if let Some(receipt) = guard.index.receipts.get(&key) {
                 if receipt.identity != receipt_identity(session_id, operation, &value)? {
@@ -353,6 +360,7 @@ impl HistoryTask {
             "asset_bind" => ops.asset_bind(&value)?,
             "asset_copy_bindings" => ops.asset_copy_bindings(&value)?,
             "asset_release_bindings" => ops.asset_release_bindings(&value)?,
+            "asset_purge_session" => ops.asset_purge_session(&value)?,
             "asset_unbind" => ops.asset_unbind(&value)?,
             "asset_has_binding" => ops.asset_has_binding(&value)?,
             "asset_list_bindings" => ops.asset_list_bindings(&value)?,
@@ -388,6 +396,7 @@ impl HistoryTask {
             }
             "head_switch" | "checkpoint" | "rollback" => ops.head_switch(&value, operation)?,
             "truncate_message" => ops.truncate_message(request_id, &value)?,
+            "truncate_history" => ops.truncate_history(request_id, &value)?,
             "list_checkpoints" => ops.list_checkpoints(&value)?,
             "lookup_checkpoints" => ops.lookup_checkpoints(&value)?,
             "fork" => ops.fork(&value)?,
@@ -757,6 +766,7 @@ impl SessionOps<'_> {
     fn asset_bind(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let asset_id = required_string(value, "assetId")?;
         let session_id = required_string(value, "sessionId")?;
+        layout::ensure_not_deleted(self.root(), session_id).map_err(convert_io)?;
         if self
             .index()
             .aux_value(&format!("asset\0{asset_id}"))
@@ -794,6 +804,8 @@ impl SessionOps<'_> {
         let target = required_string(value, "targetSessionId")?;
         layout::validate_session_id(source).map_err(convert_io)?;
         layout::validate_session_id(target).map_err(convert_io)?;
+        layout::ensure_not_deleted(self.root(), source).map_err(convert_io)?;
+        layout::ensure_not_deleted(self.root(), target).map_err(convert_io)?;
         if source == target { return Err(HistoryError::InvalidCommand("fork asset owner must differ".into())); }
         let prefix = format!("binding\0{source}\0");
         let snapshot = self.index().aux.clone();
@@ -817,6 +829,34 @@ impl SessionOps<'_> {
             if bound.is_some() { self.set_aux(key.clone(), None); count += 1; }
         }
         serialized(&serde_json::json!({"released":count}))
+    }
+
+    fn asset_purge_session(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
+        let session = required_string(value, "sessionId")?;
+        layout::validate_session_id(session).map_err(convert_io)?;
+        if !layout::deletion_marker(self.root(), session).try_exists()? {
+            return Err(HistoryError::InvalidCommand("Session must be deleted before its assets".into()));
+        }
+        let prefix = format!("binding\0{session}\0");
+        let snapshot = self.index().aux.clone();
+        let mut deleted = Vec::new();
+        for (key, bound) in snapshot.range(prefix.clone()..map_end(&prefix)) {
+            if bound.as_ref().is_none_or(|v| v != true) { continue; }
+            let asset = key.trim_start_matches(&prefix);
+            let suffix = format!("\0{asset}");
+            let shared = self.index().aux_entries("binding\0")
+                .any(|(other, _)| other != key && other.ends_with(&suffix));
+            if !shared {
+                // The global asset writer fences new bindings while bytes are
+                // removed. If cleanup fails, uncommitted bindings remain so
+                // retry can discover every asset, including a half-purged one.
+                self.task.purge_session(&format!("asset:{asset}"))?;
+                self.set_aux(format!("asset\0{asset}"), None);
+                deleted.push(asset.to_owned());
+            }
+            self.set_aux(key.clone(), None);
+        }
+        serialized(&serde_json::json!({"deletedAssetIds":deleted}))
     }
 
     fn asset_has_binding(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
@@ -876,6 +916,16 @@ impl SessionOps<'_> {
     /// Remove a user message and everything following it using the visible
     /// message index. No checkpoint is required, including for imported chats.
     fn truncate_message(&mut self, request_id: &str, value: &Value) -> Result<Vec<u8>, HistoryError> {
+        self.truncate_at_message(request_id, value, false)
+    }
+
+    /// Retain the selected visible message, removing only its suffix. Unlike
+    /// editing an input this accepts any role, but never the latest message.
+    fn truncate_history(&mut self, request_id: &str, value: &Value) -> Result<Vec<u8>, HistoryError> {
+        self.truncate_at_message(request_id, value, true)
+    }
+
+    fn truncate_at_message(&mut self, request_id: &str, value: &Value, inclusive: bool) -> Result<Vec<u8>, HistoryError> {
         let expected = required_u64(value, "expectedRevision")?;
         let actual = self.index().head.revision;
         if expected != actual {
@@ -885,16 +935,33 @@ impl SessionOps<'_> {
         if self.context_sealed("message", message_id) { return Err(HistoryError::ReadOnlyHistory); }
         let messages: Vec<_> = self.index().entity_keys("message")
             .map(|(_, item)| item.clone()).collect();
-        let boundary = messages.iter().position(|item| item.value["id"] == message_id)
+        let selected = messages.iter().position(|item| item.value["id"] == message_id)
             .ok_or_else(|| HistoryError::ObjectMissing(format!("message {message_id}")))?;
+        if inclusive && selected + 1 == messages.len() {
+            return Err(HistoryError::InvalidCommand("cannot truncate at the latest message".into()));
+        }
+        let boundary = selected + usize::from(inclusive);
         let target = &messages[boundary].value;
-        if target["role"] != "user" {
+        if !inclusive && target["role"] != "user" {
             return Err(HistoryError::InvalidCommand("only user messages can be edited".into()));
         }
         let keep_messages: HashSet<_> = messages[..boundary].iter()
             .filter_map(|item| item.value["id"].as_str()).collect();
         let keep_runs: HashSet<_> = messages[..boundary].iter()
             .filter_map(|item| item.value["runId"].as_str()).collect();
+        let keep_steps: HashSet<_> = messages[..boundary].iter()
+            .filter_map(|item| item.value["stepId"].as_str()).collect();
+        let removed_steps: HashSet<_> = messages[boundary..].iter()
+            .filter_map(|item| item.value["stepId"].as_str())
+            .filter(|id| !keep_steps.contains(id)).collect();
+        // A reordered/imported transcript must not move a sealed row into the
+        // removed suffix, even when the selected message itself is unsealed.
+        if inclusive && messages[boundary..].iter().any(|item|
+            item.value["id"].as_str().is_some_and(|id| self.context_sealed("message", id))) {
+            return Err(HistoryError::ReadOnlyHistory);
+        }
+        let selected_revision = self.index().first_revision.get(
+            &super::identity_key("message", self.session_id, message_id)).copied().unwrap_or(0);
         let timestamp = |item: &Value| -> String {
             ["createdAt", "startedAt", "timestamp"].iter()
                 .find_map(|key| item[*key].as_str()).unwrap_or("").to_owned()
@@ -914,7 +981,29 @@ impl SessionOps<'_> {
             let run = if kind == "run" { Some(id) } else {
                 item.value["runId"].as_str().or_else(|| item.value["payload"]["runId"].as_str())
             };
-            let keep = match kind {
+            let keep = if inclusive {
+                let step = if kind == "step" { Some(id) } else { item.value["stepId"].as_str() };
+                let message = item.value["messageId"].as_str();
+                match kind {
+                    "message" => keep_messages.contains(id),
+                    _ if self.context_sealed(kind, id) => true,
+                    "compaction" => self.index().aux_value("context\0current")
+                        .is_some_and(|current| current["objectId"] == item.object_id),
+                    "context" => false,
+                    _ if message.is_some_and(|id| !keep_messages.contains(id)) => false,
+                    _ if step.is_some_and(|id| removed_steps.contains(id)) => false,
+                    _ if run.is_some_and(|id| !keep_runs.contains(id)) => false,
+                    "run" => keep_runs.contains(id),
+                    _ if self.index().first_revision.get(&identity)
+                        .is_some_and(|revision| *revision > selected_revision) => false,
+                    _ if message.is_some_and(|id| keep_messages.contains(id)) => true,
+                    _ if step.is_some_and(|id| keep_steps.contains(id)) => true,
+                    _ => self.index().first_revision.get(&identity).is_some_and(|revision|
+                        *revision < selected_revision || (*revision == selected_revision
+                            && !cutoff.is_empty() && !timestamp(&item.value).is_empty()
+                            && timestamp(&item.value) < cutoff)),
+                }
+            } else { match kind {
                 "message" => keep_messages.contains(id),
                 // Files remain as they are; preserve their ownership records.
                 "file_change" => true,
@@ -928,7 +1017,7 @@ impl SessionOps<'_> {
                 _ if run.is_some() && run != target["runId"].as_str() => true,
                 _ => !cutoff.is_empty() && !timestamp(&item.value).is_empty()
                     && timestamp(&item.value) < cutoff,
-            };
+            }};
             if keep { retained.push(item.clone()); }
         }
         let mut refs = Vec::with_capacity(retained.len());
@@ -965,10 +1054,17 @@ impl SessionOps<'_> {
                 .is_some_and(|id| !keep_messages.contains(id)))
             .map(|(key, _)| key.clone()).collect();
         for key in removed_pins { self.set_aux(key, None); }
-        self.file_command(request_id, "restore_transcript", &serde_json::json!({
+        let result = self.file_command(request_id, "restore_transcript", &serde_json::json!({
             "objectId":root.object_id, "expectedRevision":expected,
             "metadata":value["metadata"],
-        }))
+        }))?;
+        if inclusive {
+            // A plain Head record does not rebuild during log replay. Persist
+            // the destructive projection, not just the new pointer, so losing
+            // the optional index checkpoint cannot resurrect the suffix.
+            self.staged.push(Record::HistoryAux(AuxRecord::TruncateHead(self.index().head.clone())));
+        }
+        Ok(result)
     }
 
     fn head_switch(&mut self, value: &Value, operation: &str) -> Result<Vec<u8>, HistoryError> {
@@ -1958,7 +2054,7 @@ fn import_entities(value: &Value) -> Vec<Value> {
 }
 
 fn convert_io(error: crate::storage::jsonl::error::JsonlError) -> HistoryError {
-    HistoryError::InvalidCommand(error.to_string())
+    super::convert_io(error)
 }
 
 fn file_io(error: std::io::Error) -> HistoryError {

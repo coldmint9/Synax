@@ -18,6 +18,7 @@ import {
   conversationHistoryApi,
   type HistoryAction,
   type ForkWorkspaceMode,
+  type HistoryTruncateMode,
   type HistoryPreview,
   type HistorySummary,
   type MessageCheckpoint,
@@ -160,7 +161,7 @@ export function SessionHistoryProvider({
   const messageIds = useRef<string[]>([]);
   messageIds.current = messages.map((message) => message.id);
   useConversationHistoryVisit(sessionId);
-  const [includeFiles, setIncludeFiles] = useState(true);
+  const [truncateMode, setTruncateMode] = useState<HistoryTruncateMode>("session");
   const forkInFlight = useRef(false);
   const editInFlight = useRef(false);
   const editAttempt = useRef<{ sessionId: string; messageId: string; message: string; requestId: string; submitted: boolean } | null>(null);
@@ -242,6 +243,7 @@ export function SessionHistoryProvider({
     ): Promise<boolean> => {
       if (!sessionId || executing || resolver.current || forkInFlight.current || editInFlight.current) return false;
       if (action === "fork" && !workspaceMode) return false;
+      if (action === "rollback" && (!checkpoint.available || checkpoint.canRollback === false || checkpoint.reason?.startsWith("READ_ONLY_HISTORY") || (!checkpoint.hasLaterHistory && !ACTIVE_STATUSES.has(session?.status ?? "completed")))) return false;
       if (
         action !== "fork" &&
         session?.sessionMetadata?.historyRollbackEnabled === false
@@ -255,7 +257,7 @@ export function SessionHistoryProvider({
       }
       const epoch = ++requestEpoch.current;
       const requestId = crypto.randomUUID();
-      setIncludeFiles(action !== "fork" && !checkpoint.transcriptOnly && !checkpoint.destructive);
+      setTruncateMode("session");
       if (action === "fork") {
         forkInFlight.current = true;
         setExecuting(true);
@@ -335,7 +337,7 @@ export function SessionHistoryProvider({
             sessionId,
             checkpoint.id,
             action,
-            !checkpoint.transcriptOnly && !checkpoint.destructive,
+            "session",
           );
           if (epoch === requestEpoch.current) setPreview(value);
         } catch (e) {
@@ -412,6 +414,7 @@ export function SessionHistoryProvider({
     ): Promise<boolean> => {
       const current = summary?.sessionId === sessionId ? summary : await loadSummary?.();
       if (!current) return false;
+      if (current.readOnlyMessageIds?.includes(checkpoint.messageId)) return false;
       const resolved = findCheckpoint(
         current,
         messages,
@@ -431,12 +434,13 @@ export function SessionHistoryProvider({
   );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing || pending.checkpoint.transcriptOnly) return;
-    setIncludeFiles(value);
+    const mode: HistoryTruncateMode = value ? "session_and_workspace" : "session";
+    setTruncateMode(mode);
     setPreview(null);
     setError(null);
     const epoch = ++requestEpoch.current;
     void conversationHistoryApi
-      .preview(pending.sessionId, pending.checkpoint.id, pending.action, value)
+      .preview(pending.sessionId, pending.checkpoint.id, pending.action, mode)
       .then((result) => {
         if (epoch === requestEpoch.current) setPreview(result);
       })
@@ -463,14 +467,14 @@ export function SessionHistoryProvider({
           revision: preview.revision,
           requestId: pending.requestId,
           message: pending.message,
-          includeFiles,
+          ...(pending.action === "rollback" ? { mode: truncateMode } : { includeFiles: false }),
         },
       );
       const store = useAgentSessionStore.getState();
       store.resetConversationHistory(pending.sessionId);
-      void store.refreshSessions();
+      await store.refreshSessions();
+      await refresh();
       close(true);
-      void refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -602,18 +606,29 @@ export function SessionHistoryProvider({
               <DialogTitle>{title}</DialogTitle>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-3 text-sm">
-              {!pending?.checkpoint.destructive && <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" checked={includeFiles} disabled={executing || pending?.checkpoint.transcriptOnly}
-                  onChange={(event) => changeFilePolicy(event.target.checked)} className="mt-1 accent-[var(--accent)]" />
-                <span>{zh ? "同时撤销本会话记录的未提交文件变更" : "Also undo this session’s recorded uncommitted file changes"}</span>
-              </label>}
+              {!pending?.checkpoint.destructive && <fieldset className="flex flex-col gap-2">
+                <legend className="text-sm font-medium">{zh ? "回滚范围" : "Rollback scope"}</legend>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="radio" name="truncate-mode" checked={truncateMode === "session"} disabled={executing || pending?.checkpoint.transcriptOnly} onChange={() => changeFilePolicy(false)} className="mt-1 accent-[var(--accent)]" />
+                  <span>{zh ? "仅会话记录" : "Session history only"}</span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="radio" name="truncate-mode" checked={truncateMode === "session_and_workspace"} disabled={executing || pending?.checkpoint.transcriptOnly} onChange={() => changeFilePolicy(true)} className="mt-1 accent-[var(--accent)]" />
+                  <span>{zh ? "会话记录 + 工作区" : "Session history + workspace"}</span>
+                </label>
+              </fieldset>}
+              {truncateMode === "session_and_workspace" && !pending?.checkpoint.transcriptOnly && (
+                <p data-testid="workspace-overwrite-warning" role="alert" className="rounded-xl bg-danger/5 p-3 text-xs text-danger">
+                  {zh ? "工作区模式会强制覆盖当前工作区文件，未提交的本地修改可能丢失。" : "Workspace mode forcibly overwrites workspace files; uncommitted local changes may be lost."}
+                </p>
+              )}
               {pending?.checkpoint.transcriptOnly && <p className="text-xs text-muted-foreground">
                 {zh ? "此边界由旧消息补建：仅恢复会话历史并重建上下文，不恢复当时的工作状态或文件。" : "This boundary was reconstructed from older messages. It restores conversation history and rebuilds context, without historical work state or file restoration."}
               </p>}
               {pending?.checkpoint.destructive && <p className="text-xs text-danger">
                 {zh ? "后续消息和执行记录将被永久删除，工作区文件保持不变。" : "Later messages and execution records will be permanently deleted. Workspace files remain unchanged."}
               </p>}
-              {!includeFiles && <p className="text-xs text-muted-foreground">
+              {truncateMode === "session" && <p className="text-xs text-muted-foreground">
                 {zh ? "仅裁剪会话历史，已有工作目录中的文件保持不变。" : "Trim conversation only; files in the existing workspace remain unchanged."}
               </p>}
               {!preview && !error && (
@@ -627,9 +642,9 @@ export function SessionHistoryProvider({
                   <p className="text-muted-foreground">
                     {zh
                       ? pending?.checkpoint.destructive ? `永久删除 ${preview.removedMessages} 条后续消息` : `截断 ${preview.removedMessages} 条消息 · 恢复 ${preview.files.length} 个文件`
-                      : pending?.checkpoint.destructive ? `Permanently remove ${preview.removedMessages} later messages` : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
+                      : pending?.checkpoint.destructive ? `Permanently remove ${preview.removedMessages} later messages` : truncateMode === "session" ? `Remove ${preview.removedMessages} messages` : `Remove ${preview.removedMessages} messages · restore ${preview.files.length} files`}
                   </p>
-                  {includeFiles && preview.files.length > 0 && (
+                  {truncateMode === "session_and_workspace" && preview.files.length > 0 && (
                     <ul className="message-history-files">
                       {preview.files.slice(0, 80).map((file) => (
                         <li key={`${file.root}/${file.path}`} title={file.root}>
@@ -644,7 +659,7 @@ export function SessionHistoryProvider({
                       )}
                     </ul>
                   )}
-                  {includeFiles && (
+                  {truncateMode === "session_and_workspace" && (
                     outOfScope.length > 0 || preview.warnings?.length
                   ) && (
                     <p

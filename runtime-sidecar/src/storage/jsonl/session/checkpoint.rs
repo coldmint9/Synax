@@ -146,6 +146,7 @@ fn prepare(
     actor: &mut SessionActor,
     force: bool,
 ) -> JsonlResult<Option<(checkpoint::Pending, u64)>> {
+    if layout::deletion_marker(root, &actor.id).try_exists()? { return Ok(None); }
     if !actor.header.is_object()
         || actor.commit == actor.checkpoint_commit
         || (!force

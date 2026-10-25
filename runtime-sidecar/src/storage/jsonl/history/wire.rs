@@ -4,6 +4,8 @@ use crate::runtime::actor::RuntimeError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
+    #[error("session has been permanently deleted")]
+    SessionDeleted,
     #[error("READ_ONLY_HISTORY: history is sealed by a context checkpoint")]
     ReadOnlyHistory,
     #[error("Conversation changed. Refresh history.")]
@@ -26,6 +28,7 @@ impl HistoryError {
     /// The `(code, message)` pair the wire answers with.
     pub fn wire(&self) -> (&'static str, String) {
         match self {
+            HistoryError::SessionDeleted => ("NOT_FOUND", self.to_string()),
             HistoryError::ReadOnlyHistory => ("READ_ONLY_HISTORY", self.to_string()),
             HistoryError::StaleCursor => (
                 "HISTORY_STALE",
@@ -56,6 +59,7 @@ impl From<std::io::Error> for HistoryError {
 impl From<HistoryError> for RuntimeError {
     fn from(error: HistoryError) -> Self {
         match error {
+            HistoryError::SessionDeleted => RuntimeError::SessionDeleted,
             HistoryError::RevisionConflict { expected, actual } => {
                 RuntimeError::RevisionConflict { expected, actual }
             }

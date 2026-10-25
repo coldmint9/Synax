@@ -58,6 +58,8 @@ pub struct ControlCommandReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
+    #[error("session has been permanently deleted")]
+    SessionDeleted,
     #[error("session UI projection has not been initialized")]
     ProjectionMissing,
     #[error("UI projection exceeds transport budget; content externalization required")]

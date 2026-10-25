@@ -22,10 +22,14 @@ pub(super) fn request(input: &ProviderRequest) -> Result<CompletionRequest, Erro
     let max_tokens = input
         .max_output_tokens
         .map(u64::from)
-        .or_else(|| (input.api_format == "anthropic").then_some(8192));
+        .or_else(|| (input.api_format == "anthropic").then(|| {
+            input.required_max_output_tokens.map(u64::from).unwrap_or(8192)
+        }));
+    let modern_cap = input.api_format == "openai"
+        && input.output_token_parameter.as_deref() == Some("max_completion_tokens");
     let mut request = CompletionRequest::from(messages)
         .temperature(input.temperature)
-        .max_tokens(max_tokens);
+        .max_tokens(if modern_cap { None } else { max_tokens });
     if let Some(top_p) = input.top_p {
         request = request.top_p(top_p);
     }
@@ -47,6 +51,14 @@ pub(super) fn request(input: &ProviderRequest) -> Result<CompletionRequest, Erro
         });
     }
     let mut extra = provider_options(input)?;
+    if modern_cap {
+        // These providers give legacy max_tokens a different (answer-only)
+        // meaning. Send exactly one total-output cap when explicitly requested.
+        if let Some(tokens) = max_tokens {
+            extra.as_object_mut().unwrap().remove("max_tokens");
+            extra["max_completion_tokens"] = json!(tokens);
+        }
+    }
     let mut hosted = Vec::new();
     for tool in &input.tools {
         if tool["type"] == "provider" {

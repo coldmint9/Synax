@@ -26,6 +26,8 @@ export type RustAgentLoopProviderRequest = {
   tools?: unknown[];
   toolChoice?: unknown;
   maxOutputTokens?: number;
+  requiredMaxOutputTokens?: number;
+  outputTokenParameter?: "max_completion_tokens";
   /** Legacy wire compatibility only; Rust does not enforce step budgets. */
   maxSteps?: number;
   runtimeBinding?: { sessionId: string; runId: string };

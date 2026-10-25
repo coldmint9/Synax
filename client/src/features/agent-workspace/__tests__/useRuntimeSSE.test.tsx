@@ -186,7 +186,7 @@ it("keeps a step callback to the open transcript only", async () => {
   expect(refreshDetail).not.toHaveBeenCalled();
 });
 
-it('leaves selected run lifecycle to realtime and does not trigger full detail hydration', async () => {
+it('keeps intermediate lifecycle with realtime but applies the terminal session patch', async () => {
   const { setRunRealtimeObservation } = await import('../../../adapters/transport/runRealtime');
   const refreshDetail = vi.fn(async () => {});
   useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState(), selectedSessionId: 's1',
@@ -197,7 +197,7 @@ it('leaves selected run lifecycle to realtime and does not trigger full detail h
     act(() => bus.changed({ data: JSON.stringify({ sessionId: 's1', patch: {
       title: 'Updated title', status: 'completed', activeRunId: null,
     } }) } as MessageEvent));
-    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ title: 'Updated title', status: 'running', activeRunId: 'r1' });
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ title: 'Updated title', status: 'completed', activeRunId: null });
     act(() => bus.step({ data: JSON.stringify({ sessionId: 's1' }) } as MessageEvent));
     await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
     expect(refreshDetail).not.toHaveBeenCalled();

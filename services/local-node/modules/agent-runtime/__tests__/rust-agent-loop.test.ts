@@ -133,6 +133,131 @@ function end(protocol: Protocol, response: ServerResponse, tools = false) {
   }
 }
 
+function boundedEnd(protocol: Protocol, response: ServerResponse, limited: boolean, tools = false) {
+  if (protocol === "openai") {
+    chat(response, {}, limited ? "length" : tools ? "tool_calls" : "stop");
+    response.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: "fixture", created: 0, choices: [],
+      usage: { prompt_tokens: 2, completion_tokens: 5, completion_tokens_details: { reasoning_tokens: 3 } } })}\n\n`);
+    response.end("data: [DONE]\n\n");
+  } else if (protocol === "openai-responses") {
+    event(response, limited ? "response.incomplete" : "response.completed", { response: {
+      status: limited ? "incomplete" : "completed", ...(limited ? { incomplete_details: { reason: "max_output_tokens" } } : {}),
+      usage: { input_tokens: 2, output_tokens: 5, output_tokens_details: { reasoning_tokens: 3 } },
+    } });
+    response.end();
+  } else {
+    event(response, "message_delta", { delta: { stop_reason: limited ? "max_tokens" : tools ? "tool_use" : "end_turn" }, usage: { output_tokens: 5 } });
+    event(response, "message_stop", {});
+    response.end();
+  }
+}
+
+it.each(protocols)("%s silently continues a length-limited answer inside one step", async protocol => {
+  const prefix = "The first portion of this answer has already been delivered. ";
+  respond = (_request, response) => {
+    begin(protocol, response);
+    reasoning(protocol, response);
+    text(protocol, response, requests.length === 1 ? prefix : `${prefix}The answer is now complete.`);
+    boundedEnd(protocol, response, requests.length === 1);
+  };
+  const events = await collect(observe(await start(protocol)));
+  expect(events.at(-1)?.type).toBe("done");
+  expect(requests).toHaveLength(2);
+  expect(events.filter(event => event.type === "step-started")).toHaveLength(1);
+  expect(events.filter(event => event.type === "assistant-message")).toHaveLength(1);
+  expect(events.filter(event => event.type === "finish")).toMatchObject([{ finishReason: "stop" }]);
+  expect(events.some(event => ["step-restarted", "retry_status", "error"].includes(event.type))).toBe(false);
+  expect(events.filter(event => event.type === "text-delta").map(event => event.delta).join("")).toBe(`${prefix}The answer is now complete.`);
+  const message = events.find(event => event.type === "assistant-message")!.message as Record<string, unknown>;
+  expect(message.continuationMessages).toHaveLength(3);
+  expect(JSON.stringify(requests[1].body)).toContain("Continue exactly where it stopped");
+  expect(JSON.stringify(requests[1].body)).toContain(prefix);
+  if (protocol === "anthropic") expect(JSON.stringify(requests[1].body)).toContain("signed-fixture");
+  if (protocol === "openai-responses") expect(JSON.stringify(requests[1].body)).toContain("opaque-fixture");
+  const usage = events.filter(event => event.type === "usage").at(-1)!.usage!;
+  expect(usage).toMatchObject({ inputTokens: 4, outputTokens: 10, providerRequestCount: 2 });
+  const tokens = events.filter(event => event.type === "text-delta").map(event => event.outputTokens!);
+  expect(tokens).toEqual([...tokens].sort((a, b) => a - b));
+});
+
+it("stops length renewal when repeated requests make no visible progress", async () => {
+  respond = (_request, response) => {
+    begin("openai", response); reasoning("openai", response); boundedEnd("openai", response, true);
+  };
+  const events = await collect(observe(await start("openai")));
+  expect(events.at(-1)).toMatchObject({ type: "error", error: expect.stringContaining("OUTPUT_CONTINUATION_LIMIT") });
+  expect(requests).toHaveLength(2);
+  expect(events.some(event => event.type === "done")).toBe(false);
+});
+
+it("continues Messages after an unsigned thinking block is cut short", async () => {
+  respond = (_request, response) => {
+    begin("anthropic", response);
+    if (requests.length === 1) {
+      event(response, "content_block_start", { index: 0, content_block: { type: "thinking", thinking: "" } });
+      event(response, "content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "An unfinished thought" } });
+      event(response, "content_block_stop", { index: 0 });
+      boundedEnd("anthropic", response, true);
+    } else { text("anthropic", response, "Finished."); boundedEnd("anthropic", response, false); }
+  };
+  const events = await collect(observe(await start("anthropic")));
+  expect(events.at(-1)?.type).toBe("done");
+  const messages = requests[1].body.messages as Array<{ content: Array<{ type: string; signature?: string }> }>;
+  for (const part of messages.flatMap(message => Array.isArray(message.content) ? message.content : []))
+    if (part.type === "thinking") expect(part.signature).toBeTruthy();
+});
+
+it("never dispatches a truncated tool batch and executes the renewed call once", async () => {
+  respond = (_request, response) => {
+    begin("openai", response);
+    if (requests.length <= 2) {
+      tool("openai", response, 0, requests.length === 1 ? '{"value":"partial' : '{"value":"complete"}');
+      boundedEnd("openai", response, requests.length === 1, true);
+    } else { text("openai", response, "Done."); boundedEnd("openai", response, false); }
+  };
+  const id = await start("openai");
+  const events: RustAgentLoopEvent[] = [];
+  for await (const current of observe(id)) {
+    events.push(current);
+    if (current.type === "tool-call") {
+      expect(current.input).toEqual({ value: "complete" });
+      expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: current.toolCallId, result: "ok" })).status).toBe(200);
+    }
+  }
+  expect(events.filter(event => event.type === "tool-call")).toHaveLength(1);
+  expect(events.at(-1)?.type).toBe("done");
+  expect(requests).toHaveLength(3);
+  expect(JSON.stringify(requests[1].body)).not.toContain('"partial');
+});
+
+it("cancels an in-flight renewal without opening another provider request", async () => {
+  respond = (_request, response) => {
+    begin("openai", response);
+    if (requests.length === 1) { text("openai", response, "Partial answer."); boundedEnd("openai", response, true); }
+    else text("openai", response, "Continuation started.");
+  };
+  const id = await start("openai");
+  const events: RustAgentLoopEvent[] = [];
+  for await (const current of observe(id)) {
+    events.push(current);
+    if (current.type === "text-delta" && current.delta?.includes("Continuation started"))
+      expect((await post("/agent-loop/cancel", { loopId: id })).status).toBe(200);
+  }
+  expect(events.at(-1)?.type).toBe("cancelled");
+  expect(requests).toHaveLength(2);
+});
+
+it("does not renew an incomplete response stopped by content filtering", async () => {
+  respond = (_request, response) => {
+    begin("openai-responses", response); text("openai-responses", response, "Partial");
+    event(response, "response.incomplete", { response: { status: "incomplete", incomplete_details: { reason: "content_filter" } } });
+    response.end();
+  };
+  const events = await collect(observe(await start("openai-responses")));
+  expect(events.at(-1)?.type).toBe("error");
+  expect(requests).toHaveLength(1);
+});
+
 it.each(protocols)("%s streams before upstream completion and replays only unacknowledged output", async protocol => {
   let finish!: () => void;
   respond = (_request, response) => {

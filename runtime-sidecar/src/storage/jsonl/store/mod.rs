@@ -70,10 +70,12 @@ impl JsonlStore {
     /// The handle for `session_id`, loading it on first touch.
     pub fn session(&self, session_id: &str) -> JsonlResult<SessionHandle> {
         super::layout::validate_session_id(session_id)?;
+        super::layout::ensure_not_deleted(self.root(), session_id)?;
         let handle =
             self.root
                 .sessions
                 .get_or_try_init(session_id, || -> JsonlResult<SessionHandle> {
+                    super::layout::ensure_not_deleted(self.root(), session_id)?;
                     let started = std::time::Instant::now();
                     let loaded = load::load(&self.root.path, session_id)?;
                     tracing::debug!(
@@ -192,20 +194,31 @@ impl JsonlStore {
     }
 
     fn load_list_entry(&self, id: &str) -> JsonlResult<bool> {
+        if super::layout::deletion_marker(self.root(), id).try_exists()? {
+            match std::fs::remove_dir_all(super::layout::session_dir(self.root(), id)?) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(error.into()),
+            }
+            return Ok(false);
+        }
         if self.root.sessions.get(id).is_some() {
             return Ok(false);
         }
         if let Some(row) = summary_cache::read(&self.root.path, id) {
-            self.root.list.write().insert_cached(row);
+            let mut list = self.root.list.write();
+            if !super::layout::deletion_marker(self.root(), id).try_exists()? { list.insert_cached(row); }
             return Ok(false);
         }
         let row = summary_cache::rebuild(&self.root.path, id)?;
-        self.root.list.write().insert_cached(row);
+        let mut list = self.root.list.write();
+        if !super::layout::deletion_marker(self.root(), id).try_exists()? { list.insert_cached(row); }
         Ok(true)
     }
 
     pub fn session_summary(&self, id: &str) -> JsonlResult<Option<serde_json::Value>> {
         super::layout::validate_session_id(id)?;
+        super::layout::ensure_not_deleted(self.root(), id)?;
         if let Some(row) = self.root.list.read().get(id) {
             return Ok(Some(row));
         }
@@ -214,6 +227,7 @@ impl JsonlStore {
     }
 
     fn cache_summary(&self, actor: &SessionActor) {
+        if super::layout::ensure_not_deleted(self.root(), &actor.id).is_err() { return; }
         if let Err(error) = summary_cache::write(&self.root.path, actor) {
             // Cache failures cannot fail an otherwise durable session write.
             tracing::warn!(event = "storage.summary_cache_failed", session_id = actor.id,
@@ -235,6 +249,7 @@ impl JsonlStore {
     }
 
     pub fn session_exists(&self, session_id: &str) -> bool {
+        if super::layout::ensure_not_deleted(self.root(), session_id).is_err() { return false; }
         self.root.sessions.get(session_id).is_some()
             || super::layout::session_dir(&self.root.path, session_id)
                 .map(|dir| dir.is_dir())
@@ -341,8 +356,16 @@ impl JsonlStore {
                 .is_none_or(|lease| lease.closed)
     }
 
-    pub fn update_list(&self, row: ListRecord) -> JsonlResult<()> {
-        self.root.list.write().upsert(row);
+    pub fn update_list(&self, mut row: ListRecord) -> JsonlResult<()> {
+        let mut list = self.root.list.write();
+        if super::layout::deletion_marker(self.root(), &row.s).try_exists()? { row.del = true; }
+        list.upsert(row);
+        Ok(())
+    }
+
+    pub(crate) fn forget_deleted_session(&self, id: &str) -> JsonlResult<()> {
+        self.update_list(ListRecord { s: id.into(), u: String::new(), h: serde_json::Value::Null, del: true })?;
+        self.root.sessions.remove(id);
         Ok(())
     }
 
@@ -353,6 +376,8 @@ impl JsonlStore {
         if sessions.exists() {
             std::fs::remove_dir_all(&sessions).map_err(JsonlError::io)?;
         }
+        let markers = self.root.path.join("deleted-sessions");
+        if markers.exists() { std::fs::remove_dir_all(markers)?; }
         self.root.list.write().clear();
         self.root.index_state.store(2, Ordering::Release);
         *self.root.index_error.lock() = None;

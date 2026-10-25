@@ -1,6 +1,7 @@
 import { apiRequest } from "./origin";
 export type ForkWorkspaceMode = "new_worktree" | "reuse_worktree";
 export type HistoryAction = "rollback" | "fork";
+export type HistoryTruncateMode = "session" | "session_and_workspace";
 export interface MessageCheckpoint {
   id: string;
   kind: "input" | "reply";
@@ -70,15 +71,27 @@ export const conversationHistoryApi = {
     sessionId: string,
     checkpointId: string,
     action: HistoryAction,
-    includeFiles = true,
+    modeOrIncludeFiles: HistoryTruncateMode | boolean = "session",
     workspaceMode?: ForkWorkspaceMode,
-  ) =>
-    post<HistoryPreview>(sessionId, "preview", {
+  ) => {
+    // Fork keeps its historical includeFiles request shape. Rollback uses the
+    // explicit truncation mode required by the history API.
+    if (action === "fork") {
+      const includeFiles = typeof modeOrIncludeFiles === "boolean" ? modeOrIncludeFiles : false;
+      return post<HistoryPreview>(sessionId, "preview", {
+        checkpointId,
+        action,
+        includeFiles,
+        workspaceMode,
+      });
+    }
+    const mode = typeof modeOrIncludeFiles === "string" ? modeOrIncludeFiles : "session";
+    return post<HistoryPreview>(sessionId, "preview", {
       checkpointId,
-      action,
-      includeFiles,
-      workspaceMode,
-    }),
+      action: "truncate_history",
+      mode,
+    });
+  },
   apply: (
     sessionId: string,
     action: HistoryAction,
@@ -88,12 +101,13 @@ export const conversationHistoryApi = {
       requestId: string;
       message?: string;
       includeFiles?: boolean;
+      mode?: HistoryTruncateMode;
       workspaceMode?: ForkWorkspaceMode;
     },
   ) =>
     post<{ sessionId: string; revision?: number; runId?: string }>(
       sessionId,
-      action,
+      action === "rollback" ? "truncate_history" : action,
       body,
     ),
   visit: (sessionId: string) =>

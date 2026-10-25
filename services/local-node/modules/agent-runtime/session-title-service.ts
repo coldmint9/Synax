@@ -230,6 +230,7 @@ async function applyGeneratedSessionTitle(
   const current = agentRuntimeStore.tryGetSession(session.id);
   if (
     !current ||
+    current.sessionMetadata?.titleSource === "user" ||
     current.title !== session.title ||
     resolveUserTitleInput(current.id, current.prompt) !== userInput
   )
@@ -282,7 +283,53 @@ export function resolveInitialSessionTitle(input: {
   return null;
 }
 
+/** A trailing `(n)` is a fork counter, not part of the user's own title. */
+const FORK_TITLE_COUNTER = /^(.*?)\s*\((\d+)\)$/;
+const FORK_TITLE_FIRST_COUNTER = 2;
+
+function withForkCounter(base: string, counter: number): string {
+  const suffix = `(${counter})`;
+  const room = INITIAL_TITLE_MAX_LEN - suffix.length;
+  return `${base.length <= room ? base : `${base.slice(0, room - 1)}…`}${suffix}`;
+}
+
+/**
+ * Title for a session forked from `sourceTitle`.
+ *
+ * A fork keeps its source's prompt, so copying the title would leave two
+ * sessions with the same name in the list. Use the first free `base(n)`
+ * (n >= 2) instead, which reuses numbers that became free when a fork was
+ * deleted. Placeholder titles are left untouched: they carry no real name yet,
+ * and a counter would freeze them before the generated title arrives.
+ *
+ * Returns null when the source title needs no change.
+ */
+export function forkSessionTitle(input: {
+  sourceTitle: string | null | undefined;
+  existingTitles: Iterable<string | null | undefined>;
+}): string | null {
+  const source = input.sourceTitle?.trim();
+  if (!source || isPlaceholderSessionTitle(source)) return null;
+  const base = (FORK_TITLE_COUNTER.exec(source)?.[1] ?? source).trim();
+  if (!base) return null;
+  const taken = new Set<string>();
+  for (const title of input.existingTitles) {
+    const candidate = title?.trim();
+    if (candidate) taken.add(candidate);
+  }
+  for (
+    let counter = FORK_TITLE_FIRST_COUNTER;
+    counter < FORK_TITLE_FIRST_COUNTER + 10_000;
+    counter += 1
+  ) {
+    const candidate = withForkCounter(base, counter);
+    if (!taken.has(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function needsGeneratedSessionTitle(session: AgentSession): boolean {
+  if (session.sessionMetadata?.titleSource === "user") return false;
   if (session.sessionMetadata?.titleSummarized === true) return false;
   if (isPlaceholderSessionTitle(session.title)) return true;
   return !session.title?.trim();
@@ -424,7 +471,7 @@ export async function generateSessionTitle(
     prompt,
   );
   const current = agentRuntimeStore.tryGetSession(sessionId);
-  if (!title || !current || current.title !== before.title) return false;
+  if (!title || !current || current.sessionMetadata?.titleSource === "user" || current.title !== before.title) return false;
   agentRuntimeStore.updateSession(sessionId, { title, updatedAt: nowIso() });
   return true;
 }

@@ -23,6 +23,73 @@ fn temp() -> Value {
     Value::Object(Default::default())
 }
 
+#[test]
+fn full_fork_needs_no_message_checkpoint_and_purge_cannot_resurrect_source() {
+    use crate::storage::jsonl::hot::HotOps;
+    let root = temp_root("session-actions");
+    let (store, ops) = open(&root);
+    let hot = HotOps::new(store.clone());
+    hot.ui_snapshot("s", Some(br#"{"id":"s","projectId":"p","status":"completed","updatedAt":"2026-10-25T00:00:00Z"}"#)).unwrap();
+    let retained = hot.handle("s").unwrap();
+    ok(&ops, "s", "messages", "append_entities", objects(serde_json::json!([
+        message("first", 1, "Original input"), message("last", 2, "Complete reply")
+    ])));
+    let payload = serde_json::json!({"sourceSessionId":"s","fullHistory":true,"allowSourceChanges":true});
+    let fork = ok(&ops, "copy", "fork", "fork_copy", payload.clone());
+    assert_eq!(ok(&ops, "copy", "fork", "fork_copy", payload.clone()), fork);
+    let messages = ok(&ops, "copy", "messages", "list_messages", temp());
+    assert_eq!(messages["items"].as_array().unwrap().len(), 2);
+    assert_eq!(messages["items"][1]["content"], "Complete reply");
+    assert_ne!(messages["items"][0]["id"], "first");
+    let source_dir = super::layout::session_dir(&root, "s").unwrap();
+    assert_eq!(ok(&ops, "s", "purge", "session_purge", temp())["deleted"], true);
+    assert!(!source_dir.exists());
+    assert!(store.session_summary("s").is_err());
+    assert!(store.list().read().get("s").is_none());
+    assert!(call(&ops, "s", "late", "append_entities", objects(serde_json::json!([message("late", 3, "Late write")]))).is_err());
+    assert!(retained.seed(br#"{"id":"s","title":"Resurrect"}"#).is_err());
+    drop(retained);
+    hot.flush().unwrap();
+    assert!(!source_dir.exists());
+    assert_eq!(ok(&ops, "s", "retry", "session_purge", temp())["deleted"], true);
+    assert_eq!(ok(&ops, "copy", "after-delete", "list_messages", temp()), messages);
+    drop(hot); drop(ops); drop(store);
+    let (store, ops) = open(&root);
+    assert!(store.session("s").is_err());
+    assert_eq!(ok(&ops, "copy", "reopened", "list_messages", temp()), messages);
+    assert!(!source_dir.exists());
+    drop(ops); drop(store); std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn full_fork_copies_empty_and_compacted_conversations() {
+    let root = temp_root("full-fork-without-pin");
+    let (store, ops) = open(&root);
+    ok(&ops, "empty", "fork", "fork_copy", serde_json::json!({"sourceSessionId":"s","fullHistory":true,"allowSourceChanges":true}));
+    assert!(ok(&ops, "empty", "messages", "list_messages", temp())["items"].as_array().unwrap().is_empty());
+    let active = begin_context(&ops);
+    let checkpoint = checkpoint_candidate(&active);
+    ok(&ops, "s", "commit-context", "context_commit", serde_json::json!({"checkpoint":checkpoint}));
+    ok(&ops, "compacted", "fork", "fork_copy", serde_json::json!({"sourceSessionId":"s","fullHistory":true,"allowSourceChanges":true}));
+    assert_eq!(ok(&ops, "compacted", "messages", "list_messages", temp())["items"][0]["content"], "Historical evidence");
+    assert_eq!(ok(&ops, "compacted", "context", "context_current", temp())["checkpoint"]["sessionId"], "compacted");
+    drop(ops); drop(store); std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn session_purge_retry_after_a_durable_marker_never_recreates_history_on_drop() {
+    let root = temp_root("purge-retry");
+    let (store, ops) = open(&root);
+    ok(&ops, "s", "messages", "append_entities", objects(serde_json::json!([message("m", 1, "Erase this")])));
+    let marker = super::layout::deletion_marker(&root, "s");
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    std::fs::write(marker, b"").unwrap();
+    ok(&ops, "s", "resume-purge", "session_purge", temp());
+    drop(ops); drop(store);
+    assert!(!super::layout::session_dir(&root, "s").unwrap().exists());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn begin_context(ops: &HistoryOps) -> Value {
     let head = ok(ops, "s", "context-seed", "append_entities", objects(serde_json::json!([
         message("old-message", 1, "Historical evidence"),
@@ -1512,6 +1579,120 @@ fn truncate_user_message_without_checkpoints_is_atomic_and_survives_restart() {
     ok(&ops,"s","first-edit","truncate_message",serde_json::json!({"messageId":"u1","expectedRevision":revision,"metadata":{}}));
     assert_eq!(list(&ops,"empty",temp())["items"],serde_json::json!([]));
     drop(ops);drop(store);cleanup(root);
+}
+
+#[test]
+fn truncate_history_retains_target_and_replays_without_an_index_checkpoint() {
+    let root = temp_root("truncate-history");
+    let (store, ops) = open(&root);
+    let mut target = message("target", 2, "Keep selected assistant reply");
+    target["value"]["role"] = text("assistant");
+    target["value"]["runId"] = text("shared-run");
+    target["value"]["stepId"] = text("keep-step");
+    ok(&ops, "s", "prefix", "append_entities", objects(serde_json::json!([
+        message("prefix", 1, "Keep prefix"), target,
+        {"kind":"runtime.run","value":{"id":"shared-run","sessionId":"s","status":"completed"}},
+        {"kind":"runtime.step","value":{"id":"keep-step","sessionId":"s","runId":"shared-run","status":"completed","index":1}}
+    ])));
+    let mut tail = message("tail", 3, "Never expose tail");
+    tail["value"]["runId"] = text("shared-run");
+    tail["value"]["stepId"] = text("tail-step");
+    let before = ok(&ops, "s", "suffix", "append_entities", objects(serde_json::json!([
+        tail,
+        {"kind":"runtime.step","value":{"id":"tail-step","sessionId":"s","runId":"shared-run","status":"completed","index":2}},
+        {"kind":"runtime.part","value":{"id":"tail-part","sessionId":"s","stepId":"tail-step","kind":"text","content":"tail"}},
+        {"kind":"runtime.event","value":{"id":"tail-event","sessionId":"s","runId":"shared-run"}},
+        {"kind":"runtime.file_change","value":{"id":"tail-file","sessionId":"s","sequence":1}}
+    ])));
+    let window = ok(&ops, "s", "window", "history_sync", temp());
+    let payload = serde_json::json!({"messageId":"target","expectedRevision":before["revision"],"metadata":{}});
+    let mut stale = payload.clone(); stale["expectedRevision"] = number(0);
+    assert!(matches!(call(&ops, "s", "stale", "truncate_history", stale), Err(HistoryError::RevisionConflict { .. })));
+    let mut latest = payload.clone(); latest["messageId"] = text("tail");
+    assert!(matches!(call(&ops, "s", "latest", "truncate_history", latest), Err(HistoryError::InvalidCommand(_))));
+    let mut missing = payload.clone(); missing["messageId"] = text("missing");
+    assert!(matches!(call(&ops, "s", "missing", "truncate_history", missing), Err(HistoryError::ObjectMissing(_))));
+    assert_eq!(head(&ops), before);
+    let result = ok(&ops, "s", "truncate", "truncate_history", payload.clone());
+    let after = head(&ops);
+    assert_eq!(after["revision"], before["revision"].as_u64().unwrap() + 1);
+    assert_eq!(ok(&ops, "s", "truncate", "truncate_history", payload.clone()), result);
+    let mut reused = payload.clone(); reused["messageId"] = text("prefix");
+    assert!(matches!(call(&ops, "s", "truncate", "truncate_history", reused), Err(HistoryError::RequestConflict)));
+    assert!(matches!(call(&ops, "s", "old-window", "history_sync",
+        serde_json::json!({"since":window["historyWindow"]["syncCursor"]})), Err(HistoryError::StaleCursor)));
+    let assert_projection = |ops: &HistoryOps| {
+        let messages = list(ops, "messages", temp());
+        assert_eq!(messages["items"].as_array().unwrap().len(), 2);
+        assert_eq!(messages["items"][1]["id"], "target");
+        let steps = ok(ops, "s", "steps", "list_steps", temp());
+        assert_eq!(steps["items"].as_array().unwrap().len(), 1);
+        assert_eq!(steps["items"][0]["id"], "keep-step");
+        for operation in ["list_parts", "list_events", "list_file_changes"] {
+            assert_eq!(ok(ops, "s", operation, operation, temp())["items"], serde_json::json!([]));
+        }
+        let page = ok(ops, "s", "graph", "page", serde_json::json!({"objectId":after["objectId"],"limit":256}));
+        assert!(page["cursor"].is_null());
+        assert!(!page.to_string().contains("tail"));
+        let current = ok(ops, "s", "current", "context_current", temp());
+        let updates = ok(ops, "s", "updates", "history_updates", serde_json::json!({
+            "generation":current["generation"],"afterRevision":0,"throughRevision":after["revision"]
+        }));
+        assert_eq!(updates["items"], serde_json::json!([]));
+    };
+    assert_projection(&ops);
+    drop(ops); drop(store);
+    // Exercise log replay, not just the optional saved query projection.
+    let directory = super::history_path(&root, "s").unwrap();
+    std::fs::write(directory.join("history-index.bin"), b"invalid checkpoint").unwrap();
+    let (store, ops) = open(&root);
+    assert_eq!(head(&ops), after);
+    assert_eq!(ok(&ops, "s", "truncate", "truncate_history", payload), result);
+    assert_projection(&ops);
+    assert_eq!(ok(&ops, "s", "verify", "verify", temp())["ok"], true);
+    ok(&ops, "s", "pin-target", "checkpoint", serde_json::json!({
+        "objectId":after["objectId"],"pinId":"target-pin","metadata":{"messageId":"target"}
+    }));
+    ok(&ops, "copy", "copy-truncated", "fork_copy", serde_json::json!({
+        "sourceSessionId":"s","checkpointId":"target-pin","expectedRevision":after["revision"]
+    }));
+    let copied = ok(&ops, "copy", "messages", "list_messages", temp());
+    assert_eq!(copied["items"].as_array().unwrap().len(), 2);
+    assert!(!copied.to_string().contains("Never expose tail"));
+    ok(&ops, "s", "append-after", "append_entities", objects(serde_json::json!([message("new", 4, "New branch")])));
+    let messages = list(&ops, "after-append", temp());
+    assert_eq!(messages["items"].as_array().unwrap().len(), 3);
+    assert!(!messages.to_string().contains("Never expose tail"));
+    drop(ops); drop(store); cleanup(root);
+}
+
+#[test]
+fn truncate_history_preserves_the_compaction_seal_and_rejects_its_prefix() {
+    let root = temp_root("truncate-history-seal");
+    let (store, ops) = open(&root);
+    ok(&ops, "s", "earlier", "append_entities", objects(serde_json::json!([message("earlier", 0, "Earlier evidence")])));
+    let active = begin_context(&ops);
+    ok(&ops, "s", "commit", "context_commit", serde_json::json!({"checkpoint":checkpoint_candidate(&active)}));
+    let current = ok(&ops, "s", "current", "context_current", temp());
+    let before = ok(&ops, "s", "new", "append_entities", objects(serde_json::json!([
+        message("target", 3, "Keep target"), message("tail", 4, "Remove tail")
+    ])));
+    for id in ["earlier", "old-message"] {
+        assert!(matches!(call(&ops, "s", id, "truncate_history",
+            serde_json::json!({"messageId":id,"expectedRevision":before["revision"]})), Err(HistoryError::ReadOnlyHistory)));
+    }
+    ok(&ops, "s", "truncate", "truncate_history", serde_json::json!({"messageId":"target","expectedRevision":before["revision"]}));
+    let after = ok(&ops, "s", "current", "context_current", temp());
+    assert_eq!(after["checkpoint"], current["checkpoint"]);
+    assert_eq!(after["sealedThroughRevision"], current["sealedThroughRevision"]);
+    let messages = list(&ops, "messages", temp());
+    for id in ["earlier", "old-message", "target"] {
+        assert!(messages["items"].as_array().unwrap().iter().any(|item| item["id"] == id));
+    }
+    assert!(!messages["items"].as_array().unwrap().iter().any(|item| item["id"] == "tail"));
+    assert!(matches!(call(&ops, "s", "rewrite-sealed", "append_entities",
+        objects(serde_json::json!([message("old-message", 1, "Forbidden rewrite")]))), Err(HistoryError::ReadOnlyHistory)));
+    drop(ops); drop(store); cleanup(root);
 }
 
 #[test]

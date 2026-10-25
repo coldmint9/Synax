@@ -3,6 +3,8 @@ import { useAgentSessionStore as store } from "../agentSessionStore";
 import { materializeLiveBlocks } from "../../streamingLiveBlocks";
 import type { AgentSession } from "../../../../adapters/transport/agentRuntime";
 import type { ToolCallRecord } from "../../../../adapters/transport/agentRuntime";
+import { agentRuntimeApi } from "../../../../adapters/transport/agentRuntime";
+import { usePendingSubmissionStore } from "../pendingSubmissionStore";
 
 vi.mock("../../../../adapters/transport/sessionLiveClient", () => ({
   ensureSessionLiveSubscription: vi.fn(),
@@ -71,7 +73,29 @@ beforeEach(() => {
 });
 afterEach(() => {
   store.setState(store.getInitialState());
+  usePendingSubmissionStore.setState({ items: {} });
+  vi.restoreAllMocks();
   vi.useRealTimers();
+});
+
+it("sends a side chat message without replacing the main conversation or its stream", async () => {
+  const submit = vi.spyOn(agentRuntimeApi, "submitRun").mockResolvedValue({
+    run: { id: "run-side", sessionId: "session-a", status: "running" } as never,
+    reused: false,
+  });
+  store.setState({ refreshSessions: vi.fn(async () => {}), refreshDetail: vi.fn(async () => {}) });
+  vi.mocked(ensureSessionLiveSubscription).mockClear();
+  vi.mocked(releaseSessionLiveSubscription).mockClear();
+
+  await store.getState().sendSessionMessage("session-a", { message: "A side question" });
+
+  expect(submit).toHaveBeenCalledWith("session-a", expect.objectContaining({ message: "A side question" }), expect.any(String), "turn");
+  expect(store.getState().selectedSessionId).toBe("session-b");
+  expect(store.getState().messages).toEqual([]);
+  expect(ensureSessionLiveSubscription).not.toHaveBeenCalled();
+  expect(releaseSessionLiveSubscription).not.toHaveBeenCalled();
+  expect(store.getState().refreshDetail).not.toHaveBeenCalled();
+  expect(usePendingSubmissionStore.getState().items["session-a"]?.run?.id).toBe("run-side");
 });
 
 it("drops a stale stream's step_started instead of seeding the selected transcript", () => {

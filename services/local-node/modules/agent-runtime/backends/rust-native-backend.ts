@@ -5,6 +5,7 @@ import { resolvePermissionDecision } from "../permission-policy.js";
 import type { RustAgentLoopEvent } from "../rust-agent-loop-client.js";
 import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
 import { resolveGatewaySelection } from "../../../infrastructure/llm-runtime/gateway.js";
+import { outputProtocolOptions, resolveOutputReserve } from "../../../infrastructure/llm-runtime/model-output-limits.js";
 import { businessStore } from "../../../infrastructure/persistence/business-store.js";
 import type { StreamTurnRequest, AgentRunStreamChunk, AgentRun, AgentRunStep, AgentRuntimeMessage } from "../contracts.js";
 import type { BackendAdapter } from "./backend-contracts.js";
@@ -95,16 +96,22 @@ export class RustNativeBackend implements BackendAdapter {
       const contextLimit = selection.modelDef.contextLimit ?? 200_000;
       const inputLimit = selection.modelDef.inputLimit;
       let effectiveInputLimit = inputLimit;
-      const outputReserve = input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
+      // Reserve context space without overriding the provider's output default.
+      const reasoningEffort = input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode);
+      const maxOutputTokens = input.maxTokens ?? selection.config.maxOutputTokens;
+      const outputReserve = resolveOutputReserve(selection.modelDef, reasoningEffort, maxOutputTokens);
       const inputBudget = contextInputBudget({ contextLimit, inputLimit, outputReserve });
       const generationRequest: LlmGatewayRequest = { projectId: session.projectId, purpose: input.purpose ?? "agent", messages: [],
-        temperature: input.temperature, reasoningEffort: input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode) };
+        temperature: input.temperature, reasoningEffort };
       run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, contextLimit, inputLimit, inputBudget, outputReserve } });
       await warmupMcpForSession(sessionId);
       const prepareContext = (stepIndex: number) => buildNativeStepContext(sessionId, input, prompt, stepIndex);
       const resolvePromptMessage = async (message: AgentRuntimeMessage): Promise<unknown[]> => {
         const canonical = message.metadata?.rustMessage;
-        if (canonical) return [canonical];
+        if (canonical) {
+          const continuation = (canonical as { continuationMessages?: unknown[] }).continuationMessages;
+          return Array.isArray(continuation) && continuation.length ? continuation : [canonical];
+        }
         else if (message.contentParts?.length && (message.role === "user" || message.role === "assistant")) {
           return resolveMediaMessages([{ role: message.role,
             content: modelContentParts(message.contentParts) }], selection, session.projectId);
@@ -142,7 +149,8 @@ export class RustNativeBackend implements BackendAdapter {
         headers: selection.config.options?.headers as Record<string, string> | undefined,
         // The first context barrier reconstructs the bounded durable tail.
         // Never copy all stored messages into the loop start envelope.
-        model: selection.modelId, prompt: [], tools: [], maxOutputTokens: outputReserve,
+        model: selection.modelId, prompt: [], tools: [], maxOutputTokens,
+        ...outputProtocolOptions(selection, reasoningEffort),
         cachePolicy: { adapter: selection.provider.npm, mode: selection.config.options?.promptCaching, chatBreakpoints: selection.config.options?.chatCacheBreakpoints, sessionId, projectId: session.projectId },
       }, workSignal, async loopId => {
         this.activeLoops.set(sessionId, loopId);
@@ -453,6 +461,11 @@ export class RustNativeBackend implements BackendAdapter {
       const message = error instanceof Error ? error.message : String(error);
       if (compacting) emitSessionLive(sessionId, { type: "context_compaction_failed", error: message });
       const interrupted = signal?.aborted || message === "Rust loop cancelled." || message.includes("RUN_INTERRUPTED");
+      if (step && text && !assistant) {
+        assistant = store.appendMessage({ id: makeRuntimeId("msg"), sessionId, runId: run.id, stepId: step.id,
+          role: "assistant", content: text, metadata: { engine: "rust", thought, partial: true }, createdAt: nowIso() });
+        yield { type: "message", message: assistant };
+      }
       if (!interrupted) logger.error({ sessionId, runId: run.id, stepId: step?.id,
         code: toRuntimeError(error).code, err: error,
       }, "[agent-runtime] native run failed");

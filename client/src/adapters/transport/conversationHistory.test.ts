@@ -35,3 +35,12 @@ it('keeps an unfiltered query while the transcript is still empty', async () => 
   await conversationHistoryApi.list('s', undefined, []);
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith('/api/agent-runtime/sessions/s/checkpoints', { signal: undefined, silent: true });
 });
+
+it('uses truncate_history with explicit session mode for rollback', async () => {
+  await conversationHistoryApi.preview('s', 'cp', 'rollback', 'session');
+  expect(mocks.request).toHaveBeenCalledExactlyOnceWith('/api/agent-runtime/sessions/s/history/preview', expect.objectContaining({
+    body: JSON.stringify({ checkpointId: 'cp', action: 'truncate_history', mode: 'session' }),
+  }));
+  await conversationHistoryApi.apply('s', 'rollback', { checkpointId: 'cp', revision: 1, requestId: 'r', mode: 'session' });
+  expect(mocks.request).toHaveBeenLastCalledWith('/api/agent-runtime/sessions/s/history/truncate_history', expect.anything());
+});

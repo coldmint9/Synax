@@ -6,6 +6,7 @@ use crate::agent::context::{self as loop_context, Compaction, ContextAction, Con
 use crate::agent::policy::{self as loop_policy, Decision, Disposition, RuntimeBinding};
 use crate::llm::errors::InvalidToolArguments;
 use crate::llm::{completion::provider_events, contract::ProviderRequest};
+use crate::llm::continuation::continuing_provider_events;
 use crate::runtime::{actor::SessionShardRouter, execution::ExecutionLease};
 use crate::storage::jsonl::hot::HotOps as HotStore;
 use futures_util::StreamExt;
@@ -1189,7 +1190,9 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     }
                     drop(handle.commit(state, next, vec![event], false).await?);
                 }
-                let mut events = provider_events(model_request);
+                let mut events = continuing_provider_events(model_request,
+                    execution.request.context_policy.as_ref().map(ContextPolicy::input_budget),
+                    |request| Ok(loop_context::composition(request)?.total));
                 check_execution(handle, execution.request.execution_context.as_ref()).await?;
                 let mut lease_tick = tokio::time::interval(std::time::Duration::from_millis(500));
                 let mut calls = Vec::new();

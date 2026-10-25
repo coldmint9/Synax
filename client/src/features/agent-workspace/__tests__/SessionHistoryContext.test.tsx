@@ -18,7 +18,7 @@ function Trigger({action='rollback'}: {action?: 'rollback' | 'edit' | 'fork'}){c
 beforeEach(()=>{
  vi.clearAllMocks();useShellStore.setState(s=>({preferences:{...s.preferences,locale:'zh'}}));
  vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[cp]});
- vi.mocked(conversationHistoryApi.preview).mockImplementation(async(_session,_checkpoint,_action,files=true)=>({checkpointId:'cp',revision:0,removedMessages:2,files:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'committed.ts',kind:'committed',reason:'Committed'}],conflicts:files?[{root:'/project',path:'manual.ts',reason:'Human edit'}]:[],canApply:!files}));
+ vi.mocked(conversationHistoryApi.preview).mockImplementation(async(_session,_checkpoint,_action,mode='session')=>({checkpointId:'cp',revision:0,removedMessages:2,files:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'committed.ts',kind:'committed',reason:'Committed'}],conflicts:mode === 'session_and_workspace'?[{root:'/project',path:'manual.ts',reason:'Human edit'}]:[],canApply:mode !== 'session_and_workspace'}));
  vi.mocked(conversationHistoryApi.apply).mockResolvedValue({sessionId:'s',revision:1});
  vi.mocked(conversationHistoryApi.edit).mockResolvedValue({sessionId:'s',revision:1});
  vi.spyOn(useAgentSessionStore.getState(),'cancelSessionRun').mockResolvedValue();
@@ -57,7 +57,7 @@ describe('history impact confirmation',()=>{
    const rollback=await screen.findByRole('button',{name:'回滚到此处'});
    await waitFor(()=>expect(rollback).not.toHaveAttribute('aria-disabled','true'));
    fireEvent.click(rollback);
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',true));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
  });
  it('hides history actions when a stored checkpoint is unavailable',async()=>{
    vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[{...cp,canRollback:false,reason:'检查点暂不可用'}]});
@@ -70,32 +70,37 @@ describe('history impact confirmation',()=>{
    function Trim(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,destructive:true})}>Trim</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><Trim/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Trim'}));
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
-   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
+   expect(screen.queryByRole('radio')).not.toBeInTheDocument();
    expect(screen.getByText(/后续消息和执行记录将被永久删除/)).toBeInTheDocument();
    fireEvent.click(screen.getByRole('button',{name:'永久截取到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('shows committed-file preservation and allows conversation-only trimming through a conflict',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   expect(await screen.findByText('另有 1 项变更不在回滚范围，将保留。')).toBeInTheDocument();
-   expect(screen.getByRole('button',{name:'回滚到此处'})).toBeDisabled();
-   fireEvent.click(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'}));
+   expect(await screen.findByText('仅裁剪会话历史，已有工作目录中的文件保持不变。')).toBeInTheDocument();
+   expect(screen.queryByText(/变更不在回滚范围/)).not.toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
+   fireEvent.click(await screen.findByRole('radio',{name:'会话记录 + 工作区'}));
+   expect(screen.getByTestId('workspace-overwrite-warning')).toBeInTheDocument();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenLastCalledWith('s','cp','rollback','session_and_workspace'));
+   await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).toBeDisabled());
+   fireEvent.click(screen.getByRole('radio',{name:'仅会话记录'}));
    await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled());
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('restricts reconstructed checkpoints to conversation-only rollback',async()=>{
    function Reconstructed(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,transcriptOnly:true})}>Restore imported</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><Reconstructed/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Restore imported'}));
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
-   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).toBeDisabled();
-   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).not.toBeChecked();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
+   expect(screen.getByRole('radio',{name:'会话记录 + 工作区'})).toBeDisabled();
+   expect(screen.getByRole('radio',{name:'仅会话记录'})).toBeChecked();
    expect(screen.getByText(/此边界由旧消息补建/)).toBeInTheDocument();
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('submits edits without opening a confirmation modal',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
@@ -106,9 +111,8 @@ describe('history impact confirmation',()=>{
  it('flags expired file history as out of scope without spelling out the rule',async()=>{
    vi.mocked(conversationHistoryApi.preview).mockResolvedValue({checkpointId:'cp',revision:0,removedMessages:2,files:[],conflicts:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'expired.ts',kind:'expired',reason:'Expired'}],canApply:true});
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   const hint=await screen.findByText('另有 1 项变更不在回滚范围，将保留。');
-   expect(hint).toHaveAttribute('title','expired.ts · 超过 24 小时未访问，撤销记录已清理');
-   expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalled());
+   expect(screen.queryByText('另有 1 项变更不在回滚范围，将保留。')).not.toBeInTheDocument();
  });
  it.each([['reuse_worktree', '在原工作空间中'], ['new_worktree', '在新的工作树上']] as const)('executes %s directly from the two-option pop', async (mode, label) => {
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);

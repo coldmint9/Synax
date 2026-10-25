@@ -73,7 +73,7 @@ pub(crate) fn composition(input: &ProviderRequest) -> Result<Composition, Contex
         measured_at: chrono::Utc::now().to_rfc3339(),
         estimator: "o200k-json-estimate".into(),
     };
-    for message in &input.prompt {
+    for message in crate::llm::expanded_messages(&input.prompt) {
         // This is a text estimate. Media billing depends on the provider; raw
         // attachment bytes/URLs must never be tokenized as conversation text.
         let count = tokens(&serde_json::to_string(&without_attachments(message))?) + 4;

@@ -1135,6 +1135,18 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/pin`,
       { method: "PATCH", body: JSON.stringify({ pinned }) },
     ),
+  renameSession: (sessionId: string, title: string) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/title`, {
+      method: "PATCH", body: JSON.stringify({ title }), silent: true,
+    }),
+  forkSession: (sessionId: string, body: { requestId: string; workspaceMode: "new_worktree" | "reuse_worktree" }) =>
+    request<{ sessionId: string; session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+      method: "POST", body: JSON.stringify(body), silent: true,
+    }),
+  permanentlyDeleteSession: (sessionId: string) =>
+    request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
+      method: "POST", body: JSON.stringify({}), silent: true,
+    }),
   updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
     request<{ session: AgentSession }>(
       `/sessions/${encodeURIComponent(sessionId)}/mode`,

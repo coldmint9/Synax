@@ -81,6 +81,24 @@ export type SessionLiveEvent =
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
 
+const ACTIVE_SESSION_STATUSES = new Set<AgentSession["status"]>([
+  "running",
+  "queued",
+  "waiting_permission",
+  "waiting_input",
+]);
+
+function isTerminalLifecycleEvent(event: SessionLiveEvent): boolean {
+  if (event.type === "runtime_state") {
+    return typeof event.patch.status === "string" &&
+      !ACTIVE_SESSION_STATUSES.has(event.patch.status);
+  }
+  if (event.type === "runtime_snapshot") {
+    return !ACTIVE_SESSION_STATUSES.has(event.session.status);
+  }
+  return false;
+}
+
 /** Give the run stream sole ownership of live projections. Session events
  * still carry auxiliary domains and discover runs created by another client.
  * On replay expiry, rebuild from one durable snapshot before accepting deltas. */
@@ -108,14 +126,35 @@ export function sessionLiveStream(
     if (unavailable.size > 64) unavailable.delete(unavailable.values().next().value!);
     stopRun?.(); activeRun = runId;
     setRunRealtimeObservation(sessionId, runId);
-    stopRun = observeRunRealtime(sessionId, runId, onEvent, recover);
+    stopRun = observeRunRealtime(
+      sessionId,
+      runId,
+      event => {
+        if (isTerminalLifecycleEvent(event)) finishActiveRun();
+        onEvent(event);
+      },
+      recover,
+    );
+  };
+  const finishActiveRun = () => {
+    activeRun = null;
+    setRunRealtimeObservation(sessionId, null);
+    stopRun?.();
+    stopRun = undefined;
   };
   const core = new Set(['runtime_snapshot', 'runtime_state', 'message', 'event', 'permission_updated',
     'execution_status', 'step_started', 'retry_status', 'message_delta', 'thought_delta', 'tool_call', 'tool_result']);
   const receive = (event: SessionLiveEvent) => {
     const run = event.type === 'runtime_snapshot' || event.type === 'runtime_state' ? event.run : undefined;
     if (run && ['queued', 'running'].includes(run.status)) start(run.id);
-    if (activeRun && core.has(event.type)) return;
+    if (activeRun && core.has(event.type)) {
+      // Terminal records are written to the durable stream after the final
+      // reply is persisted. The run realtime channel intentionally does not
+      // carry those records, so do not filter the durable terminal state out
+      // while the realtime observation is still attached.
+      if (!isTerminalLifecycleEvent(event)) return;
+      finishActiveRun();
+    }
     onEvent(event);
   };
   const unsubscribe = onRunObservation(sessionId, start);

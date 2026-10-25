@@ -90,7 +90,17 @@ describe('model-visible builtin tool contracts', () => {
     const planSchema = toolRegistry.get('plan.propose').inputSchema!;
     expect(planSchema.safeParse(plan).success).toBe(true);
     expect(planSchema.safeParse({ ...plan, steps: [...plan.steps].reverse() }).success).toBe(false);
-    expect(planSchema.safeParse({ ...plan, humanAcceptanceCriteria: ['Foreign'] }).success).toBe(false);
+    const independent = planSchema.parse({ ...plan, humanAcceptanceCriteria: ['User approves the result'] });
+    expect(independent.humanAcceptanceCriteria).toEqual(['User approves the result']);
+    expect(independent.acceptanceCriteria).toEqual(['Done']);
+    expect(planSchema.safeParse({ ...plan, humanAcceptanceCriteria: ['Done'] }).success).toBe(true);
+    expect(planSchema.safeParse({ ...plan, humanAcceptanceCriteria: ['   '] }).success).toBe(false);
+    expect(planSchema.safeParse({ ...plan, humanAcceptanceCriteria: Array(31).fill('Review') }).success).toBe(false);
+    expect(planSchema.safeParse({ ...plan, acceptanceCriteria: ['Done', 'Done'] }).success).toBe(false);
+    expect((await definition('plan.propose')).description).toContain('humanAcceptanceCriteria may be specified independently');
+    expect((await definition('plan.propose')).schema).toMatchObject({ properties: {
+      humanAcceptanceCriteria: { description: expect.stringContaining('independently of acceptanceCriteria') },
+    } });
   });
 
   it('corrects search defaults and does not warn against supported hyphen patterns', async () => {

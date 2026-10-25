@@ -16,6 +16,10 @@ export interface FieldError {
 
 export function validateProviderDraft(draft: ApiProviderDraft): FieldError[] {
   const errors: FieldError[] = []
+  const output = draft.maxOutputTokens?.trim()
+  if (output && (!/^\d+$/.test(output) || !Number.isSafeInteger(Number(output)) || Number(output) < 1 || Number(output) > 10_000_000)) {
+    errors.push({ field: 'maxOutputTokens', message: '输出上限须为 1–10,000,000 的整数，或留空使用上游默认值' })
+  }
   if (!draft.apiKey.trim() && !draft.apiKeyMasked.trim()) {
     errors.push({ field: 'apiKey', message: 'API Key 不能为空' })
   }

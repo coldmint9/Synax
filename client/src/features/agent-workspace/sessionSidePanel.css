@@ -1,0 +1,78 @@
+/* The host owns geometry. Feature views only lay out their own contents. */
+.session-side-panel {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--work-line);
+  background: var(--background);
+}
+.session-side-panel[hidden] {
+  display: none;
+}
+.session-side-panel-content,
+.session-side-panel-view {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.session-side-panel[data-presentation="inset"] {
+  padding: var(--work-panel-inset) 6px var(--work-panel-inset) 0;
+  border: 0;
+  background: transparent;
+}
+.session-side-panel[data-presentation="inset"] > .session-side-panel-content {
+  border-radius: var(--work-panel-radius);
+  background: var(--ui-panel-soft);
+  box-shadow: var(--work-sidebar-shadow), var(--work-sidebar-relief);
+}
+.session-side-panel[data-collapsed="true"] {
+  padding: 0;
+}
+.session-side-panel[data-collapsed="true"] > .session-side-panel-content {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.session-side-panel[data-resizing="true"] {
+  user-select: none;
+}
+.session-side-panel > .session-panel-resizer {
+  display: block;
+}
+.session-side-panel > .session-panel-resizer:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
+}
+.work-session-layout[data-side-panel-fullscreen="true"] {
+  flex-direction: row;
+}
+.session-side-panel[data-fullscreen="true"] {
+  flex: 1;
+  width: 100%;
+  max-height: none;
+  border: 0;
+}
+@media (max-width: 767px) {
+  .work-page[data-side-panel="true"]
+    .work-session-layout:not([data-side-panel-fullscreen="true"]) {
+    flex-direction: column;
+  }
+  .session-side-panel:not([data-fullscreen="true"]) {
+    flex: 0 0 42%;
+    width: 100% !important;
+    max-height: 42%;
+    border-left: 0;
+    border-top: 1px solid var(--work-line);
+  }
+  .session-side-panel > .session-panel-resizer {
+    display: none;
+  }
+  .work-page[data-side-panel="true"] .agent-command-rail {
+    bottom: calc(42% + 10px);
+  }
+}

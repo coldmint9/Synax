@@ -7,6 +7,8 @@ import { toolRegistry } from "./tool-registry.js";
 import { prepareCheckpointContext } from "./checkpoint-projection.js";
 import { buildNativeStepContext } from "./native-step-context.js";
 import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
+import { resolveOutputReserve } from "../../infrastructure/llm-runtime/model-output-limits.js";
+import { mapThinkingModeToReasoningEffort } from "../../infrastructure/llm-runtime/thinking-mode-strategy.js";
 import { resolveMediaMessages } from "./media-capabilities.js";
 import { modelContentParts } from "./media-assets.js";
 import { nativeCapabilitiesEnabled } from "./native-capabilities/policy.js";
@@ -92,9 +94,13 @@ export async function compactSessionContextWithLlm(
   const result = await prepareCheckpointContext({
     sessionId, projectId: session.projectId, model: selection.modelId, ...prepared, force: true, signal, ownerId,
     budget: { contextLimit: selection.modelDef.contextLimit ?? 200_000, inputLimit: selection.modelDef.inputLimit,
-      outputReserve: selection.modelDef.maxTokens ?? 8192 },
+      outputReserve: resolveOutputReserve(selection.modelDef, session.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode)) },
     resolve: async message => {
-      if (message.metadata?.rustMessage) return [message.metadata.rustMessage];
+      if (message.metadata?.rustMessage) {
+        const canonical = message.metadata.rustMessage as { continuationMessages?: unknown[] };
+        return Array.isArray(canonical.continuationMessages) && canonical.continuationMessages.length
+          ? canonical.continuationMessages : [canonical];
+      }
       if (message.contentParts?.length && (message.role === "user" || message.role === "assistant"))
         return resolveMediaMessages([{ role: message.role, content: modelContentParts(message.contentParts) }], selection, session.projectId);
       return [{ role: message.role, content: [{ type: "text", text: message.content }] }];

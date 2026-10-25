@@ -42,6 +42,11 @@ pub(crate) struct ProviderRequest {
     pub(crate) tool_choice: Option<Value>,
     #[serde(rename = "maxOutputTokens")]
     pub(crate) max_output_tokens: Option<u32>,
+    /// Host-provided default for protocols that require an explicit cap.
+    #[serde(default, rename = "requiredMaxOutputTokens")]
+    pub(crate) required_max_output_tokens: Option<u32>,
+    #[serde(default, rename = "outputTokenParameter")]
+    pub(crate) output_token_parameter: Option<String>,
     #[serde(default)]
     pub(crate) temperature: Option<f64>,
     #[serde(default, rename = "topP")]

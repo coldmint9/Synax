@@ -5,6 +5,7 @@ import { SessionToolbarContent } from "./SessionToolbarPortal";
 import { SessionSidebarActions } from "./SessionSidebarActions";
 import { SessionListHeader } from "./SessionListHeader";
 import { SessionTimeGroups } from "./SessionTimeGroups";
+import { SessionActionsDialog, type SessionActionRequest } from "./SessionActionsDialog";
 import { WorkspaceDirectoryTree } from "./WorkspaceDirectoryTree";
 import "./workspaceDirectoryTree.css";
 import { useNotificationStore } from "../../shared/state/notificationStore";
@@ -47,6 +48,8 @@ export function SessionListPanel({
   const { ensureLoaded } = list;
   const pendingArchives = useRef(new Set<string>());
   const [archiving, setArchiving] = useState(false);
+  const [actionRequest, setActionRequest] = useState<SessionActionRequest | null>(null);
+  useEffect(() => { setActionRequest(null); }, [projectId]);
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return;
     // Loading a workspace is lazy and cached: switching back to one paints its
@@ -149,11 +152,14 @@ export function SessionListPanel({
                 onToggleExpand={list.toggleExpand}
                 onLoadMore={list.loadMore}
                 onDelete={(id) => void handleArchive(id)}
+                onSessionAction={(kind, session) => setActionRequest({ kind, session })}
               />
             </div>
           </>
         )}
       </div>
+      {actionRequest ? <SessionActionsDialog key={`${actionRequest.session.id}:${actionRequest.kind}`} request={actionRequest}
+        onClose={() => setActionRequest(null)} onComplete={() => { void list.refresh(); }} /> : null}
     </div>
   );
 }

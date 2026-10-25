@@ -1024,6 +1024,7 @@ export interface AgentSessionStoreState {
     body: SessionInputBody,
   ) => Promise<AgentSession>;
   deleteSession: (sessionId: string, onViewArchive?: () => void) => Promise<string[]>;
+  permanentlyDeleteSession: (sessionId: string) => Promise<string[]>;
   discardRemovedSessions: (
     sessionIds: string[],
     projectId: string | null,
@@ -1714,6 +1715,21 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         });
       }
       return deletedSessionIds;
+    },
+
+    permanentlyDeleteSession: async (sessionId) => {
+      const projectId = get().projectId;
+      markRuntimeResourcePendingRemoval(sessionId);
+      try {
+        const { deletedSessionIds } = await agentRuntimeApi.permanentlyDeleteSession(sessionId);
+        get().discardRemovedSessions(deletedSessionIds, projectId);
+        return deletedSessionIds;
+      } catch (error) {
+        clearRuntimeResourcePendingRemoval(sessionId);
+        if (!isMissingSession(error, sessionId)) throw error;
+        get().discardRemovedSessions([sessionId], projectId);
+        return [sessionId];
+      }
     },
 
     discardRemovedSessions: (deletedSessionIds, projectId) => {

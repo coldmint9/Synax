@@ -127,6 +127,8 @@ export type ApiProviderDraft = {
   modelMeta: Record<string, ModelMeta>;
   /** Reasoning effort levels allowed for this provider (multi-select). Empty = unrestricted. */
   reasoningEfforts: ReasoningEffort[];
+  /** Optional per-request cap. Empty uses the upstream default. */
+  maxOutputTokens?: string;
   custom: boolean;
   status: "live" | "experimental" | "inactive";
   showApiKey: boolean;
@@ -555,6 +557,7 @@ export function buildApiDrafts(
         connection?.baseUrl ?? preset?.defaultBaseUrl ?? defaultBaseUrl(format),
       apiKey: "",
       apiKeyMasked: connection?.apiKeyMasked ?? "",
+      maxOutputTokens: typeof connection?.extra?.maxOutputTokens === "number" ? String(connection.extra.maxOutputTokens) : "",
       model,
       models: normalizeModelList(
         provider.models.map((m) => m.id),
@@ -569,6 +572,8 @@ export function buildApiDrafts(
           .filter(
             (m) =>
               typeof m.contextLimit === "number" ||
+              typeof m.inputLimit === "number" ||
+              typeof m.maxTokens === "number" ||
               m.inputModalities ||
               m.outputModalities ||
               m.capabilities ||
@@ -578,6 +583,8 @@ export function buildApiDrafts(
             m.id,
             {
               contextLimit: m.contextLimit,
+              inputLimit: m.inputLimit,
+              outputLimit: m.maxTokens,
               inputModalities: m.inputModalities?.filter(
                 (modality): modality is DeclaredModelModality => ["text", "image", "video"].includes(modality),
               ),
@@ -671,6 +678,8 @@ export function draftToProviderDef(draft: ApiProviderDraft): ProviderDef {
         ...(meta.inputModalities ? { inputModalities: meta.inputModalities } : {}),
         ...(meta.outputModalities ? { outputModalities: meta.outputModalities } : {}),
         ...(meta.contextLimit ? { contextLimit: meta.contextLimit } : {}),
+        ...(meta.inputLimit ? { inputLimit: meta.inputLimit } : {}),
+        ...(meta.outputLimit ? { maxTokens: meta.outputLimit } : {}),
         ...(meta.capabilities ? { capabilities: meta.capabilities } : {}),
         ...(meta.media ? { media: meta.media } : {}),
       };
@@ -689,6 +698,7 @@ export function draftToConnection(draft: ApiProviderDraft): ProviderConnection {
       kind: "api",
       apiFormat: draft.format,
       model: draft.model || undefined,
+      ...(draft.maxOutputTokens?.trim() ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
       ...(draft.reasoningEfforts?.length
         ? { reasoningEfforts: parseReasoningEfforts(draft.reasoningEfforts) }
         : {}),

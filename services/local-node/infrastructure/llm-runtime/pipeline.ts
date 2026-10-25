@@ -6,6 +6,7 @@ import { inspectHistoryCacheAnchor } from "./cache-policy.js";
 import { resolveMediaMessages } from "../../modules/agent-runtime/media-capabilities.js";
 import { ensureJsonObjectResponseFormatInstruction } from "./prompt.js";
 import { mergeProviderOptions } from "./connection-options.js";
+import { outputProtocolOptions } from "./model-output-limits.js";
 import { streamProvider, prepareProvider } from "./native-client.js";
 import { cacheDiagnosticsEnabled, fingerprintRequest } from "./cache-diagnostics.js";
 import { asSchema } from "./tool-schema.js";
@@ -115,7 +116,8 @@ export async function executePipeline(
       chatBreakpoints: selection.config.options?.chatCacheBreakpoints, projectId: request.projectId, sessionId: request.hookContext?.sessionId,
       previousAnchorMatches: !request.previousHistoryAnchor || inspectHistoryCacheAnchor(request.messages, request.previousHistoryAnchor).historyAnchorStatus === "matched" },
     tools, toolChoice: typeof choice === "string" ? { type: choice } : choice,
-    maxOutputTokens: request.maxTokens, stopSequences: request.stop,
+    maxOutputTokens: request.maxTokens ?? selection.config.maxOutputTokens, stopSequences: request.stop,
+    ...outputProtocolOptions(selection, request.reasoningEffort),
     temperature: request.temperature, purpose: request.purpose,
     reasoningEffort: request.reasoningEffort, reasoningCapable: selection.modelDef.reasoning,
     supportedReasoningEfforts: selection.modelDef.supportedReasoningEfforts,

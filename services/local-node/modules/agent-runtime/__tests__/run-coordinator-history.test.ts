@@ -76,6 +76,8 @@ it("forks the complete conversation once through Rust even from an earlier check
   const result = await response.json();
   expect(response.status, JSON.stringify(result)).toBe(201);
   const targetId = result.sessionId;
+  expect(result.session.title).toBe("Answer(2)");
+  expect((await runtimeFacade.sessionSummaryAuthoritative(targetId)).title).toBe("Answer(2)");
   expect(concurrent.status).toBe(201);
   expect((await concurrent.json()).sessionId).toBe(targetId);
   const copied = await runtimeFacade.listMessageHistory(targetId) as Array<{ id: string; content: string; sessionId: string }>;
@@ -86,6 +88,12 @@ it("forks the complete conversation once through Rust even from an earlier check
   const retry = await send();
   expect(retry.status).toBe(201);
   expect((await retry.json()).sessionId).toBe(targetId);
+  const secondFork = await agentRuntimeRoutes.request(`/sessions/${sessionId}/history/fork`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...payload, requestId: "second-fork-request" }),
+  });
+  expect(secondFork.status).toBe(201);
+  expect((await secondFork.json()).session.title).toBe("Answer(3)");
   await runtimeFacade.sessionPatch(targetId, "simulate-lost-fork-header", { sessionMetadata: {
     forkPreparing: true, forkCopyComplete: false, forkHostId: "previous-process", forkRequestId: payload.requestId,
   } });
