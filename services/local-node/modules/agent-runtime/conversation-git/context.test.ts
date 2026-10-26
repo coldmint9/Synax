@@ -9,6 +9,12 @@ const message = (id: string, source: string, content = "result"): AgentRuntimeMe
 });
 
 describe("conversationGitContextMessage", () => {
+  it('omits expired task anchors from the model context after resume', () => {
+    const old = message('old', 'git_merge_task');
+    old.metadata.gitMergeTimeline = { state: 'superseded', replacementMessageId: 'new', supersededAt: '2026-10-26T09:00:00Z' };
+    const value = conversationGitContextMessage([old, message('new', 'git_merge_task')], 's')!;
+    expect(JSON.parse(value.split('\n').at(-1)!).tasks).toHaveLength(1);
+  });
   it("scopes references and labels the payload as untrusted data", () => {
     const value = conversationGitContextMessage([
       message("task", "git_merge_task"),

@@ -442,9 +442,11 @@ describe("GET /sessions projected-status pagination", () => {
       "unconfirmed",
       "c-old",
     ]);
+    // A residual stop fence is settled in the background; it must never reach
+    // the client as a blocked reason the user is expected to act on.
     expect(completedBody.items[1]).toMatchObject({
       status: "completed",
-      blockedReason: "Needs inspection.",
+      blockedReason: null,
     });
 
     const legacyBlocked = await agentRuntimeRoutes.request(

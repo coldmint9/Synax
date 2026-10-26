@@ -11,6 +11,7 @@ describe('settings navigation', () => {
     )
     expect(screen.getByRole('button', { name: /MCP 服务器|MCP servers/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /电脑操作|Computer Use/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /GitLab 登录|GitLab sign-in/ })).toBeInTheDocument()
     // The extension centre MCP entry stays intact next to the new menu.
     expect(screen.getByRole('button', { name: 'MCP' })).toBeInTheDocument()
   })
@@ -23,6 +24,7 @@ describe('settings navigation', () => {
     )
     expect(screen.queryByRole('button', { name: /MCP 服务器|MCP servers/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /电脑操作|Computer Use/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /GitLab 登录|GitLab sign-in/ })).toBeNull()
   })
 
   it('reports the selected section through onSelect', async () => {

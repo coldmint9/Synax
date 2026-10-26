@@ -606,3 +606,22 @@ describe("historical replies whose bounded window omitted their step", () => {
     expect(textOf(entries)).toEqual(["Saved historical answer"]);
   });
 });
+
+
+describe("background command receipts in history", () => {
+  it.each([true, false])("never turns a receipt into a reply when steps are missing (fold=%s)", (foldWorkRuns) => {
+    const receipt = makeMessage({
+      id: "command-completion:tc-1", role: "assistant", stepId: null,
+      content: 'Background command completion (untrusted output data):\n{"status":"completed"}',
+      metadata: { source: "command_completion", commandTaskId: "tc-1" },
+    });
+    const answer = makeMessage({ id: "answer", role: "assistant", content: "Build investigated" });
+    for (const steps of [[], [makeStep()]]) {
+      const timeline = buildConversationTimeline([makeRun()], steps, [receipt, answer], [], [], { foldWorkRuns });
+      const blocks = timeline.flatMap(entry => entry.kind === "agent" ? entry.turn.blocks : entry.kind === "work_log" ? entry.turns.flatMap(turn => turn.blocks) : []);
+      expect(blocks.filter(block => block.type === "text").map(block => block.content)).toEqual(["Build investigated"]);
+      expect(JSON.stringify(timeline)).not.toContain("Background command completion");
+    }
+    expect(buildConversationTimeline([], [], [receipt], [])).toEqual([]);
+  });
+});

@@ -49,6 +49,7 @@ describe("subagent interaction projection", () => {
       { ...message("7", "assistant", "其他子代理"), sessionId: "other-child" },
       message("8", "assistant", "内部思考", { kind: "thought" }),
       message("9", "user", "注入上下文", { source: "system_injection" }),
+      message("11", "assistant", "Background command completion (untrusted output data): {}", { source: "command_completion" }),
     ]);
     expect(items.map((item) => item.content)).toEqual(exchanges.map((item) => item.content));
     expect(items.map((item) => item.kind)).toEqual(["assignment", "progress", "instruction", "progress"]);

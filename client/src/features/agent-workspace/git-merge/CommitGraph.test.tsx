@@ -92,6 +92,18 @@ afterEach(() => {
   else delete (document as any).visibilityState;
 });
 describe("prospective merge graph motion lifecycle", () => {
+  it('keeps wide branch geometry at its native scale instead of squeezing lanes into 88 pixels', () => {
+    const branches = Array.from({ length: 12 }, (_, index) => ({ oid: `branch-${index}`, parents: [`parent-${index}`], subject: `Branch ${index}`, author: 'A', date: '', refs: [] }));
+    const { container } = render(<CommitGraph commits={branches} />);
+    const svg = container.querySelector('svg.conversation-git-tree')!;
+    const width = Number(svg.getAttribute('width'));
+    expect(width).toBeGreaterThan(88);
+    expect(Number(svg.getAttribute('viewBox')!.split(' ')[2])).toBe(width);
+    expect(svg).toHaveAttribute('preserveAspectRatio', 'xMinYMin meet');
+    expect((container.querySelector('.conversation-git-virtual-space') as HTMLElement).style.minWidth).toBe(`${width + 240}px`);
+    const points = [...svg.querySelectorAll('circle')].map(circle => Number(circle.getAttribute('cx')));
+    expect(points[1] - points[0]).toBe(24);
+  });
   it("virtualizes commit rows and SVG geometry while retaining cross-window edges", async () => {
     const history = Array.from({ length: 1500 }, (_, index) => ({
       oid: `sha-${index}`,

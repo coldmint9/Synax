@@ -120,6 +120,12 @@ npm run dev:client   # Web only, port 5174, ~/.synax/web-dev
 
 The standalone defaults apply to `start:local`. The development profile defaults are applied automatically by the existing `dev`, `dev:all`, `dev:local`, `dev:client`, and `dev:desktop` commands. You can still override them in the shell that launches the development scripts.
 
+## GitLab MR sign-in
+
+Open **Settings → GitLab sign-in**, enter a GitLab hostname and a Personal Access Token with the `api` scope, then choose **Verify and save**. Synax connects through its built-in GitLab REST API client without requiring `glab`. Credentials are scoped to each host, encrypted in local configuration, and omitted from settings responses. You can test connections, replace tokens, and sign out.
+
+Choose a GitLab remote in the conversation **PR** panel to read, create, and merge MRs, inspect Pipeline status, and resolve conflicts. GitLab API connections use HTTPS. Git push / fetch continue to use the repository's existing SSH or HTTPS credentials. Signing out removes Synax credentials without revoking the token on GitLab.
+
 ## Local Git merge requests
 
 Workspace Commit / Commit & Push checks for conflicts before staging. Identical changes and conflicts with an unchanged base side resolve directly; other text conflicts use the project's configured model, replacing only conflict blocks. Unavailable models, incomplete results, concurrent file edits, and binary or structural conflicts stop the commit and preserve the conflict state. Push checks the index, worktree, and every outgoing commit for conflict markers. Push alone does not create resolution commits; use Commit to resolve conflicts first.

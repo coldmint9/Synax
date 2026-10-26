@@ -51,6 +51,16 @@ afterEach(() => {
 });
 
 describe("owner-scoped conversation Git messages", () => {
+  it('ingests resumed anchors and expired history atomically without duplicating the latest card', () => {
+    const original = anchor(parentId);
+    const resumed = { ...original, id: 'resumed-anchor', createdAt: '2026-10-26T09:00:00Z' };
+    const expired = { ...original, metadata: { ...original.metadata, gitMergeTimeline: { state: 'superseded', replacementMessageId: resumed.id, supersededAt: resumed.createdAt } } };
+    store.setState({ messages: [original], sessionDetailCache: { [parentId]: { ...cache([original]), timelineMessages: [original] } } });
+    store.getState().ingestConversationMessages(parentId, [expired, resumed]);
+    store.getState().ingestConversationMessages(parentId, [expired, resumed]);
+    expect(store.getState().messages).toEqual([expired, resumed]);
+    expect(store.getState().sessionDetailCache[parentId].timelineMessages?.[0].metadata.gitMergeTimeline).toEqual(expired.metadata.gitMergeTimeline);
+  });
   it("upserts a stable anchor in the visible transcript and cache without duplicate cards", () => {
     const original = anchor(parentId);
     const updated = anchor(parentId, "验证完成，等待合并");

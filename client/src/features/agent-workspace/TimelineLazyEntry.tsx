@@ -81,7 +81,7 @@ export function estimateEntryHeight(entry: ConversationTimelineEntry): number {
   for (const block of entry.turn.blocks) {
     switch (block.type) {
       case "git_merge":
-        height += 480;
+        height += block.superseded ? 76 : 480;
         break;
       case "media":
         height += 180;

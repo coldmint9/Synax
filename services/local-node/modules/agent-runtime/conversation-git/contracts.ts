@@ -57,6 +57,7 @@ export interface ConversationGitTask {
   rootId?: string;
   mrId: string;
   previousMrIds: string[];
+  /** Current actionable timeline anchor; earlier anchors expire on resume. */
   messageId: string;
   createdAt: string;
   updatedAt: string;

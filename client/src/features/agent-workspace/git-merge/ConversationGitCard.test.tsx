@@ -579,3 +579,12 @@ describe("conversation merge workbench", () => {
     expect(conversationGitApi.action).not.toHaveBeenCalled();
   });
 });
+
+ it('expires a stale timeline position after fetching a newer task anchor', async () => {
+  const current = snapshot('running');
+  current.task.messageId = 'resumed-anchor';
+  vi.mocked(conversationGitApi.get).mockResolvedValue(current);
+  render(<ConversationGitCard reference={reference} messageId="original-anchor" />);
+  expect(await screen.findByRole('note', { name: '已过期的合并任务卡片' })).toBeVisible();
+  expect(screen.queryByRole('group', { name: '智能合并控制' })).toBeNull();
+});

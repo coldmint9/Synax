@@ -14,6 +14,16 @@ const COMPLETED_SESSION_STATUSES = new Set<string>([
 ]);
 
 const EVENT_REFRESH_DEBOUNCE_MS = 300;
+const PROJECT_BADGE_VIEWED_KEY = "synax.projectBadgeViewedAt";
+
+function loadProjectBadgeViewedAt(projectId: string): number {
+  try {
+    const value = Number(localStorage.getItem(`${PROJECT_BADGE_VIEWED_KEY}:${projectId}`));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
 
 export interface ProjectSessionBadge {
   waitingInput: number;
@@ -41,12 +51,14 @@ interface ProjectSessionBadgeInput {
   sessions: readonly SessionBadgeRow[];
   readMarkers: Readonly<Record<string, string>>;
   now: number;
+  viewedAt?: number;
 }
 
 export function projectSessionBadge({
   sessions,
   readMarkers,
   now,
+  viewedAt = 0,
 }: ProjectSessionBadgeInput): ProjectSessionBadge {
   let running = 0;
   let unreadCompleted = 0;
@@ -54,6 +66,8 @@ export function projectSessionBadge({
   let unreadFailed = 0;
 
   for (const session of sessions) {
+    const updatedAt = Date.parse(session.updatedAt);
+    if (updatedAt <= viewedAt) continue;
     if (session.status === RUNNING_SESSION_STATUS) {
       running += 1;
       continue;
@@ -65,7 +79,6 @@ export function projectSessionBadge({
     if (!COMPLETED_SESSION_STATUSES.has(session.status)) continue;
 
     const readMarker = readMarkers[session.id];
-    const updatedAt = Date.parse(session.updatedAt);
     const unread = readMarker
       ? updatedAt > Date.parse(readMarker)
       : Number.isFinite(updatedAt) && updatedAt <= now;
@@ -91,6 +104,7 @@ export interface ProjectSessionBadgesResult {
 
 export function useProjectSessionBadges(
   projectIds: readonly string[],
+  currentProjectId: string,
 ): ProjectSessionBadgesResult {
   const projectKey = JSON.stringify(
     [...new Set(projectIds.filter(Boolean))].sort(),
@@ -111,8 +125,28 @@ export function useProjectSessionBadges(
     Record<string, SessionBadgeRow[]>
   >({});
   const [now, setNow] = useState(() => Date.now());
+  const [viewedAtByProject, setViewedAtByProject] = useState<Record<string, number>>({});
   const requestVersion = useRef(0);
   const eventRefreshTimer = useRef<number | null>(null);
+
+  const markProjectViewed = useCallback((projectId: string) => {
+    const viewedAt = Date.now();
+    // Workspace attention is separate from individual conversation read markers.
+    // Persist synchronously so leaving/unmounting cannot bring old badges back.
+    try {
+      localStorage.setItem(`${PROJECT_BADGE_VIEWED_KEY}:${projectId}`, String(viewedAt));
+    } catch {
+      // Keep clearing badges in memory when browser storage is unavailable.
+    }
+    setViewedAtByProject((previous) => ({ ...previous, [projectId]: viewedAt }));
+  }, []);
+
+  useEffect(() => {
+    if (!currentProjectId) return;
+    markProjectViewed(currentProjectId);
+    // Activity received while viewing the workspace has also been seen.
+    return () => markProjectViewed(currentProjectId);
+  }, [currentProjectId, markProjectViewed]);
 
   const clearScheduledRefresh = useCallback(() => {
     if (eventRefreshTimer.current === null) return;
@@ -192,13 +226,14 @@ export function useProjectSessionBadges(
     const nextBadges: Record<string, ProjectSessionBadge> = {};
     for (const projectId of stableProjectIds) {
       nextBadges[projectId] = projectSessionBadge({
-        sessions: sessionsByProject[projectId] ?? [],
+        sessions: projectId === currentProjectId ? [] : sessionsByProject[projectId] ?? [],
         readMarkers: readMarkersByProject[projectId] ?? {},
         now,
+        viewedAt: viewedAtByProject[projectId] ?? loadProjectBadgeViewedAt(projectId),
       });
     }
     return nextBadges;
-  }, [now, readMarkersByProject, sessionsByProject, stableProjectIds]);
+  }, [currentProjectId, now, readMarkersByProject, sessionsByProject, stableProjectIds, viewedAtByProject]);
 
   return { badges, refresh };
 }

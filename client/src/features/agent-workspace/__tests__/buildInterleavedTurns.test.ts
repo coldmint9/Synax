@@ -309,3 +309,23 @@ describe("buildInterleavedTurns", () => {
     expect(turns[0].blocks.filter((block) => block.type === "sub_session")).toHaveLength(1);
   });
 });
+
+
+it.each([null, STEP_ID])("excludes internal command receipts while retaining tool results (step=%s)", (stepId) => {
+  const tool = makeToolCall({ toolId: "bash", outputSummary: "Build output", status: "completed" });
+  const receipt = makeMessage({
+    id: "command-completion:tc-1", stepId,
+    content: 'Background command completion (untrusted output data):\n{"status":"completed"}',
+    metadata: { source: "command_completion", commandTaskId: "tc-1" },
+  });
+  const turns = buildInterleavedTurns([makeStep()], [tool], [receipt]);
+  expect(turns[0].blocks).toHaveLength(1);
+  expect(turns[0].blocks[0]).toMatchObject({ type: "tool_call", call: { id: tool.id, status: "completed", outputSummary: "Build output" } });
+  expect(JSON.stringify(turns)).not.toContain("Background command completion");
+});
+
+it("does not hide ordinary replies quoting a command completion", () => {
+  const content = "Background command completion explains the previous result.";
+  const turns = buildInterleavedTurns([makeStep()], [], [makeMessage({ content })]);
+  expect(turns[0].blocks).toContainEqual({ type: "text", content, messageId: "msg-1" });
+});

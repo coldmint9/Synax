@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react'
-import { Activity, Archive, Bot, Compass, KeyRound, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
+import { Activity, Archive, Bot, Compass, GitPullRequest, KeyRound, Monitor, Plug, Server, Settings2, Sparkles, Wrench } from 'lucide-react'
 import { useExtensionCopy } from './extension-copy'
 import type { ExtensionKind } from '../../../adapters/transport/extensions'
 import './extensions.css'
-export type SettingsSection = 'general' | 'archive' | 'analytics' | 'subagents' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse' | 'llmProviders'
+export type SettingsSection = 'general' | 'archive' | 'analytics' | 'subagents' | ExtensionKind | 'market' | 'mcpServers' | 'computerUse' | 'llmProviders' | 'gitLab'
 export function SettingsFrame({
   section,
   onSelect,
@@ -76,6 +76,7 @@ export function SettingsFrame({
               [
                 { id: 'mcpServers', icon: Server },
                 { id: 'computerUse', icon: Monitor },
+                { id: 'gitLab', icon: GitPullRequest },
               ] as const
             ).map(({ id, icon: Icon }) => (
               <button

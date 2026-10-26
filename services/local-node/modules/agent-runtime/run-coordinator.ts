@@ -15,6 +15,7 @@ import {
 } from "./backends/backend-binding.js";
 import { getBackendAdapter } from "./backends/backend-registry.js";
 import type {
+  AgentSession,
   AgentRun,
   AgentRunStreamChunk,
   StreamTurnRequest,
@@ -53,10 +54,24 @@ interface Owner {
   controller: AbortController;
   task: Promise<void>;
   stopping: boolean;
+  /** Human-readable stop reason, reused by background retries. */
+  reason?: string;
   stopTask?: Promise<void>;
   stopFailed?: boolean;
   finalizers?: Array<() => void | Promise<void>>;
 }
+/** Descendants fenced by a stop: session ids plus the owners that still hold one. */
+interface StopTargets {
+  ids: string[];
+  owners: Array<{ id: string; owner: Owner }>;
+}
+/**
+ * A stop whose process exit was not confirmed is retried in the background.
+ * The budget is bounded: whatever is left afterwards is settled by restart
+ * recovery, so no failure ever reaches the composer.
+ */
+const SILENT_STOP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 15_000];
+const SILENT_STOP_ATTEMPT_TIMEOUT_MS = 8_000;
 interface Driver {
   execute: typeof executeBackendSession;
   interrupt: (sessionId: string, reason: string) => Promise<void>;
@@ -78,6 +93,7 @@ export class RunCoordinator {
   private readonly owners = new Map<string, Owner>();
   private readonly queueDispatches = new Map<string, Promise<boolean>>();
   private readonly pendingResumes = new Map<string, StreamTurnRequest>();
+  private readonly stopRetries = new Map<string, Promise<void>>();
   constructor(private readonly driver: Driver = defaultDriver) {}
   isActive(sessionId: string): boolean {
     return this.owners.has(sessionId);
@@ -714,22 +730,7 @@ export class RunCoordinator {
           "[run-coordinator] Rust stop fence could not be committed",
         ),
       );
-    const descendants = agentRuntimeStore
-      .listSessionTree(sessionId)
-      .slice(1)
-      .filter(
-        (child) =>
-          child.activeRunId ||
-          child.sessionMetadata?.runtimeControl ||
-          [
-            "queued",
-            "running",
-            "waiting_permission",
-            "waiting_input",
-            "interrupted",
-            "cancelled",
-          ].includes(child.status),
-      );
+    const descendants = this.stopDescendants(sessionId);
     const descendantOwners = descendants.flatMap((child) => {
       const childOwner = this.owners.get(child.id);
       return childOwner ? [{ id: child.id, owner: childOwner }] : [];
@@ -748,72 +749,35 @@ export class RunCoordinator {
     }
     this.pendingResumes.delete(sessionId);
     this.controlEvent(sessionId, stopping.runId, reason);
+    stopping.reason = reason;
     stopping.controller.abort(new Error(reason));
-    stopping.stopTask = (async () => {
-      try {
-        await this.driver.interrupt(sessionId, reason);
-        await stopping.task;
-        await Promise.all(
-          descendantOwners.map(
-            (child) => child.owner.stopTask ?? child.owner.task,
-          ),
-        );
-        await runtimeFacade.controlCommand({
-          sessionId,
-          requestId: `stop-ack:${sessionId}:${stopping.runId}`,
-          operation: "stop_ack",
-          payload: {
-            runId: stopping.runId,
-            reason: "Execution shutdown confirmed.",
-          },
-        });
-        for (const action of stopping.finalizers!) await action();
-        for (const child of descendants) {
-          if (agentRuntimeStore.tryGetSession(child.id))
-            agentRuntimeStore.updateSessionMetadata(child.id, {
-              runtimeControl: null,
-            });
-        }
-        for (const child of descendantOwners)
-          if (this.owners.get(child.id) === child.owner)
-            this.owners.delete(child.id);
-        if (agentRuntimeStore.tryGetSession(sessionId)) {
-          agentRuntimeStore.updateSessionMetadata(sessionId, {
-            runtimeControl: null,
-          });
-          this.controlEvent(
-            sessionId,
-            stopping.runId,
-            "Execution shutdown confirmed.",
-          );
-        }
-        if (this.owners.get(sessionId) === stopping)
-          this.owners.delete(sessionId);
-      } catch (error) {
+    const targets: StopTargets = {
+      ids: descendants.map((child) => child.id),
+      owners: descendantOwners,
+    };
+    stopping.stopTask = this.confirmStop(sessionId, stopping, targets).catch(
+      async (error: unknown) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Execution shutdown could not be confirmed.";
         stopping.stopFailed = true;
         await runtimeFacade
           .controlCommand({
             sessionId,
             requestId: `stop-unconfirmed:${sessionId}:${stopping.runId}`,
             operation: "stop_unconfirmed",
-            payload: {
-              runId: stopping.runId,
-              reason:
-                error instanceof Error
-                  ? error.message
-                  : "Execution shutdown could not be confirmed.",
-            },
+            payload: { runId: stopping.runId, reason: message },
           })
           .catch(() => {});
         if (agentRuntimeStore.tryGetSession(sessionId)) {
+          // The fence is an internal admission guard, not a user-facing
+          // failure: it keeps the next turn out until the worker is really gone.
           agentRuntimeStore.updateSessionMetadata(sessionId, {
             runtimeControl: {
               state: "unconfirmed",
               runId: stopping.runId,
-              reason:
-                error instanceof Error
-                  ? error.message
-                  : "Execution shutdown could not be confirmed.",
+              reason: message,
             },
           });
           this.controlEvent(
@@ -822,9 +786,10 @@ export class RunCoordinator {
             "Execution shutdown could not be confirmed.",
           );
         }
+        this.scheduleSilentStopRetry(sessionId, stopping, message);
         throw error;
-      }
-    })();
+      },
+    );
     return stopping.stopTask;
   }
   private controlEvent(
@@ -842,6 +807,130 @@ export class RunCoordinator {
       payload: { runId },
       visibility: "internal",
     });
+  }
+  /**
+   * Confirmation half of a stop. The caller has already published the fence and
+   * aborted the work, so this only waits for the shutdown to prove itself and
+   * then releases the session. Keeping it separate lets a failed foreground
+   * stop be retried in the background with identical semantics.
+   */
+  private async confirmStop(
+    sessionId: string,
+    stopping: Owner,
+    targets: StopTargets,
+  ): Promise<void> {
+    await this.driver.interrupt(
+      sessionId,
+      stopping.reason ?? "Execution shutdown could not be confirmed.",
+    );
+    await stopping.task;
+    await Promise.all(
+      targets.owners.map((child) => child.owner.stopTask ?? child.owner.task),
+    );
+    await runtimeFacade.controlCommand({
+      sessionId,
+      requestId: `stop-ack:${sessionId}:${stopping.runId}`,
+      operation: "stop_ack",
+      payload: {
+        runId: stopping.runId,
+        reason: "Execution shutdown confirmed.",
+      },
+    });
+    // Finalizers mutate the projection. Run them once even when a later retry
+    // is the attempt that finally succeeds.
+    const finalizers = stopping.finalizers ?? [];
+    stopping.finalizers = [];
+    for (const action of finalizers) await action();
+    for (const id of targets.ids) {
+      if (agentRuntimeStore.tryGetSession(id))
+        agentRuntimeStore.updateSessionMetadata(id, {
+          runtimeControl: null,
+        });
+    }
+    for (const child of targets.owners)
+      if (this.owners.get(child.id) === child.owner)
+        this.owners.delete(child.id);
+    if (agentRuntimeStore.tryGetSession(sessionId)) {
+      agentRuntimeStore.updateSessionMetadata(sessionId, {
+        runtimeControl: null,
+      });
+      this.controlEvent(
+        sessionId,
+        stopping.runId,
+        "Execution shutdown confirmed.",
+      );
+    }
+    if (this.owners.get(sessionId) === stopping)
+      this.owners.delete(sessionId);
+  }
+  /** Descendants that still own execution state and therefore need fencing. */
+  private stopDescendants(sessionId: string): AgentSession[] {
+    return agentRuntimeStore
+      .listSessionTree(sessionId)
+      .slice(1)
+      .filter(
+        (child) =>
+          child.activeRunId ||
+          child.sessionMetadata?.runtimeControl ||
+          [
+            "queued",
+            "running",
+            "waiting_permission",
+            "waiting_input",
+            "interrupted",
+            "cancelled",
+          ].includes(child.status),
+      );
+  }
+  private stopTargets(sessionId: string): StopTargets {
+    const descendants = this.stopDescendants(sessionId);
+    return {
+      ids: descendants.map((child) => child.id),
+      owners: descendants.flatMap((child) => {
+        const owner = this.owners.get(child.id);
+        return owner ? [{ id: child.id, owner }] : [];
+      }),
+    };
+  }
+  /**
+   * Residual cleanup is a background concern. The turn is already shown as
+   * stopped, so a stop that could not confirm its process exit is retried here
+   * silently: no error reaches the user, and the fence clears itself as soon as
+   * the worker is gone. Restart recovery settles whatever is left.
+   */
+  private scheduleSilentStopRetry(
+    sessionId: string,
+    stopping: Owner,
+    reason: string,
+  ): void {
+    if (this.stopRetries.has(sessionId)) return;
+    const retry = (async () => {
+      for (const delay of SILENT_STOP_RETRY_DELAYS_MS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        // A newer owner means the session moved on; the retry is obsolete.
+        if (this.owners.get(sessionId) !== stopping) return;
+        try {
+          await withDeadline(
+            this.confirmStop(sessionId, stopping, this.stopTargets(sessionId)),
+            SILENT_STOP_ATTEMPT_TIMEOUT_MS,
+            "Residual execution shutdown is still unconfirmed.",
+          );
+          stopping.stopFailed = false;
+          logger.info(
+            { sessionId, runId: stopping.runId },
+            "[run-coordinator] residual execution shutdown confirmed in the background",
+          );
+          return;
+        } catch {
+          // Stay silent and keep trying inside the bounded budget.
+        }
+      }
+      logger.warn(
+        { sessionId, runId: stopping.runId, reason },
+        "[run-coordinator] residual execution shutdown remains unconfirmed; restart recovery will settle it",
+      );
+    })().finally(() => this.stopRetries.delete(sessionId));
+    this.stopRetries.set(sessionId, retry);
   }
   activeSessionIds(): string[] {
     return [...this.owners.keys()];

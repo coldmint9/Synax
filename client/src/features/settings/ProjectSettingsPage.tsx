@@ -95,6 +95,7 @@ function ProjectSettingsContent({ projectId }: { projectId: string }) {
     section === "computerUse" ||
     section === "analytics" ||
     section === "subagents" ||
+    section === "gitLab" ||
     section === "llmProviders"
       ? null
       : section;

@@ -123,7 +123,7 @@ function ProjectSwitcher({
   onRemoveRequest: (event: React.MouseEvent, project: ProjectSummary) => void;
   onOpen?: () => void;
 }) {
-  const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
+  const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id), currentProjectId);
   const otherBadges = projects.reduce<ProjectSessionBadge>(
     (counts, project) => {
       const badge = badges[project.id];
@@ -144,7 +144,7 @@ function ProjectSwitcher({
     onRemoveRequest={onRemoveRequest}
     otherActivity={projectSessionActivity(otherBadges)}
     onOpen={() => { onOpen?.(); void refresh(); }}
-    renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
+    renderBadge={id => id === currentProjectId ? null : <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;
 }
 

@@ -35,7 +35,6 @@ import type {
   GitWorkspaceSelection,
   TurnReference,
 } from "../../adapters/transport/agentRuntime";
-import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
 import { readSessionContextUsage } from "./contextUsage";
@@ -811,12 +810,6 @@ export function SessionComposer({
             ? (zh ? "此会话使用的执行后端已移除。历史记录仍可查看，请新建 Synax 会话继续。" : "This session's execution backend has been removed. Its history remains available; start a new Synax session to continue.")
             : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}
         </p>
-      )}
-      {session && (
-        <RuntimeRecoveryPanel
-          key={`recovery-${session.id}`}
-          session={session}
-        />
       )}
       {session && !hasPendingInteractions && (
         <AgentInteractionPanel

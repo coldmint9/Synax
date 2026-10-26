@@ -145,6 +145,19 @@ export interface GlobalComputerUseSettings {
   jev?: GlobalComputerUseJevSettings;
 }
 
+export interface GitLabAccount {
+  /** GitLab host without protocol, for example gitlab.com or gitlab.example.com. */
+  host: string;
+  /** Stored encrypted at rest; omitted from display responses. */
+  token?: string;
+  /** Safe display form of the token. */
+  tokenMasked?: string;
+}
+
+export interface GitLabConfig {
+  accounts: GitLabAccount[];
+}
+
 export interface GlobalConfig {
   macWindowAppearance?: MacWindowAppearance;
   defaultImageModel?: MediaModelSelection | null;
@@ -159,6 +172,7 @@ export interface GlobalConfig {
   providerConnections: Record<string, ProviderConnection>;
   mcpServers: McpServerConfig[];
   computerUse?: GlobalComputerUseSettings;
+  gitLab?: GitLabConfig;
   webSearch: WebSearchConfig;
   sessionArchiveRetentionDays?: number | null;
   limits: {
@@ -218,6 +232,7 @@ export interface UpdateGlobalConfigRequest {
   providerConnections?: Record<string, ProviderConnection>;
   mcpServers?: McpServerConfig[];
   computerUse?: GlobalComputerUseSettings;
+  gitLab?: GitLabConfig;
   webSearch?: WebSearchConfig;
   sessionArchiveRetentionDays?: number | null;
   limits?: GlobalConfig["limits"];

@@ -187,8 +187,10 @@ export function buildInterleavedTurns(
   const uniqueMessages = new Map<string, AgentRuntimeMessage>();
   for (const message of messages) uniqueMessages.set(message.id, message);
   for (const message of uniqueMessages.values()) {
+    // Completion receipts are model context, not assistant replies. The
+    // associated tool call already owns the command's result in the transcript.
     if (
-      ["artifact_publisher", "artifact_request", "artifact_job"].includes(
+      ["artifact_publisher", "artifact_request", "artifact_job", "command_completion"].includes(
         String(message.metadata?.source),
       )
     )

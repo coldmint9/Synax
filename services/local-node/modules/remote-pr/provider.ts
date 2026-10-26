@@ -2,6 +2,7 @@ import { runCommand } from "../agent-runtime/tools/exec-async.js";
 import { cleanEnvironment } from "../git-mr/repository.js";
 import { GitMrError } from "../git-mr/errors.js";
 import { safeRemoteUrl } from "./remote.js";
+import { gitLabRequest } from "./gitlab-api.js";
 import type {
   RemoteRepository,
   RemotePullRequest,
@@ -118,7 +119,11 @@ const status = (value: string): RemotePrCheck["status"] =>
         ? "pending"
         : "unknown";
 export class RemotePrProvider {
-  constructor(readonly api: PrApi = cliPrApi) {}
+  constructor(readonly api: PrApi = (repo, method, endpoint, body) =>
+    repo.provider === 'gitlab'
+      ? gitLabRequest(repo.host, method, endpoint, body)
+      : cliPrApi(repo, method, endpoint, body),
+  ) {}
   private prefix(repo: RemoteRepository) {
     return repo.provider === "github"
       ? `repos/${repo.path}`

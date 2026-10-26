@@ -8,6 +8,7 @@ export type GitMergeReplyPart = {
   type: "git_merge";
   reference: ConversationGitReference;
   messageId: string;
+  superseded?: { replacementMessageId: string; supersededAt: string };
 };
 
 function identifier(value: unknown): value is string {
@@ -47,5 +48,10 @@ export function gitMergeReplyParts(message: AgentRuntimeMessage): GitMergeReplyP
       message.metadata.kind === "thought") return null;
   const reference = readConversationGitReference(message.metadata.gitMergeTask, message.sessionId);
   if (!reference) return null;
-  return [{ type: "git_merge", reference, messageId: message.id }];
+  const timeline = message.metadata.gitMergeTimeline as Record<string, unknown> | undefined;
+  const superseded = reference.schema === 'synax.git-merge' && timeline?.state === 'superseded' &&
+    identifier(timeline.replacementMessageId) && typeof timeline.supersededAt === 'string' &&
+    timeline.supersededAt.length <= 64 && Number.isFinite(Date.parse(timeline.supersededAt))
+    ? { replacementMessageId: timeline.replacementMessageId, supersededAt: timeline.supersededAt } : undefined;
+  return [{ type: "git_merge", reference, messageId: message.id, ...(superseded ? { superseded } : {}) }];
 }

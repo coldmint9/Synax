@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const service=vi.hoisted(()=>({create:vi.fn(),get:vi.fn(),list:vi.fn(),file:vi.fn(),fileSlice:vi.fn(),propose:vi.fn(),action:vi.fn(),configureChecks:vi.fn()}));
 vi.mock('./service.js',()=>({conversationGitService:service}));
-const worker=vi.hoisted(()=>({startConversationMergeWorker:vi.fn(),resumeConversationMergeWorker:vi.fn(),waitForConversationMergeWorker:vi.fn()}));
+const worker=vi.hoisted(()=>({startConversationMergeWorker:vi.fn(),resumeConversationMergeWorker:vi.fn(),waitForConversationMergeWorker:vi.fn(),cancelConversationMergeWorker:vi.fn()}));
 vi.mock('./worker.js',()=>worker);
 import { conversationGitTools } from './tools.js';
 import type { ToolExecutionInput } from '../contracts.js';
@@ -44,13 +44,22 @@ describe('conversation native Git tools',()=>{
   service.propose.mockResolvedValue({id:'proposal'});
   await execute('git.merge.propose',{objectId:'task',fileId:'file',revision:'r1',content:'combined',rationale:'Preserves both branches'});
   expect(service.propose).toHaveBeenCalledWith('s','task',{fileId:'file',revision:'r1',content:'combined',rationale:'Preserves both branches'});
-  expect(conversationGitTools.map(tool=>tool.id)).toEqual(['git.merge.create','git.merge.analyze','git.merge.resume','git.merge.configure','git.merge.read','git.merge.propose']);
+  expect(conversationGitTools.map(tool=>tool.id)).toEqual(['git.merge.create','git.merge.analyze','git.merge.resume','git.merge.cancel','git.merge.configure','git.merge.read','git.merge.propose']);
  });
  it('re-enters the same task with current user decisions',async()=>{
   await execute('git.merge.resume',{objectId:'task',instructions:'Accept source deletions.'});
   expect(worker.resumeConversationMergeWorker).toHaveBeenCalledExactlyOnceWith('s','task','Accept source deletions.');
   expect(worker.startConversationMergeWorker).not.toHaveBeenCalled();
   expect(service.create).not.toHaveBeenCalled();
+ });
+ it('cancels an old task through its owning worker without restarting it',async()=>{
+  worker.cancelConversationMergeWorker.mockResolvedValue({...snapshot,execution:{status:'cancelled'},mr:{...snapshot.mr,status:'cancelled'}});
+  const result=await execute('git.merge.cancel',{objectId:'task'});
+  expect(worker.cancelConversationMergeWorker).toHaveBeenCalledExactlyOnceWith('s','task');
+  expect(worker.startConversationMergeWorker).not.toHaveBeenCalled();
+  expect(worker.resumeConversationMergeWorker).not.toHaveBeenCalled();
+  expect(result.result).toMatchObject({objectId:'task',execution:{status:'cancelled'}});
+  await expect(execute('git.merge.cancel',{objectId:'task',sessionId:'other'})).rejects.toThrow();
  });
  it.each(['failed','recovery_required'])('automatically retries %s once and returns the completed state',async(status)=>{
   service.get.mockResolvedValueOnce({...snapshot,execution:{status}}).mockResolvedValue({...snapshot,execution:{status:'completed'},mr:{...snapshot.mr,status:'merged'}});

@@ -141,6 +141,13 @@ it('continues a paused merge after the parent completed without starting another
     action: 'resume', requestId: 'resume-after-parent-complete', expectedVersion: paused.mr.version, expectedTaskRevision: paused.task.revision,
   });
   expect(resumed.execution?.joinMode).toBe('async');
+  expect(resumed.task.messageId).not.toBe(task.task.messageId);
+  expect(store.getMessage(sessionId, task.task.messageId)?.metadata.gitMergeTimeline).toMatchObject({
+    state: 'superseded', replacementMessageId: resumed.task.messageId,
+  });
+  expect(store.getMessage(sessionId, resumed.task.messageId)).toMatchObject({
+    runId: null, stepId: null, metadata: { source: 'git_merge_task' },
+  });
   await vi.waitFor(async () => {
     const state = await conversationGitService.workerSnapshot(sessionId, task.task.id);
     const id = state.execution!.childSessionId!;

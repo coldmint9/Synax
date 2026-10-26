@@ -58,7 +58,13 @@ export function spawnOwnedProcess(
     background?: boolean;
     commandLabel?: string;
   } = {},
-): ChildProcess & { ownedProcessId: string; ownedProcessClosed: Promise<void> } {
+): ChildProcess & {
+  ownedProcessId: string;
+  /** Bounded cleanup wait for callers that require synchronous confirmation. */
+  ownedProcessClosed: Promise<void>;
+  /** Actual cleanup acknowledgement; remains pending through inspection timeouts. */
+  ownedProcessReaped: Promise<void>;
+} {
   const grouped = process.platform !== "win32";
   const ticket = prepareOwnedProcess(
     options.background
@@ -135,17 +141,18 @@ export function spawnOwnedProcess(
   const closed = new Promise<number | null>((resolve) => {
     child.once("close", resolve);
   });
-  const ownedProcessClosed = closed.then(async (code) => {
-    if (guard) {
-      // A cleanup wait may time out while the guardian is still retrying.
-      // Keep the lease until the eventual acknowledgement, even in that case.
-      void guard.closed.then(() => releaseOwnedProcess(ticket.id, completedCode ?? code)).catch(() => {});
-      await guard.release();
-    } else releaseOwnedProcess(ticket.id, completedCode ?? code);
+  const ownedProcessReaped = closed.then(async (code) => {
+    if (guard) await guard.closed;
+    releaseOwnedProcess(ticket.id, completedCode ?? code);
+  });
+  const ownedProcessClosed = closed.then(async () => {
+    if (guard) await guard.release();
+    await ownedProcessReaped;
   });
   // Raw ChildProcess callers can observe stream closure without awaiting the
   // stronger tree-closure promise. Keep a failed cleanup lease for recovery.
   void ownedProcessClosed.catch(() => {});
+  void ownedProcessReaped.catch(() => {});
   try {
     recordOwnedPid(ticket.id, child.pid);
     if (direct && child.pid) guard = guardProcessGroup(child, ticket.id);
@@ -180,5 +187,5 @@ export function spawnOwnedProcess(
     releaseOwnedProcess(ticket.id);
     throw error;
   }
-  return Object.assign(child, { ownedProcessId: ticket.id, ownedProcessClosed });
+  return Object.assign(child, { ownedProcessId: ticket.id, ownedProcessClosed, ownedProcessReaped });
 }

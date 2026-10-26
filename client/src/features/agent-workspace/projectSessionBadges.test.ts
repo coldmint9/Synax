@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { agentRuntimeApi, type SessionBadgeRow } from "../../adapters/transport/agentRuntime";
 import { projectSessionActivity, projectSessionBadge, useProjectSessionBadges } from "./projectSessionBadges";
 
@@ -20,6 +20,13 @@ const row = (id: string, status: SessionBadgeRow["status"]): SessionBadgeRow => 
 });
 
 describe("workspace session activity", () => {
+  beforeEach(() => {
+    markerState.active = { projectId: "current", readSessionMarkers: {} };
+    markerState.saved = {};
+    vi.spyOn(Date, "now").mockReturnValue(now);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it("uses persisted read markers for other workspaces and live markers after switching", async () => {
     const recent = new Date(Date.now() - 1000).toISOString();
     markerState.active = { projectId: "current", readSessionMarkers: {} };
@@ -28,7 +35,7 @@ describe("workspace session activity", () => {
       { ...row("done", "completed"), projectId: "other", updatedAt: recent },
       { ...row("failed", "failed"), projectId: "other", updatedAt: recent },
     ] });
-    const view = renderHook(() => useProjectSessionBadges(["current", "other"]));
+    const view = renderHook(() => useProjectSessionBadges(["current", "other"], markerState.active.projectId));
     await waitFor(() => expect(view.result.current.badges.other.unreadFailed).toBe(1));
     expect(view.result.current.badges.other.unreadCompleted).toBe(0);
     markerState.active = { projectId: "other", readSessionMarkers: { done: recent, failed: recent } };
@@ -40,6 +47,74 @@ describe("workspace session activity", () => {
     expect(view.result.current.badges.other.total).toBe(0);
     view.unmount();
     request.mockRestore();
+  });
+
+  it("clears every badge category on entry without reading individual conversations, and persists after leaving", async () => {
+    const items = [row("input", "waiting_input"), row("approval", "waiting_permission"),
+      row("running", "running"), row("failed", "failed"), row("done", "completed")];
+    vi.spyOn(agentRuntimeApi, "listSessionBadges").mockResolvedValue({ items });
+    const projectIds = ["current", "workspace"];
+    const view = renderHook(({ current }) => useProjectSessionBadges(projectIds, current), {
+      initialProps: { current: "current" },
+    });
+    await waitFor(() => expect(view.result.current.badges.workspace.total).toBe(5));
+
+    view.rerender({ current: "workspace" });
+    expect(view.result.current.badges.workspace.total).toBe(0);
+    expect(markerState.active.readSessionMarkers).toEqual({});
+    expect(markerState.saved).toEqual({});
+    await act(() => view.result.current.refresh());
+    expect(view.result.current.badges.workspace.total).toBe(0);
+
+    view.rerender({ current: "current" });
+    expect(view.result.current.badges.workspace.total).toBe(0);
+    view.unmount();
+
+    const restored = renderHook(() => useProjectSessionBadges(projectIds, "current"));
+    await act(() => restored.result.current.refresh());
+    expect(restored.result.current.badges.workspace.total).toBe(0);
+  });
+
+  it("acknowledges activity while viewing a workspace and counts new activity after leaving", async () => {
+    const request = vi.spyOn(agentRuntimeApi, "listSessionBadges").mockResolvedValue({ items: [
+      row("done", "completed"), { ...row("elsewhere", "failed"), projectId: "third" },
+    ] });
+    const view = renderHook(({ current }) => useProjectSessionBadges(["current", "workspace", "third"], current), {
+      initialProps: { current: "workspace" },
+    });
+    await waitFor(() => expect(view.result.current.badges.third.total).toBe(1));
+    expect(view.result.current.badges.workspace.total).toBe(0);
+
+    vi.mocked(Date.now).mockReturnValue(now + 2000);
+    request.mockResolvedValue({ items: [
+      { ...row("done", "completed"), updatedAt: new Date(now + 1000).toISOString() },
+      { ...row("elsewhere", "failed"), projectId: "third" },
+    ] });
+    await act(() => view.result.current.refresh());
+    view.rerender({ current: "current" });
+    expect(view.result.current.badges.workspace.total).toBe(0);
+    expect(view.result.current.badges.third.total).toBe(1);
+
+    vi.mocked(Date.now).mockReturnValue(now + 4000);
+    request.mockResolvedValue({ items: [
+      { ...row("done", "completed"), updatedAt: new Date(now + 3000).toISOString() },
+    ] });
+    await act(() => view.result.current.refresh());
+    expect(view.result.current.badges.workspace.unreadCompleted).toBe(1);
+    view.rerender({ current: "workspace" });
+    expect(view.result.current.badges.workspace.total).toBe(0);
+  });
+
+  it("does not restore old badges when an in-flight snapshot arrives after a workspace visit", async () => {
+    let resolve!: (value: { items: SessionBadgeRow[] }) => void;
+    vi.spyOn(agentRuntimeApi, "listSessionBadges").mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const view = renderHook(({ current }) => useProjectSessionBadges(["current", "workspace"], current), {
+      initialProps: { current: "current" },
+    });
+    view.rerender({ current: "workspace" });
+    view.rerender({ current: "current" });
+    await act(async () => resolve({ items: [row("done", "completed"), row("running", "running")] }));
+    expect(view.result.current.badges.workspace.total).toBe(0);
   });
 
   it("separates waiting, failed, running and unread completion without treating cancelled or paused work as success", () => {

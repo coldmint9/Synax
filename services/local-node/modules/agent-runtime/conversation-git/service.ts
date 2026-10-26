@@ -11,6 +11,8 @@ import { agentRuntimeStore } from '../session-store.js';
 import { emitSessionLive } from '../../../infrastructure/runtime/ipc/agent-session-protocol.js';
 import { outsideExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
 import { runtimeFacade } from '../sidecar/runtime-facade.js';
+import { hydrateHistoryValues } from '../sidecar/history-pages.js';
+import { runtimeClient } from '../sidecar/runtime-repository.js';
 import { ensureSessionRecovered } from '../session-recovery.js';
 import type { AgentRuntimeMessage } from '../contracts.js';
 import type {
@@ -40,6 +42,7 @@ interface StoredTask extends ConversationGitTask {
   messages: AgentRuntimeMessage[];
   activeRequest?: string;
   execution?: ConversationMergeExecution;
+  pendingTimelineMessageIds?: string[];
 }
 interface RequestRecord {
   id: string;
@@ -79,7 +82,7 @@ const notFound = () => new GitMrError('Conversation merge task not found.', 'NOT
 const requestError = (error: unknown) => error instanceof GitMrError
   ? { message: error.message, code: error.code, status: error.status }
   : { message: error instanceof Error ? error.message : String(error), code: 'CONVERSATION_GIT_ERROR', status: 500 };
-const taskView = ({ rootLocation: _root, repository: _repo, commonDir: _common, messages: _messages, activeRequest: _request, execution: _execution, ...task }: StoredTask): ConversationGitTask => task;
+const taskView = ({ rootLocation: _root, repository: _repo, commonDir: _common, messages: _messages, activeRequest: _request, execution: _execution, pendingTimelineMessageIds: _pending, ...task }: StoredTask): ConversationGitTask => task;
 const recentMessages = (task: StoredTask) => [
   ...task.messages.filter(message => message.id === task.messageId),
   ...task.messages.filter(message => message.id !== task.messageId).slice(-16),
@@ -189,6 +192,7 @@ export class ConversationGitService {
 
   async get(sessionId: string, objectId: string): Promise<ConversationGitSnapshot> {
     let { task, mr } = await this.binding(sessionId, objectId);
+    if (task.pendingTimelineMessageIds?.length) await this.deliverTimeline(sessionId, objectId);
     await this.reconcilePendingOnRead(sessionId, objectId);
     ({ task, mr } = await this.binding(sessionId, objectId));
     const fileSnapshot = this.gitMr.files(task.projectId, mr.id).catch(error => {
@@ -359,13 +363,13 @@ export class ConversationGitService {
       task.updatedAt = new Date().toISOString();
       if (task.activeRequest === record.id) delete task.activeRequest;
       const reference = this.reference(task, mr);
-      task.messages[0] = { ...task.messages[0], metadata: { ...task.messages[0].metadata,
-        gitMergeTask: reference, gitMergeState: { status: mr.status, revision: task.revision, mrVersion: mr.version } } };
+      task.messages = task.messages.map(item => item.id === task.messageId ? { ...item, metadata: { ...item.metadata,
+        gitMergeTask: reference, gitMergeState: { status: mr.status, revision: task.revision, mrVersion: mr.version } } } : item);
       const receipt: AgentRuntimeMessage = { id: receiptId, sessionId: task.sessionId, runId: null, stepId: null,
         role: 'assistant', content: message ?? (error ? `合并任务操作未完成：${requestError(error).message}` : `合并任务已更新：${mr.status}。`),
         metadata: { source: 'git_merge_receipt', gitMergeTask: reference, operation: record.operation, requestId: record.id,
           status: error ? 'failed' : 'succeeded', mrStatus: mr.status }, createdAt: task.updatedAt };
-      if (record.internal) task.messages = [task.messages[0], receipt];
+      if (record.internal) task.messages = [...task.messages.filter(item => item.metadata.source === 'git_merge_task'), receipt];
       else task.messages.push(receipt);
       await this.store.write(TASKS, task);
     }
@@ -664,22 +668,68 @@ export class ConversationGitService {
           patch.status !== 'running' || !['paused', 'waiting_user', 'failed', 'recovery_required'].includes(task.execution.status)))
         throw new GitMrError('The merge worker changed during re-entry; inspect its latest state before continuing.', 'WORKER_FENCED');
       if (task.execution && ['completed', 'cancelled'].includes(task.execution.status)) return { task, mr };
+      if (task.execution && ['pausing', 'cancelling'].includes(task.execution.status) && ['queued', 'running'].includes(patch.status ?? ''))
+        throw new GitMrError('The merge worker is stopping; a pending launch cannot reopen it.', 'WORKER_FENCED');
       if (task.execution?.status === 'cancelled_cleanup_pending' &&
           (expectedEpoch !== undefined || !['cancelled', 'cancelled_cleanup_pending', 'cancelling'].includes(patch.status ?? '')))
         throw new GitMrError('Cancelled merges may only retry isolated candidate cleanup.', 'WORKER_FENCED');
       if (!reentry && expectedEpoch !== undefined && task.execution && ['pausing', 'paused', 'cancelling', 'waiting_user', 'recovery_required'].includes(task.execution.status))
         throw new GitMrError('The merge worker is stopped.', 'WORKER_FENCED');
+      const moveTimeline = task.execution && patch.epoch !== undefined && patch.epoch > task.execution.epoch &&
+        ['queued', 'running'].includes(patch.status ?? '');
       task.execution = { status: 'queued', phase: 'preparing', joinMode: 'blocking', epoch: 1, ...task.execution, ...patch,
         revision: (task.execution?.revision ?? 0) + 1, updatedAt: new Date().toISOString(),
         ...(patch.summary !== undefined ? { summary: boundedUtf8(patch.summary, 8 * 1024) } : {}),
         ...(patch.error !== undefined ? { error: boundedUtf8(patch.error, 4 * 1024) } : {}) };
       task.revision += 1;
       task.updatedAt = task.execution.updatedAt;
+      if (moveTimeline) {
+        const previous = task.messages.find(message => message.id === task.messageId)!;
+        const messageId = `git-task-${task.id}-epoch-${task.execution.epoch}`;
+        task.messages = task.messages.map(message => message.id === previous.id ? { ...message,
+          metadata: { ...message.metadata, gitMergeTimeline: { state: 'superseded', replacementMessageId: messageId, supersededAt: task.updatedAt } },
+        } : message);
+        task.messages.push({ id: messageId, sessionId, runId: null, stepId: null, role: 'assistant',
+          content: `继续合并任务：${mr.title}。objectId: ${task.id}`,
+          metadata: { source: 'git_merge_task', gitMergeTask: this.reference(task, mr),
+            gitMergeState: { status: mr.status, revision: task.revision, mrVersion: mr.version } }, createdAt: task.updatedAt });
+        task.messageId = messageId;
+        task.pendingTimelineMessageIds = [...new Set([...(task.pendingTimelineMessageIds ?? []), previous.id, messageId])];
+      }
       await this.store.write(TASKS, task);
       return { task, mr };
     });
+    if (updated.task.pendingTimelineMessageIds?.length) await this.deliverTimeline(sessionId, objectId);
     await this.publishWorkerExecution(updated.task, updated.mr, includeFiles, changedFileIds, changedFiles);
     return updated.task.execution!;
+  }
+
+  /** Stable message IDs make delivery replayable after a crash between stores. */
+  private async deliverTimeline(sessionId: string, objectId: string): Promise<void> {
+    await this.lock(`conversation-task:${objectId}`, async () => {
+      const { task } = await this.binding(sessionId, objectId);
+      if (!task.pendingTimelineMessageIds?.length) return;
+      const pending = new Set(task.pendingTimelineMessageIds);
+      const messages = task.messages.filter(message => pending.has(message.id));
+      if (this.runtime === agentRuntimeStore) {
+        // The API host may only have a summary while the worker owns the full
+        // transcript. Restore exact old sequence numbers and the current tail
+        // before upserting, without loading the entire conversation.
+        await agentRuntimeStore.flushSession(sessionId);
+        const [known, tail] = await Promise.all([
+          runtimeFacade.historyCommand({ sessionId, requestId: randomUUID(), operation: 'execution_refs',
+            payload: { refs: messages.map(message => ({ kind: 'message', id: message.id })) } }) as Promise<{ items: Array<{ value: AgentRuntimeMessage }> }>,
+          runtimeFacade.historyEntityPageAuthoritative(sessionId, 'list_messages', undefined, 1),
+        ]);
+        const prior = await hydrateHistoryValues<AgentRuntimeMessage>(runtimeClient(), sessionId, known.items.map(item => item.value));
+        for (const message of [...tail.items as AgentRuntimeMessage[], ...prior]) agentRuntimeStore.acceptMessageProjection(message);
+      }
+      for (const message of messages) this.runtime.appendMessage(message);
+      await this.runtime.flushSession(sessionId);
+      this.emitMessages(sessionId, messages);
+      delete task.pendingTimelineMessageIds;
+      await this.store.write(TASKS, task);
+    });
   }
 
   private async publishWorkerExecution(task: StoredTask, mr: MergeRequest, includeFiles = false, changedFileIds?: string[], changedFiles?: ConversationGitSnapshot['files']): Promise<void> {
@@ -730,7 +780,7 @@ export class ConversationGitService {
     }
     await this.setWorkerExecution(sessionId, objectId, {
       status: ['merged', 'noop'].includes(cancelled.status) ? 'completed' : 'cancelled', phase: 'settled',
-      summary: ['merged', 'noop'].includes(cancelled.status) ? '目标分支已更新，已按真实 Git 状态记录完成。' : '此次合并已放弃；隔离候选保留用于恢复，不再继续执行。',
+      summary: ['merged', 'noop'].includes(cancelled.status) ? '目标分支已更新，已按真实 Git 状态记录完成。' : '此次合并已取消；隔离候选已清理。',
     });
   }
 

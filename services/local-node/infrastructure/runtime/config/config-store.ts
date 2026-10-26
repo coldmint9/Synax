@@ -25,6 +25,8 @@ import type {
   AnalyzerLlmConfig,
   ApiFormat,
   EffectiveConfig,
+  GitLabConfig,
+  GitLabAccount,
   GlobalConfig,
   McpServerConfig,
   ProjectConfig,
@@ -62,6 +64,14 @@ export function getGlobalConfig(): GlobalConfig {
 
 export function getGlobalConfigForRuntime(): GlobalConfig {
   return getGlobalConfigInternal(true);
+}
+
+export function getGitLabTokenForHost(host: string): string | undefined {
+  const normalized = normalizeGitLabHost(host);
+  if (!normalized) return undefined;
+  return getGlobalConfigForRuntime().gitLab?.accounts.find(
+    (account) => account.host === normalized,
+  )?.token;
 }
 
 function getGlobalConfigInternal(includeSecrets: boolean): GlobalConfig {
@@ -418,6 +428,7 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
       defaultApiProviderId:
         config.defaultApiProviderId || globalBase.defaultApiProviderId,
+      gitLab: config.gitLab ?? globalBase.gitLab,
       webSearch: config.webSearch ?? globalBase.webSearch,
       limits: config.limits,
       features: config.features,
@@ -477,6 +488,7 @@ function normalizeTemplateConfig(
       config.computerUse ?? defaults.computerUse,
       includeSecrets,
     ),
+    gitLab: normalizeGitLabConfig(config.gitLab ?? defaults.gitLab, includeSecrets),
     webSearch: normalizeWebSearchConfig(
       config.webSearch ?? defaults.webSearch,
       includeSecrets,
@@ -517,6 +529,7 @@ function normalizeUserGlobalConfig(
       config.computerUse ?? defaults.computerUse,
       includeSecrets,
     ),
+    gitLab: normalizeGitLabConfig(config.gitLab ?? defaults.gitLab, includeSecrets),
     webSearch: normalizeWebSearchConfig(
       config.webSearch ?? defaults.webSearch,
       includeSecrets,
@@ -562,6 +575,10 @@ function mergeGlobalConfigLayers(
     ),
     computerUse: normalizeComputerUseSettings(
       global.computerUse ?? template.computerUse,
+      includeSecrets,
+    ),
+    gitLab: normalizeGitLabConfig(
+      global.gitLab ?? template.gitLab,
       includeSecrets,
     ),
     webSearch: normalizeWebSearchConfig(
@@ -644,6 +661,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.mcpServers) ||
     Boolean(patch.macWindowAppearance) ||
     Boolean(patch.computerUse) ||
+    Boolean(patch.gitLab) ||
     Boolean(userPatchProviders?.length) ||
     Object.keys(userPatchConnections).length > 0;
   const templateTouched =
@@ -706,6 +724,9 @@ function applyGlobalConfigPatch(
           current.computerUse,
         )
       : current.computerUse,
+    gitLab: patch.gitLab
+      ? mergeGitLabConfigPatch(current.gitLab, patch.gitLab)
+      : current.gitLab,
     webSearch: patch.webSearch
       ? mergeWebSearchConfig(current.webSearch, patch.webSearch)
       : current.webSearch,
@@ -903,6 +924,48 @@ function normalizeComputerUseSettings(
   };
 }
 
+function normalizeGitLabConfig(
+  settings: GitLabConfig | undefined,
+  includeSecrets: boolean,
+): GitLabConfig {
+  const accounts = new Map<string, GitLabAccount>();
+  for (const account of settings?.accounts ?? []) {
+    const host = normalizeGitLabHost(account.host);
+    if (!host) continue;
+    const decrypted = includeSecrets ? decryptSecret(account.token) : undefined;
+    const tokenMasked = account.tokenMasked ?? maskSecret(account.token);
+    accounts.set(host, {
+      host,
+      ...(decrypted ? { token: decrypted } : {}),
+      ...(tokenMasked ? { tokenMasked } : {}),
+      ...(!includeSecrets ? { token: undefined } : {}),
+    });
+  }
+  return { accounts: Array.from(accounts.values()).sort((a, b) => a.host.localeCompare(b.host)) };
+}
+
+function normalizeGitLabHost(value: string | undefined): string {
+  const host = value?.trim().toLowerCase() ?? "";
+  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/.test(host)) return "";
+  try { return new URL(`https://${host}`).host; } catch { return ""; }
+}
+
+function mergeGitLabConfigPatch(
+  current: GitLabConfig | undefined,
+  patch: GitLabConfig,
+): GitLabConfig {
+  const previous = new Map(
+    (current?.accounts ?? []).map((account) => [normalizeGitLabHost(account.host), account]),
+  );
+  const accounts = patch.accounts.map((account) => {
+    const host = normalizeGitLabHost(account.host);
+    const existing = previous.get(host);
+    const token = account.token === undefined ? existing?.token : account.token;
+    return { host, ...(token ? { token, tokenMasked: maskSecret(token) } : {}) };
+  });
+  return { accounts };
+}
+
 function mergeComputerUsePatch(
   current: GlobalComputerUseSettings | undefined,
   patch: GlobalComputerUseSettings,
@@ -955,10 +1018,30 @@ function prepareGlobalConfigForStorage(config: GlobalConfig): GlobalConfig {
   return {
     ...withoutRetiredProviderSettings(config),
     mcpServers: config.mcpServers ?? [],
+    gitLab: prepareGitLabConfigForStorage(config.gitLab),
     webSearch: prepareWebSearchConfigForStorage(config.webSearch),
     providerConnections: prepareProviderConnectionsForStorage(
       config.providerConnections,
     ),
+  };
+}
+
+function prepareGitLabConfigForStorage(
+  settings: GitLabConfig | undefined,
+): GitLabConfig | undefined {
+  if (!settings) return undefined;
+  return {
+    accounts: settings.accounts
+      .map((account) => {
+        const host = normalizeGitLabHost(account.host);
+        if (!host || !account.token) return { host };
+        const encrypted = encryptSecret(account.token);
+        return {
+          host,
+          ...(encrypted ? { token: encrypted, tokenMasked: maskSecret(account.token) } : {}),
+        };
+      })
+      .filter((account) => Boolean(account.host)),
   };
 }
 

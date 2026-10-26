@@ -22,7 +22,7 @@ export function buildSubagentInteractions(
       && message.content.trim()
       && message.metadata?.type !== "thinking"
       && message.metadata?.kind !== "thought"
-      && !["context_compaction", "system_injection", "artifact_publisher", "artifact_request", "artifact_job"]
+      && !["context_compaction", "system_injection", "artifact_publisher", "artifact_request", "artifact_job", "command_completion"]
         .includes(String(message.metadata?.source)))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const interactions: SubagentInteraction[] = [];

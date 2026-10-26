@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createWorkerShutdown } from './worker-shutdown.js';
+import {
+  createWorkerShutdown,
+  WORKER_SHUTDOWN_TIMEOUT_MS,
+} from './worker-shutdown.js';
 
 afterEach(() => vi.useRealTimers());
 describe('bounded worker shutdown', () => {
@@ -34,7 +37,7 @@ describe('bounded worker shutdown', () => {
     const stuck = new Promise<void>(resolve => { finish = resolve; });
     const shutdown = createWorkerShutdown({ abort: vi.fn(), cleanup: () => [stuck], exit, report });
     shutdown('parent lost');
-    await vi.advanceTimersByTimeAsync(4_999); expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(WORKER_SHUTDOWN_TIMEOUT_MS - 1); expect(exit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1); expect(exit).toHaveBeenCalledExactlyOnceWith(1);
     finish(); await vi.advanceTimersByTimeAsync(0);
     expect(exit).toHaveBeenCalledOnce(); expect(report).toHaveBeenCalledOnce();

@@ -23,9 +23,6 @@ import { useSessionComposerSelections } from "../useSessionComposerSelection";
 vi.mock("../AgentInteractionPanel", () => ({
   AgentInteractionPanel: () => null,
 }));
-vi.mock("../RuntimeRecoveryPanel", () => ({
-  RuntimeRecoveryPanel: () => null,
-}));
 vi.mock("../../settings/useConfig", () => ({
   useConfig: () => ({
     providers: [],

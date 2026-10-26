@@ -91,6 +91,42 @@ async function interruptedRequest(snapshot: ConversationGitSnapshot, operation: 
 }
 
 describe('merge command recovery after a host interruption', { timeout: 60_000 }, () => {
+  it('moves resumed tasks to a new durable timeline anchor and expires every previous position', async () => {
+    const original = await create();
+    const stopped = await service.setWorkerExecution('session', original.task.id, { status: 'waiting_user', epoch: 1, phase: 'resolving' });
+    const mrVersion = original.mr.version;
+    await service.setWorkerExecution('session', original.task.id, { status: 'running', epoch: 2 }, { epoch: stopped.epoch, revision: stopped.revision });
+    let current = await service.workerSnapshot('session', original.task.id);
+    expect(current.task.messageId).not.toBe(original.task.messageId);
+    expect(current.mr.version).toBe(mrVersion);
+    const firstNewId = current.task.messageId;
+    expect(messages.get(original.task.messageId)).toMatchObject({ createdAt: original.task.createdAt, metadata: { gitMergeTimeline: { state: 'superseded', replacementMessageId: firstNewId } } });
+    expect(messages.get(firstNewId)).toMatchObject({ runId: null, stepId: null, metadata: { source: 'git_merge_task' } });
+    expect(messages.get(firstNewId)!.createdAt > original.task.createdAt).toBe(true);
+    const stoppedAgain = await service.setWorkerExecution('session', original.task.id, { status: 'paused', stopRequested: 'pause' });
+    await service.setWorkerExecution('session', original.task.id, { status: 'running', epoch: 3, stopRequested: undefined }, { epoch: stoppedAgain.epoch, revision: stoppedAgain.revision });
+    current = await service.workerSnapshot('session', original.task.id);
+    expect(messages.get(firstNewId)?.metadata.gitMergeTimeline).toMatchObject({ state: 'superseded', replacementMessageId: current.task.messageId });
+    expect(messages.get(current.task.messageId)?.metadata.gitMergeTimeline).toBeUndefined();
+    const stored = await store.read<any>('conversation-tasks', original.task.id);
+    expect(stored.messages.filter((message: AgentRuntimeMessage) => message.metadata.source === 'git_merge_task')).toHaveLength(3);
+    expect(stored.pendingTimelineMessageIds).toBeUndefined();
+  });
+
+  it('repairs timeline delivery after restart without creating another resumed anchor', async () => {
+    const original = await create();
+    const stopped = await service.setWorkerExecution('session', original.task.id, { status: 'paused', epoch: 1 });
+    flushSession.mockRejectedValueOnce(new Error('timeline delivery interrupted'));
+    await expect(service.setWorkerExecution('session', original.task.id, { status: 'running', epoch: 2 }, { epoch: stopped.epoch, revision: stopped.revision })).rejects.toThrow('timeline delivery interrupted');
+    const pending = await store.read<any>('conversation-tasks', original.task.id);
+    expect(pending.pendingTimelineMessageIds).toEqual([original.task.messageId, pending.messageId]);
+    const restored = await instance().get('session', original.task.id);
+    expect(restored.task.messageId).toBe(pending.messageId);
+    expect(messages.get(original.task.messageId)?.metadata.gitMergeTimeline).toMatchObject({ state: 'superseded' });
+    expect([...messages.values()].filter(message => message.metadata.source === 'git_merge_task')).toHaveLength(2);
+    expect((await store.read<any>('conversation-tasks', original.task.id)).pendingTimelineMessageIds).toBeUndefined();
+  });
+
   it('re-enters a stopped generation once and fences concurrent stops or repeated admissions', async () => {
     const snapshot = await create();
     const stopped = await service.setWorkerExecution('session', snapshot.task.id, { status: 'waiting_user', epoch: 1, phase: 'resolving' });
@@ -100,6 +136,7 @@ describe('merge command recovery after a host interruption', { timeout: 60_000 }
     await expect(service.setWorkerExecution('session', snapshot.task.id, { status: 'running', epoch: 2 }, fence)).rejects.toMatchObject({ code: 'WORKER_FENCED' });
     const paused = await service.setWorkerExecution('session', snapshot.task.id, { status: 'paused', stopRequested: 'pause' });
     await service.setWorkerExecution('session', snapshot.task.id, { status: 'cancelling', stopRequested: 'cancel' });
+    await expect(service.setWorkerExecution('session', snapshot.task.id, { status: 'queued', epoch: 3 })).rejects.toMatchObject({ code: 'WORKER_FENCED' });
     await expect(service.setWorkerExecution('session', snapshot.task.id, { status: 'running', epoch: 3 }, { epoch: paused.epoch, revision: paused.revision })).rejects.toMatchObject({ code: 'WORKER_FENCED' });
     expect((await service.workerSnapshot('session', snapshot.task.id)).execution).toMatchObject({ status: 'cancelling', stopRequested: 'cancel' });
   });

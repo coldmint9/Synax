@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn } from "node:child_process";
 import { parseWslUncPath } from "../../workspace-location.js";
 import { stopWslOwnedProcess } from "../../../infrastructure/wsl/wsl.js";
+import { logger } from "../../../infrastructure/runtime/logger.js";
 
 /**
  * Async process execution helpers for agent tools.
@@ -33,6 +34,8 @@ export interface AsyncCommandOptions {
   stdin?: string;
   /** Run through the shell (`sh -c` / `cmd /c`). */
   shell?: boolean;
+  /** Wait for descendant cleanup before returning (e.g. workspace handoff). */
+  waitForCleanup?: boolean;
 }
 
 export interface AsyncCommandResult {
@@ -142,6 +145,7 @@ export function runCommand(
     let settled = false;
     let aborted = false;
     let stoppedEarly = false;
+    let stopping = false;
     const decoder = new TextDecoder();
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -185,28 +189,38 @@ export function runCommand(
       }
     };
 
-    let markClosed!: () => void;
-    const closed = new Promise<void>((resolveClosed) => {
-      markClosed = resolveClosed;
-    });
-    ownedCommands.set(killTree, closed);
+    const stopOwned = (signal: NodeJS.Signals) => {
+      stopping = true;
+      killTree(signal);
+    };
     const onAbort = () => {
       aborted = true;
-      killTree("SIGKILL");
+      stopOwned("SIGKILL");
     };
     const cleanup = () => {
-      ownedCommands.delete(killTree);
+      ownedCommands.delete(stopOwned);
       signal?.removeEventListener("abort", onAbort);
-      markClosed();
     };
+    // Result delivery does not release ownership. Even after close, shutdown
+    // must wait for the guardian's eventual acknowledgement, not its timeout.
+    const reaped = child.ownedProcessReaped.then(cleanup);
+    ownedCommands.set(stopOwned, reaped);
+    void reaped.catch(error => {
+      signal?.removeEventListener("abort", onAbort);
+      // Retain the rejected entry so shutdown reports unconfirmed cleanup.
+      logger.error({ err: error, ownedProcessId: child.ownedProcessId }, "Command process cleanup failed");
+    });
+    void child.ownedProcessClosed.catch(error => {
+      logger.warn({ err: error, ownedProcessId: child.ownedProcessId }, "Command cleanup wait failed; ownership retained until acknowledgement");
+    });
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
 
     if (options.timeoutMs && options.timeoutMs > 0) {
       const timeout = setTimeout(() => {
         timedOut = true;
-        killTree("SIGTERM");
-        killTimer = setTimeout(() => killTree("SIGKILL"), KILL_GRACE_MS);
+        stopOwned("SIGTERM");
+        killTimer = setTimeout(() => stopOwned("SIGKILL"), KILL_GRACE_MS);
         killTimer.unref?.();
       }, options.timeoutMs);
       timeout.unref?.();
@@ -218,7 +232,7 @@ export function runCommand(
       if (!stoppedEarly && (options.onStdout?.(decoder.decode(chunk, { stream: true })) === false ||
           options.stopOnOutputLimit && stdout.truncated)) {
         stoppedEarly = true;
-        killTree("SIGKILL");
+        stopOwned("SIGKILL");
       }
     });
     child.stderr?.on("data", (chunk: Buffer) =>
@@ -259,14 +273,15 @@ export function runCommand(
       if (settled) return;
       settled = true;
       if (killTimer) clearTimeout(killTimer);
-      try {
-        await child.ownedProcessClosed;
-      } catch (error) {
-        spawnError ??= Object.assign(new Error("Command process cleanup could not be confirmed.", { cause: error }), {
-          code: "PROCESS_CLEANUP_FAILED",
-        });
+      if (options.waitForCleanup || timedOut || aborted || stoppedEarly || stopping || exitSignal || spawnError) {
+        try {
+          await child.ownedProcessClosed;
+        } catch (error) {
+          spawnError ??= Object.assign(new Error("Command process cleanup could not be confirmed.", { cause: error }), {
+            code: "PROCESS_CLEANUP_FAILED",
+          });
+        }
       }
-      cleanup();
       resolve({
         status: code ?? (exitSignal ? null : 0),
         stdout: captureText(stdout),

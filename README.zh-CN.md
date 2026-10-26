@@ -120,6 +120,12 @@ npm run dev:client   # 仅 Web，5174 端口，~/.synax/web-dev
 
 独立运行默认值适用于 `start:local`；开发 Profile 默认值由原有 `dev`、`dev:all`、`dev:local`、`dev:client` 和 `dev:desktop` 命令自动设置。也可以在启动开发脚本的终端中显式覆盖这些变量。
 
+## GitLab MR 登录
+
+在 **设置 → GitLab 登录** 中填写 GitLab 主机（如 `gitlab.com` 或自建实例域名）和具有 `api` 权限的 Personal Access Token，点击 **验证并保存登录**。Synax 内置 GitLab REST API 连接，无需安装 `glab`；支持按主机保存多个账号、检测连接、更新令牌和退出登录。Token 加密保存在本机配置中，读取设置不会返回原文。
+
+在会话的 **PR** 面板选择 GitLab remote，可读取、创建、合并 MR、查看 Pipeline 状态并处理冲突。GitLab 主机通过 HTTPS 连接；Git push / fetch 仍使用仓库已有的 SSH 或 HTTPS 凭据。退出登录只移除 Synax 保存的凭据，不会撤销 GitLab 上的 Token。
+
 ## 本地 Git 合并请求
 
 工作区的 Commit / Commit & Push 会在暂存前检测冲突：相同内容或有明确共同基线的冲突直接解决，其余文本冲突使用项目配置的模型尝试解决，并只替换冲突块。模型不可用、结果不完整、文件被并发修改或遇到二进制/结构性冲突时，会停止提交并保留现场。Push 会检查暂存区、工作区及所有待推送提交中的冲突标记；单独 Push 不会自动新增提交，需先 Commit 解决冲突。

@@ -39,6 +39,13 @@ export interface AcceptedRuntimeInput {
   previousSessionStatus: string;
 }
 
+/**
+ * How long a new turn waits for a residual stop fence to clear before it is
+ * reported. Cleanup normally settles in milliseconds; the wait keeps it
+ * invisible instead of turning it into a rejection the user has to retry.
+ */
+const RESIDUAL_CLEANUP_GRACE_MS = 3_000;
+
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object")
@@ -145,6 +152,16 @@ async function prepareAuthoritativeRuntimeRun(
       );
     });
     preparedSession = agentRuntimeStore.getSession(sessionId);
+    // Residual cleanup finishes in the background: give it a short, bounded
+    // grace period instead of bouncing the user's message back immediately.
+    const cleanupDeadline = Date.now() + RESIDUAL_CLEANUP_GRACE_MS;
+    while (
+      preparedSession.sessionMetadata?.runtimeControl &&
+      Date.now() < cleanupDeadline
+    ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      preparedSession = agentRuntimeStore.getSession(sessionId);
+    }
   }
   if (preparedSession.sessionMetadata?.runtimeControl)
     throw new AgentRuntimeError(

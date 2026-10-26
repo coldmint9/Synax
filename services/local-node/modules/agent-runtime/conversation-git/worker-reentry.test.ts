@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   service: { get: vi.fn(), workerSnapshot: vi.fn(), setWorkerExecution: vi.fn(), workerAction: vi.fn(), workerSaveFile: vi.fn(), file: vi.fn(), awaitWorkerAdmission: vi.fn(), cancelWorkerMr: vi.fn(), gitMr: { files: vi.fn() }, store: { exclusive: vi.fn() } },
   coordinator: { submitAsync: vi.fn(), waitForSessionIdle: vi.fn(), reconcileFencedSession: vi.fn() },
   create: vi.fn(), flush: vi.fn(), wait: vi.fn(), recover: vi.fn(), acknowledge: vi.fn(),
+  interrupt: vi.fn(),
 }));
 vi.mock('./service.js', () => ({ conversationGitService: mocks.service }));
 vi.mock('../session-store.js', () => ({ agentRuntimeStore: {
@@ -19,12 +20,13 @@ vi.mock('../run-coordinator.js', () => ({ runCoordinator: mocks.coordinator }));
 vi.mock('../profile-service.js', () => ({ profileService: { register: vi.fn() } }));
 vi.mock('../tool-registry.js', () => ({ toolRegistry: { registerProvider: vi.fn() } }));
 vi.mock('../session-recovery.js', () => ({ ensureSessionRecovered: vi.fn() }));
+vi.mock('../agent-stream-proxy.js', () => ({ interruptAgentSessionsAndWait: mocks.interrupt }));
 vi.mock('../../../infrastructure/runtime/execution-context.js', () => ({ outsideExecutionContext: (fn: () => unknown) => fn() }));
 vi.mock('../subagent-control-broker.js', () => ({ subagentCompletionBroker: { wait: mocks.wait, recover: mocks.recover, acknowledge: mocks.acknowledge } }));
 vi.mock('./worker-watchdog.js', () => ({ MERGE_WORKER_PROGRESS_TIMEOUT_MS: 600_000, mergeWorkerWatchdog: {
   progress: vi.fn(), watch: () => ({ dispose() {}, timedOut: false, expired: new Promise(() => {}) }),
 } }));
-import { conversationMergeWorkerTools, resumeConversationMergeWorker, startConversationMergeWorker, waitForConversationMergeWorker, hasLocalConversationMergeWorker } from './worker.js';
+import { conversationMergeWorkerTools, resumeConversationMergeWorker, startConversationMergeWorker, waitForConversationMergeWorker, hasLocalConversationMergeWorker, cancelConversationMergeWorker } from './worker.js';
 
 let serial = 0;
 let objectId: string;
@@ -152,4 +154,37 @@ it('returns a completed finalize without applying the candidate again', async ()
   mocks.snapshot.execution.status = 'completed'; mocks.snapshot.mr.status = 'merged';
   expect((await call('git.merge.worker.finalize')).result).toMatchObject({ mr: { status: 'merged' } });
   expect(mocks.service.workerAction).not.toHaveBeenCalled();
+});
+
+it('coalesces cancellations, fences the old worker, and makes repeated cancellation a no-op', async () => {
+  mocks.snapshot.execution.status = 'running';
+  mocks.service.cancelWorkerMr.mockImplementation(async () => {
+    mocks.snapshot.execution.status = 'cancelled'; mocks.snapshot.mr.status = 'cancelled';
+  });
+  await Promise.all([cancelConversationMergeWorker('parent', objectId), cancelConversationMergeWorker('parent', objectId)]);
+  expect(mocks.interrupt).toHaveBeenCalledExactlyOnceWith(['child'], 'Merge cancelled by the user.');
+  expect(mocks.service.cancelWorkerMr).toHaveBeenCalledTimes(1);
+  expect(mocks.snapshot.execution).toMatchObject({ epoch: 2, status: 'cancelled', stopRequested: 'cancel' });
+  await cancelConversationMergeWorker('parent', objectId);
+  expect(mocks.service.cancelWorkerMr).toHaveBeenCalledTimes(1);
+  await expect(call('git.merge.worker.prepare')).rejects.toMatchObject({ code: 'WORKER_STALE' });
+});
+
+it('leaves completed merges unchanged on cancellation', async () => {
+  mocks.snapshot.mr.status = 'merged'; mocks.snapshot.execution.status = 'completed';
+  expect((await cancelConversationMergeWorker('parent', objectId)).mr.status).toBe('merged');
+  expect(mocks.interrupt).not.toHaveBeenCalled();
+  expect(mocks.service.cancelWorkerMr).not.toHaveBeenCalled();
+});
+
+it('retires a newly created child when cancellation wins before launch', async () => {
+  mocks.snapshot.execution = undefined; mocks.snapshot.mr.status = 'draft';
+  mocks.create.mockReturnValue(mocks.sessions.get('child'));
+  mocks.service.setWorkerExecution.mockImplementationOnce(async () => {
+    mocks.snapshot.execution = { status: 'cancelled', epoch: 2 };
+    return mocks.snapshot.execution;
+  });
+  expect((await startConversationMergeWorker('parent', objectId)).execution?.status).toBe('cancelled');
+  expect(mocks.sessions.get('child').status).toBe('cancelled');
+  expect(mocks.coordinator.submitAsync).not.toHaveBeenCalled();
 });

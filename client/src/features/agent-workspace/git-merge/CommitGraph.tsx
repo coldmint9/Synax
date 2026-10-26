@@ -6,8 +6,8 @@ import { layoutCommitGraph } from "./model";
 import { VirtualList } from "./VirtualList";
 
 const rowHeight = 35;
-const laneWidth = 17;
-const pointX = (lane: number) => 12 + lane * laneWidth;
+const laneWidth = 24;
+const pointX = (lane: number) => 14 + lane * laneWidth;
 export interface PendingMergeGraph {
   key: string;
   target: string;
@@ -79,10 +79,10 @@ export function CommitGraph({
       }),
     );
     const width = rows.reduce(
-      (width, row) => Math.max(width, 24 + row.lane * laneWidth),
-      45,
+      (width, row) => Math.max(width, 36 + row.lane * laneWidth),
+      48,
     );
-    return { rows, edges, width, renderedWidth: Math.min(width, 88) };
+    return { rows, edges, width };
   }, [projectedCommits]);
   const motion = useGraphMotion(Boolean(pendingMerge) && animate);
   const detail = commits.find((commit) => commit.oid === selected);
@@ -108,15 +108,16 @@ export function CommitGraph({
         maxHeight={245}
         label="提交列表"
         className="conversation-git-graph-window"
-        contentStyle={{ paddingLeft: graph.renderedWidth }}
+        spaceStyle={{ minWidth: graph.width + 240 }}
+        contentStyle={{ paddingLeft: graph.width }}
         decoration={(range) => (
           <svg
             className="conversation-git-tree conversation-git-tree--window"
-            width={graph.renderedWidth}
+            width={graph.width}
             height={(range.end - range.start) * rowHeight}
-            style={{ top: range.offset }}
+            style={{ top: range.offset, width: graph.width, height: (range.end - range.start) * rowHeight, maxWidth: 'none' }}
             viewBox={`0 ${range.offset} ${graph.width} ${(range.end - range.start) * rowHeight}`}
-            preserveAspectRatio="none"
+            preserveAspectRatio="xMinYMin meet"
             aria-hidden="true"
           >
             {graph.edges

@@ -1,8 +1,9 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import * as commands from '../tools/exec-async.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { agentRuntimeStore as store } from '../session-store.js';
 import { sessionLiveBus } from '../session-live-bus.js';
@@ -11,6 +12,7 @@ import { ensureSynaxAgentRegistered } from '../synax/index.js';
 import { resetAgentRuntimeFixtures } from '../__tests__/agent-runtime-fixtures.js';
 import { conversationGitTools } from './tools.js';
 import { conversationGitService } from './service.js';
+import type { AgentRuntimeMessage } from '../contracts.js';
 
 let root: string;
 let repo: string;
@@ -67,12 +69,40 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   if (sessionId) store.reset();
   if (root) rmSync(root, { recursive: true, force: true });
   requestCounter = 0;
 });
 
 describe('registered conversation Git tools in the native runtime', { timeout: 60_000 }, () => {
+  it('persists a resumed timeline after an API host reload while preserving the old message sequence', async () => {
+    // This contract exercises Rust history, not the process guardian. Execute
+    // real Git directly so process shutdown timing cannot mask sequence bugs.
+    vi.spyOn(commands, 'runCommand').mockImplementation(async (executable, args, options = {}) => {
+      const result = spawnSync(executable, args, { cwd: options.cwd, env: options.env, input: options.stdin, encoding: 'utf8', timeout: 30_000 });
+      return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', error: result.error,
+        timedOut: false, stdoutTruncated: false, stderrTruncated: false,
+        stdoutBytes: Buffer.byteLength(result.stdout ?? ''), stderrBytes: Buffer.byteLength(result.stderr ?? '') };
+    });
+    const original = await conversationGitService.create(sessionId, { requestId: 'timeline-create', title: 'Resume timeline', target: 'integration', sources: ['feature/a'], strategy: 'merge_commit' });
+    const old = store.getMessage(sessionId, original.task.messageId) as AgentRuntimeMessage & { sequence: number };
+    const stopped = await conversationGitService.setWorkerExecution(sessionId, original.task.id, { status: 'paused', epoch: 1 });
+    store.appendMessage({ id: 'follow-up', sessionId, runId: null, stepId: null, role: 'user', content: '继续原任务', metadata: {}, createdAt: new Date().toISOString() });
+    await store.flushSession(sessionId);
+    store.reset();
+    await store.hydrateSessionSummary(sessionId, true);
+    await conversationGitService.setWorkerExecution(sessionId, original.task.id, { status: 'running', epoch: 2 }, { epoch: stopped.epoch, revision: stopped.revision });
+    const current = await conversationGitService.workerSnapshot(sessionId, original.task.id);
+    const { runtimeFacade } = await import('../sidecar/runtime-facade.js');
+    const messages = await runtimeFacade.listMessageHistory(sessionId) as Array<AgentRuntimeMessage & { sequence: number }>;
+    const expired = messages.find(message => message.id === old.id)!;
+    const resumed = messages.find(message => message.id === current.task.messageId)!;
+    expect(expired.sequence).toBe(old.sequence);
+    expect(expired.metadata.gitMergeTimeline).toMatchObject({ state: 'superseded', replacementMessageId: resumed.id });
+    expect(resumed.sequence).toBeGreaterThan(messages.find(message => message.id === 'follow-up')!.sequence);
+    expect(messages.filter(message => message.metadata.source === 'git_merge_task')).toHaveLength(2);
+  }, 180_000);
   it('renders a durable domain task and reads/proposes through the real tool registry', async () => {
     const visible = toolRegistry.listForSession(sessionId).map(tool => tool.id);
     expect(visible).toEqual(expect.arrayContaining(conversationGitTools.map(tool => tool.id)));

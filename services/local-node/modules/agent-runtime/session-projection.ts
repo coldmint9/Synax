@@ -34,11 +34,10 @@ export function projectSessionState(session: AgentSession): AgentSession {
   const control = normalized.sessionMetadata?.runtimeControl as { state?: string; reason?: string } | undefined;
 
   if (control?.state === 'unconfirmed') {
-    return {
-      ...normalized,
-      status: 'completed',
-      blockedReason: control.reason ?? 'Execution shutdown requires inspection.',
-    };
+    // A residual stop fence is runtime bookkeeping, not a decision the user has
+    // to make: the runtime confirms the process exit in the background. Keep
+    // the row terminal and quiet instead of surfacing the internal reason.
+    return { ...normalized, status: 'completed', blockedReason: null };
   }
   if (SYNAX_PROFILES.has(normalized.profileId)) {
     if (normalized.status === 'waiting_permission' || normalized.status === 'waiting_input') {

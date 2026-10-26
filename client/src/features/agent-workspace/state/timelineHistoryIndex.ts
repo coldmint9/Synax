@@ -22,6 +22,7 @@ export function previewTimelineMessage(message: AgentRuntimeMessage): AgentRunti
       partial: message.metadata?.partial,
       forkedFromMessageId: message.metadata?.forkedFromMessageId,
       ...(task ? { gitMergeTask: task.reference } : {}),
+      ...(task?.superseded ? { gitMergeTimeline: { state: 'superseded', ...task.superseded } } : {}),
     },
   };
 }

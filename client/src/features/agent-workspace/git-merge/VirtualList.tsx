@@ -176,6 +176,7 @@ export function VirtualList<T>({
   className = "",
   decoration,
   contentStyle,
+  spaceStyle,
 }: {
   items: readonly T[];
   getKey: (item: T, index: number) => string;
@@ -186,6 +187,7 @@ export function VirtualList<T>({
   className?: string;
   decoration?: (range: VirtualRange) => ReactNode;
   contentStyle?: CSSProperties;
+  spaceStyle?: CSSProperties;
 }) {
   const { viewport, range, onKeyDown } = useVirtualWindow(
     items.length,
@@ -207,7 +209,7 @@ export function VirtualList<T>({
     >
       <div
         className="conversation-git-virtual-space"
-        style={{ height: range.totalHeight }}
+        style={{ ...spaceStyle, height: range.totalHeight }}
       >
         {decoration?.(range)}
         <ol

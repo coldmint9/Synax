@@ -1,11 +1,12 @@
 import { MediaParts } from "../media/MediaParts";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useShellStore } from "../../shared/state/shellStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
+import { TextAttachmentCard } from "./TextAttachmentCard";
 interface Props {
   content: string;
   contentParts?: RuntimeContentPart[];
@@ -22,8 +23,26 @@ export const UserMessageBlock = memo(function UserMessageBlock({
     (state) => state.preferences.userMessageFontWeight,
   );
   const history = useSessionHistory();
+  const { messageText, attachments } = useMemo(() => {
+    const attachments = contentParts?.filter(
+      (part): part is Extract<RuntimeContentPart, { type: "text" }> & { attachmentName: string } =>
+        part.type === "text" && Boolean(part.attachmentName),
+    ) ?? [];
+    return {
+      attachments,
+      // Only split messages with explicit attachment metadata; ordinary and
+      // legacy messages retain their original content.
+      messageText: attachments.length
+        ? contentParts!.filter((part) => part.type === "text" && !part.attachmentName)
+          .map((part) => part.type === "text" ? part.text : "").join("\n")
+        : content,
+    };
+  }, [content, contentParts]);
+  const attachmentCards = attachments.map((part, index) => (
+    <TextAttachmentCard key={`${index}-${part.attachmentName}`} name={part.attachmentName} text={part.text} />
+  ));
   const [editing, setEditing] = useState(false),
-    [draft, setDraft] = useState(content),
+    [draft, setDraft] = useState(messageText),
     [saving, setSaving] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
@@ -54,6 +73,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
     <div className="flex justify-end">
       {editing && history?.canEditMessages !== false ? (
         <div className="message-inline-editor">
+          {attachmentCards}
           <textarea
             ref={textarea}
             autoFocus
@@ -102,12 +122,17 @@ export const UserMessageBlock = memo(function UserMessageBlock({
           </div>
         </div>
       ) : (
-        <div className="message-action-group max-w-[min(85%,42rem)]">
-          <div
-            className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm"
-            style={{ fontWeight: userMessageFontWeight }}
-          >
-            {content}
+        <div className="message-action-group min-w-0 max-w-[min(85%,42rem)]">
+          <div className="flex min-w-0 flex-col gap-2">
+            {attachmentCards}
+            {messageText ? (
+              <div
+                className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm"
+                style={{ fontWeight: userMessageFontWeight }}
+              >
+                {messageText}
+              </div>
+            ) : null}
             <MediaParts parts={contentParts} />
           </div>
           <MessageActionToolbar
@@ -116,7 +141,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
             disabledReason={disabledReason}
             busy={history?.busy}
             onEdit={history?.canEditMessages === false ? undefined : () => {
-              setDraft(content);
+              setDraft(messageText);
               setEditing(true);
             }}
           />

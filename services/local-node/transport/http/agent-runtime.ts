@@ -362,6 +362,7 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
           .filter(
             (session) =>
               selected.has(session.projectId) &&
+              !session.parentSessionId &&
               !session.sessionMetadata?.archivedAt &&
               !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
           )
@@ -448,6 +449,14 @@ function runtimeError(c: Context, error: unknown) {
   return c.json(
     mapped.body,
     mapped.status as 400 | 401 | 403 | 404 | 409 | 500,
+  );
+}
+/** A stop whose process exit is not confirmed yet settles in the background.
+ * The turn is already fenced, so this is never an error for the user. */
+function isUnconfirmedStop(error: unknown): boolean {
+  return (
+    error instanceof AgentRuntimeError &&
+    ["DELETE_TIMEOUT", "STOP_UNCONFIRMED"].includes(error.code)
   );
 }
 async function archiveSessionAfterShutdown(
@@ -1162,29 +1171,51 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
     if (!id) throw new AgentValidationError("Session id is required.");
     const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
-    await runCoordinator.interrupt(
-      id,
-      "User requested session stop.",
-      async () => {
-        {
-          await Promise.all(
-            agentRuntimeStore
-              .listSessionTree(id)
-              .map((session) =>
-                runtimeFacade.stopSessionAuthoritative(
-                  session.id,
-                  "interrupted",
-                  "User requested session stop.",
-                ),
-              ),
-          );
-        }
-        for (const session of agentRuntimeStore.listSessionTree(id))
-          invalidateSessionEnvironment(session.id);
-        if (parentId) invalidateSessionEnvironment(parentId);
-      },
-      control.runId,
-    );
+    const stopShutdown = async () => {
+      await Promise.all(
+        agentRuntimeStore
+          .listSessionTree(id)
+          .map((session) =>
+            runtimeFacade.stopSessionAuthoritative(
+              session.id,
+              "interrupted",
+              "User requested session stop.",
+            ),
+          ),
+      );
+      for (const session of agentRuntimeStore.listSessionTree(id))
+        invalidateSessionEnvironment(session.id);
+      if (parentId) invalidateSessionEnvironment(parentId);
+    };
+    try {
+      await runCoordinator.interrupt(
+        id,
+        "User requested session stop.",
+        stopShutdown,
+        control.runId,
+      );
+    } catch (error) {
+      // An unconfirmed process exit is runtime bookkeeping: the turn is already
+      // fenced and the runtime keeps cleaning it up in the background, so the
+      // stop request itself still succeeded for the user.
+      if (!isUnconfirmedStop(error)) throw error;
+      logger.warn(
+        { sessionId: id, error: error instanceof Error ? error.message : String(error) },
+        "Stop confirmed in the background",
+      );
+      await stopShutdown().catch((shutdownError) => {
+        logger.warn(
+          {
+            sessionId: id,
+            error:
+              shutdownError instanceof Error
+                ? shutdownError.message
+                : String(shutdownError),
+          },
+          "Deferred stop projection will be applied by the runtime",
+        );
+      });
+    }
     return c.json(
       projectSessionState(
         (await runtimeFacade.uiSnapshotAuthoritative(id)).session,

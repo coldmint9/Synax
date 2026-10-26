@@ -731,6 +731,8 @@ export function buildConversationTimeline(
   const seenOrphans = new Set<string>();
   const standaloneReplyIds = new Set<string>();
   for (const message of messages) {
+    // Apply the internal-message exclusion here too: a paged history window
+    // may omit the receipt's run/steps and otherwise promote it to a reply.
     if (
       message.role !== "assistant" ||
       (message.stepId !== null && excludedStepIds.has(message.stepId)) ||
@@ -738,7 +740,7 @@ export function buildConversationTimeline(
       message.metadata?.partial ||
       message.metadata?.type === "thinking" ||
       message.metadata?.kind === "thought" ||
-      ["artifact_publisher", "artifact_request", "artifact_job"].includes(
+      ["artifact_publisher", "artifact_request", "artifact_job", "command_completion"].includes(
         String(message.metadata?.source),
       ) ||
       (message.stepId && stepIds.has(message.stepId)) ||

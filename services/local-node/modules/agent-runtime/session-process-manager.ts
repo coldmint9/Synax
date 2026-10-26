@@ -55,7 +55,26 @@ import {
 import { syncWorkerSessionBinding } from "./session-binding-sync.js";
 
 const ACTIVE_SESSION_WAIT_MS = 25;
-const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
+/**
+ * Stop confirmation is about the physical exit of the worker; the exit
+ * reconciliation only gets whatever grace is left (RECONCILIATION_GRACE_MS),
+ * because that work is unbounded and admission already gates a replacement
+ * worker on it through `pendingStartEligible`. Keep this budget above
+ * `CHILD_EXIT_GRACE_MS` so the SIGKILL fallback is always inside the window.
+ */
+const ACTIVE_SESSION_TIMEOUT_MS = 6_000;
+/**
+ * SIGTERM → SIGKILL escalation. Must stay above the worker's own graceful
+ * shutdown budget and its exit watchdog (services/worker/jobs/worker-shutdown.ts:
+ * 2.5s graceful, 3s watchdog), otherwise the parent kills a worker that is
+ * still committing its own cleanup and then pays for it in reconciliation.
+ */
+const CHILD_EXIT_GRACE_MS = 4_000;
+/**
+ * Bounded patience for the post-exit reconciliation. It runs after the process
+ * is already gone, so it can only delay the confirmation, never fail it.
+ */
+const RECONCILIATION_GRACE_MS = 2_000;
 const CHILD_READY_TIMEOUT_MS = AGENT_SESSION_CHILD_READY_TIMEOUT_MS;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 5 * 60_000;
 let preparingWorkerMetadata: Promise<void> | undefined;
@@ -457,7 +476,7 @@ export class SessionProcessManager {
       const force = setTimeout(() => {
         if (this.terminatingChildren.has(state.child))
           state.child.kill("SIGKILL");
-      }, 3000);
+      }, CHILD_EXIT_GRACE_MS);
       force.unref();
       const confirmedExit = () => {
         clearTimeout(force);
@@ -489,6 +508,13 @@ export class SessionProcessManager {
     }
   }
 
+  /**
+   * Wait for the physical exit of every listed worker, then give the exit
+   * reconciliation a bounded grace period. The reconciliation (sidecar hydrate
+   * + flush) is bookkeeping that can take arbitrarily long on a large session,
+   * so its latency never becomes a stop failure: callers that need the settled
+   * projection normally get it, and a slow one is simply logged.
+   */
   async waitForIdleSessions(
     sessionIds: Iterable<string>,
     timeoutMs = ACTIVE_SESSION_TIMEOUT_MS,
@@ -500,7 +526,6 @@ export class SessionProcessManager {
       ids.some(
         (sessionId) =>
           this.activeMainStreams.has(sessionId) ||
-          this.exitReconciliations.has(sessionId) ||
           (this.children.has(sessionId) && !(allowRetainedIdle && this.admission.lifecycle.phase(sessionId) === "idle")) ||
           [...this.terminatingChildren.values()].includes(sessionId),
       )
@@ -511,6 +536,33 @@ export class SessionProcessManager {
           "DELETE_TIMEOUT",
           409,
         );
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, ACTIVE_SESSION_WAIT_MS),
+      );
+    }
+    // Stay inside the caller's deadline: the stop is already confirmed, so a
+    // slow reconciliation only costs the grace that is still available.
+    await this.settleExitReconciliations(
+      ids,
+      Math.min(RECONCILIATION_GRACE_MS, Math.max(0, deadline - Date.now())),
+    );
+  }
+
+  private async settleExitReconciliations(
+    ids: string[],
+    graceMs: number,
+  ): Promise<void> {
+    const pending = () => ids.filter((id) => this.exitReconciliations.has(id));
+    if (!pending().length) return;
+    const deadline = Date.now() + graceMs;
+    while (pending().length) {
+      if (Date.now() >= deadline) {
+        logger.warn(
+          { sessionIds: pending() },
+          "worker exit reconciliation is still running after the stop was confirmed",
+        );
+        return;
       }
       await new Promise((resolve) =>
         setTimeout(resolve, ACTIVE_SESSION_WAIT_MS),

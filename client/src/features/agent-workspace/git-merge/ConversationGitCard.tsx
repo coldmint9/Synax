@@ -36,12 +36,14 @@ import { taskPresentation } from "./model";
 import { applyMergeState, chooseMergeSnapshot } from "./mergeTaskProjection";
 import { MergeFileIndex } from "./mergeFileIndex";
 import { CommitGraph } from "./CommitGraph";
+import { ExpiredMergeTask } from './ExpiredMergeTask';
 import { VirtualList } from "./VirtualList";
 import { VirtualCheckResults } from "./VirtualCheckResults";
 import "./conversationGit.css";
 
 interface ConversationGitCardProps {
   reference: ConversationGitReference;
+  messageId?: string;
   readOnly?: boolean;
 }
 const stopped = new Set([
@@ -84,6 +86,7 @@ export function ConversationGitCard(props: ConversationGitCardProps) {
 
 function ConversationGitCardInstance({
   reference,
+  messageId,
   readOnly = false,
 }: ConversationGitCardProps) {
   const scope = useTranscriptSession();
@@ -188,6 +191,7 @@ function ConversationGitCardInstance({
           const next = latestEvent.current
             ? applyMergeState(response, latestEvent.current)
             : response;
+          if (messageId && response.task.messageId !== messageId) ingest(reference.sessionId, response.messages);
           restoreManifest(response);
           publish(chooseMergeSnapshot(snapshotRef.current, next));
           setReadError("");
@@ -211,6 +215,8 @@ function ConversationGitCardInstance({
     }
   }, [
     owner,
+    messageId,
+    ingest,
     publish,
     restoreManifest,
     reference.objectId,
@@ -503,6 +509,7 @@ function ConversationGitCardInstance({
       </section>
     );
   const { mr, execution } = snapshot;
+  if (messageId && snapshot.task.messageId !== messageId) return <ExpiredMergeTask title={reference.title} />;
   if (!presentation) return null;
   const cleanupPending = execution?.status === "cancelled_cleanup_pending";
   const finished =

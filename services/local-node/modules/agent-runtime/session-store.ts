@@ -628,7 +628,7 @@ export class AgentRuntimeStore {
   }
   listSessionBadges(projectIds: string[]) {
     return this.listSessions({ limit: Infinity })
-      .filter((s) => projectIds.includes(s.projectId))
+      .filter((s) => projectIds.includes(s.projectId) && !s.parentSessionId)
       .map(({ id, projectId, status, updatedAt }) => ({
         id,
         projectId,

@@ -54,7 +54,27 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("shared POSIX command supervision", () => {
-  it.each([false, true])("waits for surviving descendants before returning (detached=%s)", async (detached) => {
+  it("returns output before detached cleanup but keeps shutdown waiting for it", async () => {
+    const cwd = directory();
+    const worker = path.join(cwd, "worker.cjs");
+    fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
+    const result = await runCommand(process.execPath, ["-e", `
+      const child = require('node:child_process').spawn(process.execPath, [${JSON.stringify(worker)}], {
+        detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      });
+      child.once('message', () => { console.log(child.pid); process.exit(0); });
+    `]);
+    const pid = Number(result.stdout.trim());
+    descendantPids.push(pid);
+    expect(result.status).toBe(0);
+    expect(pid).toBeGreaterThan(1);
+    // Deterministic deferred-cleanup coverage is in command-completion.test;
+    // this integration check verifies the real guardian still owns descendants.
+    await terminateOwnedCommands();
+    expect(alive(pid)).toBe(false);
+  }, 10000);
+
+  it.each([false, true])("supports explicitly waiting for descendant cleanup (detached=%s)", async (detached) => {
     const cwd = directory();
     const worker = path.join(cwd, "worker.cjs");
     fs.writeFileSync(worker, `process.on('SIGTERM', () => {}); process.send('ready'); setInterval(() => {}, 1000);`);
@@ -64,7 +84,7 @@ describe.skipIf(process.platform === "win32")("shared POSIX command supervision"
         detached: ${detached}, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       });
       child.once('message', () => { console.log(child.pid); process.exit(7); });
-    `]);
+    `], { waitForCleanup: true });
     const pid = Number(result.stdout.trim());
     descendantPids.push(pid);
     expect(pid).toBeGreaterThan(1);

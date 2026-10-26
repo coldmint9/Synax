@@ -12,6 +12,7 @@ export function ProjectCapabilitiesSection({ projectId }: { projectId: string; s
     section === 'computerUse' ||
     section === 'analytics' ||
     section === 'subagents' ||
+    section === 'gitLab' ||
     section === 'llmProviders'
       ? 'skill'
       : section

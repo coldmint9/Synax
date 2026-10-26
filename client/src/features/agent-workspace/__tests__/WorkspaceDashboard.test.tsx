@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  act,
   cleanup,
   fireEvent,
   render as testingRender,
@@ -729,74 +728,19 @@ describe("WorkspaceDashboard", () => {
     ).toEqual(["api", "web"]);
   });
 
-  it("keeps the empty progress panel available and updates it when tasks arrive", () => {
-    const { container } = renderDashboard();
-    expect(
-      container.querySelector('[data-dashboard-panel="progress"]'),
-    ).not.toBeNull();
-    expect(screen.queryByText("任务进度")).not.toBeNull();
-    expect(screen.queryByText("暂无任务")).not.toBeNull();
-
-    act(() =>
-      useAgentSessionStore.setState({
-        sessionTodos: [
-          { id: "todo-1", label: "Review outputs", status: "pending" },
-        ],
-      }),
-    );
-    expect(
-      container.querySelector('[data-dashboard-panel="progress"]'),
-    ).not.toBeNull();
-    expect(screen.getByText("Review outputs")).toBeTruthy();
-  });
-
-  it("shows todos for the selected session and never leaks them into another session", () => {
+  it("no longer renders a progress panel for session todos", () => {
     useAgentSessionStore.setState({
       selectedSessionId: "session-1",
       sessionTodos: [
         { id: "todo-1", label: "Review outputs", status: "in_progress" },
       ],
     });
-    const view = renderDashboard();
-    expect(screen.getByText("Review outputs")).toBeTruthy();
-    expect(screen.getByText("0 / 1")).toBeVisible();
-    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
-      "data-status",
-      "in_progress",
-    );
-    expect(screen.queryByRole("progressbar")).toBeNull();
-    act(() =>
-      useAgentSessionStore.setState({
-        sessionTodos: [
-          { id: "todo-1", label: "Review outputs", status: "done" },
-        ],
-      }),
-    );
-    expect(screen.getByText("1 / 1")).toBeInTheDocument();
-    expect(screen.getByText("Review outputs").closest("li")).toHaveAttribute(
-      "data-status",
-      "done",
-    );
-    view.rerender(
-      <WorkspaceDashboard
-        sessionId="session-2"
-        environment={{ ...environment, sessionId: "session-2" }}
-      />,
-    );
-    expect(screen.queryByText("Review outputs")).toBeNull();
-    expect(screen.queryByText("1 / 1")).toBeNull();
-    act(() =>
-      useAgentSessionStore.setState({
-        selectedSessionId: "session-2",
-        sessionTodos: [
-          { id: "todo-2", label: "Check second session", status: "pending" },
-        ],
-      }),
-    );
+    const { container } = renderDashboard();
     expect(
-      screen.getByText("Check second session").closest("li"),
-    ).toHaveAttribute("data-status", "pending");
-    expect(screen.getByText("0 / 1")).toBeVisible();
+      container.querySelector('[data-dashboard-panel="progress"]'),
+    ).toBeNull();
+    expect(screen.queryByText("任务进度")).toBeNull();
+    expect(screen.queryByText("Progress")).toBeNull();
     expect(screen.queryByText("Review outputs")).toBeNull();
   });
 

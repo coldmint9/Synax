@@ -187,6 +187,27 @@ describe("workbench action state", () => {
     expect(activity()).toHaveTextContent("4");
   });
 
+  it("clears the selected workspace row immediately when switching", async () => {
+    const user = userEvent.setup();
+    const props = { ...base, projects: [project, { ...project, id: "other", name: "Other" }] };
+    badgeState.badges = {
+      p: { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 8, total: 8 },
+      other: { waitingInput: 1, unreadFailed: 2, running: 3, unreadCompleted: 4, total: 10 },
+    };
+    const view = render(<WorkbenchHeader {...props} />, { wrapper });
+    await user.click(screen.getByRole("button", { name: "appSwitchProject" }));
+    const list = await screen.findByRole("group", { name: "Workspaces" });
+    expect(list.querySelector('[data-current="true"] .project-session-badge')).toBeNull();
+    expect(list.querySelectorAll('.project-session-badge')).toHaveLength(1);
+
+    await user.click(within(list).getByRole("button", { name: /^Other/ }));
+    expect(base.onProjectSwitch).toHaveBeenCalledWith("other");
+    view.rerender(<WorkbenchHeader {...props} currentProjectId="other" projectName="Other" />);
+    await user.click(screen.getByRole("button", { name: "appSwitchProject" }));
+    const reopened = await screen.findByRole("group", { name: "Workspaces" });
+    expect(reopened.querySelector('[data-current="true"] .project-session-badge')).toBeNull();
+  });
+
   it("keeps the workspace menu and navigation in the same header when entering a viewer", async () => {
     const user = userEvent.setup();
     const view = render(<WorkbenchHeader {...base} />, { wrapper });

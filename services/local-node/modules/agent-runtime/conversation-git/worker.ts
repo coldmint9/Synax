@@ -26,6 +26,7 @@ type WorkerBinding = { parentSessionId: string; objectId: string; projectId: str
 type WorkerState = { childSessionId: string; promise: Promise<void>; epoch: number };
 const activeWorkers = new Map<string, WorkerState>();
 const launches = new Map<string, Promise<ConversationGitSnapshot>>();
+const cancellations = new Map<string, Promise<ConversationGitSnapshot>>();
 const workerWrites = new Map<string, Promise<unknown>>();
 export function hasLocalConversationMergeWorker(objectId: string): boolean {
   return activeWorkers.has(objectId) || launches.has(objectId);
@@ -235,8 +236,21 @@ async function startWorker(parentSessionId: string, objectId: string, replaceMis
   const child = agentSessionRuntime.create({ projectId: current.task.projectId, profileId: CONVERSATION_MERGE_WORKER_PROFILE_ID, parentSessionId, backendId: 'native', mcpServerIds: [], skillIds: [], prompt, thinkingMode: 'deep', sessionMetadata: { mode: 'chat', titleSummarized: true, [bindingKey]: { parentSessionId, objectId, projectId: current.task.projectId, epoch, supervisorPid: process.pid }, subagentTask: { joinMode, state: 'running', phase: 'starting' } } });
   agentRuntimeStore.updateSession(child.id, { title: `合并：${current.mr.title}` });
   await agentRuntimeStore.flushSession(child.id);
-  await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'queued', phase: 'preparing', childSessionId: child.id, joinMode, epoch, summary: 'Merge worker queued.' });
-  await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'running', phase: 'preparing', summary: 'Merge worker started.' });
+  const retireUnlaunched = async () => {
+    agentRuntimeStore.updateSession(child.id, { status: 'cancelled', activeRunId: null, completedAt: new Date().toISOString(), blockedReason: 'Merge task stopped before worker launch.' });
+    agentRuntimeStore.updateSessionMetadata(child.id, { subagentTask: { joinMode, state: 'cancelled', phase: 'settled' } });
+    await agentRuntimeStore.flushSession(child.id);
+    return conversationGitService.get(parentSessionId, objectId);
+  };
+  try {
+    const queued = await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'queued', phase: 'preparing', childSessionId: child.id, joinMode, epoch, summary: 'Merge worker queued.' });
+    if (queued.status !== 'queued' || queued.epoch !== epoch) return retireUnlaunched();
+    const started = await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'running', phase: 'preparing', summary: 'Merge worker started.' }, epoch);
+    if (started.status !== 'running') return retireUnlaunched();
+  } catch (error) {
+    if (error instanceof GitMrError && error.code === 'WORKER_FENCED') return retireUnlaunched();
+    throw error;
+  }
   const running: WorkerState = { childSessionId: child.id, epoch, promise: Promise.resolve() }; running.promise = driveWorker(parentSessionId, objectId, child.id, epoch, prompt); activeWorkers.set(objectId, running);
   return conversationGitService.get(parentSessionId, objectId);
 }
@@ -315,12 +329,24 @@ async function resumeWorker(parentSessionId: string, objectId: string, instructi
   const running: WorkerState = { childSessionId: child.id, epoch, promise: Promise.resolve() }; running.promise = outsideExecutionContext(() => driveWorker(parentSessionId, objectId, child.id, epoch, prompt, 'continue')); activeWorkers.set(objectId, running); return conversationGitService.get(parentSessionId, objectId);
 }
 export async function cancelConversationMergeWorker(parentSessionId: string, objectId: string): Promise<ConversationGitSnapshot> {
+  // Cancellation does not share the launch lock: it must be able to fence a
+  // pending start/resume. Coalesce concurrent cancellations independently.
+  await conversationGitService.workerSnapshot(parentSessionId, objectId);
+  const existing = cancellations.get(objectId);
+  if (existing) return existing;
+  const cancellation = outsideExecutionContext(() => cancelWorker(parentSessionId, objectId));
+  cancellations.set(objectId, cancellation);
+  try { return await cancellation; }
+  finally { if (cancellations.get(objectId) === cancellation) cancellations.delete(objectId); }
+}
+async function cancelWorker(parentSessionId: string, objectId: string): Promise<ConversationGitSnapshot> {
   ensureConversationMergeWorkerRegistered();
   const snapshot = await conversationGitService.get(parentSessionId, objectId); const childId = snapshot.execution?.childSessionId;
+  if (['completed', 'cancelled'].includes(snapshot.execution?.status ?? '') || ['merged', 'noop'].includes(snapshot.mr.status)) return snapshot;
+  const cancelling = await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'cancelling', stopRequested: 'cancel', epoch: (snapshot.execution?.epoch ?? 0) + 1, phase: snapshot.execution?.phase ?? 'resolving', summary: 'Cancelling merge worker.' });
+  if (['completed', 'cancelled'].includes(cancelling.status)) return conversationGitService.get(parentSessionId, objectId);
   if (childId) {
     await agentRuntimeStore.hydrateSessionSummary(childId, true);
-    const cancelling = await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'cancelling', stopRequested: 'cancel', epoch: (snapshot.execution?.epoch ?? 0) + 1, phase: snapshot.execution?.phase ?? 'resolving', summary: 'Cancelling merge worker.' });
-    if (['completed', 'cancelled'].includes(cancelling.status)) return conversationGitService.get(parentSessionId, objectId);
     try { const { interruptAgentSessionsAndWait } = await import('../agent-stream-proxy.js'); await interruptAgentSessionsAndWait([childId], 'Merge cancelled by the user.'); await runCoordinator.waitForSessionIdle(childId); await activeWorkers.get(objectId)?.promise; }
     catch (error) { await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'recovery_required', phase: 'settled', error: error instanceof Error ? error.message : String(error) }); throw error; }
   }

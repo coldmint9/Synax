@@ -33,6 +33,8 @@ import type {
 import { mergeMediaModelsIntoProviders } from "../../modules/media/catalog.js";
 import { beginWebSearchOAuth } from "../../modules/web-search/oauth.js";
 import { getRuntimeCatalog } from "../../infrastructure/llm-runtime/catalog.js";
+import { gitLabHost, validateGitLabAccount } from '../../modules/remote-pr/gitlab-api.js';
+import { GitMrError } from '../../modules/git-mr/errors.js';
 
 export const configRoutes = new Hono();
 
@@ -178,6 +180,37 @@ const macWindowAppearanceSchema = z
   })
   .strict();
 
+const gitLabAccountSchema = z
+  .object({
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .max(256)
+      .transform((value, ctx) => {
+        try { return gitLabHost(value); }
+        catch { ctx.addIssue({ code: 'custom', message: 'Invalid GitLab host' }); return z.NEVER; }
+      }),
+    token: z.string().trim().max(32_768).refine(value => !/[\r\n]/.test(value) && !value.startsWith('enc:v1:'), 'Invalid token').optional(),
+    tokenMasked: z.string().max(256).optional(),
+  })
+  .strict();
+
+const gitLabConfigSchema = z
+  .object({ accounts: z.array(gitLabAccountSchema).max(32) })
+  .strict()
+  .refine(value => new Set(value.accounts.map(account => account.host)).size === value.accounts.length, 'Duplicate GitLab host');
+
+configRoutes.post('/gitlab/validate', async (c) => {
+  try {
+    const input = gitLabAccountSchema.omit({ tokenMasked: true }).parse(await c.req.json());
+    return c.json(await validateGitLabAccount(input.host, input.token));
+  } catch (error) {
+    if (error instanceof GitMrError) return c.json({ error: error.message, code: error.code }, error.status as 400 | 403 | 404 | 502);
+    return c.json({ error: 'GitLab 登录配置无效。' }, 400);
+  }
+});
+
 const globalConfigPatchSchema = z
   .object({
     macWindowAppearance: macWindowAppearanceSchema.optional(),
@@ -226,6 +259,7 @@ const globalConfigPatchSchema = z
       })
       .strict()
       .optional(),
+    gitLab: gitLabConfigSchema.optional(),
     webSearch: webSearchConfigSchema.optional(),
     sessionArchiveRetentionDays: z
       .union([z.number().int().min(1).max(3650), z.null()])

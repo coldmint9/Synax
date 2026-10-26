@@ -8,7 +8,8 @@ const InlineVisualization = lazy(() =>
   })),
 );
 import type { InlineVisualizationReference } from "./visualizationTranscript";
-import type { ConversationGitReference } from "./gitMergeTranscript";
+import type { GitMergeReplyPart } from "./gitMergeTranscript";
+import { ExpiredMergeTask } from './git-merge/ExpiredMergeTask';
 import { useTranscriptSession } from "./SessionTranscriptContext";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
@@ -31,16 +32,17 @@ import {
 } from "./toolCallUtils";
 import "./conversationFlow.css";
 
-function TranscriptGitMerge({ reference }: { reference: ConversationGitReference }) {
+function TranscriptGitMerge({ reference, messageId, superseded }: GitMergeReplyPart) {
   const { sessionId } = useTranscriptSession();
   const historical = useAgentSessionStore((state) =>
     state.sessionDetailCache[reference.sessionId]?.historyWindow?.latest === false,
   );
   // A child transcript must never operate on the surrounding parent's task.
   if (sessionId && sessionId !== reference.sessionId) return null;
+  if (superseded) return <ExpiredMergeTask title={reference.title} />;
   return (
     <Suspense fallback={<div className="text-[11px] text-muted-foreground" role="status">正在加载合并任务…</div>}>
-      {reference.schema === "synax.git-pr" ? <RemotePrCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} readOnly={historical || !sessionId} />}
+      {reference.schema === "synax.git-pr" ? <RemotePrCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} messageId={messageId} readOnly={historical || !sessionId} />}
     </Suspense>
   );
 }
@@ -76,7 +78,7 @@ function segmentKey(
   segment: (ReturnType<typeof buildTurnRenderSegments>)[number],
   index: number,
 ): string {
-  if (segment.type === "git_merge") return `git-merge:${segment.reference.objectId}`;
+  if (segment.type === "git_merge") return `git-merge:${segment.messageId}`;
   if (segment.type === "visualization") return `visualization:${segment.reference.id}`;
   if (segment.type === "media") return `media:${segment.messageId ?? index}`;
   if (segment.type === "sources")
@@ -122,7 +124,7 @@ export function TurnContent({
   const render = (segment: (typeof segments)[number], i: number) => {
     const key = segmentKey(segment, i);
     if (segment.type === "git_merge")
-      return <TranscriptGitMerge key={key} reference={segment.reference} />;
+      return <TranscriptGitMerge key={key} {...segment} />;
     if (segment.type === "visualization")
       return (
         <TranscriptVisualization

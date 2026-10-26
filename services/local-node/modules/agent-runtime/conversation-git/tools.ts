@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RegisteredTool } from '../contracts.js';
 import { conversationGitService } from './service.js';
-import { conversationGitInputSchema, conversationGitProposalSchema, conversationGitReadSchema, conversationGitAnalyzeSchema, conversationGitConfigureSchema, conversationGitResumeSchema } from './schemas.js';
+import { conversationGitInputSchema, conversationGitProposalSchema, conversationGitReadSchema, conversationGitAnalyzeSchema, conversationGitConfigureSchema, conversationGitResumeSchema, conversationGitCancelSchema } from './schemas.js';
 import type { ConversationGitSnapshot } from './contracts.js';
 
 function compact(snapshot: ConversationGitSnapshot) {
@@ -61,6 +61,17 @@ export const conversationGitTools: RegisteredTool[] = [
       const {objectId,instructions}=conversationGitResumeSchema.parse(input.args);
       const snapshot=await runWorker(input.sessionId,objectId,input.abortSignal,{instructions});
       return {result:workerReceipt(snapshot),displaySummary:`智能合并任务：${snapshot.execution?.summary??snapshot.mr.status}`,artifacts:[]};
+    },
+  },
+  {
+    id:'git.merge.cancel',label:'Cancel an existing merge task',category:'task',internalGate:'none',mutability:'task',resumeBehavior:'auto',
+    description:'Cancel an obsolete or unwanted merge task owned by this conversation. Stops its worker, fences further writes and cleans up its isolated candidate. Use within the user-authorized scope when a task is superseded or no longer needed. Repeated cancellation is safe; completed merges are returned unchanged and never reverted. Does not delete source branches or user checkout files.',
+    inputSchema:conversationGitCancelSchema,
+    async execute(input){
+      const {objectId}=conversationGitCancelSchema.parse(input.args);
+      const {cancelConversationMergeWorker}=await import('./worker.js');
+      const snapshot=await cancelConversationMergeWorker(input.sessionId,objectId);
+      return {result:workerReceipt(snapshot),displaySummary:`合并任务：${snapshot.execution?.summary??snapshot.mr.status}`,artifacts:[]};
     },
   },
   {

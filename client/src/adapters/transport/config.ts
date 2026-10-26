@@ -52,6 +52,10 @@ async function openWithPreference(body: Record<string, unknown>): Promise<void> 
 }
 
 export const configApi = {
+  validateGitLab: (input: { host: string; token?: string }) =>
+    request<{ host: string; username: string; name: string }>(`${BASE}/gitlab/validate`, {
+      method: 'POST', body: JSON.stringify(input),
+    }),
   listFileOpeners: () => request<{ apps: FileOpener[] }>(`${BASE}/file-openers`),
   getTerminalShell: () =>
     request<{ defaultPath: string }>(`${BASE}/terminal-shell`),

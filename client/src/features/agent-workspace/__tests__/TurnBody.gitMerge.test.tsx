@@ -74,3 +74,14 @@ it("keeps an unscoped standalone render read-only", async () => {
   render(<TranscriptSessionProvider sessionId={null}><TurnContent blocks={blocks()} /></TranscriptSessionProvider>);
   expect(await screen.findByTestId("git-card")).toHaveAttribute("data-readonly", "true");
 });
+
+it('replaces the old card with an inert expired note while the resumed card remains usable', async () => {
+  const old = { ...blocks()[0], superseded: { replacementMessageId: 'resumed', supersededAt: '2026-10-26T09:00:00Z' } };
+  const resumed = { ...blocks()[0], messageId: 'resumed' };
+  const { container } = render(<TranscriptSessionProvider sessionId={reference.sessionId}><TurnContent blocks={[old, resumed]} /></TranscriptSessionProvider>);
+  const note = screen.getByRole('note', { name: '已过期的合并任务卡片' });
+  expect(note).toHaveTextContent('最新时间线');
+  expect(note.querySelector('button')).toBeNull();
+  expect(await screen.findAllByTestId('git-card')).toHaveLength(1);
+  expect(container.querySelectorAll('.session-answer-region')).toHaveLength(2);
+});

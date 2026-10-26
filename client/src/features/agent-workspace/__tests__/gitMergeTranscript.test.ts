@@ -33,6 +33,21 @@ const cards = (entries: ReturnType<typeof buildConversationTimeline>) => entries
 );
 
 describe("native Git task transcript", () => {
+  it('keeps the expired card in its original position and renders the resumed card at the new time', () => {
+    const superseded = { replacementMessageId: 'resumed-anchor', supersededAt: '2026-10-26T09:00:00Z' };
+    const old = { ...message, runId: null, stepId: null, metadata: { ...message.metadata, gitMergeTimeline: { state: 'superseded', ...superseded } } };
+    const resumed = { ...message, id: superseded.replacementMessageId, runId: null, stepId: null, createdAt: superseded.supersededAt };
+    const entries = buildConversationTimeline([], [], [resumed, old], []);
+    const rendered = cards(entries);
+    expect(rendered).toHaveLength(2);
+    expect(rendered[0]).toMatchObject({ messageId: old.id, superseded });
+    expect(rendered[1]).toMatchObject({ messageId: resumed.id });
+    expect(rendered[1]).not.toHaveProperty('superseded');
+    expect(gitMergeReplyParts(previewTimelineMessage(old))![0].superseded).toEqual(superseded);
+    const oldEntry = entries.find(entry => entry.kind === 'agent' && entry.turn.blocks.some(block => block.type === 'git_merge' && block.messageId === old.id))!;
+    expect(estimateEntryHeight(oldEntry)).toBeLessThan(150);
+  });
+
   it("renders persisted remote PR references with the same stable transcript contract", () => {
     const remote = { ...reference, schema: "synax.git-pr" as const };
     const messageWithPr = { ...message, metadata: { source: "git_merge_task", gitMergeTask: remote } };

@@ -128,6 +128,24 @@ describe("agent runtime wire projections", () => {
     expect(mountedResponse.status).toBe(200);
   });
 
+  it("excludes subagents in every badge status from workspace badges", async () => {
+    const session = agentSessionRuntime.create(executorInput);
+    for (const status of ["running", "waiting_input", "waiting_permission", "failed", "completed"] as const) {
+      const child = agentSessionRuntime.create({ ...executorInput, profileId: "explorer", parentSessionId: session.id });
+      agentRuntimeStore.updateSession(child.id, { status });
+    }
+    await agentRuntimeStore.flush();
+
+    expect(agentRuntimeStore.listSessionBadges([session.projectId]).map((row) => row.id)).toEqual([session.id]);
+    const { agentRuntimeRoutes } = await import("../agent-runtime.js");
+    const response = await agentRuntimeRoutes.request(
+      `http://localhost/sessions/badges?projectIds=${session.projectId}`,
+    );
+    expect(response.status).toBe(200);
+    const { items } = (await response.json()) as { items: Array<{ id: string }> };
+    expect(items.map((row) => row.id)).toEqual([session.id]);
+  });
+
   it("GET /sessions list rows omit latestSystemPrompt", async () => {
     const session = await createSessionWithHeavyArtifacts();
     agentRuntimeStore.updateSessionMetadata(session.id, { latestSystemPrompt: "P".repeat(4096) });

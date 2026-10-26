@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from 'react-router-dom';
 import { ArrowUpRight, GitPullRequest, RefreshCw, Upload } from "lucide-react";
 import {
   remotePrApi,
@@ -170,8 +171,10 @@ export default function RemotePrPanel({
                 />
               </div>
               <p className="git-actions-description">
-                使用本机 {provider === "github" ? "gh" : "glab"}{" "}
-                的登录凭据。支持对应平台的私有主机，凭据不会保存到对话。
+                {provider === 'github' ? '使用本机 gh 的登录凭据。支持对应平台的私有主机，凭据不会保存到对话。' : <>
+                  使用 Synax 内置 GitLab 连接和已保存的登录凭据。
+                  <Link className="text-primary underline" to="/settings?section=gitLab">配置 GitLab 登录</Link>
+                </>}
               </p>
               <div className="git-actions-toolbar">
                 <Button

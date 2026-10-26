@@ -83,6 +83,7 @@ export function conversationGitContextMessage(
   sessionId: string,
 ): string | null {
   const anchors = messages
+    .filter(message => (message.metadata?.gitMergeTimeline as { state?: string } | undefined)?.state !== 'superseded')
     .map(message => rowFor(message, TASK_SOURCE, sessionId))
     .filter((row): row is GitRow => Boolean(row))
     .slice(-MAX_ANCHORS)

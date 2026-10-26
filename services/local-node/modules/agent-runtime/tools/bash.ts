@@ -325,6 +325,8 @@ export function executeBash(
   // requests (profile panels, stats) for the whole lifetime of the command.
   return executeBashCommand({
     onStarted: input.onCommandStarted,
+    // A version-bound verification receipt requires all writers to be gone.
+    waitForCleanup: input.toolId === "verification.run",
     sessionId: input.sessionId,
     command,
     commandPreview,
@@ -337,6 +339,7 @@ export function executeBash(
 
 interface BashExecutionInput {
   onStarted?: () => void;
+  waitForCleanup?: boolean;
   background?: boolean;
   timeoutMs: number;
   sessionId: string;
@@ -427,6 +430,7 @@ async function executeBashCommand(
   input.onStarted?.();
   const result = await runShellCommand(command, {
     cwd,
+    waitForCleanup: input.waitForCleanup,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
     timeoutMs: input.timeoutMs,
     // Agent shell commands have no interactive terminal. Force CI mode so

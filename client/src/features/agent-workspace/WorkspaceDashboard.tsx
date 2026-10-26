@@ -32,8 +32,6 @@ import {
 import { WorkspaceSection as WorkspaceCard } from "./WorkspaceSection";
 import { WorkspaceFilesCard } from "./WorkspaceFilesCard";
 import { ChangedFilesViewport } from "./ChangedFilesViewport";
-import { SessionTodoPanel } from "./SessionTodoPanel";
-import { useAgentSessionStore } from "./state/agentSessionStore";
 import "../workspace/workspaceProjects.css";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useContextMenu } from "../../shared/ui/context-menu/ContextMenuProvider";
@@ -57,8 +55,6 @@ import { SessionCommitDialog } from "./SessionCommitDialog";
 import { SessionPushDialog } from "./SessionPushDialog";
 import { getProjectThemeColor } from "./projectThemeColor";
 import { useShellStore } from "../../shared/state/shellStore";
-
-const EMPTY_TODOS: import("../../adapters/transport/agentRuntime").TodoItem[] = [];
 
 function fileName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
@@ -412,9 +408,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
   reload?: () => void | Promise<void>;
 }) {
   const { t, locale } = useLocale();
-  const todos = useAgentSessionStore((state) =>
-    state.selectedSessionId === sessionId ? state.sessionTodos : EMPTY_TODOS,
-  );
   const projectId = useShellStore((state) => state.currentProjectId);
   // Both layers (workspace Git + session cards) are owned by the environment
   // provider; a standalone render only paints what it was handed.
@@ -532,18 +525,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
           />
         </DashboardPanel>
 
-        {(
-          <DashboardPanel
-            id="progress"
-            label={locale === "zh" ? "任务进度" : "Progress"}
-          >
-            {todos.length > 0 ? <SessionTodoPanel key={sessionId} items={todos} /> : (
-              <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"} dormant summary={locale === "zh" ? "暂无任务" : "No tasks yet"}>
-                {null}
-              </WorkspaceCard>
-            )}
-          </DashboardPanel>
-        )}
         <DashboardPanel
           id="processes"
           label={locale === "zh" ? "后台服务" : "Background processes"}
@@ -684,18 +665,6 @@ export const WorkspaceDashboard = memo(function WorkspaceDashboard({
       ) : null}
       {sessionId && (
         <>
-          {(
-            <DashboardPanel
-              id="progress"
-              label={locale === "zh" ? "任务进度" : "Progress"}
-            >
-              {todos.length > 0 ? <SessionTodoPanel items={todos} /> : (
-                <WorkspaceCard icon={<List size={13} />} title={locale === "zh" ? "任务进度" : "Progress"} dormant summary={locale === "zh" ? "暂无任务" : "No tasks yet"}>
-                  {null}
-                </WorkspaceCard>
-              )}
-            </DashboardPanel>
-          )}
           <DashboardPanel
             id="processes"
             label={locale === "zh" ? "后台服务" : "Background processes"}

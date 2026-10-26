@@ -15,6 +15,21 @@
 .conversation-git-card button {
   font: inherit;
 }
+.conversation-git-expired {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0;
+  padding: 12px 16px;
+  border: 1px dashed var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text-muted);
+}
+.conversation-git-expired > svg { flex: none; margin-top: 2px; }
+.conversation-git-expired > div { display: grid; gap: 4px; min-width: 0; }
+.conversation-git-expired strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.conversation-git-expired span { font-size: 11px; line-height: 1.6; }
 .conversation-git-card__header {
   display: flex;
   align-items: center;
