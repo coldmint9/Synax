@@ -6,7 +6,6 @@ import { agentSessionRuntime } from '../session-runtime.js';
 import { profileService } from '../profile-service.js';
 import { runCoordinator } from '../run-coordinator.js';
 import { toolRegistry } from '../tool-registry.js';
-import { subagentCompletionBroker } from '../subagent-control-broker.js';
 import { outsideExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
 import { ensureSessionRecovered } from '../session-recovery.js';
 import { conversationGitService } from './service.js';
@@ -14,6 +13,10 @@ import type { ConversationGitActionName, ConversationGitSnapshot } from './contr
 import { GitMrError } from '../../git-mr/errors.js';
 import { mergeWorkerWatchdog, MERGE_WORKER_PROGRESS_TIMEOUT_MS } from './worker-watchdog.js';
 import { withDeadline } from '../managed-process.js';
+import { advanceMergeWorker } from './worker-flow.js';
+import { packetInput, resolveBatchInput, repairReadInput, repairInput } from './worker-schemas.js';
+import { mergeProgressIdentity } from './worker-progress.js';
+import { emitRuntimeBusEvent } from '../runtime-bus-bridge.js';
 import {
   CONVERSATION_MERGE_WORKER_PROFILE_ID,
   CONVERSATION_MERGE_WORKER_PROVIDER_ID,
@@ -57,6 +60,13 @@ const fileInput = z.object({ fileId: z.string().min(1).max(200) }).strict();
 const readInput = fileInput.extend({ side: z.enum(['base', 'target', 'source', 'result']).default('result'), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(48_000).default(24_000), byteOffset: z.number().int().min(0).optional(), expectedRevision: z.string().min(1).max(256).optional() }).strict().refine(value => value.byteOffset === undefined || Boolean(value.expectedRevision), 'Byte paging requires the current expectedRevision.');
 const resolveInput = fileInput.extend({ expectedRevision: z.string().min(1).max(256), content: z.string().max(2 * 1024 * 1024).optional(), choice: z.enum(['target', 'source', 'delete']).optional(), rationale: z.string().max(16_000).optional() }).strict()
   .refine(value => value.choice ? value.content === undefined : value.content !== undefined, 'Provide content or a whole-file choice, never both.');
+function recordProgress(input: ToolExecutionInput, output: unknown) {
+  const identity = mergeProgressIdentity(input.toolId, input.args, output);
+  if (!identity) return;
+  const binding = bindingFor(input.sessionId);
+  emitRuntimeBusEvent({ type: 'merge_worker_progress', sessionId: binding.parentSessionId,
+    childSessionId: input.sessionId, patch: { identity } });
+}
 async function workerSnapshot(input: ToolExecutionInput, readOnly = false) {
   const binding = bindingFor(input.sessionId);
   const snapshot = await conversationGitService.workerSnapshot(binding.parentSessionId, binding.objectId);
@@ -77,11 +87,12 @@ async function workerAction(input: ToolExecutionInput, action: ConversationGitAc
 }
 function workerTool(id: string, description: string, schema: z.ZodType, execute: (input: ToolExecutionInput) => Promise<ToolExecutionResult>, readOnly = false): RegisteredTool {
   return { id, label: id, description,
+    ...(['git.merge.worker.next', 'git.merge.worker.resolveBatch', 'git.merge.worker.repair'].includes(id) ? { executionTimeoutMs: 60 * 60_000 } : {}),
     progressiveDetails: 'Internal-only tool for the dedicated merge worker. The task binding comes from the worker session.',
     category: readOnly ? 'read' : 'task', internalGate: 'none', mutability: readOnly ? 'read' : 'task', resumeBehavior: 'auto', inputSchema: schema, getPattern: () => id, execute: async input => {
       const run = async () => {
         const value = await execute(input);
-        mergeWorkerWatchdog.progress(input.sessionId, `tool:${input.toolCallId}`);
+        recordProgress(input, value.result);
         return value;
       };
       if (readOnly) return run();
@@ -95,7 +106,56 @@ function workerTool(id: string, description: string, schema: z.ZodType, execute:
     } };
 }
 
+async function nextDecision(input: ToolExecutionInput): Promise<ToolExecutionResult> {
+  const { binding } = await workerSnapshot(input, true);
+  const decision = await advanceMergeWorker({
+    snapshot: async () => (await workerSnapshot(input, true)).snapshot,
+    action: async (action, snapshot) => {
+      input.abortSignal?.throwIfAborted();
+      const next = await conversationGitService.workerAction(input.sessionId, binding.objectId, {
+        action, expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision,
+        requestId: requestId({ ...input, toolCallId: `${input.toolCallId}:${action}:${snapshot.mr.version}` }),
+      });
+      recordProgress({ ...input, toolId: `git.merge.worker.${action}`, args: {} }, compact(next));
+    },
+    packet: snapshot => conversationGitService.gitMr.conflictPacket(snapshot.task.projectId, snapshot.mr.id, {}, input.abortSignal),
+    diagnostics: snapshot => conversationGitService.gitMr.repairContext(snapshot.task.projectId, snapshot.mr.id),
+    waiting: async (reason, snapshot) => {
+      await conversationGitService.setWorkerExecution(binding.parentSessionId, binding.objectId,
+        { status: 'waiting_user', phase: 'resolving', summary: reason }, snapshot.execution!.epoch);
+    },
+  });
+  const labels = { conflicts: '等待冲突块决策', repair: '需要修复检查错误', waiting: '合并等待处理', done: '合并流程已结束' };
+  return result(decision, labels[decision.decision]);
+}
+
 export const conversationMergeWorkerTools: RegisteredTool[] = [
+  workerTool('git.merge.worker.next', 'Start here. Automatically prepare/recover, continue resolved merges, run checks and finalize verified candidates. Returns only the next decision: conflicts (bounded packet), repair (failed diagnostics), waiting or done. Do not manually orchestrate those steps.', empty, nextDecision),
+  workerTool('git.merge.worker.packet', 'Read a bounded conflict packet with all three hunk sides, context and revisions. Use nextOffset for more files, or fileId + nextHunkOffset for more blocks. Truncated blocks are previews: use read to inspect missing context. No complete-file reads are required for untruncated blocks.', packetInput, async input => {
+    const { snapshot } = await workerSnapshot(input, true);
+    const packet = await conversationGitService.gitMr.conflictPacket(snapshot.task.projectId, snapshot.mr.id, packetInput.parse(argsOf(input)), input.abortSignal);
+    return result(packet, `${packet.files.length}/${packet.totalFiles} 个冲突文件`);
+  }, true),
+  workerTool('git.merge.worker.resolveBatch', 'Resolve multiple files/blocks in one call. Each file needs the packet revision; each block needs its hunkId and choice=target/source/base or exact replacement content (preserve newlines). Only selected blocks change; automatic non-conflicting merges are retained. Whole-file choices are only for binary/structural conflicts. Partial block decisions remain drafts. Automatically advances to the next decision after applying.', resolveBatchInput, async input => {
+    const { binding, snapshot } = await workerSnapshot(input);
+    const args = resolveBatchInput.parse(argsOf(input));
+    await conversationGitService.workerResolveBatch(input.sessionId, binding.objectId, { ...args,
+      expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision, requestId: requestId(input) });
+    return nextDecision(input);
+  }),
+  workerTool('git.merge.worker.repairRead', 'Read a tracked UTF-8 file named by the current failed-check diagnostics, including files outside the merge diff. Reads only the isolated candidate. Return revision is required for repair; use nextOffset for additional content.', repairReadInput, async input => {
+    const { snapshot } = await workerSnapshot(input, true);
+    const args = repairReadInput.parse(argsOf(input));
+    const read = await conversationGitService.gitMr.repairRead(snapshot.task.projectId, snapshot.mr.id, args.path, args.offset, args.limit);
+    return result(read, read.path);
+  }, true),
+  workerTool('git.merge.worker.repair', 'Repair current failed-check diagnostic files inside the isolated candidate using exact, unique oldText/newText replacements and read revisions. Commits a new candidate, invalidates old check results and automatically reruns configured checks. At most three repair rounds. Cannot modify other files, skip checks or write the target branch directly.', repairInput, async input => {
+    const { binding, snapshot } = await workerSnapshot(input);
+    const args = repairInput.parse(argsOf(input));
+    await conversationGitService.workerRepair(input.sessionId, binding.objectId, { ...args,
+      expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision, requestId: requestId(input) });
+    return nextDecision(input);
+  }),
   workerTool('git.merge.worker.inspect', 'Inspect durable progress, including stopped/completed tasks, before resuming the next unfinished step.', empty, async input => result(compact((await workerSnapshot(input, true)).snapshot), 'merge task inspected'), true),
   workerTool('git.merge.worker.prepare', 'Create the isolated worktree and run the real Git merge.', empty, input => workerAction(input, 'prepare')),
   workerTool('git.merge.worker.files', 'List files currently requiring a resolution.', empty, async input => { const { snapshot } = await workerSnapshot(input, true); const files = await conversationGitService.gitMr.files(snapshot.task.projectId, snapshot.mr.id); return result(files, `${files.filter(file => file.conflicted).length} conflict files`); }, true),
@@ -103,15 +163,15 @@ export const conversationMergeWorkerTools: RegisteredTool[] = [
     const { binding } = await workerSnapshot(input, true); const args = readInput.parse(argsOf(input));
     if (args.byteOffset !== undefined && args.expectedRevision) {
       const page = await conversationGitService.fileSlice(binding.parentSessionId, binding.objectId, args.fileId, { side: args.side, byteOffset: args.byteOffset, maxBytes: Math.max(4, args.limit), expectedRevision: args.expectedRevision }, input.abortSignal);
-      return result({ fileId: args.fileId, side: args.side, ...page, contentState: 'partial', editable: false, truncated: !page.eof }, 'bounded conflict page read');
+      return result({ fileId: args.fileId, side: args.side, ...page, contentState: 'partial', editable: false, truncated: !page.eof }, page.path);
     }
     const file = await conversationGitService.file(binding.parentSessionId, binding.objectId, args.fileId); const content = file[args.side];
     const partial = file.truncatedSides?.includes(args.side) === true;
     if (partial) {
       const page = await conversationGitService.fileSlice(binding.parentSessionId, binding.objectId, args.fileId, { side: args.side, byteOffset: args.offset, maxBytes: Math.max(4, args.limit), expectedRevision: file.revision }, input.abortSignal);
-      return result({ fileId: file.id, path: file.path, side: args.side, ...page, offsetUnit: 'bytes', contentState: file.contentState, editable: file.editable, truncated: !page.eof }, 'bounded conflict page read');
+      return result({ fileId: file.id, side: args.side, ...page, offsetUnit: 'bytes', contentState: file.contentState, editable: file.editable, truncated: !page.eof }, file.path);
     }
-    return result({ fileId: file.id, path: file.path, revision: file.revision, side: args.side, baseExists: file.baseExists, targetExists: file.targetExists, sourceExists: file.sourceExists, kind: file.kind, offset: args.offset, content: content.slice(args.offset, args.offset + args.limit), totalCharacters: content.length, totalBytes: file.byteSizes?.[args.side], contentState: file.contentState, editable: file.editable, truncated: args.offset + args.limit < content.length }, 'conflict content read');
+    return result({ fileId: file.id, path: file.path, revision: file.revision, side: args.side, baseExists: file.baseExists, targetExists: file.targetExists, sourceExists: file.sourceExists, kind: file.kind, offset: args.offset, content: content.slice(args.offset, args.offset + args.limit), totalCharacters: content.length, totalBytes: file.byteSizes?.[args.side], contentState: file.contentState, editable: file.editable, truncated: args.offset + args.limit < content.length }, file.path);
   }, true),
   workerTool('git.merge.worker.resolve', 'Resolve and stage one file with complete content OR choice=target/source/delete. A missing chosen side accepts that branch\'s deletion; do not replace a deleted file with empty content. Read its current revision first.', resolveInput, async input => {
     const { binding, snapshot } = await workerSnapshot(input); const args = resolveInput.parse(argsOf(input));
@@ -203,7 +263,7 @@ async function driveWorker(parentSessionId: string, objectId: string, childSessi
 }
 
 function workerPrompt(objectId: string, instructions?: string): string {
-  return `Continue bound merge task ${objectId} from durable state using only git.merge.worker.* tools. Inspect first. Recover interrupted/failed Git state, prepare only a draft, resolve remaining conflicts, continue, run configured checks and finalize. Reuse staged resolutions; completed steps are reentrant. If a decision is still missing, call git.merge.worker.waiting and finish the turn.${instructions ? `\n\nCurrent instructions from the parent agent:\n${instructions}` : ''}`;
+  return `Continue bound merge task ${objectId} using only git.merge.worker.* tools. Call git.merge.worker.next first: the program advances Git operations and returns the next decision. For conflicts, review the packet's three-sided blocks and batch decisions with resolveBatch; preserve automatic non-conflicting edits and do not read entire files by default. Fetch additional packet pages or read context only when necessary. For repair, use repairRead on the diagnostic paths and repair exact replacements in the isolated candidate. Batch resolution and repair automatically advance and verify. Reuse durable progress. When decision=done or waiting, finish the turn; when intent is unclear call waiting and finish. Never skip verification.${instructions ? `\n\nCurrent instructions from the parent agent:\n${instructions}` : ''}`;
 }
 
 async function startWorker(parentSessionId: string, objectId: string, replaceMissing = false, instructions?: string): Promise<ConversationGitSnapshot> {

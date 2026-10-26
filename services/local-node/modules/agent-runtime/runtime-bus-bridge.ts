@@ -14,7 +14,7 @@ export function emitRuntimeBusEvent(event: RuntimeBusEvent): void {
   runtimeBus.emit(event);
   if (process.env.SYNAX_AGENT_SESSION_CHILD === '1') {
     sendAgentSessionToParent({ type: 'runtime:event', event });
-  } else if (event.type === 'subagent_state_changed') {
+  } else if (event.type === 'subagent_state_changed' || event.type === 'merge_worker_progress') {
     workerNotifier?.(event);
   }
 }

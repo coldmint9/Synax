@@ -380,7 +380,7 @@ async function readFileContentSlice(mr: MergeRequest, id: string, input: Omit<Me
   const before = source.filename && input.side === 'result' ? await fs.stat(source.filename) : undefined;
   const slice = await sourceSlice(source, input.byteOffset, input.maxBytes, signal);
   if (before && statSignature(before) !== statSignature(await fs.stat(source.filename!))) throw new GitMrError('The result changed while reading a page.', 'STALE_DRAFT');
-  return { ...slice, revision: data.revision };
+  return { ...slice, path: data.summary.path, revision: data.revision };
 }
 export function readFileSlice(mr: MergeRequest, id: string, input: Omit<MergeFileSliceInput, 'expectedRevision'>, signal?: AbortSignal): Promise<MergeFileSlice> {
   return withContentReadBudget(signal, () => readFileContentSlice(mr, id, input, signal));

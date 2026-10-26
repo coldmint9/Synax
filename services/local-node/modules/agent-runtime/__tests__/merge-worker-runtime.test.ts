@@ -25,6 +25,8 @@ let releaseChild: (() => void) | undefined;
 let childHeld: boolean;
 let asynchronous: boolean;
 let holdForControl: boolean;
+let batched: boolean;
+let repairFailure: boolean;
 let parentToolResults: unknown[];
 let childToolSets: string[][];
 const privateTarget = 'TARGET_IMPLEMENTATION_MUST_STAY_IN_CHILD';
@@ -46,7 +48,8 @@ beforeEach(async () => {
   await mkdir(repository);
   git('init', '-b', 'main'); git('config', 'user.name', 'Merge Worker Test'); git('config', 'user.email', 'merge@example.test');
   await writeFile(path.join(repository, 'app.ts'), "export const behavior = 'base';\n");
-  git('add', 'app.ts'); git('commit', '-m', 'base');
+  await writeFile(path.join(repository, 'helper.ts'), 'export const ready = false;\n');
+  git('add', 'app.ts', 'helper.ts'); git('commit', '-m', 'base');
   git('checkout', '-b', 'feature/worker');
   await writeFile(path.join(repository, 'app.ts'), `export const behavior = '${privateSource}';\n`);
   git('commit', '-am', 'source');
@@ -55,7 +58,7 @@ beforeEach(async () => {
   git('commit', '-am', 'target');
   targetBefore = git('rev-parse', 'integration');
   git('checkout', 'main');
-  asynchronous = false; holdForControl = false; childHeld = false; parentToolResults = []; childToolSets = [];
+  asynchronous = false; holdForControl = false; childHeld = false; batched = false; repairFailure = false; parentToolResults = []; childToolSets = [];
 
   provider = http.createServer(async (request, response) => {
     try {
@@ -74,7 +77,20 @@ beforeEach(async () => {
         name = 'git_merge_create';
         args = { rootId: 'project-alpha', title: 'Dedicated merge worker', target: 'integration', sources: ['feature/worker'], strategy: 'merge_commit', checks: [
           { id: 'retains-both-behaviors', executable: process.execPath, args: ['-e', `const t=require('fs').readFileSync('app.ts','utf8');if(!t.includes('${privateTarget}')||!t.includes('${privateSource}'))process.exit(1);console.log('checks passed')`], timeoutMs: 10_000 },
+          ...(repairFailure ? [{ id: 'diagnostic', executable: process.execPath, args: ['-e', "if(require('fs').readFileSync('helper.ts','utf8').includes('false')){console.error('helper.ts(1,1): error TS18046: wrong value');process.exit(1)}"], timeoutMs: 10000 }] : []),
         ] };
+      } else if (child && batched) {
+        const sequence = ['next', 'resolveBatch', ...(repairFailure ? ['repairRead', 'repair'] : [])];
+        const operation = sequence[results.length];
+        if (operation) name = `git_merge_worker_${operation}`;
+        if (operation === 'resolveBatch') {
+          const file = results.at(-1)?.packet?.files[0];
+          args = { files: [{ fileId: file?.fileId, expectedRevision: file?.revision,
+            hunks: [{ hunkId: file?.hunks[0]?.id, content: resolution }] }] };
+        }
+        if (operation === 'repairRead') args = { path: 'helper.ts' };
+        if (operation === 'repair') args = { files: [{ path: 'helper.ts', expectedRevision: results.at(-1)?.revision,
+          edits: [{ oldText: 'false', newText: 'true' }] }] };
       } else if (child) {
         const sequence = ['inspect', 'prepare', 'files', ...(asynchronous ? ['report'] : []), 'read', 'read', 'read', 'read', 'resolve', 'continue', 'checks', 'finalize'];
         const operation = sequence[results.length];
@@ -111,6 +127,27 @@ beforeEach(async () => {
   updateGlobalConfig({ defaultApiProviderId: 'openai', providerConnections: { openai: { providerId: 'openai', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`, extra: { kind: 'api', apiFormat: 'openai', model: 'fixture' } } } }, 'merge-worker-test');
   sessionId = agentSessionRuntime.create({ projectId: 'project-alpha', profileId: 'synax', prompt: 'Merge feature into integration.', workDir: repository, permissionTier: 'unrestricted', sessionMetadata: { mode: 'chat' } }).id;
 });
+
+it.each(['1', '0'])('resolves and verifies through the native batched flow, including out-of-diff repair (in process: %s)', async inProcess => {
+  vi.stubEnv('SYNAX_AGENT_SESSION_IN_PROCESS', inProcess);
+  batched = true; repairFailure = true;
+  const admitted = await runCoordinator.submitAsync(sessionId, { message: 'Merge and repair verification.' }, 'merge-batched-repair');
+  await runCoordinator.waitForIdle();
+  await store.hydrateSession(sessionId, true);
+  const [task] = await conversationGitService.list(sessionId);
+  await store.hydrateSession(task.execution!.childSessionId!, true);
+  const calls = store.listToolCalls(task.execution!.childSessionId!);
+  expect(task.mr.status, JSON.stringify(calls.map(call => ({ tool: call.toolId, error: call.error })))).toBe('merged');
+  expect(task.execution?.status).toBe('completed');
+  expect(calls.map(call => call.toolId)).toEqual(['git.merge.worker.next', 'git.merge.worker.resolveBatch', 'git.merge.worker.repairRead', 'git.merge.worker.repair']);
+  expect(task.mr.repairAttempts).toBe(1);
+  expect(task.mr.checkResults.every(check => check.status === 'passed' && check.tree === task.mr.candidateTree)).toBe(true);
+  expect(git('show', 'integration:app.ts') + '\n').toBe(resolution);
+  expect(git('show', 'integration:helper.ts')).toContain('true');
+  expect(git('show', 'main:helper.ts')).toContain('false');
+  expect(JSON.stringify(parentToolResults)).not.toContain('export const behavior');
+  expect(store.getRun(admitted.run.id).status).toBe('completed');
+}, 120_000);
 
 afterEach(async () => {
   releaseChild?.(); releaseChild = undefined;

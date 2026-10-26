@@ -67,6 +67,10 @@ export interface MergeRequest {
   updatedAt: string;
   checks: MergeCheckConfig[];
   checkResults: MergeCheckResult[];
+  /** Bounded repair rounds in the isolated candidate; never resets on resume. */
+  repairAttempts?: number;
+  /** Persisted before writes so interrupted repair candidates remain recoverable. */
+  repair?: { parentOid: string; paths: string[]; message: string };
   skippedChecks?: { tree: string; at: string };
   autoFinalize: boolean;
   allowCheckedOutTarget: boolean;
@@ -109,6 +113,7 @@ export interface MergeFileSliceInput {
   expectedRevision: string;
 }
 export interface MergeFileSlice {
+  path: string;
   content: string;
   byteOffset: number;
   nextByteOffset: number;

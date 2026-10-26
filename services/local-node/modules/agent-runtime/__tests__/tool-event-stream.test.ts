@@ -27,17 +27,22 @@ it("finishes an independent read before a slow read and fences ACKs until both s
   expect(order).toEqual(["fast", "slow"]); expect(progress.through).toBe(3);
 });
 
-it("bounds reads and places writes behind an exclusive barrier", async () => {
+it.each([
+  ['file.read', 'file.write'],
+  ['git.merge.worker.read', 'git.merge.worker.resolveBatch'],
+  ['git.merge.worker.packet', 'git.merge.worker.next'],
+  ['git.merge.worker.repairRead', 'git.merge.worker.repair'],
+])("bounds %s calls and places writes behind an exclusive barrier", async (readTool, writeTool) => {
   const started = deferred(); const release = deferred(); let active = 0; let peak = 0; const order: string[] = [];
   async function* events(): AsyncGenerator<RustAgentLoopEvent> {
-    for (const [index, name] of ["file.read", "file.read", "file.write", "file.read"].entries())
+    for (const [index, name] of [readTool, readTool, writeTool, readTool].entries())
       yield { type: "tool-call", toolName: name, toolCallId: String(index), sequence: index + 1 };
   }
   const consuming = (async () => {
     for await (const _item of toolEventStream(events(), { shouldStop: () => false, abort: () => {}, concurrency: 2,
       execute: async event => {
         active++; peak = Math.max(peak, active);
-        if (event.toolName === "file.write") expect(active).toBe(1);
+        if (event.toolName === writeTool) expect(active).toBe(1);
         if (event.toolCallId === "0" || event.toolCallId === "1") { if (active === 2) started.resolve(); await release.promise; }
         order.push(event.toolCallId!); active--;
       },

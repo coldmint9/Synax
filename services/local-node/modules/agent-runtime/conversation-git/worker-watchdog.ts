@@ -3,7 +3,7 @@ import { runtimeBus, type RuntimeBusEvent } from '../runtime-bus.js';
 export const MERGE_WORKER_PROGRESS_TIMEOUT_MS = 10 * 60_000;
 interface Watch {
   lastProgressAt: number;
-  lastEvent: string;
+  seen: Set<string>;
   deadlineMs: number;
   timer?: ReturnType<typeof setTimeout>;
   expired: boolean;
@@ -24,7 +24,7 @@ export class MergeWorkerWatchdog {
     if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) throw new Error('Invalid merge progress deadline.');
     let settle!: (error?: Error) => void;
     const expired = new Promise<Error | undefined>(resolve => { settle = resolve; });
-    const watch: Watch = { lastProgressAt: Date.now(), lastEvent: '', deadlineMs, expired: false, onExpired, settle };
+    const watch: Watch = { lastProgressAt: Date.now(), seen: new Set(), deadlineMs, expired: false, onExpired, settle };
     this.watches.set(childId, watch);
     this.unsubscribe ??= this.events.subscribe(event => this.onEvent(event));
     const schedule = () => {
@@ -52,17 +52,15 @@ export class MergeWorkerWatchdog {
 
   progress(childId: string, identity: string): void {
     const watch = this.watches.get(childId);
-    if (!watch || watch.expired || watch.lastEvent === identity) return;
-    watch.lastEvent = identity;
+    if (!watch || watch.expired || watch.seen.has(identity)) return;
+    watch.seen.add(identity);
+    // Bound supervision memory even for very large, productive merges.
+    if (watch.seen.size > 1024) watch.seen.delete(watch.seen.values().next().value!);
     watch.lastProgressAt = Date.now();
   }
   private onEvent(event: RuntimeBusEvent): void {
-    if (event.type === 'subagent_state_changed' && event.childSessionId && Number.isSafeInteger(event.eventSeq))
-      this.progress(event.childSessionId, `state:${event.eventSeq}`);
-    else if (event.type === 'session_step_completed')
-      this.progress(event.sessionId, `step:${event.runId}:${event.stepIndex}`);
-    else if (event.type === 'session_checkpoint_changed')
-      this.progress(event.sessionId, `checkpoint:${event.runId ?? ''}`);
+    if (event.type === 'merge_worker_progress' && event.childSessionId && typeof event.patch?.identity === 'string')
+      this.progress(event.childSessionId, event.patch.identity);
   }
 }
 export const mergeWorkerWatchdog = new MergeWorkerWatchdog();

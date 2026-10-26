@@ -66,6 +66,11 @@ beforeEach(async () => {
     permissionTier: 'unrestricted',
   });
   sessionId = session.id;
+  // The real tool registry now checks command state against its owning run.
+  // Supply the run used by call(), rather than a dangling fixture ID.
+  store.appendRun({ id: 'run-conversation-git', sessionId, status: 'running',
+    startedAt: new Date().toISOString(), completedAt: null, triggerMessageId: null,
+    currentStep: 0, stopReason: null, model: null, metadata: {} });
 });
 
 afterEach(() => {

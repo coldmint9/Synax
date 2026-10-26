@@ -19,16 +19,22 @@ describe('merge worker progress deadline', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
-  it('renews only genuine scoped progress, never heartbeat/status events or duplicate steps', async () => {
+  it('renews only new merge evidence, never steps, checkpoints, status events or alternating duplicate reads', async () => {
     vi.useFakeTimers();
     try {
       const { supervisor, emit } = fixture(), stop = vi.fn(async () => {});
       const watch = supervisor.watch('child', stop, 1000);
       await vi.advanceTimersByTimeAsync(500);
-      emit({type:'session_step_completed',sessionId:'child',runId:'r',stepIndex:1});
+      emit({type:'merge_worker_progress',sessionId:'parent',childSessionId:'child',patch:{identity:'file-a:page-0'}});
+      emit({type:'merge_worker_progress',sessionId:'parent',childSessionId:'child',patch:{identity:'file-b:page-0'}});
       await vi.advanceTimersByTimeAsync(500);
       emit({type:'session_changed',sessionId:'child'});
       emit({type:'session_step_completed',sessionId:'child',runId:'r',stepIndex:1});
+      emit({type:'session_step_completed',sessionId:'child',runId:'r',stepIndex:2});
+      emit({type:'session_checkpoint_changed',sessionId:'child',runId:'r'});
+      emit({type:'subagent_state_changed',sessionId:'parent',childSessionId:'child',eventSeq:42});
+      emit({type:'merge_worker_progress',sessionId:'parent',childSessionId:'child',patch:{identity:'file-a:page-0'}});
+      emit({type:'merge_worker_progress',sessionId:'parent',childSessionId:'other',patch:{identity:'new-page'}});
       emit({type:'session_step_completed',sessionId:'other',runId:'r',stepIndex:2});
       expect(stop).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(500);

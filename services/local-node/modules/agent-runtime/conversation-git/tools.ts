@@ -100,7 +100,7 @@ export const conversationGitTools: RegisteredTool[] = [
         const file=await conversationGitService.file(input.sessionId,args.objectId,args.fileId);
         if(args.side&&file.truncatedSides?.includes(args.side)){
           const page=await conversationGitService.fileSlice(input.sessionId,args.objectId,args.fileId,{side:args.side,byteOffset:args.offset,maxBytes:Math.max(4,args.limit),expectedRevision:file.revision},input.abortSignal);
-          result={fileId:file.id,path:file.path,side:args.side,...page,offsetUnit:'bytes',contentState:file.contentState,editable:file.editable,truncated:!page.eof};
+          result={fileId:file.id,side:args.side,...page,offsetUnit:'bytes',contentState:file.contentState,editable:file.editable,truncated:!page.eof};
         }
         else if(args.side){const content=file[args.side];result={fileId:file.id,path:file.path,revision:file.revision,side:args.side,offset:args.offset,content:content.slice(args.offset,args.offset+args.limit),totalCharacters:content.length,totalBytes:file.byteSizes?.[args.side],contentState:file.contentState,editable:file.editable,truncated:args.offset+args.limit<content.length};}
         else {const {resolutionState:_state,...summary}=file;result={...summary,base:file.base.slice(0,args.limit),target:file.target.slice(0,args.limit),source:file.source.slice(0,args.limit),result:file.result.slice(0,args.limit),truncated:file.contentState==='partial'||[file.base,file.target,file.source,file.result].some(value=>value.length>args.limit),limit:args.limit};}

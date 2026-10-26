@@ -67,6 +67,22 @@ const ALIASES: Record<string, [string, string, typeof Wrench]> = {
   "human.ask": ["确认任务细节", "Clarify task", ListChecks],
   "mode.switch": ["切换工作模式", "Switch workflow", ListChecks],
   "subagent.delegate": ["委派子任务", "Delegate task", GitBranch],
+  "git.merge.worker.inspect": ["查看合并进度", "Inspect merge progress", GitBranch],
+  "git.merge.worker.next": ["推进智能合并", "Advance smart merge", GitBranch],
+  "git.merge.worker.packet": ["查看冲突摘要", "Read conflict packet", FileSearch],
+  "git.merge.worker.resolveBatch": ["批量解决冲突块", "Resolve conflict blocks", FileEdit],
+  "git.merge.worker.repairRead": ["读取检查诊断文件", "Read diagnostic file", FileSearch],
+  "git.merge.worker.repair": ["修复并重新检查", "Repair and recheck", ListChecks],
+  "git.merge.worker.prepare": ["准备合并", "Prepare merge", GitBranch],
+  "git.merge.worker.files": ["查看冲突文件", "List merge files", FileSearch],
+  "git.merge.worker.read": ["读取合并文件", "Read merge file", FileSearch],
+  "git.merge.worker.resolve": ["解决文件冲突", "Resolve file conflict", FileEdit],
+  "git.merge.worker.continue": ["继续合并", "Continue merge", GitBranch],
+  "git.merge.worker.recover": ["核对合并状态", "Reconcile merge state", GitBranch],
+  "git.merge.worker.checks": ["运行合并检查", "Run merge checks", ListChecks],
+  "git.merge.worker.finalize": ["应用合并结果", "Apply merge result", GitBranch],
+  "git.merge.worker.waiting": ["报告合并阻塞", "Report merge blocker", GitBranch],
+  "git.merge.worker.report": ["汇报合并进度", "Report merge progress", GitBranch],
   "design.write": ["保存设计稿", "Save design", Image],
   "design.preview": ["预览设计稿", "Preview design", Image],
   "design.transition": ["更新设计状态", "Update design status", Image],
@@ -94,7 +110,7 @@ function patchTargets(patch: string, truncated = false): string {
 }
 
 export function toolCallPresentation(
-  call: Pick<ToolCallView, "toolId" | "inputSummary"> & { category?: string },
+  call: Pick<ToolCallView, "toolId" | "inputSummary"> & Partial<Pick<ToolCallView, "outputSummary" | "status">> & { category?: string },
   locale: Locale = "zh",
 ) {
   const tool = TOOLS[call.toolId];
@@ -118,6 +134,22 @@ export function toolCallPresentation(
     const input: unknown = JSON.parse(call.inputSummary);
     if (input && typeof input === "object" && !Array.isArray(input)) {
       const values = input as Record<string, unknown>;
+      if (call.toolId === "git.merge.worker.read") {
+        // Merge files live in an isolated worktree. Show their identity and
+        // side/page without presenting them as links to the working checkout.
+        const summary = call.status === "completed" ? call.outputSummary?.trim() : "";
+        const path = summary && !["conflict content read", "bounded conflict page read"].includes(summary)
+          ? summary : typeof values.fileId === "string" ? values.fileId.slice(0, 8) : "";
+        const sides: Record<string, [string, string]> = {
+          base: ["基线", "base"], target: ["目标分支", "target"],
+          source: ["来源分支", "source"], result: ["合并结果", "result"],
+        };
+        const side = sides[typeof values.side === "string" ? values.side : "result"]?.[locale === "zh" ? 0 : 1];
+        const offset = typeof values.byteOffset === "number" ? values.byteOffset : values.offset;
+        const page = typeof offset === "number" && offset > 0
+          ? `${typeof values.byteOffset === "number" ? (locale === "zh" ? "字节" : "byte") : (locale === "zh" ? "起点" : "offset")} ${offset}` : "";
+        target = [path, side, page].filter(Boolean).join(" · ");
+      }
       if (call.toolId === "file.patch" && typeof values.patch === "string") {
         target = patchTargets(values.patch);
       }

@@ -57,11 +57,13 @@ describe('bounded large merge content', { timeout: 90_000 }, () => {
     expect(file.truncatedSides).toContain('target');
     const initialSpools = spooled.mock.calls.length;
     const page = await service.fileSlice('large', mr.id, file.id, { side: 'target', byteOffset: 17 * 1024 * 1024 + 1, maxBytes: 64 * 1024, expectedRevision: file.revision });
+    expect(page.path).toBe('large.java');
     expect(page.byteOffset).toBeGreaterThanOrEqual(17 * 1024 * 1024 + 1);
     expect(Buffer.byteLength(page.content)).toBeLessThanOrEqual(64 * 1024);
     expect(page.content).not.toContain('\ufffd'); expect(page.eof).toBe(false);
     const next = await service.fileSlice('large', mr.id, file.id, { side: 'target', byteOffset: page.nextByteOffset, maxBytes: 64 * 1024, expectedRevision: file.revision });
     expect(next.byteOffset).toBe(page.nextByteOffset);
+    expect(next.path).toBe('large.java');
     const tail = await service.fileSlice('large', mr.id, file.id, { side: 'target', byteOffset: page.totalBytes - 16, maxBytes: 64, expectedRevision: file.revision });
     expect(tail.eof).toBe(true); expect(tail.content).toContain('// target');
     expect(spooled).toHaveBeenCalledTimes(initialSpools);

@@ -1,6 +1,6 @@
 [package]
 name = "synax-runtime-sidecar"
-version = "2.25.3"
+version = "2.26.0"
 edition = "2024"
 publish = false
 

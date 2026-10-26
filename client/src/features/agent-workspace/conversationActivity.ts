@@ -152,6 +152,10 @@ function liveLabelForCall(call: ToolCallView, locale: Locale): string {
   if (progress?.phase === "executing_tool" && liveLabelKind(call) === "search" && progress.files !== undefined) {
     return labels.scanned(progress.files);
   }
+  if (call.toolId.startsWith("git.merge.worker.")) {
+    const name = toolCallPresentation(call, locale).name;
+    return locale === "zh" ? `正在${name}` : name;
+  }
   return labels.action[liveLabelKind(call)];
 }
 

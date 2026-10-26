@@ -9,6 +9,7 @@ export type RuntimeBusEventType =
   | "session_archived"
   | "session_checkpoint_changed"
   | "session_step_completed"
+  | "merge_worker_progress"
   | "session_input_queue_changed"
   | "subagent_state_changed";
 

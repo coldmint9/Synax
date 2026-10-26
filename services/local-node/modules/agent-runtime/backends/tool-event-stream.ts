@@ -2,6 +2,7 @@ import type { AgentRunStreamChunk } from "../contracts.js";
 import type { RustAgentLoopEvent } from "../rust-agent-loop-client.js";
 
 export const PARALLEL_READ_TOOLS = new Set(["rg", "grep.search", "file.glob", "file.read", "file.list", "diff.read"]);
+const MERGE_READ_TOOLS = new Set(['git.merge.worker.read', 'git.merge.worker.packet', 'git.merge.worker.repairRead']);
 /** Only tools whose completed state lives in files/history can move to a new worker. */
 export const WORKER_PORTABLE_TOOLS = new Set([...PARALLEL_READ_TOOLS, "file.write", "file.patch", "file.delete", "context.read"]);
 
@@ -63,7 +64,7 @@ export async function* toolEventStream(source: AsyncGenerator<RustAgentLoopEvent
       const event = ready.result.value;
       consumed = event.sequence ?? consumed;
       if (event.type !== "tool-call") { yield { event }; acknowledge(); continue; }
-      const read = PARALLEL_READ_TOOLS.has(event.toolName ?? "") && (options.canParallel?.(event) ?? true);
+      const read = (PARALLEL_READ_TOOLS.has(event.toolName ?? "") || MERGE_READ_TOOLS.has(event.toolName ?? "")) && (options.canParallel?.(event) ?? true);
       if (event.sequence) inFlight.add(event.sequence);
       acknowledge();
       if (!read && active.size > 0) deferred = event;

@@ -194,7 +194,7 @@ export class SessionProcessManager {
   private readonly compactionControllers = new Map<string, AbortController>();
 
   notifyRuntimeEvent(event: RuntimeBusEvent): void {
-    if (event.type !== "subagent_state_changed") return;
+    if (event.type !== "subagent_state_changed" && event.type !== "merge_worker_progress") return;
     const child = this.children.get(event.sessionId)?.child;
     if (!child?.connected) return;
     // A notification is only a wake-up hint. Readers rehydrate durable state.

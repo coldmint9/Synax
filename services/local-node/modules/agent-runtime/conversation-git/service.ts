@@ -4,6 +4,8 @@ import { GitMrStore, gitMrStore } from '../../git-mr/store.js';
 import { GitMrError } from '../../git-mr/errors.js';
 import { branchOid, git, inspect } from '../../git-mr/repository.js';
 import type { MergeRequest, MergeRequestInput, MergeProposal, MergeCheckConfig } from '../../git-mr/contracts.js';
+import type { ConflictResolution } from '../../git-mr/conflict-hunks.js';
+import type { CandidateRepair } from '../../git-mr/candidate-repair.js';
 import { workspaceRootLocation, type ProjectWorkspaceRoot } from '../../project-workspace.js';
 import { canonicalizeWorkspaceLocation, type WorkspaceLocation } from '../../workspace-location.js';
 import { resolveSessionWorkspaceRoots } from '../tools/workspace.js';
@@ -765,6 +767,36 @@ export class ConversationGitService {
     const child = agentRuntimeStore.getSession(childSessionId);
     if (!child.parentSessionId) throw notFound();
     return outsideExecutionContext(() => this.saveFile(child.parentSessionId!, objectId, fileId, input, childSessionId));
+  }
+
+  private async workerBatch<T>(childSessionId: string, objectId: string, operation: string,
+    input: { files: T[]; requestId: string; expectedVersion: number; expectedTaskRevision: number },
+    apply: (task: StoredTask, mr: MergeRequest, guard: () => Promise<void>) => Promise<MergeRequest>) {
+    const child = agentRuntimeStore.getSession(childSessionId);
+    if (!child.parentSessionId) throw notFound();
+    const parentId = child.parentSessionId;
+    return outsideExecutionContext(() => this.execute(parentId, objectId, input.requestId, operation, { files: input.files }, async (task, mr) => {
+      this.version(task, mr, input.expectedTaskRevision, input.expectedVersion);
+      this.assertWorker(task, childSessionId);
+    }, async (task, mr) => {
+      const outcome = await apply(task, mr, () => this.assertWorkerCurrent(task.id, childSessionId));
+      await this.setWorkerExecution(parentId, objectId, {
+        phase: outcome.status === 'conflicted' ? 'resolving' : 'checking',
+        summary: operation === 'resolve-batch' ? `已处理 ${input.files.length} 个文件的冲突块。` : `已修复 ${input.files.length} 个诊断文件，准备重新检查。`,
+      }, task.execution!.epoch, true);
+    }, true));
+  }
+
+  async workerResolveBatch(childSessionId: string, objectId: string,
+    input: { files: ConflictResolution[]; requestId: string; expectedVersion: number; expectedTaskRevision: number }) {
+    return this.workerBatch(childSessionId, objectId, 'resolve-batch', input,
+      (task, mr, guard) => this.gitMr.resolveBatch(task.projectId, mr.id, input.expectedVersion, input.files, guard));
+  }
+
+  async workerRepair(childSessionId: string, objectId: string,
+    input: { files: CandidateRepair[]; requestId: string; expectedVersion: number; expectedTaskRevision: number }) {
+    return this.workerBatch(childSessionId, objectId, 'repair-candidate', input,
+      (task, mr, guard) => this.gitMr.repairCandidate(task.projectId, mr.id, input.expectedVersion, input.files, guard));
   }
 
   async cancelWorkerMr(sessionId: string, objectId: string) {

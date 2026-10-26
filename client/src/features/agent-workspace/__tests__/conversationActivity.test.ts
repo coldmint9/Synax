@@ -29,6 +29,29 @@ describe("conversation activity presentation", () => {
     expect(conversationToolPresentation(call("bash", "npm test", { status: "running", duration: "2s" }), "zh").label).toBe("正在运行");
     expect(conversationToolPresentation(call("bash", "npm test", { duration: "36s" }), "zh").label).toBe("已在 36s 内运行");
   });
+  it("distinguishes merge read files, sides and byte pages in collapsed rows", () => {
+    const read = call("git.merge.worker.read", JSON.stringify({ fileId: "ae2f7f6eb712b936", side: "target" }), {
+      outputSummary: "src/app.ts", category: "read",
+    });
+    expect(conversationToolPresentation(read, "zh")).toMatchObject({
+      label: "已读取合并文件", target: "src/app.ts · 目标分支", filePath: null,
+    });
+    const page = { ...read, inputSummary: JSON.stringify({ fileId: "ae2f7f6eb712b936", side: "source", byteOffset: 48000 }),
+      outputSummary: "package-lock.json" };
+    expect(conversationToolPresentation(page, "zh").target).toBe("package-lock.json · 来源分支 · 字节 48000");
+    expect(conversationToolPresentation(page, "en").target).toBe("package-lock.json · source · byte 48000");
+  });
+  it("shows side and page for historical/running merge reads without treating errors as paths", () => {
+    const read = call("git.merge.worker.read", JSON.stringify({ fileId: "ae2f7f6eb712b936", side: "base", offset: 24000 }), {
+      outputSummary: "conflict content read",
+    });
+    expect(conversationToolPresentation(read, "zh").target).toBe("ae2f7f6e · 基线 · 起点 24000");
+    expect(conversationToolPresentation({ ...read, status: "failed", outputSummary: "File not found in this merge request." }, "zh").target)
+      .toBe("ae2f7f6e · 基线 · 起点 24000");
+    expect(conversationActivityLiveLabel([{ ...read, status: "running" }], "zh")).toBe("正在读取合并文件");
+    expect(conversationActivityLiveLabel([call("git.merge.worker.checks", "{}", { status: "running" })], "zh"))
+      .toBe("正在运行合并检查");
+  });
   it("maps running calls to human-readable events without exposing raw input", () => {
     expect(conversationActivityLiveLabel([call("bash", "rm -rf production", { status: "running" })], "zh")).toBe("正在执行命令");
     expect(conversationActivityLiveLabel([call("rg", "secret-token", {

@@ -3,7 +3,7 @@ import type { ToolExecutionInput } from '../contracts.js';
 
 const mocks = vi.hoisted(() => ({
   sessions: new Map<string, any>(), snapshot: {} as any,
-  service: { get: vi.fn(), workerSnapshot: vi.fn(), setWorkerExecution: vi.fn(), workerAction: vi.fn(), workerSaveFile: vi.fn(), file: vi.fn(), awaitWorkerAdmission: vi.fn(), cancelWorkerMr: vi.fn(), gitMr: { files: vi.fn() }, store: { exclusive: vi.fn() } },
+  service: { get: vi.fn(), workerSnapshot: vi.fn(), setWorkerExecution: vi.fn(), workerAction: vi.fn(), workerSaveFile: vi.fn(), file: vi.fn(), fileSlice: vi.fn(), awaitWorkerAdmission: vi.fn(), cancelWorkerMr: vi.fn(), gitMr: { files: vi.fn() }, store: { exclusive: vi.fn() } },
   coordinator: { submitAsync: vi.fn(), waitForSessionIdle: vi.fn(), reconcileFencedSession: vi.fn() },
   create: vi.fn(), flush: vi.fn(), wait: vi.fn(), recover: vi.fn(), acknowledge: vi.fn(),
   interrupt: vi.fn(),
@@ -133,6 +133,27 @@ it('accepts whole-file deletion choices and rejects ambiguous resolutions', asyn
   await call('git.merge.worker.resolve', { fileId: 'file', expectedRevision: 'rev', choice: 'source' });
   expect(mocks.service.workerSaveFile).toHaveBeenCalledWith('child', objectId, 'file', expect.objectContaining({ choice: 'source', content: undefined, resolve: true, expectedRevision: 'rev' }));
   await expect(call('git.merge.worker.resolve', { fileId: 'file', expectedRevision: 'rev', content: '', choice: 'delete' })).rejects.toThrow();
+});
+
+it('exposes the read path in the lightweight summary without copying file content into it', async () => {
+  mocks.service.file.mockResolvedValue({ id: 'file', path: 'src/app.ts', revision: 'rev', source: 'private content' });
+  const read = await call('git.merge.worker.read', { fileId: 'file', side: 'source' });
+  expect(read.displaySummary).toBe('src/app.ts');
+  expect(read.result).toMatchObject({ path: 'src/app.ts', side: 'source', content: 'private content' });
+});
+
+it.each([false, true])('identifies bounded reads in the transcript (continuation page: %s)', async continuation => {
+  mocks.service.file.mockResolvedValue({ id: 'file', path: 'package-lock.json', revision: 'rev',
+    source: 'preview', truncatedSides: ['source'], contentState: 'partial', editable: false });
+  mocks.service.fileSlice.mockResolvedValue({ path: 'package-lock.json', content: 'page', revision: 'rev', byteOffset: continuation ? 48000 : 0,
+    nextByteOffset: continuation ? 48004 : 4, totalBytes: 96000, eof: false });
+  const read = await call('git.merge.worker.read', { fileId: 'file', side: 'source', limit: 48000,
+    ...(continuation ? { byteOffset: 48000, expectedRevision: 'rev' } : {}) });
+  expect(read.displaySummary).toBe('package-lock.json');
+  expect(read.result).toMatchObject({ path: 'package-lock.json', side: 'source', content: 'page', truncated: true });
+  expect(mocks.service.fileSlice).toHaveBeenCalledWith('parent', objectId, 'file', {
+    side: 'source', byteOffset: continuation ? 48000 : 0, maxBytes: 48000, expectedRevision: 'rev',
+  }, undefined);
 });
 
 it('serializes concurrent writes so each reads the latest task and MR versions', async () => {

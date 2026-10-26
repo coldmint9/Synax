@@ -25,6 +25,22 @@ export async function reconcile(mr: MergeRequest) {
   const head = (
     await git(mr, ["rev-parse", "HEAD"], { cwd: mr.worktree })
   ).stdout.trim();
+  if (mr.repair) {
+    const repair = mr.repair;
+    await ensureClean(mr, mr.worktree);
+    if (head !== repair.parentOid) {
+      const parents = (await git(mr, ['show', '-s', '--format=%P', head])).stdout.trim();
+      const subject = (await git(mr, ['show', '-s', '--format=%s', head])).stdout.trim();
+      const changed = (await git(mr, ['diff', '--name-only', '-z', repair.parentOid, head, '--'])).stdout.split('\0').filter(Boolean);
+      if (parents !== repair.parentOid || subject !== repair.message || changed.some(file => !repair.paths.includes(file)))
+        throw new GitMrError('Unrecognized candidate repair commit; inspect the retained worktree.', 'RECOVERY_REQUIRED');
+      mr.candidateOid = head;
+      mr.candidateTree = (await git(mr, ['rev-parse', 'HEAD^{tree}'], { cwd: mr.worktree })).stdout.trim();
+      await git(mr, ['update-ref', `refs/synax/mr/${mr.id}/candidate`, head]);
+      mr.checkResults = []; mr.skippedChecks = undefined;
+    }
+    mr.repair = undefined;
+  }
   const unresolved = (
     await git(mr, ["ls-files", "-u", "-z"], { cwd: mr.worktree })
   ).stdout;

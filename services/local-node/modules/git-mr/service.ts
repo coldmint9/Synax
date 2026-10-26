@@ -1,6 +1,9 @@
 import { loadSourcePolicy } from "./branch-policy.js";
 import { reconcile } from "./recovery.js";
 import { assertMergeContentPolicy } from './content-policy.js';
+import { conflictFilePacket, CONFLICT_PACKET_BYTES, type ConflictPacketInput } from './conflict-packet.js';
+import { resolveHunks, type ConflictResolution } from './conflict-hunks.js';
+import { applyRepairEdits, readRepairFile, replaceRepairFile, repairDiagnostics, MAX_REPAIR_ATTEMPTS, type CandidateRepair } from './candidate-repair.js';
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +20,7 @@ import {
   repoPath,
   hostPath,
   command,
+  MAX_FILE_BYTES,
 } from "./repository.js";
 import { listFiles, readFile, readFileSlice, writeFile, invalidateMergeFileIndex, releaseMergeFileCaches } from "./files.js";
 import type {
@@ -345,6 +349,166 @@ export class GitMrService {
   }
   async files(projectId: string, id: string) {
     return listFiles(await this.get(projectId, id));
+  }
+  async conflictPacket(projectId: string, id: string, input: ConflictPacketInput = {}, signal?: AbortSignal) {
+    const mr = await this.get(projectId, id);
+    const files = (await listFiles(mr, signal)).filter(file => file.conflicted);
+    const selected = input.fileId ? files.filter(file => file.id === input.fileId) : files;
+    if (input.fileId && !selected.length) throw new GitMrError('Conflict file not found.', 'NOT_FOUND', 404);
+    const offset = input.offset ?? 0, limit = input.limit ?? 10, hunkOffset = input.hunkOffset ?? 0;
+    if (![offset, hunkOffset].every(value => Number.isSafeInteger(value) && value >= 0) || !Number.isInteger(limit) || limit < 1 || limit > 20)
+      throw new GitMrError('Invalid conflict packet page.', 'INVALID_INPUT', 400);
+    const packets: ReturnType<typeof conflictFilePacket>[] = [];
+    let bytes = 2048;
+    for (const summary of selected.slice(offset, offset + limit)) {
+      signal?.throwIfAborted();
+      const packet = conflictFilePacket(await this.file(projectId, id, summary.id, signal), hunkOffset);
+      // A single unusually large hunk is explicitly a preview; it never
+      // silently displaces the pagination cursor or expands the model budget.
+      while (Buffer.byteLength(JSON.stringify(packet)) > CONFLICT_PACKET_BYTES - 2048 && packet.hunks.length > 1) {
+        packet.hunks.pop(); packet.nextHunkOffset = hunkOffset + packet.hunks.length;
+      }
+      const size = Buffer.byteLength(JSON.stringify(packet));
+      if (bytes + size > CONFLICT_PACKET_BYTES && packets.length) break;
+      packets.push(packet); bytes += size;
+    }
+    return { mrVersion: mr.version, target: mr.target, source: mr.steps[mr.currentStep]?.branch,
+      totalFiles: files.length, files: packets,
+      nextOffset: offset + packets.length < selected.length ? offset + packets.length : null };
+  }
+
+  async resolveBatch(projectId: string, id: string, version: number, files: ConflictResolution[], guard?: MergeMutationGuard) {
+    if (!files.length || files.length > 20 || new Set(files.map(file => file.fileId)).size !== files.length)
+      throw new GitMrError('Provide 1–20 distinct conflict files.', 'INVALID_INPUT', 400);
+    return this.mutate(projectId, id, version, async mr => {
+      if (mr.status !== 'conflicted') throw new GitMrError('No active conflicts to resolve.', 'INVALID_STATE');
+      await this.current(mr);
+      // Validate every revision and every hunk before the first write.
+      const prepared = [];
+      let bytes = 0;
+      for (const decision of files) {
+        const file = await this.file(projectId, id, decision.fileId);
+        if (file.path.split('/').at(-1) === '.DS_Store') throw new GitMrError('.DS_Store must never be tracked.', 'BRANCH_POLICY');
+        if (!file.conflicted || file.revision !== decision.expectedRevision)
+          throw new GitMrError(`Conflict changed: ${file.path}. Reload the packet.`, 'STALE_DRAFT');
+        if (decision.choice && (decision.hunks?.length || file.kind === 'text'))
+          throw new GitMrError('Use hunk decisions for text; whole-file choices are only for structural/binary conflicts.', 'INVALID_INPUT', 400);
+        if (file.reason?.startsWith('Submodule')) throw new GitMrError(file.reason, 'UNSUPPORTED_CONFLICT');
+        const save: MergeFileSave = decision.choice
+          ? { expectedRevision: file.revision, choice: decision.choice, resolve: true }
+          : { expectedRevision: file.revision, ...resolveHunks(file, decision.hunks ?? []) };
+        const size = Buffer.byteLength(save.content ?? ''); bytes += size;
+        if (size > MAX_FILE_BYTES || bytes > 8 * MAX_FILE_BYTES)
+          throw new GitMrError('Resolution batch exceeds the text editing budget.', 'FILE_TOO_LARGE');
+        // Draft decisions use a visible revision; the file writer validates
+        // the underlying content revision again at its mutation boundary.
+        const raw = await readFile(mr, file.id);
+        if ((await this.visibleFileRevision(id, file.id, raw.revision)).revision !== decision.expectedRevision)
+          throw new GitMrError(`Conflict changed while preparing the batch: ${file.path}.`, 'STALE_DRAFT');
+        prepared.push({ file, save: { ...save, expectedRevision: raw.revision } });
+      }
+      let applied = 0;
+      try {
+        for (const { file, save } of prepared) {
+          await writeFile(mr, file.id, save, guard);
+          applied++;
+          mr.checkResults = []; mr.skippedChecks = undefined;
+          await this.store.save(mr, `${save.resolve ? 'Resolved' : 'Updated conflict blocks'}: ${file.path}`);
+        }
+      } catch (error) {
+        // A stop/I/O failure retains completed file decisions. Re-entry reads
+        // those real staged results; it never replays the batch blindly.
+        if (applied) await this.store.save(mr, `Batch interrupted after ${applied}/${prepared.length} files; completed decisions retained.`);
+        throw error;
+      }
+    }, guard);
+  }
+
+  async repairContext(projectId: string, id: string) {
+    const mr = await this.get(projectId, id);
+    await this.verifyCandidate(mr);
+    return repairDiagnostics(mr);
+  }
+
+  async repairRead(projectId: string, id: string, file: string, offset = 0, limit = 24_000) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 48_000)
+      throw new GitMrError('Invalid repair read page.', 'INVALID_INPUT', 400);
+    const mr = await this.get(projectId, id);
+    await this.verifyCandidate(mr);
+    const diagnostics = await repairDiagnostics(mr);
+    const read = await readRepairFile(mr, file, diagnostics.files);
+    return { path: read.path, revision: read.revision, candidateOid: mr.candidateOid, offset,
+      content: read.content.slice(offset, offset + limit), totalCharacters: read.content.length,
+      nextOffset: offset + limit < read.content.length ? offset + limit : null };
+  }
+
+  async repairCandidate(projectId: string, id: string, version: number, files: CandidateRepair[], guard?: MergeMutationGuard) {
+    if (!files.length || files.length > 10 || new Set(files.map(file => file.path)).size !== files.length)
+      throw new GitMrError('Provide 1–10 distinct diagnostic files.', 'INVALID_INPUT', 400);
+    return this.mutate(projectId, id, version, async mr => {
+      await this.current(mr);
+      await this.verifyCandidate(mr);
+      const diagnostics = await repairDiagnostics(mr);
+      if ((mr.repairAttempts ?? 0) >= MAX_REPAIR_ATTEMPTS)
+        throw new GitMrError('Verification still fails after three candidate repair rounds. Report the remaining diagnostics.', 'REPAIR_LIMIT');
+      const prepared = [];
+      for (const repair of files) {
+        const original = await readRepairFile(mr, repair.path, diagnostics.files);
+        if (original.revision !== repair.expectedRevision) throw new GitMrError(`Repair file changed: ${repair.path}.`, 'STALE_DRAFT');
+        prepared.push({ ...original, replacement: applyRepairEdits(original.content, repair.edits) });
+      }
+      await guard?.();
+      const parentOid = mr.candidateOid!;
+      mr.repairAttempts = (mr.repairAttempts ?? 0) + 1;
+      const message = `Repair merge verification (Synax ${mr.id} #${mr.repairAttempts})`;
+      mr.repair = { parentOid, paths: files.map(file => file.path), message };
+      mr.status = 'preparing';
+      await this.store.save(mr, `Repairing ${files.length} diagnostic file(s) in the isolated candidate.`);
+      const changed: typeof prepared = [];
+      try {
+        for (const item of prepared) {
+          await guard?.();
+          const current = await readRepairFile(mr, item.path, diagnostics.files);
+          if (current.revision !== item.revision) throw new GitMrError('Candidate changed during repair.', 'STALE_DRAFT');
+          changed.push(item);
+          await replaceRepairFile(mr, item.path, item.content, item.replacement);
+        }
+        await guard?.();
+        await git(mr, ['add', '--', ...files.map(file => file.path)], { cwd: mr.worktree });
+        const staged = (await git(mr, ['diff', '--cached', '--name-only', '-z'], { cwd: mr.worktree })).stdout.split('\0').filter(Boolean);
+        if (staged.some(file => !files.some(repair => repair.path === file)))
+          throw new GitMrError('Unexpected staged files appeared during repair; candidate retained for inspection.', 'STALE_CANDIDATE');
+        await this.noOsMetadata(mr);
+        await guard?.();
+        await git(mr, ['commit', '-m', message], { cwd: mr.worktree });
+        await ensureClean(mr, mr.worktree!);
+        await this.anchor(mr);
+        mr.candidateTree = (await git(mr, ['rev-parse', 'HEAD^{tree}'], { cwd: mr.worktree })).stdout.trim();
+        mr.checkResults = []; mr.skippedChecks = undefined; mr.status = 'ready'; mr.repair = undefined;
+      } catch (error) {
+        // Roll back only our own unchanged writes before a commit. If anything
+        // else touched them, retain the journal and require reconciliation.
+        const head = (await git(mr, ['rev-parse', 'HEAD'], { cwd: mr.worktree })).stdout.trim();
+        if (head === parentOid) {
+          const unchanged = await Promise.all(changed.map(async item => {
+            const stat = await fs.lstat(item.destination);
+            if (!stat.isFile() || stat.isSymbolicLink()) return false;
+            const content = await fs.readFile(item.destination, 'utf8');
+            return content === item.replacement || content === item.content;
+          }));
+          if (unchanged.every(Boolean)) {
+            for (const item of changed) {
+              const content = await fs.readFile(item.destination, 'utf8');
+              if (content !== item.content) await replaceRepairFile(mr, item.path, item.replacement, item.content);
+            }
+            if (changed.length) await git(mr, ['add', '--', ...changed.map(item => item.path)], { cwd: mr.worktree });
+            mr.repair = undefined;
+          }
+        }
+        mr.status = mr.repair ? 'interrupted' : 'check_failed';
+        throw error;
+      }
+    }, guard);
   }
   private async visibleFileRevision(id: string, fileId: string, revision: string) {
     const draft = await this.store.read<{ contentRevision: string; revision: string; state: unknown }>('drafts', `${id}-${fileId}`).catch(() => null);

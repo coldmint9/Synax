@@ -17,6 +17,17 @@ const call: ToolCallView = {
 };
 
 describe("tool call display names", () => {
+  it("shows merge worker file and side before expanding the read details", () => {
+    const read = { ...call, toolId: "git.merge.worker.read", inputSummary: JSON.stringify({
+      fileId: "ae2f7f6eb712b936", side: "source", byteOffset: 48000, expectedRevision: "rev",
+    }), outputSummary: "client/package-lock.json" };
+    const { container, getByRole } = render(<ToolCallSummaryLine call={read} />);
+    expect(container.querySelector(".bui-tool-label")).toHaveTextContent("已读取合并文件");
+    expect(container.querySelector(".bui-tool-target")).toHaveTextContent("client/package-lock.json · 来源分支 · 字节 48000");
+    expect(container.querySelector("pre")).toBeNull();
+    fireEvent.click(getByRole("button"));
+    expect(container.querySelector("pre")?.textContent).toBe(read.inputSummary);
+  });
   it.each([
     ["agent.discover", "查找可用工具"],
     ["webSearch", "搜索网页"],
