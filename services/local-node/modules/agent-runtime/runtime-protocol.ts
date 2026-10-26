@@ -1,4 +1,4 @@
-import type { RuntimeAsset, InputCapabilities, InputModality } from './content-parts.js';
+import type { RuntimeAsset, InputCapabilities } from './content-parts.js';
 import type {
   AgentRun,
   AgentRunStep,
@@ -76,7 +76,6 @@ export interface RuntimeTerminalResult {
 }
 
 export interface RuntimeBackendDescriptor extends BackendDescription {
-  models?: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>;
   defaultModel?: string | null;
 }
 
@@ -158,7 +157,6 @@ export interface RuntimeClient {
   getInputCapabilities(sessionId: string, model?: string): Promise<InputCapabilities>;
   getProtocol(): Promise<{ protocol: string; schema?: unknown; transports?: string[]; operations?: string[] }>;
   listBackends(): Promise<{ items: RuntimeBackendDescriptor[] }>;
-  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>; defaultModel?: string | null }>;
   listProjects(): Promise<{ items: Array<{ id: string; name: string; source?: { localPath?: string; kind?: string } }> }>;
   createProject(body: { name: string; environment?: 'production' | 'staging' | 'development'; source: { kind: 'localPath'; localPath: string } }): Promise<{ project: { id: string; name: string; source?: { localPath?: string; kind?: string } } }>;
   listSessions(query?: Record<string, string | number | undefined>): Promise<RuntimeSessionListResponse>;

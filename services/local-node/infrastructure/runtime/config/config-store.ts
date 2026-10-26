@@ -418,7 +418,6 @@ function splitMergedGlobalConfig(config: GlobalConfig): ConfigLayers {
       defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
       defaultApiProviderId:
         config.defaultApiProviderId || globalBase.defaultApiProviderId,
-      enabledAcpProviderIds: [],
       webSearch: config.webSearch ?? globalBase.webSearch,
       limits: config.limits,
       features: config.features,
@@ -434,6 +433,12 @@ function normalizeMergedGlobalConfig(
 ): GlobalConfig {
   const split = splitMergedGlobalConfig(config);
   return mergeGlobalConfigLayers(split.template, split.global, includeSecrets);
+}
+
+function withoutRetiredProviderSettings(config: GlobalConfig): GlobalConfig {
+  const current = { ...config } as GlobalConfig & { enabledAcpProviderIds?: unknown };
+  delete current.enabledAcpProviderIds;
+  return current;
 }
 
 function normalizeTemplateConfig(
@@ -456,7 +461,7 @@ function normalizeTemplateConfig(
   );
   return {
     ...defaults,
-    ...config,
+    ...withoutRetiredProviderSettings(config),
     providers,
     providerConnections,
     defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
@@ -464,7 +469,6 @@ function normalizeTemplateConfig(
       config.defaultApiProviderId,
       providers,
     ),
-    enabledAcpProviderIds: [],
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
@@ -499,13 +503,12 @@ function normalizeUserGlobalConfig(
   );
   return {
     ...defaults,
-    ...config,
+    ...withoutRetiredProviderSettings(config),
     providers,
     providerConnections,
     defaultProviderId: normalizeDefaultProviderId(config.defaultProviderId),
     defaultApiProviderId:
       config.defaultApiProviderId || defaults.defaultApiProviderId,
-    enabledAcpProviderIds: [],
     mcpServers: normalizeMcpServers(
       config.mcpServers ?? defaults.mcpServers ?? [],
       includeSecrets,
@@ -552,7 +555,6 @@ function mergeGlobalConfigLayers(
       global.defaultApiProviderId ?? template.defaultApiProviderId,
       providers,
     ),
-    enabledAcpProviderIds: [],
     providerConnections,
     mcpServers: normalizeMcpServers(
       global.mcpServers ?? template.mcpServers ?? [],
@@ -636,7 +638,6 @@ function applyGlobalConfigPatch(
     patch.sessionArchiveRetentionDays !== undefined ||
     Boolean(patch.defaultProviderId) ||
     Boolean(patch.defaultApiProviderId) ||
-    Boolean(patch.enabledAcpProviderIds) ||
     Boolean(patch.limits) ||
     Boolean(patch.features) ||
     Boolean(patch.webSearch) ||
@@ -696,7 +697,6 @@ function applyGlobalConfigPatch(
       patch.defaultProviderId ?? current.defaultProviderId,
     ),
     defaultApiProviderId: resolvedDefaultApiProviderId,
-    enabledAcpProviderIds: [],
     mcpServers: patch.mcpServers ?? layers.global.mcpServers ?? [],
     macWindowAppearance:
       patch.macWindowAppearance ?? current.macWindowAppearance,
@@ -953,7 +953,7 @@ function normalizeMcpServers(
 
 function prepareGlobalConfigForStorage(config: GlobalConfig): GlobalConfig {
   return {
-    ...config,
+    ...withoutRetiredProviderSettings(config),
     mcpServers: config.mcpServers ?? [],
     webSearch: prepareWebSearchConfigForStorage(config.webSearch),
     providerConnections: prepareProviderConnectionsForStorage(

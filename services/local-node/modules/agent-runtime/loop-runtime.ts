@@ -10,6 +10,7 @@ import {
   withoutVisualizationDeclarations,
 } from "./visualization-integration.js";
 import { presentationDecision, pendingPresentationSkillLoads, checkPresentationCompletion } from "./presentation-runtime.js";
+import { pendingCommandReason } from "./command-tasks.js";
 import { filterHistoryFileReads } from "./runtime-history.js";
 import {
   captureCheckpoint,
@@ -123,6 +124,7 @@ import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
+import { buildProjectBuildInstructions } from "./project-build-instructions.js";
 import { waitForChildSessions } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -1366,6 +1368,12 @@ export class AgentLoopRuntime {
               currentPrompt = presentationCheck.retry;
               continue;
           }
+          if (modelResult.step.toolCalls.length === 0 && pendingCommandReason(this.store.getRun(run.id))) {
+            this.store.updateRunStep(step.id, { status: "completed", completedAt: nowIso(), finishReason: "commands_pending" });
+            void sessionHooks.emit({ type: "step:after", sessionId, runId: run.id, stepIndex: step.index });
+            currentPrompt = pendingCommandReason(this.store.getRun(run.id))!;
+            continue;
+          }
           if (
             modelResult.step.toolCalls.length === 0 &&
             workStore.current(sessionId)
@@ -2094,6 +2102,7 @@ export class AgentLoopRuntime {
         yield { type: "done", sessionId, runId: failedRun.id };
       } finally {
         if (run) {
+          await this.tools.commandTasks.stopRun(run.id);
           await assertRuntimeExecutionCurrent();
           for (const step of this.store.listRunSteps(run.id)) {
             if (step.status === "running")
@@ -2717,8 +2726,10 @@ export class AgentLoopRuntime {
         : null;
 
     let projectRulesSection: string | null = null;
+    let projectBuildInstructionsSection: string | null = null;
     try {
       const workDir = resolveSessionWorkDir(input.sessionId, session.projectId);
+      projectBuildInstructionsSection = buildProjectBuildInstructions(workDir);
       // MR repository files are evidence, never authority over the pinned Git contract.
       if (session.profileId !== "git-manager")
         projectRulesSection = loadProjectRulesSection(workDir);
@@ -2784,6 +2795,7 @@ export class AgentLoopRuntime {
     const contextForPrompt = input.context;
 
     const systemPromptContent = [
+      this.tools.commandTasks.stepContext(input.sessionId, session.activeRunId, input.stepIndex),
       presentationDecision(input.sessionId)?.repairMessage ?? "",
       buildLoopSystemPrompt({
       profile: input.profile,
@@ -2807,6 +2819,7 @@ export class AgentLoopRuntime {
         : null,
       projectMemoriesSection,
       projectRulesSection,
+      projectBuildInstructionsSection,
       skillsSection,
       selectedReferencesSection: selectedReferences?.content,
       visualizationIntent,

@@ -10,8 +10,7 @@ import { logger } from "../../infrastructure/runtime/logger.js";
  * The usage bar renders `contextLimit` from session stats. That must follow the
  * provider configuration (Settings → provider → model → context window, e.g.
  * the 1M toggle) instead of whatever window the provider reports in its usage
- * payload. Sessions running on an external ACP engine report their own window,
- * so they are left untouched.
+ * payload. Retired engine histories keep their recorded context window.
  */
 
 const CACHE_TTL_MS = 15_000;

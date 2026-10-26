@@ -119,6 +119,9 @@ export class RuntimeSidecarClient {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   }
 
+  /** Clients on separate sockets still write the same session authority. */
+  get coordinationKey(): string { return this.options.socketPath; }
+
   connect(): Promise<Extract<SidecarBody, { type: 'ready' }>> {
     if (this.lifetime.signal.aborted) return Promise.reject(new Error('Runtime sidecar client closed.'));
     if (this.ready) return this.ready;

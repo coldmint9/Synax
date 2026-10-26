@@ -2,6 +2,7 @@
 
 pub mod control;
 pub mod ops;
+mod process_leases;
 
 use std::sync::Arc;
 
@@ -219,7 +220,14 @@ impl HotOps {
     ) -> Result<ControlCommandReceipt, RuntimeError> {
         let handle = self.handle(session_id)?;
         let result = handle.control(request_id, epoch, revision, operation, payload)?;
-        self.refresh_list(&handle)?;
+        // Process bookkeeping and reads do not change a session-list row.
+        if operation == "lease_update" {
+            let actor = handle.actor.lock();
+            self.store.list().write().set_recovery_required(session_id,
+                crate::storage::jsonl::session::recovery_required(&actor));
+        } else if !control::RECEIPT_FREE.contains(&operation) {
+            self.refresh_list(&handle)?;
+        }
         Ok(result)
     }
 

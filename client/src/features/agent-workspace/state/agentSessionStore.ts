@@ -960,7 +960,7 @@ export interface AgentSessionStoreState {
   sessionListLoading: boolean;
   sessionListError: string | null;
   detailLoading: boolean;
-  /** A complete cached snapshot remains visible during a background refresh. */
+  /** True until the last incremental transcript page has been reconciled. */
   detailRefreshing: boolean;
   detailError: string | null;
   selectedSessionId: string | null;
@@ -1043,7 +1043,7 @@ export interface AgentSessionStoreState {
     /** Live events own a loaded active transcript; background work only refreshes its profile. */
     background?: boolean;
   }) => Promise<void>;
-  fetchChildSessions: (parentId: string) => Promise<void>;
+  fetchChildSessions: (parentId: string, childIds?: string[]) => Promise<void>;
   resumeSession: (sessionId: string, message?: string) => Promise<void>;
   fetchSessionStats: () => Promise<void>;
   fetchSessionTodos: () => Promise<void>;
@@ -1619,7 +1619,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
       const prompt = body.prompt?.trim() || message || "附件输入 / Media input";
       const mode = body.mode ?? get().draftMode;
-      if ((body.backendId && !["native", "codex"].includes(body.backendId)) || body.model?.split("/")[0].endsWith("-acp")) {
+      if ((body.backendId && body.backendId !== "native") || body.model?.split("/")[0].endsWith("-acp")) {
         throw new AppError(
           "This execution backend has been removed. Start a native Synax session.",
           { level: "business", code: "VALIDATION" },
@@ -2023,17 +2023,30 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         return activeOlderHistory.promise;
       if (!cursor) return;
       const promise = (async () => {
+        const visited = new Set<string>();
+        const readPage = async (next?: string) => {
+          if (next && visited.has(next)) throw new Error("History cursor did not advance.");
+          if (next) visited.add(next);
+          const page = next
+            ? await agentRuntimeApi.historyWindow(sessionId, next)
+            : await agentRuntimeApi.historyWindow(sessionId);
+          if (page.historyWindow.olderCursor && visited.has(page.historyWindow.olderCursor))
+            throw new Error("History cursor did not advance.");
+          return page;
+        };
         let pages;
         let rebuilt = false;
         try {
-          pages = [await agentRuntimeApi.historyWindow(sessionId, cursor)];
+          pages = [await readPage(cursor)];
         } catch (error) {
           if ((error as { code?: string }).code !== "HISTORY_STALE")
             throw error;
           // Cursors are tied to an immutable tree root. If new messages have
           // arrived, walk the new root until we rejoin the oldest loaded row.
           const oldestId = initial.messages[0]?.id;
-          let latest = await agentRuntimeApi.historyWindow(sessionId);
+          visited.clear();
+          let latest = await readPage();
+          if (get().selectedSessionId !== sessionId) return;
           if (latest.historyWindow.epoch !== initial.historyWindow?.epoch) {
             await get().refreshDetail();
             return;
@@ -2045,18 +2058,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             (!oldestId ||
               !latest.messages.some((message) => message.id === oldestId))
           ) {
-            latest = await agentRuntimeApi.historyWindow(
-              sessionId,
-              latest.historyWindow.olderCursor,
-            );
+            latest = await readPage(latest.historyWindow.olderCursor);
+            if (get().selectedSessionId !== sessionId) return;
             pages.push(latest);
           }
           if (latest.historyWindow.olderCursor) {
             pages.push(
-              await agentRuntimeApi.historyWindow(
-                sessionId,
-                latest.historyWindow.olderCursor,
-              ),
+              await readPage(latest.historyWindow.olderCursor),
             );
           }
         }
@@ -2679,7 +2687,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                         const preserveLive = isActiveSessionStatus(currentStatus);
                         return {
                           detailLoading: false,
-                          detailRefreshing: false,
+                          detailRefreshing: moreChanges,
                           detailError: null,
                           runs: merged.runs,
                           steps: merged.steps,
@@ -2800,13 +2808,16 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       }
     },
 
-    fetchChildSessions: async (parentId) => {
+    fetchChildSessions: async (parentId, childIds) => {
       try {
-        const { items } = await agentRuntimeApi.listSessions();
-        const children = items.filter(
-          (s) =>
-            s.parentSessionId === parentId && !isRuntimeResourceRemoved(s.id),
-        );
+        const parent = get().sessions.find((session) => session.id === parentId);
+        const children = childIds?.length
+          ? (await Promise.allSettled(childIds.map((childId) => agentRuntimeApi.getSessionSummary(childId))))
+              .flatMap((result) => result.status === "fulfilled" ? [result.value.session] : [])
+              .filter((session) => session.parentSessionId === parentId && !isRuntimeResourceRemoved(session.id))
+          : (await agentRuntimeApi.listSessions({ projectId: parent?.projectId, limit: 100 })).items.filter(
+              (session) => session.parentSessionId === parentId && !isRuntimeResourceRemoved(session.id),
+            );
         set({
           childSessions: { ...get().childSessions, [parentId]: children },
         });

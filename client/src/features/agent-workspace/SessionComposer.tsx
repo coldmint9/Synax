@@ -35,7 +35,6 @@ import type {
   GitWorkspaceSelection,
   TurnReference,
 } from "../../adapters/transport/agentRuntime";
-import { NativeBackendModelPicker } from "./NativeBackendModelPicker";
 import { RuntimeRecoveryPanel } from "./RuntimeRecoveryPanel";
 import { GitWorkspacePicker } from "./GitWorkspacePicker";
 import { readSessionBackendId } from "./synaxSessionTypes";
@@ -80,7 +79,6 @@ import type {
   QueuedInput,
 } from "../../adapters/transport/agentRuntime";
 import { AgentInteractionPanel } from "./AgentInteractionPanel";
-import { SessionModePicker } from "./SessionModePicker";
 import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxPermissionTier,
@@ -299,21 +297,13 @@ export function SessionComposer({
   ]);
 
   const { providers, globalConfig, effectiveConfig } = useConfig(projectId);
-  // New sessions always execute on the Synax-native runtime. Codex CLI sessions
-  // stay reachable through subagent delegation only, so the composer exposes no
-  // execution-backend selection at all.
+  // New sessions always execute on the Synax-native runtime.
   const backendId = session ? readSessionBackendId(session) : "native";
-  const [cliEfforts, setCliEfforts] = useState<ReasoningEffort[] | undefined>();
-  const cliBackend = backendId === "codex";
-  useEffect(() => {
-    setCliEfforts(undefined);
-  }, [session?.id, backendId]);
 
   const {
     providerId,
     modelId,
     capability,
-    cliModel,
     reasoningEffort,
     setSelection,
     markSubmitted,
@@ -324,10 +314,6 @@ export function SessionComposer({
     globalConfig,
     providers,
     effectiveConfig,
-  );
-  const setCliModel = useCallback(
-    (cliModel: string) => setSelection({ cliModel }),
-    [setSelection],
   );
   const setReasoningEffort = useCallback(
     (reasoningEffort: ReasoningEffort) => setSelection({ reasoningEffort }),
@@ -353,19 +339,13 @@ export function SessionComposer({
   const updateSessionPermissions = useAgentSessionStore(
     (s) => s.updateSessionPermissions,
   );
-  const externalBackend = backendId !== "native";
   const unsupportedBackend = isUnsupportedSessionBackend(session);
-  const mode = isDraft
-    ? externalBackend
-      ? "chat"
-      : draftMode
-    : readSynaxSessionMode(session.sessionMetadata);
+  const mode = isDraft ? draftMode : readSynaxSessionMode(session.sessionMetadata);
   const modeEnabled =
     !submitting &&
     !editingQueue &&
     !changingMode &&
     canSwitchSessionMode(session, {
-      externalBackend,
       hasPendingPermissions,
       hasPendingInteractions: Boolean(
         session &&
@@ -455,10 +435,7 @@ export function SessionComposer({
     setSubmitting(true);
     submitLock.current = submittedScope;
     if (!isDraft) setContent("");
-    const model =
-      backendId === "native"
-        ? formatModelReference(providerId, modelId)
-        : cliModel !== "default" ? cliModel : undefined;
+    const model = formatModelReference(providerId, modelId);
     try {
       // Attachments upload in the background; the send waits for whichever
       // ones are still in flight instead of disabling the composer.
@@ -485,10 +462,10 @@ export function SessionComposer({
           createdDraftRef.current ??
           (await submitSessionDraft(projectId, {
             ...body,
-            backendId,
-            permissionTier: cliBackend ? undefined : permissionTier,
+            backendId: "native",
+            permissionTier,
             permissionOverrides: { task: subagentsEnabled ? "allow" : "deny" },
-            mode: externalBackend ? "chat" : draftMode,
+            mode: draftMode,
             prompt: message,
             gitWorkspace,
           }));
@@ -555,15 +532,12 @@ export function SessionComposer({
     backendId,
     providerId,
     modelId,
-    cliModel,
     reasoningEffort,
-    cliBackend,
     permissionTier,
     subagentsEnabled,
     references,
     isDraft,
     projectId,
-    externalBackend,
     draftMode,
     gitWorkspace,
     submitSessionDraft,
@@ -628,7 +602,7 @@ export function SessionComposer({
             providerId: item.model.slice(0, separator),
             modelId: item.model.slice(separator + 1),
           });
-      } else setCliModel(item.model);
+      }
     }
     useQueuedInputDraftStore.getState().clear(sessionId, item.id);
     commands.inputRef.current?.focus();
@@ -644,7 +618,6 @@ export function SessionComposer({
     backendId,
     setSelection,
     setReasoningEffort,
-    setCliModel,
     commands.inputRef,
   ]);
 
@@ -695,14 +668,9 @@ export function SessionComposer({
     void resumeSession(session.id);
   }, [session, content, media, handleSubmit, resumeSession]);
 
-  const allowedReasoningEfforts: ReasoningEffort[] | undefined = cliBackend
-    ? (cliEfforts ??
-      (backendId === "codex"
-        ? ["low", "medium", "high", "xhigh"]
-        : ["low", "medium", "high", "xhigh", "max"]))
-    : providerId
-      ? effectiveReasoningEfforts(globalConfig, providerId)
-      : undefined;
+  const allowedReasoningEfforts = providerId
+    ? effectiveReasoningEfforts(globalConfig, providerId)
+    : undefined;
   const isCentered = layout === "centered";
   const isFocusRail = layout === "focusRail";
 
@@ -711,9 +679,6 @@ export function SessionComposer({
       optimizationScope={viewKey}
       media={media}
       sessionId={sessionId ?? undefined}
-      inputModel={
-        cliBackend ? (cliModel === "default" ? undefined : cliModel) : undefined
-      }
       commands={commands}
       placeholder={
         mode === "goal"
@@ -722,20 +687,6 @@ export function SessionComposer({
       }
       welcomePlaceholderDelay={isCentered ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
       onOverlayOpenChange={setOverlayOpen}
-      modelControl={
-        backendId === "codex" ? (
-          <NativeBackendModelPicker
-            key={backendId}
-            backendId={backendId}
-            model={cliModel}
-            onChange={setCliModel}
-            onEffortsChange={setCliEfforts}
-            nativeMetadata={session?.sessionMetadata?.nativeBackend}
-            onOpenChange={setOverlayOpen}
-            disabled={submitting || isGenerating}
-          />
-        ) : undefined
-      }
       modeControl={
         <div className="flex items-center gap-1">
           {backendId === "native" && mode === "goal" && (
@@ -748,18 +699,6 @@ export function SessionComposer({
               <Target size={14} aria-hidden="true" />
             </span>
           )}
-          {!externalBackend && backendId !== "native" ? (
-            <SessionModePicker
-              mode={mode}
-              disabled={!modeEnabled}
-              description={
-                zh
-                  ? "模式与审批权限独立控制；运行中或有待处理请求时不可切换。"
-                  : "Mode and approval are independent; switching is disabled while busy or pending."
-              }
-              onChange={handleModeChange}
-            />
-          ) : null}
         </div>
       }
       projectId={projectId}
@@ -807,8 +746,8 @@ export function SessionComposer({
         if (backendId !== "native") {
           setError(
             zh
-              ? "请先选择对应的执行后端；已有会话需新建后切换。"
-              : "Choose the matching execution backend first; existing sessions keep their backend.",
+              ? "此会话的执行引擎已移除，请新建 Synax 会话。"
+              : "This execution engine has been removed. Start a new Synax session.",
           );
           return;
         }

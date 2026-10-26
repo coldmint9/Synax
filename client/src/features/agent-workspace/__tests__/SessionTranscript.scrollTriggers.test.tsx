@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { AgentRun, AgentRuntimeMessage } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
@@ -99,8 +99,9 @@ it("scrolls to the bottom on the AI's first response only", () => {
   expect(scrollToBottom).toHaveBeenCalledTimes(2);
 });
 
-it("scrolls to the bottom when the run finishes", () => {
-  render(<SessionTranscript />);
+it("scrolls to the bottom when the run finishes", async () => {
+  const { container } = render(<SessionTranscript />);
+  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
   act(() =>
     useAgentSessionStore.setState({ runs: [{ ...run, status: "running" }] }),
   );
@@ -133,4 +134,20 @@ it("keeps cached messages mounted and waits for refreshed detail before showing 
     unifiedLive: false,
   });
   expect(screen.getByText("Cached answer")).toBeVisible();
+});
+
+it("does not mistake replayed stream and terminal records for new scroll triggers on a switch", async () => {
+  const { container } = render(<SessionTranscript />);
+  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
+  act(() => useAgentSessionStore.setState({
+    selectedSessionId: 's2', detailRefreshing: true,
+    runs: [{ ...run, sessionId: 's2', status: 'running' }],
+  }));
+  act(() => useAgentSessionStore.setState({ streamingStepId: 'replayed' }));
+  act(() => useAgentSessionStore.setState({
+    detailRefreshing: false,
+    runs: [{ ...run, sessionId: 's2', status: 'completed' }],
+  }));
+  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
+  expect(scrollToBottom).not.toHaveBeenCalled();
 });

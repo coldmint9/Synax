@@ -28,6 +28,21 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.restoreAllMocks());
 describe('history impact confirmation',()=>{
+ it.each(['running','completed'] as const)('hides editing for a %s child while preserving its message and copy action',async(status)=>{
+   const child={...session,id:'child',parentSessionId:'parent',status};
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:child.id,revision:0,reason:null,checkpoints:[]});
+   render(<SessionHistoryProvider session={child} messages={[]}>
+     <UserMessageBlock messageId="msg" content="Delegated task"/>
+     <Trigger action="edit"/>
+   </SessionHistoryProvider>);
+   expect(screen.getByText('Delegated task')).toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'复制'})).toBeInTheDocument();
+   expect(screen.queryByRole('button',{name:'编辑消息'})).not.toBeInTheDocument();
+   await act(async()=>fireEvent.click(screen.getByRole('button',{name:'Open'})));
+   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+   expect(conversationHistoryApi.edit).not.toHaveBeenCalled();
+   expect(useAgentSessionStore.getState().cancelSessionRun).not.toHaveBeenCalled();
+ });
  it('keeps compressed input readable but disables editing and rejects resubmission',async()=>{
    vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:4,reason:null,
      checkpoints:[{...cp,kind:'input',available:false,canRollback:false,reason:'READ_ONLY_HISTORY: compacted'}]});

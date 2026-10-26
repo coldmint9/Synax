@@ -16,7 +16,7 @@ export const CORE_TOOL_IDS = new Set([
   "agent.execute",
   "code.result",
   "file.read", "file.list", "rg", "context.read", "diff.read",
-  "file.write", "file.patch", "file.generate", "bash", "subagent.delegate",
+  "file.write", "file.patch", "file.generate", "bash", "command.manage", "subagent.delegate",
   "task.create", "task.update", "task.get", "task.list",
   "human.ask", "plan.propose", "plan.execute", "mode.switch",
   "goal.finish", "work.checkpoint", "skill.load", "presentation.select", "tools.invalid",

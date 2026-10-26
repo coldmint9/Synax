@@ -4,6 +4,7 @@ import { withinExecutionContext } from "../../local-node/infrastructure/runtime/
 import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
 import { closeAllBrowserSessions } from "../../local-node/modules/agent-runtime/tools/browser/browser-manager.js";
 import { logger } from "../../local-node/infrastructure/runtime/logger.js";
+import { flushDiagnosticLogs } from "../../local-node/infrastructure/runtime/buffered-log-writer.js";
 import {
   isAgentSessionParentMessage,
   sendAgentSessionToParent,
@@ -195,6 +196,7 @@ function main(): void {
       Promise.allSettled([...runningTasks]),
     ],
     report: (error) => logger.error({ error }, "[agent-session-runner] shutdown failed"),
+    flush: flushDiagnosticLogs,
     exit: (code) => process.exit(code),
   });
   process.on("SIGTERM", () => {

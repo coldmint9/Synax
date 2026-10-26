@@ -211,19 +211,18 @@ it("allows report sections when they were already part of the user's draft", asy
   });
 });
 
-it("uses the saved override even for an external backend", async () => {
+it("uses the saved override for the native backend", async () => {
   mocks.config.mockReturnValue({
     inputOptimizationModel: "custom/fixed",
     providers: [],
   });
-  await optimizeInput({ ...input, backendId: "codex", model: undefined });
+  await optimizeInput({ ...input, backendId: "native", model: undefined });
   expect(mocks.generate.mock.calls[0][0].model).toBe("custom/fixed");
 });
 
 it("does not silently choose a different model for missing or external selections", async () => {
   for (const change of [
     { model: undefined },
-    { backendId: "codex" },
     { model: "codex-acp/default" },
   ]) {
     await expect(optimizeInput({ ...input, ...change })).rejects.toThrow(

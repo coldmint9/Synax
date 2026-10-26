@@ -29,6 +29,7 @@ import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
+import { executeControlCommand, withSessionRevision } from './control-commands.js';
 import { historyPages, hydrateHistoryValues, readHistoryList, readSessionList } from './history-pages.js';
 import { fileCommand, pendingRuntimeFiles, FILE_EXCLUSIONS, type RuntimeFileChange, type RuntimeFileConflict } from '../runtime-files.js';
 export type RuntimeSidecarStreamMode = "authoritative";
@@ -98,9 +99,18 @@ export interface RuntimeStreamInput {
 export class RuntimeFacade {
   private readonly pendingHistoryWrites = new Map<string, Set<Promise<void>>>();
   private readonly inFlightHistoryReads = new Map<string, Promise<unknown[]>>();
+  private readonly inFlightReads = new Map<string, Promise<unknown>>();
   constructor(
     private readonly clientFactory: () => RuntimeSidecarClient | null = makeClient,
   ) {}
+  private async readOnce<T>(key: string, read: () => Promise<T>): Promise<T> {
+    const existing = this.inFlightReads.get(key);
+    if (existing) return existing as Promise<T>;
+    const pending = read();
+    this.inFlightReads.set(key, pending);
+    try { return await pending; }
+    finally { if (this.inFlightReads.get(key) === pending) this.inFlightReads.delete(key); }
+  }
   async workspaceIndexCommand<T>(operation: 'register' | 'list' | 'status', payload: unknown): Promise<T> {
     const client = this.clientFactory();
     if (!client) throw new Error('Rust workspace indexer is unavailable.');
@@ -133,67 +143,27 @@ export class RuntimeFacade {
     }
     {
       await this.ensureUiProjection(input.sessionId);
-      let admission: Awaited<ReturnType<RuntimeSidecarClient["admitRun"]>>;
-      for (let attempt = 0; ; attempt++) {
-        const state = await client.snapshot(input.sessionId);
-        try {
-          admission = await client.admitRun({
-            sessionId: input.sessionId,
-            requestId: input.runtime.requestId,
-            bodyHash: input.runtime.inputHash,
-            runId: input.run.id,
-            run: input.run,
-            epoch: state.epoch,
-            revision: state.revision,
-            queueItem: input.runtime.queueItem,
-          });
-          break;
-        } catch (error) {
-          if (
-            !(error instanceof RuntimeSidecarError) ||
-            error.code !== "REVISION_CONFLICT" ||
-            attempt >= 7
-          )
-            throw error;
-        }
-      }
+      const admission = await withSessionRevision(client, input.sessionId, 'admit_run', state =>
+        client.admitRun({
+          sessionId: input.sessionId, requestId: input.runtime.requestId,
+          bodyHash: input.runtime.inputHash, runId: input.run.id, run: input.run,
+          epoch: state.epoch, revision: state.revision, queueItem: input.runtime.queueItem,
+        }));
       // Admission retries may propose a new ID. The Rust receipt owns the
       // identity; only activation requires the caller's exact accepted run.
       if (activate && admission.runId !== input.run.id)
         throw new Error("Runtime activation attempted for a different accepted run.");
       if (activate && input.run.status === "queued") {
-        for (let attempt = 0; ; attempt++) {
-          const fence = await client.snapshot(input.sessionId);
-          if (
-            fence.activeRunId !== input.run.id ||
-            fence.epoch !== admission.epoch
-          )
-            throw new Error("Runtime activation fence changed.");
-          try {
-            const activated = await client.activateRun({
-              requestId: `${input.runtime.requestId}:activate`,
-              sessionId: input.sessionId,
-              epoch: fence.epoch,
-              revision: fence.revision,
-              run: input.run,
-            });
-            if (
-              activated.activeRunId !== input.run.id ||
-              activated.epoch !== admission.epoch
-            )
-              throw new Error(
-                "Runtime activation returned an invalid run fence.",
-              );
-            break;
-          } catch (error) {
-            if (
-              !(error instanceof RuntimeSidecarError) ||
-              error.code !== "REVISION_CONFLICT" ||
-              attempt >= 7
-            )
-              throw error;
-          }
-        }
+        await withSessionRevision(client, input.sessionId, 'activate_run', async fence => {
+          if (fence.activeRunId !== input.run.id || fence.epoch !== admission.epoch)
+            throw new Error('Runtime activation fence changed.');
+          const activated = await client.activateRun({
+            requestId: `${input.runtime.requestId}:activate`, sessionId: input.sessionId,
+            epoch: fence.epoch, revision: fence.revision, run: input.run,
+          });
+          if (activated.activeRunId !== input.run.id || activated.epoch !== admission.epoch)
+            throw new Error('Runtime activation returned an invalid run fence.');
+        });
       }
       const current = await client.snapshot(input.sessionId);
       if (
@@ -248,28 +218,10 @@ export class RuntimeFacade {
           }
         }
       }
-      for (let attempt = 0; ; attempt++) {
-        const state = await client.snapshot(sessionId);
-        try {
-          await client.finishRun({
-            sessionId,
-            runId: run.id,
-            requestId: `finish:${run.id}`,
-            status,
-            epoch: state.epoch,
-            revision: state.revision,
-            run,
-          });
-          break;
-        } catch (error) {
-          if (
-            !(error instanceof RuntimeSidecarError) ||
-            error.code !== "REVISION_CONFLICT" ||
-            attempt >= 7
-          )
-            throw error;
-        }
-      }
+      await withSessionRevision(client, sessionId, 'finish_run', state => client.finishRun({
+        sessionId, runId: run.id, requestId: `finish:${run.id}`, status,
+        epoch: state.epoch, revision: state.revision, run,
+      }));
       try {
         await this.persistRunHistory(run);
       } catch (error) {
@@ -307,25 +259,9 @@ export class RuntimeFacade {
     await this.ensureUiProjection(input.sessionId);
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    for (let attempt = 0; ; attempt++) {
-      const snapshot = await client.snapshot(input.sessionId);
-      try {
-        return await client.queueMutation({
-          ...input,
-          epoch: snapshot.epoch,
-          revision: snapshot.revision,
-          payload: input.payload ?? null,
-        });
-      } catch (error) {
-        // No write occurred on revision conflict; retry the same semantic command against fresh state.
-        if (
-          !(error instanceof RuntimeSidecarError) ||
-          error.code !== "REVISION_CONFLICT" ||
-          attempt >= 7
-        )
-          throw error;
-      }
-    }
+    return withSessionRevision(client, input.sessionId, 'queue_mutation', fence => client.queueMutation({
+      ...input, epoch: fence.epoch, revision: fence.revision, payload: input.payload ?? null,
+    }));
   }
   async queueSnapshot(sessionId: string): Promise<unknown> {
     await agentRuntimeStore.flushSession(sessionId);
@@ -336,27 +272,14 @@ export class RuntimeFacade {
   async controlState(sessionId: string): Promise<unknown> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    await this.ensureUiProjection(sessionId);
-    for (let attempt = 0; ; attempt++) {
-      const snapshot = await client.snapshot(sessionId);
-      try {
-        const result = await client.controlCommand({
-          sessionId,
-          requestId: `control-read:${sessionId}:${snapshot.epoch}:${snapshot.revision}`,
-          epoch: snapshot.epoch,
-          revision: snapshot.revision,
-          operation: "read",
-        });
-        return JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
-      } catch (error) {
-        if (
-          !(error instanceof RuntimeSidecarError) ||
-          error.code !== "REVISION_CONFLICT" ||
-          attempt >= 7
-        )
-          throw error;
-      }
-    }
+    // Preserve pending local commits without fetching the unrelated UI body.
+    await agentRuntimeStore.flushSession(sessionId);
+    return this.readOnce(`control:${sessionId}`, async () => {
+      const result = await executeControlCommand(client, {
+        sessionId, requestId: randomUUID(), operation: 'read',
+      });
+      return JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+    });
   }
   async controlCommand(input: {
     sessionId: string;
@@ -367,31 +290,12 @@ export class RuntimeFacade {
     const client = this.clientFactory === makeClient ? makeControlClient() : this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
     if (!["execution_check", "execution_close", "stop_begin", "stop_unconfirmed", "resume", "lease_open", "lease_close"].includes(input.operation)) await this.ensureUiProjection(input.sessionId);
-    for (let attempt = 0; ; attempt++) {
-      const snapshot = await client.snapshot(input.sessionId);
-      try {
-        const result = await client.controlCommand({
-          ...input,
-          epoch: snapshot.epoch,
-          revision: snapshot.revision,
-        });
-        const state = JSON.parse(Buffer.from(result.stateJson).toString("utf8"));
-        if (state.entity && typeof state.entityKind === "string") {
-          await this.appendHistoryEntities(input.sessionId, [{
-            kind: `runtime.${state.entityKind}`,
-            value: state.entity,
-          }]);
-        }
-        return state;
-      } catch (error) {
-        if (
-          !(error instanceof RuntimeSidecarError) ||
-          error.code !== "REVISION_CONFLICT" ||
-          attempt >= 7
-        )
-          throw error;
-      }
+    const result = await executeControlCommand(client, input);
+    const state = JSON.parse(Buffer.from(result.stateJson).toString('utf8'));
+    if (state.entity && typeof state.entityKind === 'string') {
+      await this.appendHistoryEntities(input.sessionId, [{ kind: `runtime.${state.entityKind}`, value: state.entity }]);
     }
+    return state;
   }
   async sessionPatch(
     sessionId: string,
@@ -856,17 +760,21 @@ export class RuntimeFacade {
   async listSessionProjection(): Promise<unknown[]> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    return readSessionList(client);
+    // Badge, sidebar and environment refreshes often arrive together. Read
+    // the paged index once, without retaining mutable session state afterward.
+    return this.readOnce('session-list', () => readSessionList(client));
   }
 
   async sessionSummaryAuthoritative(sessionId: string): Promise<AgentSession> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
-    const page = JSON.parse(Buffer.from(await client.sessionSummary(sessionId)).toString("utf8")) as { single?: boolean; items: AgentSession[] };
-    if (!page.single) throw new Error("Runtime sidecar must support session summary queries.");
-    const session = page.items.find((item) => item.id === sessionId);
-    if (!session) throw new RuntimeSidecarError({ type: "error", code: "PROJECTION_MISSING", message: "Session summary is not available." });
-    return session;
+    return this.readOnce(`session-summary:${sessionId}`, async () => {
+      const page = JSON.parse(Buffer.from(await client.sessionSummary(sessionId)).toString("utf8")) as { single?: boolean; items: AgentSession[] };
+      if (!page.single) throw new Error("Runtime sidecar must support session summary queries.");
+      const session = page.items.find((item) => item.id === sessionId);
+      if (!session) throw new RuntimeSidecarError({ type: "error", code: "PROJECTION_MISSING", message: "Session summary is not available." });
+      return session;
+    });
   }
   async importUiProjection(
     sessionId: string,
@@ -1821,7 +1729,11 @@ export class RuntimeFacade {
         : {}),
     };
   }
-  async historyWindowAuthoritative(sessionId: string, cursor?: string, since?: string, preview = false, before?: string): Promise<{
+  async historyWindowAuthoritative(sessionId: string, cursor?: string, since?: string, preview = false, before?: string) {
+    const key = JSON.stringify(['history-window', sessionId, cursor, since, preview, before]);
+    return this.readOnce(key, () => this.readHistoryWindow(sessionId, cursor, since, preview, before));
+  }
+  private async readHistoryWindow(sessionId: string, cursor?: string, since?: string, preview = false, before?: string): Promise<{
     messages: AgentRuntimeMessage[];
     runs: AgentRun[];
     steps: AgentRunStep[];
@@ -1854,7 +1766,7 @@ export class RuntimeFacade {
           try { return JSON.parse(before); }
           catch { throw new AgentRuntimeError('Invalid history boundary.', 'INVALID_COMMAND', 400); }
         })() } : {}), ...(preview ? {preview: true} : {}) },
-    }) as Awaited<ReturnType<RuntimeFacade['historyWindowAuthoritative']>>;
+    }) as Awaited<ReturnType<RuntimeFacade['readHistoryWindow']>>;
     for (const field of ['messages', 'runs', 'steps', 'toolCalls', 'events', 'permissions'] as const) {
       const records = await hydrateHistoryValues(client, sessionId, page[field] as unknown[]);
       if (field === 'messages') for (const record of records as AgentRuntimeMessage[]) {

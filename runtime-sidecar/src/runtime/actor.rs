@@ -476,6 +476,8 @@ impl SessionShardRouter {
     ) -> Result<ControlCommandReceipt, RuntimeError> {
         let hot = self.store()?.clone();
         let durable_session = session_id.clone();
+        let readonly = crate::storage::jsonl::hot::control::RECEIPT_FREE.contains(&operation.as_str());
+        let process_lease = operation == "lease_update";
         let receipt = spawn_store(move || {
             hot.control(
                 &session_id,
@@ -487,9 +489,14 @@ impl SessionShardRouter {
             )
         })
         .await?;
-        // A retry after a failed sync must cross the barrier as well.
-        self.make_durable(Durability::Sync, &durable_session)
-            .await?;
+        // Reads own no writes. Successful mutations, including reused receipts
+        // after an uncertain ACK, still cross the durability barrier.
+        if process_lease {
+            let hot = self.store()?.clone();
+            spawn_store(move || hot.store().flush_process_leases(&durable_session).map_err(RuntimeError::from)).await?;
+        } else if !readonly {
+            self.make_durable(Durability::Sync, &durable_session).await?;
+        }
         Ok(receipt)
     }
 

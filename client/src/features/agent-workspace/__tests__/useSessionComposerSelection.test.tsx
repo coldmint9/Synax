@@ -102,7 +102,7 @@ describe("session composer selection", () => {
     });
   });
 
-  it.each(["native", "codex", "codex-acp"] as const)(
+  it.each(["native"] as const)(
     "restores independent unsent choices after switching and remounting: %s",
     (backend) => {
       const hook = renderHook(
@@ -115,7 +115,6 @@ describe("session composer selection", () => {
         hook.result.current.setSelection({
           providerId: "chosen",
           modelId: "next-a",
-          cliModel: "cli-a",
           reasoningEffort: "xhigh",
         }),
       );
@@ -125,7 +124,6 @@ describe("session composer selection", () => {
       act(() =>
         hook.result.current.setSelection({
           modelId: "next-b",
-          cliModel: "cli-b",
           reasoningEffort: "medium",
         }),
       );
@@ -133,7 +131,6 @@ describe("session composer selection", () => {
       expect(hook.result.current).toMatchObject({
         providerId: "chosen",
         modelId: "next-a",
-        cliModel: "cli-a",
         reasoningEffort: "xhigh",
       });
       hook.unmount();
@@ -142,7 +139,6 @@ describe("session composer selection", () => {
       );
       expect(restored.result.current).toMatchObject({
         modelId: "next-a",
-        cliModel: "cli-a",
         reasoningEffort: "xhigh",
       });
     },
@@ -186,7 +182,7 @@ describe("session composer selection", () => {
     expect(useAgentDockStore.getState().composerModelId).toBe("draft");
   });
 
-  it.each(["native", "codex", "codex-acp"] as const)(
+  it.each(["native"] as const)(
     "uses the last submitted selection as the next-session default: %s",
     (backend) => {
       const hook = renderHook(() =>
@@ -196,7 +192,6 @@ describe("session composer selection", () => {
         hook.result.current.setSelection({
           providerId: backend === "native" ? "api" : backend,
           modelId: "last-model",
-          cliModel: "last-cli-model",
           reasoningEffort: "xhigh",
         }),
       );
@@ -206,7 +201,6 @@ describe("session composer selection", () => {
       expect(remembered.lastSubmittedByProject.p).toMatchObject({
         backendId: backend,
         modelId: "last-model",
-        cliModel: "last-cli-model",
         reasoningEffort: "xhigh",
       });
 
@@ -219,7 +213,6 @@ describe("session composer selection", () => {
       );
       expect(next.result.current).toMatchObject({
         modelId: "last-model",
-        cliModel: "last-cli-model",
         reasoningEffort: "xhigh",
       });
     },
@@ -229,7 +222,6 @@ describe("session composer selection", () => {
     const submitted = {
       providerId: "codex-acp",
       modelId: "gpt-last",
-      cliModel: "default",
       reasoningEffort: "high" as const,
     };
     act(() =>

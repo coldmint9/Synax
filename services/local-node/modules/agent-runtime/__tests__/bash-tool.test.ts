@@ -22,6 +22,17 @@ describe('bashTool', () => {
       expect(bashTool.inputSchema).toBeDefined();
     });
 
+    it('exposes async mode and rejects combinations that bypass the completion queue', () => {
+      const schema = bashTool.inputSchema!;
+      expect(schema.parse({ command: 'echo hi', async: true, timeoutMs: 1000 })).toMatchObject({ async: true, timeoutMs: 1000 });
+      expect(schema.safeParse({ command: 'echo hi', async: false }).success).toBe(true);
+      expect(schema.safeParse({ command: 'npm run dev', background: true }).success).toBe(true);
+      expect(schema.safeParse({ command: 'echo hi', async: true, background: true }).success).toBe(false);
+      expect(schema.safeParse({ command: 'sleep 1 &', async: true }).success).toBe(false);
+      expect(schema.safeParse({ command: 'echo hi && echo there', async: true }).success).toBe(true);
+      expect(schema.safeParse({ command: 'echo "&"', async: true }).success).toBe(true);
+    });
+
     it('advertises a timeoutMs window the caller can raise', () => {
       const schema = bashTool.inputSchema!;
       expect(schema.safeParse({ command: 'echo hi', timeoutMs: 999 }).success).toBe(false);
@@ -31,6 +42,12 @@ describe('bashTool', () => {
   });
 
   describe('execute - validation', () => {
+    it('does not silently run async commands synchronously outside a managed run', () => {
+      expect(() => bashTool.execute({ sessionId: 's1', runId: null, stepId: null,
+        toolCallId: 'async', toolId: 'bash', category: 'shell', mutability: 'read',
+        args: { command: 'echo hi', async: true },
+      })).toThrow('active managed command execution');
+    });
     it('rejects missing command', () => {
       expect(() =>
         bashTool.execute({
@@ -224,7 +241,7 @@ describe('bashTool', () => {
     });
 
     it('runs independent tool calls concurrently', async () => {
-      const startedAt = Date.now();
+      const command = 'node -e "console.log(Date.now()); setTimeout(() => console.log(Date.now()), 1000)"';
       const runs = await Promise.all([
         bashTool.execute({
           sessionId: 's1',
@@ -234,7 +251,7 @@ describe('bashTool', () => {
           toolId: 'bash',
           category: 'shell',
           mutability: 'read',
-          args: { command: 'sleep 1' },
+          args: { command },
         }),
         bashTool.execute({
           sessionId: 's1',
@@ -244,14 +261,20 @@ describe('bashTool', () => {
           toolId: 'bash',
           category: 'shell',
           mutability: 'read',
-          args: { command: 'sleep 1' },
+          args: { command },
         }),
       ]);
-      // Two 1s commands must overlap (~1s total) instead of serializing (~2s).
-      expect(Date.now() - startedAt).toBeLessThan(1900);
       for (const run of runs) {
         expect((run.result as Record<string, unknown>).exitCode).toBe(0);
       }
+      // Compare actual child lifetimes: process setup and guardian cleanup may
+      // be slow on a loaded host, but serial execution can never overlap.
+      const intervals = runs.map(run => (run.result as { stdout: string }).stdout.trim().split('\n').map(Number));
+      for (const interval of intervals) {
+        expect(interval).toHaveLength(2);
+        expect(interval.every(Number.isFinite)).toBe(true);
+      }
+      expect(Math.max(...intervals.map(([start]) => start))).toBeLessThan(Math.min(...intervals.map(([, end]) => end)));
     });
   });
 
@@ -318,7 +341,7 @@ describe('bashTool', () => {
   });
 
   describe('execute - timeout handling', () => {
-    // The window defaults to 30s (EXEC_TIMEOUT_MS); tests pass a short window
+    // The window defaults to 600s (EXEC_TIMEOUT_MS); tests pass a short window
     // explicitly instead of waiting for the default.
     it('has timeout configured', async () => {
       // Verify the tool can execute normally; timeout is a safety net

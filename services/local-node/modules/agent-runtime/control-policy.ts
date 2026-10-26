@@ -110,7 +110,7 @@ export function controlToolError(
 export function validateControlBatch(
   calls: ReadonlyArray<{ toolId: string }>,
 ): string | null {
-  return calls.length > 1 && calls.some((c) => CONTROL_TOOLS.has(c.toolId))
-    ? "Control tools (human.ask, plan.propose, plan.execute, mode.switch, goal.finish, work.checkpoint, design.implement) must be the only call in a step. No tools in this batch were executed."
+  return calls.length > 1 && calls.some((c) => CONTROL_TOOLS.has(c.toolId) || c.toolId === "command.manage")
+    ? "Control tools (human.ask, plan.propose, plan.execute, mode.switch, goal.finish, work.checkpoint, design.implement, command.manage) must be the only call in a step. No tools in this batch were executed."
     : null;
 }

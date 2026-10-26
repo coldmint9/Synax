@@ -4,6 +4,7 @@ import path from 'node:path';
 import {createInterface} from 'node:readline';
 import {resolveLogDir} from './log-file-store.js';
 import {formatLocalDay,formatLogTimestamp,LOG_RETENTION_DAYS,retentionCutoffDay} from './log-retention.js';
+import { diagnosticLogWriter, flushDiagnosticLogs } from './buffered-log-writer.js';
 export type ApiLogLevel='trace'|'debug'|'info'|'warn'|'error'|'fatal';
 export interface PersistApiLogInput {level:ApiLogLevel;message:string;context:Record<string,unknown>;loggedAt?:string}
 export interface ApiLogEntry {id:number;day:string;loggedAt:string;level:ApiLogLevel;message:string;context:Record<string,unknown>;method:string|null;path:string|null;status:number|null;durationMs:number|null}
@@ -14,7 +15,7 @@ export function persistApiLog(input:PersistApiLogInput):void {
   const loggedAt=input.loggedAt ?? formatLogTimestamp(),day=formatLocalDay(new Date(loggedAt));
   const context=input.context;const number=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)?v:null;
   const row:ApiLogEntry={...input,context,loggedAt,day,id:++sequence,method:typeof context.method==='string'?context.method:null,path:typeof context.path==='string'?context.path:null,status:number(context.status),durationMs:number(context.ms??context.durationMs)};
-  try{if(day!==lastPrune){pruneOldApiLogs();lastPrune=day;}fs.appendFileSync(file(day),JSON.stringify(row)+'\n',{mode:0o600});}catch(error){process.stderr.write(`Unable to persist diagnostic log: ${String(error)}\n`);}
+  try{const today=formatLocalDay(new Date());if(today!==lastPrune){pruneOldApiLogs();lastPrune=today;}diagnosticLogWriter.write(file(day),JSON.stringify(row)+'\n');}catch(error){process.stderr.write(`Unable to persist diagnostic log: ${String(error)}\n`);}
 }
 export function pruneOldApiLogs(days=LOG_RETENTION_DAYS):void {
   const cutoff=retentionCutoffDay(days);
@@ -22,6 +23,7 @@ export function pruneOldApiLogs(days=LOG_RETENTION_DAYS):void {
 }
 async function* entries(day?:string):AsyncGenerator<ApiLogEntry> {
   if(day && !/^\d{4}-\d{2}-\d{2}$/.test(day))throw new Error('Invalid log day');
+  await flushDiagnosticLogs();
   const names=(await fsp.readdir(resolveLogDir())).filter(name=>/^events-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name) && (!day || name===`events-${day}.jsonl`)).sort();
   for(const name of names){const stream=fs.createReadStream(path.join(resolveLogDir(),name));const lines=createInterface({input:stream,crlfDelay:Infinity});try{for await(const line of lines){try{yield JSON.parse(line) as ApiLogEntry;}catch{/* incomplete crash tail */}}}finally{lines.close();stream.destroy();}}
 }
@@ -38,5 +40,5 @@ export async function listApiLogDailyStats(days=30):Promise<ApiLogDailyStat[]> {
   }
   return [...stats.values()].sort((a,b)=>b.day.localeCompare(a.day)).slice(0,Math.min(LOG_RETENTION_DAYS,Math.max(1,days)));
 }
-export function clearApiLogStoreForTests():void {for(const name of fs.readdirSync(resolveLogDir()))if(/^events-.*\.jsonl$/.test(name))fs.unlinkSync(path.join(resolveLogDir(),name));sequence=0;}
-export function closeApiLogStore():void {lastPrune='';}
+export async function clearApiLogStoreForTests():Promise<void> {await flushDiagnosticLogs();for(const name of fs.readdirSync(resolveLogDir()))if(/^events-.*\.jsonl$/.test(name))fs.unlinkSync(path.join(resolveLogDir(),name));sequence=0;}
+export async function closeApiLogStore():Promise<void> {await flushDiagnosticLogs();lastPrune='';}

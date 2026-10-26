@@ -49,9 +49,9 @@ export function toolResourcePolicy(tool: RegisteredTool, args: unknown): { resou
   const input = args as { timeoutMs?: number; timeout?: number } | null;
   if (["rg", "grep.search", "file.glob"].includes(tool.id)) return { resource: "search", timeoutMs: Math.min(120_000, Math.max(100, input?.timeoutMs ?? 30_000)) + 5_000 };
   // Compositions and parent waits must not retain a slot needed by their children.
-  if (tool.mutability === "task" || tool.category === "task" || ["code", "code.run"].includes(tool.id) || tool.id.startsWith("subagent.")) return null;
+  if (tool.mutability === "task" || tool.category === "task" || ["code", "code.run", "command.manage"].includes(tool.id) || tool.id.startsWith("subagent.")) return null;
   if (tool.id === "bash" || tool.id === "verification.run") return { resource: "command",
-    timeoutMs: resolveExecTimeoutMs(input?.timeoutMs, tool.id === "verification.run" ? 120_000 : undefined) + COMMAND_SETUP_AND_CLEANUP_MS };
+    timeoutMs: resolveExecTimeoutMs(input?.timeoutMs) + COMMAND_SETUP_AND_CLEANUP_MS };
   if (tool.id === "file.generate") return { resource: "command", timeoutMs: generationTimeout(input?.timeoutMs) + COMMAND_SETUP_AND_CLEANUP_MS };
   if (tool.category === "shell") return { resource: "command", timeoutMs: Math.min(3_600_000, Math.max(1_000, input?.timeoutMs ?? 900_000)) };
   return { resource: tool.category === "mcp" || tool.category === "external_execution" ? "command" : "io", timeoutMs: tool.executionTimeoutMs ?? 300_000 };

@@ -8,23 +8,6 @@ import userEvent from "@testing-library/user-event";
 afterEach(cleanup);
 
 describe("ComposerPermissionPicker", () => {
-  it("does not present Synax tiers as if they controlled native CLI execution", () => {
-    const change = vi.fn();
-    render(
-      <ComposerPermissionPicker
-        backendId="codex"
-        value="boundary"
-        onChange={change}
-      />,
-    );
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveAttribute(
-      "data-native-policy",
-      "true",
-    );
-    expect(change).not.toHaveBeenCalled();
-  });
-
   it("exposes only the three new approval modes with explicit selection", async () => {
     const onChange = vi.fn();
     const view = render(

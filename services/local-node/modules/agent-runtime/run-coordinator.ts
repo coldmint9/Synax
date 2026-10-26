@@ -67,12 +67,8 @@ const defaultDriver: Driver = {
     const results = await Promise.allSettled(
       agentRuntimeStore
         .listSessionTree(id)
-        .map(async (session) =>
-          getBackendAdapter(resolveSessionBackend(session.id).id).interrupt(
-            session.id,
-            reason,
-          ),
-        ),
+        // Lifecycle cleanup also applies to archived/retired bindings.
+        .map(session => getBackendAdapter("native").interrupt(session.id, reason)),
     );
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;

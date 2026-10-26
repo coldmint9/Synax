@@ -4,7 +4,7 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 import {
   SYNAX_PROFILE_ID,
-  readSessionBackendId,
+  isUnsupportedSessionBackend,
   readSynaxPermissionTier,
 } from "./synaxSessionTypes";
 
@@ -13,7 +13,8 @@ export function sideChatSessionRequest(
   source: AgentSession,
   title: string,
 ): CreateSessionRequest {
-  const backendId = readSessionBackendId(source);
+  if (isUnsupportedSessionBackend(source))
+    throw new Error("This execution engine has been removed. Start a new Synax session.");
   const backend = source.sessionMetadata?.backend as
     | { workDir?: string | null; model?: string | null; workspaceLocation?: unknown }
     | undefined;
@@ -21,17 +22,15 @@ export function sideChatSessionRequest(
     projectId: source.projectId,
     nodeId: source.nodeId,
     profileId: SYNAX_PROFILE_ID,
-    backendId,
+    backendId: "native",
     model: source.model ?? backend?.model ?? undefined,
     workDir: backend?.workDir ?? undefined,
     prompt: title,
     reasoningEffort: source.reasoningEffort ?? undefined,
-    ...(backendId === "native" ? {
-      permissionTier: readSynaxPermissionTier(source.sessionMetadata),
-      permissionOverrides: source.sessionMetadata?.permissionOverrides as CreateSessionRequest["permissionOverrides"],
-      skillIds: source.skillIds,
-      mcpServerIds: source.mcpServerIds,
-    } : {}),
+    permissionTier: readSynaxPermissionTier(source.sessionMetadata),
+    permissionOverrides: source.sessionMetadata?.permissionOverrides as CreateSessionRequest["permissionOverrides"],
+    skillIds: source.skillIds,
+    mcpServerIds: source.mcpServerIds,
     sessionMetadata: {
       mode: "chat",
       source: "session-page",

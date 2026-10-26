@@ -26,6 +26,15 @@ describe("layered prompt composition", () => {
     expect(prompt).not.toContain("verification.run");
     expect(prompt).not.toContain("Allowed capabilities:");
   });
+  it("injects detected Maven build guidance into the system prompt", () => {
+    const prompt = buildLoopSystemPrompt({
+      ...base,
+      projectBuildInstructionsSection:
+        "## Maven build optimization\nPrefer the Maven Wrapper.",
+    });
+    expect(prompt).toContain("## Maven build optimization");
+    expect(prompt).toContain("Prefer the Maven Wrapper.");
+  });
   it("keeps user output locale concise without prescribing internal reasoning language", () => {
     const prompt = buildLoopSystemPrompt({ ...base, locale: "zh" });
     expect(prompt).toContain("Chinese (Simplified)");

@@ -188,7 +188,6 @@ const globalConfigPatchSchema = z
     providers: z.array(providerDefSchema).optional(),
     defaultProviderId: z.string().min(1).refine(isApiProviderId, "Only API providers are supported").optional(),
     defaultApiProviderId: z.string().min(1).optional(),
-    enabledAcpProviderIds: z.array(z.string()).max(0).optional(),
     providerConnections: z
       .record(z.string(), providerConnectionSchema)
       .optional(),

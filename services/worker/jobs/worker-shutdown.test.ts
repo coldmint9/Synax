@@ -3,6 +3,19 @@ import { createWorkerShutdown } from './worker-shutdown.js';
 
 afterEach(() => vi.useRealTimers());
 describe('bounded worker shutdown', () => {
+  it('drains diagnostic logs after cleanup and retains the shutdown deadline', async () => {
+    vi.useFakeTimers();
+    const exit = vi.fn(), report = vi.fn();
+    const flush = vi.fn(() => new Promise<void>(() => {}));
+    const shutdown = createWorkerShutdown({ abort() {}, cleanup: () => [Promise.reject(Error('cleanup failed'))], exit, report, flush });
+    shutdown('stop');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(report).toHaveBeenCalledOnce();
+    expect(flush).toHaveBeenCalledOnce();
+    expect(exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1);
+  });
   it('aborts immediately, starts independent cleanup, and exits once', async () => {
     vi.useFakeTimers();
     const exit = vi.fn(), abort = vi.fn(), report = vi.fn();

@@ -13,7 +13,7 @@ const output = path.resolve('out/desktop-path-smoke.log');
 const executablePath = process.argv[2] ?? path.resolve(
   `out/Synax-${process.platform}-${process.arch}/${process.platform === 'darwin' ? 'Synax.app/Contents/MacOS/Synax' : process.platform === 'win32' ? 'Synax.exe' : 'Synax'}`,
 );
-const env = { ...process.env, DATA_ROOT: path.join(temp, 'data') } as Record<string, string>;
+const env = { ...process.env, OPENAI_API_KEY: 'fixture-not-used', DATA_ROOT: path.join(temp, 'data') } as Record<string, string>;
 if (process.platform !== 'win32') env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 delete env.ELECTRON_RUN_AS_NODE;
 delete env.ELECTRON_SKIP_SIDECAR;
@@ -76,7 +76,7 @@ try {
 
   const project = await request('/api/projects/workspaces', { name: 'Path smoke', roots: [{ localPath: repository }] }, 201);
   const created = await request('/api/agent-runtime/sessions', {
-    projectId: project.project.id, profileId: 'synax', backendId: 'codex',
+    projectId: project.project.id, profileId: 'synax', backendId: 'native',
     prompt: 'Path smoke only; do not execute a model.', workDir: worktree,
   }, 201);
   const environment = await request(`/api/agent-runtime/sessions/${created.session.id}/environment`);

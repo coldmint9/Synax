@@ -48,6 +48,14 @@ export async function hydrateHistoryMessageContent(
           cursor,
           revision,
         );
+        if (page.revision !== revision) {
+          throw Object.assign(new Error("History changed while loading message content."), {
+            code: "HISTORY_STALE",
+          });
+        }
+        if (page.next != null && (!Number.isSafeInteger(page.next) || page.next <= cursor)) {
+          throw new Error("History content cursor did not advance.");
+        }
         content += page.text;
         cursor = page.next ?? -1;
       } while (cursor >= 0);

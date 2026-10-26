@@ -26,6 +26,7 @@ describe("tool mount policy", () => {
     for (const tool of [
       { id: 'agent.execute', category: 'task' }, { id: 'agent.discover', category: 'read' },
       { id: 'bash', category: 'shell' }, { id: 'file.write', category: 'write' },
+      { id: 'command.manage', category: 'context' },
       { id: 'unbound.mcp', category: 'mcp' }, { id: 'skill.load', category: 'skill' },
       { id: 'work.checkpoint', category: 'task' }, { id: 'presentation.select', category: 'task' },
     ]) {

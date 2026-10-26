@@ -88,10 +88,10 @@ it('excludes retired providers and connections when normalizing persisted settin
   const { updateGlobalConfig, getGlobalConfigForRuntime } = await import('../../../infrastructure/runtime/config/config-store.js');
   updateGlobalConfig({ providers: [{ id: 'codex-acp', label: 'Old', kind: 'acp', status: 'live', caps: { canFollowUp: true, canCancel: true }, models: [] }],
     defaultProviderId: 'codex-acp', enabledAcpProviderIds: ['codex-acp'],
-    providerConnections: { 'codex-acp': { providerId: 'codex-acp', extra: { kind: 'acp' } } } }, 'migration-test');
+    providerConnections: { 'codex-acp': { providerId: 'codex-acp', extra: { kind: 'acp' } } } } as unknown as Parameters<typeof updateGlobalConfig>[0], 'migration-test');
   const current = getGlobalConfigForRuntime();
   expect(current.providers.every(provider => provider.kind === 'api')).toBe(true);
   expect(current.providerConnections).not.toHaveProperty('codex-acp');
   expect(current.defaultProviderId).toBe('openai');
-  expect(current.enabledAcpProviderIds).toEqual([]);
+  expect(current).not.toHaveProperty('enabledAcpProviderIds');
 });

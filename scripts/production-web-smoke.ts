@@ -31,7 +31,7 @@ try {
   await writeFile(path.join(repo, 'hello.txt'), 'isolated acceptance fixture\n');
   await mkdir(data);
   await writeFile(path.join(data, 'projects.json'), JSON.stringify({ items: [{ id: 'perf-project', name: 'Performance acceptance', status: 'healthy', environment: 'development', importState: 'ready', source: { kind: 'localPath', localPath: repo }, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] }));
-  child = spawn(process.execPath, ['--import', 'tsx', 'scripts/start-web.ts'], { cwd: process.cwd(), env: { ...process.env, DATA_ROOT: data, WEB_PORT: String(port), WEB_TLS_CERT: certFile, WEB_TLS_KEY: keyFile, SYNAX_API_ORIGIN: '', LOG_LEVEL: 'error' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(process.execPath, ['--import', 'tsx', 'scripts/start-web.ts'], { cwd: process.cwd(), env: { ...process.env, OPENAI_API_KEY: 'fixture-not-used', DATA_ROOT: data, WEB_PORT: String(port), WEB_TLS_CERT: certFile, WEB_TLS_KEY: keyFile, SYNAX_API_ORIGIN: '', LOG_LEVEL: 'error' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout!.on('data', b => { logs += b }); child.stderr!.on('data', b => { logs += b });
   await waitFor(() => { if (child!.exitCode !== null) throw new Error(`start:web exited ${child!.exitCode}\n${logs}`); return logs.includes('[start:web] https://'); }, 'production readiness', 120_000);
   const origin = `https://localhost:${port}`;
@@ -52,7 +52,7 @@ try {
   const cookie = (await context.cookies()).find(cookie => cookie.name.startsWith('synax_runtime_'))!;
   assert(cookie.httpOnly && cookie.secure && cookie.sameSite === 'Strict');
   const session = await first.evaluate(async () => {
-    const response = await fetch('/api/agent-runtime/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'perf-project', profileId: 'synax', backendId: 'codex', prompt: 'Performance acceptance; do not execute' }) });
+    const response = await fetch('/api/agent-runtime/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'perf-project', profileId: 'synax', backendId: 'native', prompt: 'Performance acceptance; do not execute' }) });
     const body = await response.json(); if (!response.ok) throw new Error(JSON.stringify(body)); return body.session;
   });
   const url = `${origin}/projects/perf-project/sessions?session=${encodeURIComponent(session.id)}`;

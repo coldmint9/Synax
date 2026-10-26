@@ -17,9 +17,6 @@ import {
   nativeInputCapabilities,
   resolveMediaMessages,
 } from "../media-capabilities.js";
-import {
-  codexMediaInput,
-} from "../media-backend-input.js";
 import { importToolContent } from "../media-tool-content.js";
 import { mediaReadTool } from "../tools/media-read.js";
 import {
@@ -227,12 +224,6 @@ describe("document inputs independent of provider capabilities", () => {
     );
     expect(resolved.filter((p) => p.type === "image")).toHaveLength(1);
     expect(JSON.stringify(resolved)).toContain("超过本次图片数量或体积限制");
-    const codex = await codexMediaInput(
-      { contentParts: parts.slice(0, 1) },
-      "",
-      capability,
-    );
-    expect(codex.some((p: any) => p.type === "localImage")).toBe(true);
   });
   it.each([
     "text/javascript",
@@ -370,8 +361,6 @@ describe("document inputs independent of provider capabilities", () => {
       expect(JSON.stringify(messages)).toContain(`sample.${kind}`);
       expect(JSON.stringify(messages)).not.toContain('"type":"file"');
       expect(JSON.stringify(messages)).not.toContain("base64");
-      const codex = await codexMediaInput({ contentParts: parts }, "");
-      expect(codex[0]).toMatchObject({ type: "text" });
       await bindAssets(session.id, parts);
       const read = await mediaReadTool.execute({
         sessionId: session.id,

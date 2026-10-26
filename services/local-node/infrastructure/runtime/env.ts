@@ -93,14 +93,6 @@ export function agentSessionsRunInProcess(): boolean {
   return process.env.SYNAX_AGENT_SESSION_CHILD === "1";
 }
 
-/** Max concurrent long-lived ACP (local agent runtime) session connections. */
-export const MAX_ACP_SESSIONS = Number(env("MAX_ACP_SESSIONS", "8"));
-
-/** Idle timeout before recycling an ACP session child process (ms). Default 30 min. */
-export const ACP_SESSION_IDLE_TIMEOUT_MS = Number(
-  env("ACP_SESSION_IDLE_TIMEOUT_MS", "1800000"),
-);
-
 /** Agent session child ready handshake timeout (ms). */
 export const AGENT_SESSION_CHILD_READY_TIMEOUT_MS = Number(
   env("AGENT_SESSION_CHILD_READY_TIMEOUT_MS", "30000"),

@@ -113,6 +113,16 @@ impl ListIndex {
             .cloned()
     }
 
+    /// Process bookkeeping can change recovery eligibility without changing
+    /// any other list field. Update this scalar in place, not the large row.
+    pub fn set_recovery_required(&mut self, id: &str, required: bool) {
+        if let Some(key) = self.by_id.get(id)
+            && let Some(row) = self.rows.get_mut(key).and_then(Value::as_object_mut)
+        {
+            row.insert("runtimeRecoveryRequired".into(), Value::Bool(required));
+        }
+    }
+
     /// The cursor encoding the wire uses: JSON of the last returned key.
     pub fn encode_cursor(key: &ListKey) -> String {
         serde_json::to_string(key).unwrap_or_default()

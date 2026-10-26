@@ -14,7 +14,6 @@ import {
 import {
   bindSessionWorkDir,
   resolveSessionWorkDir,
-  tryResolveSessionWorkspaceLocation,
 } from "./tools/workspace.js";
 import { interactionService } from "./interaction-service.js";
 import { agentRuntimeStore } from "./session-store.js";
@@ -111,16 +110,6 @@ async function prepareAuthoritativeRuntimeRun(
     throw new AgentRuntimeError(
       "This session belongs to an embedded job host. Use that job’s controls.",
       "EMBEDDED_HOST_REQUIRED",
-      409,
-    );
-  if (
-    tryResolveSessionWorkspaceLocation(sessionId, preparedSession.projectId)?.kind ===
-      "wsl" &&
-    preparedBinding.id !== "native"
-  )
-    throw new AgentRuntimeError(
-      "WSL2 projects currently support only the Synax native backend.",
-      "WSL_BACKEND_UNSUPPORTED",
       409,
     );
   validateBackendTurnInput(preparedBinding.id, input);

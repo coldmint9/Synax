@@ -13,6 +13,8 @@ pub use state::Tx;
 pub mod sync;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod process_lease_tests;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
@@ -285,6 +287,23 @@ impl SessionHandle {
             first_retained: actor.state.retained_from,
         }));
     }
+
+    /// A process lease update changes no UI data. Reuse the published header,
+    /// projection and event window instead of cloning them or invalidating UI caches.
+    pub fn publish_control(&self, actor: &SessionActor) {
+        let previous = self.read();
+        self.lake.store(Arc::new(Lake {
+            state: actor.state.clone(),
+            header: previous.header.clone(),
+            projection: previous.projection.clone(),
+            projection_ready: previous.projection_ready,
+            queue: previous.queue.clone(),
+            control: Arc::new(actor.control.clone()),
+            ui_gen: previous.ui_gen,
+            events: previous.events.clone(),
+            first_retained: previous.first_retained,
+        }));
+    }
 }
 
 /// Append one event to the writer's window, dropping the oldest past the cap.
@@ -340,21 +359,7 @@ pub fn list_row(actor: &SessionActor) -> ListRecord {
         header.insert("pendingPermissionCount".into(), serde_json::json!(pending));
         header.insert(
             "runtimeRecoveryRequired".into(),
-            serde_json::json!(
-                actor.state.active_run_id.is_some()
-                    || actor.header["activeRunId"].is_string()
-                    || matches!(
-                        actor.header["status"].as_str(),
-                        Some("running" | "stopping" | "queued")
-                    )
-                    || actor.control.runtime_control.is_some()
-                    || !actor.control.process_leases.is_empty()
-                    || actor
-                        .control
-                        .execution_lease
-                        .as_ref()
-                        .is_some_and(|lease| !lease.closed)
-            ),
+            serde_json::json!(recovery_required(actor)),
         );
     }
     ListRecord {
@@ -363,6 +368,15 @@ pub fn list_row(actor: &SessionActor) -> ListRecord {
         h: header,
         del: false,
     }
+}
+
+pub fn recovery_required(actor: &SessionActor) -> bool {
+    actor.state.active_run_id.is_some()
+        || actor.header["activeRunId"].is_string()
+        || matches!(actor.header["status"].as_str(), Some("running" | "stopping" | "queued"))
+        || actor.control.runtime_control.is_some()
+        || !actor.control.process_leases.is_empty()
+        || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
 }
 
 fn updated_at(actor: &SessionActor) -> String {

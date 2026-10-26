@@ -30,7 +30,6 @@ import {
 import { backendIdSchema } from "../../modules/agent-runtime/backends/backend-contracts.js";
 import {
   describeBackends,
-  getBackendAdapter,
 } from "../../modules/agent-runtime/backends/backend-registry.js";
 import type {
   AgentRun,
@@ -67,7 +66,6 @@ import {
   optimizeInput,
 } from "../../modules/agent-runtime/input-optimization.js";
 import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
-import { interactionService } from "../../modules/agent-runtime/interaction-service.js";
 import { replyAndContinueInteraction } from "../../modules/agent-runtime/interaction-reply.js";
 import {
   draftInputCapabilities,
@@ -465,7 +463,7 @@ async function archiveSessionAfterShutdown(
     .listSessionTree(sessionId)
     .map((session) => session.id);
   // Archiving is a lifecycle operation, not just a visibility mutation. Stop the
-  // active runtime, ACP sessions, and every owned background process first;
+  // active runtime and every owned background process first;
   // then mark the whole subtree stopped before hiding it. The shutdown pipeline
   // runs inside a quiesce scope: its intermediate events (stopping flags,
   // cancelled steps, interrupted runs) are dropped at the bus boundary and
@@ -739,21 +737,6 @@ agentRuntimeRoutes.get("/protocol", (c) =>
 agentRuntimeRoutes.get("/backends", (c) =>
   c.json({ protocol: RUNTIME_PROTOCOL_VERSION, items: describeBackends() }),
 );
-agentRuntimeRoutes.get("/backends/:id/models", async (c) => {
-  const id = backendIdSchema.safeParse(c.req.param("id"));
-  if (!id.success) return validationError(c, id.error);
-  try {
-    const backend = getBackendAdapter(id.data);
-    return backend.models
-      ? c.json(await backend.models())
-      : c.json(
-          { error: "Use the provider model catalog for this backend." },
-          400,
-        );
-  } catch (error) {
-    return runtimeError(c, error);
-  }
-});
 agentRuntimeRoutes.get("/projects/:projectId/references", async (c) => {
   const parsed = z
     .object({
@@ -829,23 +812,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
           ? parsed.data.projectId
           : `${parsed.data.projectId}/${root.id}`;
     }
-    if (
-      projectLocation?.kind === "wsl" &&
-      parsed.data.backendId &&
-      parsed.data.backendId !== "native"
-    ) {
-      throw new AgentRuntimeError(
-        "WSL2 projects currently support only the Synax native backend.",
-        "WSL_BACKEND_UNSUPPORTED",
-        409,
-      );
-    }
     if (parsed.data.mediaGeneration) {
-      if (parsed.data.backendId && parsed.data.backendId !== "native")
-        return c.json(
-          { error: "Media generation requires the native backend." },
-          400,
-        );
       const config = getGlobalConfigForRuntime();
       const { providerId, modelId, capability } = parsed.data.mediaGeneration;
       const mediaModel = findMediaModel(config, providerId, modelId);
@@ -866,7 +833,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
           { error: "Media provider API key is not configured." },
           422,
         );
-    } else if (!parsed.data.backendId || parsed.data.backendId === "native") {
+    } else {
       assertLlmProviderConfigured(parsed.data.projectId);
     }
     let createInput = parsed.data;
@@ -1527,8 +1494,8 @@ const submitRunSchema = streamTurnRequestSchema.extend({
 });
 function requireSessionBackendConfig(sessionId: string): void {
   const session = agentSessionRuntime.get(sessionId);
-  if (resolveSessionBackend(sessionId).id === "native")
-    assertLlmProviderConfigured(session.projectId);
+  validateBackendTurnInput(resolveSessionBackend(sessionId).id);
+  assertLlmProviderConfigured(session.projectId);
 }
 function observeRunResponse(
   c: Context,
@@ -2600,24 +2567,11 @@ agentRuntimeRoutes.post(
       }
       if (runCoordinator.isStopping(sessionId))
         return c.json({ error: "Execution is stopping." }, 409);
+      validateBackendTurnInput(resolveSessionBackend(sessionId).id);
       if (previous?.runId && session.activeRunId !== previous.runId) {
         return c.json(
           {
             error: "This permission no longer belongs to the active execution.",
-            code: "PERMISSION_EXPIRED",
-          },
-          409,
-        );
-      }
-      const backendId = resolveSessionBackend(sessionId).id;
-      const backend = getBackendAdapter(backendId);
-      if (
-        backendId !== "native" &&
-        !backend.hasPendingPermission?.(sessionId, c.req.param("permissionId"))
-      ) {
-        return c.json(
-          {
-            error: "The native permission request has expired.",
             code: "PERMISSION_EXPIRED",
           },
           409,
@@ -2643,10 +2597,6 @@ agentRuntimeRoutes.post(
             503,
           );
         decision = updated as PermissionDecision;
-      }
-      if (backendId !== "native") {
-        backend.replyPermission?.(sessionId, decision.id, parsed.data.reply);
-        return c.json(decision);
       }
       if (parsed.data.reply === "always" && typeof decision.metadata?.toolId === "string")
         grantProjectTool(sessionId, decision.metadata.toolId, decision.id);
@@ -2881,22 +2831,9 @@ agentRuntimeRoutes.post(
           { error: "Execution is stopping or requires recovery." },
           409,
         );
-      const backendId = resolveSessionBackend(sessionId).id,
-        backend = getBackendAdapter(backendId);
       const id = c.req.param("interactionId");
-      const previous = interactionService
-        .list(sessionId)
-        .find((item) => item.id === id);
-      if (
-        backendId !== "native" &&
-        previous?.status === "pending" &&
-        !backend.hasPendingInteraction?.(sessionId, id)
-      )
-        return c.json({ error: "Native input request expired." }, 409);
-      const interaction = backendId === "native"
-        ? await replyAndContinueInteraction(sessionId, id, parsed.data)
-        : await interactionService.replyAuthoritative(sessionId, id, parsed.data);
-      if (backendId !== "native") backend.replyInteraction?.(sessionId, id);
+      validateBackendTurnInput(resolveSessionBackend(sessionId).id);
+      const interaction = await replyAndContinueInteraction(sessionId, id, parsed.data);
       return c.json({ interaction });
     } catch (error) {
       return runtimeError(c, error);

@@ -82,8 +82,8 @@ export function InputOptimizationSettings({
       </FormRow>
       <p className="px-4 pb-3 text-xs leading-relaxed text-muted-foreground">
         {zh
-          ? "用于输入框的星星按钮，仅整理输入，不会发送或执行任务。CLI／ACP 会话请在此指定 API 模型。"
-          : "Used by the sparkle button to clarify drafts without sending or executing them. For CLI / ACP sessions, select an API model here."}
+          ? "用于输入框的星星按钮，仅整理输入，不会发送或执行任务。留空时使用输入框当前选择的模型。"
+          : "Used by the sparkle button to clarify drafts without sending or executing them. Leave empty to use the model selected in the composer."}
       </p>
       {!apiModels.length && (
         <p className="px-4 pb-3 text-xs text-muted-foreground">

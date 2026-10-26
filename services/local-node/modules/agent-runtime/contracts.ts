@@ -593,6 +593,8 @@ export type StreamTurnRequest = z.infer<typeof streamTurnRequestSchema> & {
 };
 
 export interface ToolExecutionInput {
+  /** Internal command lifecycle hook, fired after validation/setup and before spawn. */
+  onCommandStarted?: () => void;
   onProgress?: (progress: { files?: number; bytes?: number; matches?: number }) => void;
   abortSignal?: AbortSignal;
   sessionId: string;

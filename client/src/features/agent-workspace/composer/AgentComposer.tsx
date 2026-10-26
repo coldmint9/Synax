@@ -631,7 +631,6 @@ export function AgentComposer({
 
         <ComposerPermissionPicker
           sessionId={sessionId}
-          backendId={backendId}
           value={permissionTier}
           onChange={onPermissionTierChange}
         />
@@ -801,7 +800,6 @@ export function AgentComposer({
           />
           <ComposerPermissionPicker
             sessionId={sessionId}
-            backendId={backendId}
             value={permissionTier}
             onChange={onPermissionTierChange}
           />

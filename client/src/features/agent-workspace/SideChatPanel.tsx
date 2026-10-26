@@ -173,7 +173,6 @@ export function SideChatPanel({
             key={currentSession.id}
             sessionId={currentSession.id}
             showHeader={false}
-            showTaskDescription={false}
           />
         ) : (
           <div className="side-chat-empty">

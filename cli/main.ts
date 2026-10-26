@@ -34,7 +34,7 @@ import type {
 import { HELP, parseArgs, type CliOptions, type OutputMode } from "./args.js";
 import { ensureRuntime } from "./runtime-host.js";
 
-export const CLI_VERSION = "2.19.1";
+export const CLI_VERSION = "2.21.0";
 export const EXIT = {
   completed: 0,
   failed: 1,
@@ -196,12 +196,12 @@ function sessionBody(
   projectId: string,
   prompt: string,
 ): CreateSessionRequest {
+  const backendId = options.backend ?? process.env.SYNAX_BACKEND_ID ?? "native";
+  if (backendId !== "native") throw new Error("Only the native Synax engine is supported.");
   return {
     projectId,
     profileId: options.profile ?? process.env.SYNAX_PROFILE_ID ?? "synax",
-    backendId: (options.backend ??
-      process.env.SYNAX_BACKEND_ID ??
-      "native") as CreateSessionRequest["backendId"],
+    backendId,
     model: options.model,
     workDir: options.workDir ?? process.env.SYNAX_WORK_DIR ?? process.cwd(),
     prompt: prompt || "Interactive Synax session",
@@ -1002,17 +1002,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           result.items as unknown as Array<Record<string, unknown>>,
         );
       else writeJson(io.out, result);
-      return EXIT.completed;
-    }
-    case "models": {
-      const result = await client.listBackendModels(
-        pathArg(options, 0, "models"),
-      );
-      options.output === "human"
-        ? result.models.forEach((model) =>
-            io.out.write(`${model.id.padEnd(28)} ${model.label}\n`),
-          )
-        : writeJson(io.out, result);
       return EXIT.completed;
     }
     case "projects": {

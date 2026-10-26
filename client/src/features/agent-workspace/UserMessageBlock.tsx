@@ -35,6 +35,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
   const save = async () => {
     if (
       !history ||
+      history.canEditMessages === false ||
       !messageId ||
       saving ||
       !draft.trim()
@@ -51,7 +52,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
     history?.editReason(messageId) ?? (!history ? (zh ? "会话尚未加载" : "Conversation is not loaded") : null);
   return (
     <div className="flex justify-end">
-      {editing ? (
+      {editing && history?.canEditMessages !== false ? (
         <div className="message-inline-editor">
           <textarea
             ref={textarea}
@@ -114,7 +115,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
             text={content}
             disabledReason={disabledReason}
             busy={history?.busy}
-            onEdit={() => {
+            onEdit={history?.canEditMessages === false ? undefined : () => {
               setDraft(content);
               setEditing(true);
             }}

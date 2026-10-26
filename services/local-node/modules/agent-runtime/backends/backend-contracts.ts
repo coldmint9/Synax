@@ -1,4 +1,3 @@
-import type { InputModality } from "../content-parts.js";
 import { z } from "zod/v4";
 import type { AgentRunStreamChunk, StreamTurnRequest } from "../contracts.js";
 import type { AgentSessionStreamMode } from "../../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -11,14 +10,13 @@ const workspaceLocationSchema = z.discriminatedUnion("kind", [
     path: z.string(),
   }),
 ]);
-export const backendIdSchema = z.enum([
-  "native",
-  "codex",
-]);
+/** Active execution engines. External CLI/ACP engines are retired. */
+export const backendIdSchema = z.literal("native");
 export type BackendId = z.infer<typeof backendIdSchema>;
 export const backendBindingSchema = z.object({
   version: z.literal(1),
-  id: backendIdSchema,
+  /** History can name a retired engine; execution must validate backendIdSchema. */
+  id: z.string().min(1),
   model: z.string().nullable(),
   workDir: z.string().nullable(),
   workspaceLocation: workspaceLocationSchema.optional(),
@@ -60,7 +58,7 @@ export interface BackendCapabilities {
 export interface BackendDescription {
   id: BackendId;
   label: string;
-  kind: "native" | "cli";
+  kind: "native";
   experimental?: boolean;
   capabilities: BackendCapabilities;
 }
@@ -73,23 +71,6 @@ export interface BackendAdapter {
   ): AsyncGenerator<AgentRunStreamChunk>;
   interrupt(sessionId: string, reason: string): Promise<void>;
   close(sessionId: string): Promise<void>;
-  hasPendingPermission?(sessionId: string, permissionId: string): boolean;
-  replyPermission?(
-    sessionId: string,
-    permissionId: string,
-    reply: import("../contracts.js").PermissionReply,
-  ): boolean;
-  hasPendingInteraction?(sessionId: string, interactionId: string): boolean;
-  replyInteraction?(sessionId: string, interactionId: string): boolean;
-  models?(): Promise<{
-    models: Array<{
-      id: string;
-      label: string;
-      efforts?: string[];
-      inputModalities?: InputModality[];
-    }>;
-    defaultModel?: string | null;
-  }>;
 }
 export const BACKENDS: readonly BackendDescription[] = [
   {
@@ -105,24 +86,6 @@ export const BACKENDS: readonly BackendDescription[] = [
       chat: "supported",
       plan: "supported",
       goal: "supported",
-      nativeSessionResume: "supported",
-      jsonlEvents: "supported",
-    },
-  },
-  {
-    id: "codex",
-    label: "Codex CLI",
-    kind: "cli",
-    experimental: true,
-    capabilities: {
-      nativeControls: "unsupported",
-      resume: "supported",
-      permissions: "supported",
-      interactions: "supported",
-      cancel: "supported",
-      chat: "supported",
-      plan: "unsupported",
-      goal: "unsupported",
       nativeSessionResume: "supported",
       jsonlEvents: "supported",
     },

@@ -1,7 +1,6 @@
 import type {
   AgentSession,
   AgentSessionMode,
-  BackendId,
 } from "../../adapters/transport/agentRuntime";
 
 export const SYNAX_PROFILE_ID = "synax";
@@ -17,25 +16,26 @@ export function readSynaxSessionMode(
     : "chat";
 }
 
-export function readSessionBackendId(session?: AgentSession): BackendId {
+export function readSessionBackendId(session?: AgentSession): string {
   const explicit = session?.sessionMetadata?.backend as
-    | { id?: BackendId }
+    | { id?: string }
     | undefined;
   if (explicit?.id) return explicit.id;
   const legacy = session?.sessionMetadata?.acp as
-    | { providerId?: BackendId }
+    | { providerId?: string; engineModel?: string }
     | undefined;
-  const prefix = session?.model?.split("/")[0];
+  const prefix = (legacy?.engineModel ?? session?.model)?.split("/")[0];
+  const external = session?.sessionMetadata?.nativeBackend as { id?: string } | undefined;
   return (
     legacy?.providerId ??
-    (prefix?.endsWith("-acp") ? (prefix as BackendId) : "native")
+    (prefix?.endsWith("-acp") ? prefix : legacy ? "retired" : external?.id || "native")
   );
 }
 
 /** Retired bindings remain readable so an old transcript never silently changes engine. */
 export function isUnsupportedSessionBackend(session?: AgentSession): boolean {
   const id = readSessionBackendId(session);
-  return (id !== "native" && id !== "codex") || Boolean(session?.sessionMetadata?.acp);
+  return id !== "native" || Boolean(session?.sessionMetadata?.acp);
 }
 
 export function isExternalSession(session?: AgentSession): boolean {

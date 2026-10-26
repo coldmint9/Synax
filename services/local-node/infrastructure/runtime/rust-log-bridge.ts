@@ -24,12 +24,12 @@ export function createRustLogBridge(
     try { record = object(JSON.parse(raw)); } catch { /* legacy stderr */ }
     const level = String(record?.level ?? '').toLowerCase() as ApiLogLevel;
     const fields = object(record?.fields);
-    if (record && levels.has(level) && fields && typeof fields.message === 'string') {
+    if (record && levels.has(level) && fields && (typeof fields.message === 'string' || typeof fields.event === 'string')) {
       const { message, pid: _nativePid, ...details } = fields;
       const spans = Array.isArray(record.spans) ? record.spans.filter(item => object(item)) : [];
       const timestamp = typeof record.timestamp === 'string' && Number.isFinite(Date.parse(record.timestamp))
         ? record.timestamp : undefined;
-      emit({ level, message, loggedAt: timestamp, context: {
+      emit({ level, message: typeof message === 'string' ? message : String(fields.event), loggedAt: timestamp, context: {
         // Pino owns `pid`; keep the native PID in spans and trusted sidecarPid.
         ...Object.assign({}, ...spans.map(span => { const { name: _name, pid: _pid, ...values } = span; return values; })),
         ...details, target: record.target, spans, ...base,

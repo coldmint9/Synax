@@ -75,6 +75,9 @@ async function createSessionWithHeavyArtifacts() {
     permissionDecisionId: null,
     outputRef: { results: [{ title: "kept" }] },
   });
+  // Collection reads use the authoritative sidecar index; finish fixture
+  // writes before asserting its rows instead of racing background persistence.
+  await agentRuntimeStore.flushSession(session.id);
   return session;
 }
 

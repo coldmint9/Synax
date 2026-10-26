@@ -11,7 +11,7 @@ import { AgentConversationView } from "./AgentConversationView";
 import { TranscriptSessionProvider } from "./SessionTranscriptContext";
 import { SubagentControls } from "./SubagentControls";
 import { useLocale } from "../../shared/hooks/useLocale";
-import { SubagentIdentity, getSubagentRole } from "./SubagentIdentity";
+import { SubagentIdentity } from "./SubagentIdentity";
 
 const REFRESH_MS = 4000;
 
@@ -26,11 +26,9 @@ interface Detail {
 export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId,
   showHeader = true,
-  showTaskDescription = true,
 }: {
   sessionId: string;
   showHeader?: boolean;
-  showTaskDescription?: boolean;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const { t } = useLocale();
@@ -111,9 +109,6 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
       </div>}
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView
-          taskDescription={showTaskDescription ? (
-            detail.session.prompt?.trim() || getSubagentRole(detail.session).description
-          ) : undefined}
           session={detail.session}
           runs={detail.runs}
           steps={detail.steps}

@@ -1,4 +1,5 @@
 import { withToolResource } from "./resource-admission.js";
+import { CommandTasks } from "./command-tasks.js";
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { hydrateRuntimeAssets } from "./media-assets.js";
 import { waitForCodeRead } from "./code-mode/cancellation.js";
@@ -128,6 +129,7 @@ export interface ExecuteToolResult {
 }
 
 export class ToolRegistry {
+  readonly commandTasks: CommandTasks;
   private readonly tools = new Map<string, RegisteredTool>();
   private readonly hooks = new Map<string, ToolHook>();
   private readonly providers = new Map<string, SessionToolProvider>();
@@ -141,6 +143,8 @@ export class ToolRegistry {
     private readonly evidence: EvidenceService = evidenceService,
     private readonly profiles: ProfileService = profileService,
   ) {
+    this.commandTasks = new CommandTasks(this.store);
+    this.register(this.commandTasks.tool());
     [
       ...controlTools,
       ...subagentLifecycleTools,
@@ -374,7 +378,7 @@ export class ToolRegistry {
     const strictSubagentProfile = session.profileId === "git-merge-worker";
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
       ? "Tool is no longer approved for Code Mode."
-      : controlToolError(session, tool, args);
+      : this.commandTasks.toolError(options.runId, tool.id) ?? controlToolError(session, tool, args);
     if (
       controlError ||
       (strictSubagentProfile && !profileCanUseTool(profile, tool) && tool.id !== INVALID_TOOL_ID) ||
@@ -645,6 +649,21 @@ export class ToolRegistry {
     abortSignal?: AbortSignal,
     onProgress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
+    if (codeParentId(record)) return this.performOwnedExecution(sessionId, tool, record, args, permission, abortSignal, onProgress);
+    return this.commandTasks.execute(record, args, abortSignal, (signal, started) =>
+      this.performOwnedExecution(sessionId, tool, record, args, permission, signal, onProgress, started), onProgress);
+  }
+
+  private async performOwnedExecution(
+    sessionId: string,
+    tool: RegisteredTool,
+    record: ToolCallRecord,
+    args: unknown,
+    permission?: PermissionDecision,
+    abortSignal?: AbortSignal,
+    onProgress?: (record: ToolCallRecord) => void,
+    onExecutionStarted?: () => void,
+  ): Promise<ExecuteToolResult> {
     await businessStore.refresh();
     await hydrateRuntimeAssets([sessionId]);
     try {
@@ -748,6 +767,7 @@ export class ToolRegistry {
         onProgress?.(updated);
       };
       const input: ToolExecutionInput = {
+        onCommandStarted: onExecutionStarted,
         onProgress: progress => {
           if (Date.now() - lastProgress < 1_000) return;
           lastProgress = Date.now();

@@ -77,7 +77,7 @@ describe('verification timeout window', () => {
     const parsed = schema.parse({
       command: 'echo hi', purpose: 'Check source', scope: ['.'], criterion: 'Tests pass',
     }) as { timeoutMs?: number };
-    expect(parsed.timeoutMs).toBe(120_000);
+    expect(parsed.timeoutMs).toBe(600_000);
     expect(schema.safeParse({
       command: 'echo hi', purpose: 'Check source', scope: ['.'], timeoutMs: 600_001,
     }).success).toBe(false);

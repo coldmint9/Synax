@@ -1,4 +1,5 @@
-export const EXEC_TIMEOUT_MS = 30_000;
+// Leave time for the 120s dependency assessment before the hard process limit.
+export const EXEC_TIMEOUT_MS = 600_000;
 export const MIN_EXEC_TIMEOUT_MS = 1_000;
 export const MAX_EXEC_TIMEOUT_MS = 600_000;
 

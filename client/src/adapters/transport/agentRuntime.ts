@@ -1,5 +1,6 @@
 import { announceRunObservation } from "./runRealtime";
 import { historyWindowQuery } from "../../shared/lib/historyWindowCursor";
+import { requestHistory } from "./historyRequest";
 export interface ToolExecutionProgress {
   phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
   resource?: string;
@@ -17,16 +18,9 @@ import { SESSION_PAGE_SIZE } from "../../shared/lib/sessionListPaging";
 import type { ContextCompactionState } from "../../../../services/local-node/modules/agent-runtime/context-compaction-types";
 export type { ContextCompactionState };
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
-import type { RuntimeContentPart, InputModality } from "./runtimeMedia";
+import type { RuntimeContentPart } from "./runtimeMedia";
 export type { RuntimeContentPart } from "./runtimeMedia";
-export type BackendId =
-  | "native"
-  | "codex"
-  | "claude-code"
-  | "opencode-acp"
-  | "cursor-acp"
-  | "codex-acp"
-  | "pi-acp";
+export type BackendId = "native";
 
 import { apiFetch, apiRequest, type ApiRequestOptions } from "./origin";
 import { createAppError, handleError } from "../../shared/lib/errors";
@@ -267,6 +261,7 @@ export type ToolCallStatus =
 
 export interface ToolCallRecord {
   execution?: ToolExecutionProgress;
+  inputRef?: unknown;
   outputRef?: unknown;
   contentParts?: RuntimeContentPart[];
   id: string;
@@ -879,7 +874,7 @@ export interface SessionCapabilities {
   backend?: {
     id: BackendId;
     label: string;
-    kind: "native" | "acp" | "cli";
+    kind: "native";
     capabilities: Record<string, "supported" | "unsupported" | "unverified">;
   };
   profile: { id: string; label: string; kind: string };
@@ -1026,20 +1021,10 @@ export const agentRuntimeApi = {
       items: Array<{
         id: BackendId;
         label: string;
-        kind: "native" | "acp" | "cli";
+        kind: "native";
         experimental?: boolean;
       }>;
     }>("/backends"),
-  listBackendModels: (id: BackendId) =>
-    request<{
-      models: Array<{
-        id: string;
-        label: string;
-        efforts?: string[];
-        inputModalities?: InputModality[];
-      }>;
-      defaultModel?: string | null;
-    }>(`/backends/${encodeURIComponent(id)}/models`),
   acknowledgeRecovery: (sessionId: string) =>
     request<{ session: AgentSession }>(
       `/sessions/${encodeURIComponent(sessionId)}/recovery`,
@@ -1217,22 +1202,20 @@ export const agentRuntimeApi = {
     cursor = 0,
     revision?: number,
   ) =>
-    request<{ text: string; next?: number; revision: number }>(
-      `/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`,
+    requestHistory<{ text: string; next?: number; revision: number }>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}/content?cursor=${cursor}${revision === undefined ? "" : `&revision=${revision}`}`,
     ),
   historyTimeline: (sessionId: string, before?: number) =>
     request<{ items: AgentRuntimeMessage[]; next?: number; epoch: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/history-timeline${before === undefined ? "" : `?before=${before}`}`, { silent: true },
     ),
   historyWindow: (sessionId: string, cursor?: string, since?: string) =>
-    request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, since)}`,
-      { silent: true },
+    requestHistory<HistoryWindowResponse>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, since)}`,
     ),
   historyIndexPage: (sessionId: string, cursor?: string) =>
-    request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, undefined, true)}`,
-      { silent: true },
+    requestHistory<HistoryWindowResponse>(
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, undefined, true)}`,
     ),
   listMessages: (sessionId: string) =>
     request<{ items: AgentRuntimeMessage[] }>(

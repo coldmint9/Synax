@@ -4,7 +4,7 @@ import { formatLocalDay, LOG_RETENTION_DAYS, retentionCutoffDay } from '../log-r
 describe('log-store retention', () => {
   beforeEach(async () => {
     const { clearApiLogStoreForTests } = await import('../log-store.js');
-    clearApiLogStoreForTests();
+    await clearApiLogStoreForTests();
   });
 
   it('drops log rows older than the retention window', async () => {
@@ -38,6 +38,6 @@ describe('log-store retention', () => {
       }),
     ]);
 
-    clearApiLogStoreForTests();
+    await clearApiLogStoreForTests();
   });
 });

@@ -73,12 +73,11 @@ export async function* streamAgentSession(
   const binding = resolveSessionBackend(sessionId);
   const model = resolveBackendModel(sessionId, input);
   const metadata = agentRuntimeStore.getSession(sessionId).sessionMetadata;
-  if (binding.id !== 'native' && (metadata?.mode === 'plan' || (metadata?.mode === 'goal' && metadata.goal))) {
-    throw new AgentValidationError('Plan and goal controls require the native Synax engine. Start a Native session to use them.');
-  }
+  if (binding.id !== 'native')
+    throw new AgentValidationError('External CLI and ACP engines have been removed. Start a native Synax session.');
   const backend = getBackendAdapter(binding.id);
   const request = model ? { ...input, model } : input;
-  if (binding.id === 'native' && metadata?.mode === 'goal') {
+  if (metadata?.mode === 'goal') {
     yield* observeBackgroundRun(withSessionTitleScheduling(sessionId, backend.stream(sessionId, mode, request)), abortSignal);
   } else {
     yield* withSessionTitleScheduling(sessionId, backend.stream(sessionId, mode, request, abortSignal));

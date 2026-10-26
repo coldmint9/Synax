@@ -12,6 +12,10 @@ Synax brings agent conversations, source files, diffs, and a terminal into one a
 
 The project is in alpha.
 
+Sessions use the native Synax engine. ACP and external agent CLI/SDK execution adapters have been removed. Existing histories remain readable and can be archived; start a new Synax session for further work. Model APIs, MCP and computer-use tools remain available through the native engine.
+
+When the execution directory contains `pom.xml`, or an ancestor within the same Git repository does, the system prompt includes Maven build guidance: prefer the Maven Wrapper, verify affected modules incrementally, avoid unnecessary `clean`, enable parallel builds only with compatible plugins, and report skipped tests. Other projects receive no Maven guidance.
+
 `file.generate` lets agents use Python templates, loops and text transformations for multi-file scaffolds, batch rewrites, and long or escape-sensitive content. Use `file.patch` for small edits and `file.write` for short complete files. Scripts stage changes through `synax.write/delete/move`; the runtime validates permissions, paths, read freshness and write scopes before committing under a workspace lock. Failed commits roll back, with any incomplete restoration reported explicitly. Deleting or moving still requires the `file.delete` capability.
 
 Desktop installers bundle a pinned Python runtime; users do not need to install Python separately. The estimated installer increase is 30–45 MB, subject to platform build measurements. Development can use `python3` on `PATH`, or an interpreter selected with `SYNAX_PYTHON_RUNTIME`. The tool is hidden when no runtime is available. Limits are 120 files, 64 MiB total and 8 MiB per UTF-8 text file. Ordinary `open()`/`pathlib` access is read-only within the workspace; networking and subprocesses are blocked. Approval shows the script, while the final file list arrives after execution. Python audit hooks are guardrails against mistakes, not a hardened sandbox for hostile code.

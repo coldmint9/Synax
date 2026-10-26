@@ -109,7 +109,7 @@ export function assertSubagentToolAllowed(session: AgentSession, tool: Registere
   const saved = snapshot(session);
   if (!saved) return;
   const parent = agentRuntimeStore.getSession(saved.parentSessionId);
-  if (!saved.capabilities.includes(tool.id) || isSubagentControl(tool.id))
+  if ((!saved.capabilities.includes(tool.id) && !(tool.id === "command.manage" && saved.capabilities.includes("bash"))) || isSubagentControl(tool.id))
     throw new AgentPermissionError(`Tool ${tool.id} is outside this subagent's configuration.`);
   setSessionWorkspaceRoot(session.id, saved.workspaceRoot);
   const permissionInput: PermissionRequestInput = { sessionId: parent.id, category: tool.category, internalGate: tool.internalGate,

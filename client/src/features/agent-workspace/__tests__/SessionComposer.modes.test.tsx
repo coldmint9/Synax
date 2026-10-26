@@ -748,7 +748,7 @@ it("finishes an old draft in the background without navigating away or clearing 
   );
 });
 
-it.each(["codex-acp", "claude-code"])("prevents submission for the retired %s backend while preserving history", async id => {
+it.each(["codex", "codex-acp", "claude-code"])("prevents submission for the retired %s backend while preserving history", async id => {
   const retired = { ...session, sessionMetadata: { backend: { id } } } as AgentSession;
   renderComposer(retired);
   expect(screen.getByRole("alert")).toHaveTextContent("execution backend has been removed");

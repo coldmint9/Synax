@@ -190,7 +190,7 @@ export const bashTool: RegisteredTool = {
   id: "bash",
   label: "Bash",
   description:
-    "Executes a bash command in the workspace. Foreground commands run non-interactively with CI=1, so test runners such as Vitest use one-shot mode instead of watch mode. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
+    "Executes a bash command in the workspace. Set async:true to return a commandTaskId immediately after setup and continue independent work; completion is automatically queued into the next step. Use command.manage wait or cancel to control the task. Foreground and async commands run non-interactively with CI=1, so test runners such as Vitest use one-shot mode instead of watch mode. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
   category: "shell",
   internalGate: "shell",
   mutability: "read",
@@ -215,8 +215,11 @@ export const bashTool: RegisteredTool = {
       .boolean()
       .optional()
       .describe(
-        "Run a long-lived server in the background. Returns a process ID; the user can stop it from the session sidebar.",
+        "Run a long-lived server in the background. Returns a process ID; the user can stop it from the session sidebar. Use async:true for finite command tasks with automatic completion delivery. Cannot combine with async:true.",
       ),
+    async: z.boolean().optional().describe(
+      "Return a commandTaskId immediately after setup and execute asynchronously using the shared completion queue. Default false waits for the command, with dependency assessment at 120s. timeoutMs still applies. Use command.manage wait before dependent work, or cancel to stop. Cannot combine with background:true or shell background operators (&).",
+    ),
     timeoutMs: z
       .number()
       .int()
@@ -224,11 +227,14 @@ export const bashTool: RegisteredTool = {
       .max(MAX_EXEC_TIMEOUT_MS)
       .optional()
       .describe(
-        `Wall-clock limit for this command in ms (${MIN_EXEC_TIMEOUT_MS}-${MAX_EXEC_TIMEOUT_MS}), default ${EXEC_TIMEOUT_MS}. Estimate it from what the command does: builds, test suites and typechecks normally need 60s-300s, quick searches and reads need the default. On timeout the output captured before the kill is returned with a [TIMED OUT] marker plus the elapsed time, so raise this and re-run instead of assuming the command failed. Ignored when background is true.`,
+        `Wall-clock limit for this command in ms (${MIN_EXEC_TIMEOUT_MS}-${MAX_EXEC_TIMEOUT_MS}), default ${EXEC_TIMEOUT_MS}. Choose a shorter deadline for quick searches and reads. At 120s the runtime requests a dependency assessment without killing the process. On hard timeout partial output is returned with a [TIMED OUT] marker and elapsed time; inspect it and adjust the scope or timeout before retrying. Ignored when background is true.`,
       ),
+  }).superRefine((args, ctx) => {
+    if (args.async && (args.background || hasBackgroundBashOperator(args.command)))
+      ctx.addIssue({ code: "custom", path: ["async"], message: "async:true cannot be combined with background:true or shell background operators (&)." });
   }),
   progressiveDetails:
-    "Accepts { command: string, workdir?: string, stdin?: string, background?: boolean, timeoutMs?: number }. Foreground commands set CI=1; use background:true for dev servers and other long-lived services. Set timeoutMs when the command legitimately needs longer than the 30s default (tests, typechecks, installs); after a timeout inspect the partial output and change the approach before retrying instead of blindly repeating the same command. Do not detach with nohup or disown. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
+    "Accepts { command: string, workdir?: string, stdin?: string, async?: boolean, background?: boolean, timeoutMs?: number }. async:true runs a finite command without blocking the next step and returns commandTaskId; the same command.manage completion queue used by 120s monitoring delivers its result automatically. async:false (default) waits normally, with a dependency assessment at 120s. Use command.manage wait before dependent work and final aggregation, or cancel to stop. Foreground and async commands set CI=1 and honor timeoutMs (default 600s, max 600s). background:true is for long-lived services and cannot be combined with async:true; shell background operators (&) are also incompatible with async:true. After a timeout inspect partial output and change the approach before retrying. Do not detach with nohup or disown. Commands are classified as read-only or mutating for permission checks (e.g. rg, git:diff vs npm, git:push). Pipes and chains evaluate every segment. If a command is unavailable, fall back to dedicated tools.",
   getPattern(args) {
     if (
       typeof args === "object" &&
@@ -254,11 +260,18 @@ export function executeBash(
     workdir?: string;
     stdin?: string;
     background?: boolean;
+    async?: boolean;
     timeoutMs?: number;
   };
   if (!args?.command) throw new Error("command is required.");
 
   const command = args.command;
+  if (args.async === true) {
+    if (args.background || hasBackgroundBashOperator(command))
+      throw new Error("async:true cannot be combined with background:true or shell background operators (&).");
+    if (!input.runId || !input.onCommandStarted)
+      throw new Error("async:true requires an active managed command execution.");
+  }
   const commandPreview =
     command.length > 80 ? command.substring(0, 77) + "..." : command;
 
@@ -311,6 +324,7 @@ export function executeBash(
   // serialize parallel tool calls, live stream forwarding and side-channel
   // requests (profile panels, stats) for the whole lifetime of the command.
   return executeBashCommand({
+    onStarted: input.onCommandStarted,
     sessionId: input.sessionId,
     command,
     commandPreview,
@@ -322,6 +336,7 @@ export function executeBash(
 }
 
 interface BashExecutionInput {
+  onStarted?: () => void;
   background?: boolean;
   timeoutMs: number;
   sessionId: string;
@@ -407,7 +422,9 @@ async function executeBashCommand(
   }
 
   // 5. Execute
+  const home = await sessionHomeDir(DATA_ROOT, input.sessionId);
   const startedAtMs = Date.now();
+  input.onStarted?.();
   const result = await runShellCommand(command, {
     cwd,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
@@ -417,7 +434,7 @@ async function executeBashCommand(
     env: {
       ...process.env,
       CI: "1",
-      HOME: await sessionHomeDir(DATA_ROOT, input.sessionId),
+      HOME: home,
     },
     stdin: input.stdin ?? undefined,
   });
@@ -444,7 +461,10 @@ async function executeBashCommand(
       const timeoutSeconds = input.timeoutMs / 1000;
       const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
       const timeoutMarker = `[TIMED OUT after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s): the command was killed, so its output is partial.]`;
-      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Inspect the partial output and change the approach before retrying; do not blindly repeat the same command. If it legitimately needs more time, raise timeoutMs once with a larger timeoutMs (max ${MAX_EXEC_TIMEOUT_MS / 1000}s).`;
+      const retryAdvice = input.timeoutMs < MAX_EXEC_TIMEOUT_MS
+        ? `If it legitimately needs more time, raise timeoutMs once with a larger timeoutMs (max ${MAX_EXEC_TIMEOUT_MS / 1000}s).`
+        : "The maximum command timeout was reached; split or narrow the work before retrying.";
+      const timeoutNotice = `Command timed out after ${timeoutSeconds}s (elapsed ${elapsedSeconds}s). Output captured before the kill is preserved above. Inspect the partial output and change the approach before retrying; do not blindly repeat the same command. ${retryAdvice}`;
       return {
         result: {
           command,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { RuntimeSidecarClient, RuntimeSidecarError } from "./sidecar-client.js";
+import { RuntimeSidecarClient } from "./sidecar-client.js";
+import { executeControlCommand } from './control-commands.js';
 import { readHistoryList } from './history-pages.js';
 import { appendHistoryPayload } from './history-upload.js';
 import type { AgentSession } from "../contracts.js";
@@ -35,31 +36,7 @@ export async function patchRuntime(
   requestId: string = randomUUID(),
 ) {
   const client = runtimeClient();
-  for (let attempt = 0; ; attempt++) {
-    const fence = await client.snapshot(sessionId);
-    try {
-      return decode<Record<string, unknown>>(
-        (
-          await client.controlCommand({
-            sessionId,
-            requestId,
-            operation,
-            payload,
-            epoch: fence.epoch,
-            revision: fence.revision,
-          })
-        ).stateJson,
-      );
-    } catch (error) {
-      if (
-        !(error instanceof RuntimeSidecarError) ||
-        error.code !== "REVISION_CONFLICT" ||
-        attempt >= 7
-      )
-        throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(200, 10 * 2 ** attempt)));
-    }
-  }
+  return decode<Record<string, unknown>>((await executeControlCommand(client, { sessionId, requestId, operation, payload })).stateJson);
 }
 export async function seedSession(session: AgentSession): Promise<void> {
   await runtimeClient().seedUi(

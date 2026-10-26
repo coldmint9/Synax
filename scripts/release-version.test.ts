@@ -18,7 +18,7 @@ describe("software version consistency", () => {
   it("aligns CLI, About and provider client identities", () => {
     expect(read("cli/main.ts")).toContain(`CLI_VERSION = "${version}"`);
     expect(read("client/src/app/pages/AboutPage.tsx")).toContain(`VERSION = "${version}"`);
-    for (const file of ["services/local-node/infrastructure/mcp/mcp-client-manager.ts", "services/local-node/modules/agent-runtime/backends/codex-connection.ts"]) {
+    for (const file of ["services/local-node/infrastructure/mcp/mcp-client-manager.ts"]) {
       expect(read(file).match(/version: "\d+\.\d+\.\d+"/g)?.every(value => value === `version: "${version}"`)).toBe(true);
     }
   });

@@ -19,14 +19,77 @@
 .session-transcript-loading {
   padding-top: var(--work-transcript-top-inset, 0px);
   background: var(--work-transcript-surface, var(--background));
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms ease-out, visibility 0s;
+}
+.session-transcript-loading[data-visible="false"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 180ms ease-out, visibility 0s 180ms;
+}
+.session-transcript-loading[data-cached="true"] {
+  background: color-mix(in srgb, var(--work-transcript-surface, var(--background)) 28%, transparent);
+}
+.session-transcript-loading[data-cached="true"][data-visible="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(110deg,
+    transparent 20%,
+    color-mix(in srgb, var(--foreground) 3%, transparent) 38%,
+    color-mix(in srgb, var(--foreground) 9%, transparent) 50%,
+    color-mix(in srgb, var(--foreground) 3%, transparent) 62%,
+    transparent 80%);
+  animation: session-sync-sweep 2400ms ease-in-out infinite;
+}
+@keyframes session-sync-sweep {
+  0% { transform: translateX(-100%); opacity: 0; }
+  20%, 65% { opacity: 1; }
+  85%, 100% { transform: translateX(100%); opacity: 0; }
+}
+.session-transcript-sync {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  padding-bottom: var(--work-transcript-bottom-inset, 0px);
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  /* Fast cache hits finish before this hint appears. No artificial wait. */
+  animation: session-sync-enter 180ms ease-out 120ms both;
+}
+.session-transcript-sync-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 8%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--work-transcript-surface, var(--background)) 88%, transparent);
+  box-shadow: 0 4px 20px rgb(0 0 0 / 4%);
+}
+@keyframes session-sync-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .session-chat-scroll[data-preparing] {
-  transition: opacity 160ms ease-out;
+  transition: opacity 180ms ease-out, filter 180ms ease-out;
 }
 .session-chat-scroll[data-preparing="true"] {
   opacity: 0;
   pointer-events: none;
   transition: none;
+}
+/* Blur the transcript itself only during entry. This also works with the
+   desktop's backdrop-filter opt-out and releases the filter after syncing. */
+.session-transcript-loading[data-cached="true"] ~ .session-chat-scroll[data-preparing="true"] {
+  opacity: 0.68;
+  filter: blur(5px);
 }
 .session-transcript-skeleton,
 .session-transcript-content,
@@ -57,6 +120,14 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .session-transcript-loading::before {
+    display: none;
+  }
+  .session-transcript-loading,
+  .session-transcript-loading::before,
+  .session-transcript-sync,
+  .session-transcript-sync *,
+  .session-chat-scroll[data-preparing],
   .agent-page-shell *,
   .agent-page-shell *::before,
   .agent-page-shell *::after {

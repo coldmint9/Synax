@@ -7,6 +7,7 @@ import {
   useAgentSessionStore as store,
 } from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
+import { SESSION_TAIL_RETAIN } from "../state/sessionTailWindow";
 import {
   agentRuntimeApi as api,
   type AgentRuntimeMessage,
@@ -676,7 +677,7 @@ describe("inactive session page cache", () => {
 describe('incremental history pages', () => {
   function window(messages: AgentRuntimeMessage[], cursor: string, incremental = false, more = false): HistoryWindowResponse {
     return {messages, runs:[], steps:[], toolCalls:[], events:[], permissions:[],
-      historyWindow:{revision:2,epoch:1,generation:1,syncCursor:cursor,olderCursor:incremental ? undefined : 'older-page',
+      historyWindow:{revision:2,epoch:1,generation:1,messageLimit:SESSION_TAIL_RETAIN,syncCursor:cursor,olderCursor:incremental ? undefined : 'older-page',
         incremental,hasMoreChanges:more,hasEarlier:!incremental,latest:true,detailsTruncated:false}};
   }
   it('paints each change page before the next arrives and never refetches cached history', async () => {
@@ -690,9 +691,11 @@ describe('incremental history pages', () => {
     await store.getState().refreshDetail();
     await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','first-change']));
     await vi.waitFor(() => expect(history.mock.calls.slice(1)).toEqual([[session.id,undefined,'sync-1'],[session.id,undefined,'sync-2']]));
+    expect(store.getState().detailRefreshing).toBe(true);
     expect(api.listMessages).not.toHaveBeenCalled();
     resolve({...window([message('second-change')],'sync-3',true),removed:[{collection:'messages',id:'first-change'}]});
     await vi.waitFor(() => expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','second-change']));
+    expect(store.getState().detailRefreshing).toBe(false);
     expect(store.getState().sessionDetailCache[session.id].historyWindow?.olderCursor).toBe('older-page');
     const pageCount=history.mock.calls.length;
     vi.spyOn(api,'historyIndexPage').mockResolvedValue(window([],'sync-3'));
@@ -708,6 +711,7 @@ describe('incremental history pages', () => {
     history.mockResolvedValueOnce(window([message('saved')],'sync-2',true,true)).mockRejectedValueOnce(new Error('offline'));
     await store.getState().refreshDetail();
     await vi.waitFor(()=>expect(store.getState().detailError).toContain('offline'));
+    expect(store.getState().detailRefreshing).toBe(false);
     expect(store.getState().messages.map(m=>m.id)).toEqual(['cached','saved']);
     history.mockResolvedValueOnce(window([],'sync-3',true));
     await store.getState().refreshDetail();

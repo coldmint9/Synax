@@ -8,14 +8,14 @@ const context = { sessionId: "s", runId: "r", epoch: "e", hostId: "h" };
 const input = { sessionId: "s", runId: "r", toolCallId: "t", args: {} } as ToolExecutionInput;
 
 it.each([
-  ["bash", undefined, 60_000],
-  ["verification.run", undefined, 150_000],
+  ["bash", undefined, 630_000],
+  ["verification.run", undefined, 630_000],
   ["bash", 450_000, 480_000],
   ["bash", 120_000, 150_000],
   ["verification.run", 1_000, 31_000],
   ["bash", 1, 31_000],
   ["bash", 900_000, 630_000],
-  ["bash", Number.NaN, 60_000],
+  ["bash", Number.NaN, 630_000],
 ])("allows command setup and cleanup for %s timeout %s", (id, timeoutMs, expected) => {
   const tool = { id, category: "shell", mutability: "read" } as RegisteredTool;
   expect(toolResourcePolicy(tool, { timeoutMs })).toEqual({ resource: "command", timeoutMs: expected });

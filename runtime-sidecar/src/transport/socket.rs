@@ -37,6 +37,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "queue_mutation",
     "queue_read",
     "control_command",
+    "control_current_v1",
     "control_state",
     "execution_lease",
     "history_command",
@@ -571,8 +572,13 @@ async fn execute_wire(
         drop(read_guard);
         drop(reset_guard);
         if let Some(wire_envelope::Body::Error(error)) = &result.0.body {
-            tracing::warn!(event = "runtime.command_failed", code = %error.code,
-                duration_ms = started.elapsed().as_millis() as u64, "Runtime command failed");
+            if error.code == "REVISION_CONFLICT" {
+                tracing::debug!(event = "runtime.revision_conflict", expected = ?error.expected, actual = ?error.actual,
+                    duration_ms = started.elapsed().as_millis() as u64, "Control revision advanced");
+            } else {
+                tracing::warn!(event = "runtime.command_failed", code = %error.code,
+                    duration_ms = started.elapsed().as_millis() as u64, "Runtime command failed");
+            }
         } else {
             tracing::debug!(event = "runtime.command_completed", duration_ms = started.elapsed().as_millis() as u64,
                 "Runtime command completed");

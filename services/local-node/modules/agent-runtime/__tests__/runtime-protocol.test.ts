@@ -19,13 +19,10 @@ describe('runtime protocol v1', () => {
     }
   });
 
-  it('keeps Native mode controls separate from external CLI backends', () => {
+  it('exposes only the native Synax engine', () => {
     expect(BACKENDS.find(backend => backend.id === 'native')?.capabilities).toMatchObject({
       plan: 'supported', goal: 'supported', nativeControls: 'supported',
     });
-    expect(BACKENDS.find(backend => backend.id === 'codex')?.capabilities).toMatchObject({
-      plan: 'unsupported', goal: 'unsupported', nativeControls: 'unsupported',
-    });
-    expect(BACKENDS.some(backend => ['claude-code', 'acp'].includes(backend.id))).toBe(false);
+    expect(BACKENDS).toHaveLength(1);
   });
 });

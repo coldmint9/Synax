@@ -18,4 +18,10 @@ describe('synax CLI argument contract', () => {
     expect(() => parseArgs(['exec', '--json', '--jsonl', 'hello'])).toThrow(/mutually exclusive/);
     expect(() => parseArgs(['approve', 'p1', '--reply', 'maybe'])).toThrow(/permission reply/i);
   });
+
+  it('accepts only the native Synax engine', () => {
+    expect(parseArgs(['exec', '--backend', 'native', 'hello']).backend).toBe('native');
+    for (const id of ['codex', 'claude-code', 'codex-acp'])
+      expect(() => parseArgs(['exec', '--backend', id, 'hello'])).toThrow(/native Synax/);
+  });
 });

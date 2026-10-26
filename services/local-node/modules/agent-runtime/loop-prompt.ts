@@ -37,6 +37,8 @@ interface BuildLoopSystemPromptInput {
   projectMemoriesSection?: string | null;
   /** SYNAX.md / CLAUDE.md / AGENTS.md merged for the rules section. */
   projectRulesSection?: string | null;
+  /** Build-system guidance detected from the bound workspace. */
+  projectBuildInstructionsSection?: string | null;
   /** Resolved permission tier for this session turn. */
   permissionTier?: PermissionTier;
   /** If set, a language output directive is prepended to the system prompt. */
@@ -186,6 +188,9 @@ export function buildLoopSystemPrompt(
       : "",
     input.skillsSection ? `\n${input.skillsSection}` : "",
     input.selectedReferencesSection,
+    input.projectBuildInstructionsSection
+      ? `\n${input.projectBuildInstructionsSection}`
+      : "",
     input.profile.id !== 'git-manager' && input.projectRulesSection
       ? `[Project Rules]\nFollow these repository instruction files:\n\n${input.projectRulesSection}`
       : "",

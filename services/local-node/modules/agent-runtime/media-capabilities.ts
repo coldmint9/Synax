@@ -10,7 +10,6 @@ import {
   modalityForMime,
   type InputCapabilities,
   type InputModality,
-  type RuntimeContentPart,
   type RuntimeAsset,
 } from "./content-parts.js";
 import { getAsset, readAsset, validateAssets, prepareAssets, modelContentParts } from "./media-assets.js";
@@ -139,21 +138,6 @@ export async function sessionInputCapabilities(
         model: resolveBackendModel(sessionId, { model }) ?? undefined,
       }),
     );
-  }
-  if (binding.id === "codex") {
-    const { codexBackend } = await import("./backends/codex-backend.js");
-    const result = await codexBackend.models();
-    const selected = model ?? binding.model ?? result.defaultModel;
-    const m =
-      selected && selected !== "default"
-        ? result.models.find((m) => m.id === selected)
-        : result.models[0];
-    return caps(m?.inputModalities, [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/gif",
-    ]);
   }
   return caps(["text"], ["text/plain"]);
 }
@@ -505,27 +489,15 @@ export async function draftInputCapabilities(
   backendId: string,
   model?: string,
 ): Promise<InputCapabilities> {
-  if (backendId === "native") {
-    const { resolveGatewaySelection } =
-      await import("../../infrastructure/llm-runtime/gateway.js");
-    return nativeInputCapabilities(
-      await resolveGatewaySelection({ projectId, purpose: "agent", model }),
+  if (backendId !== "native")
+    throw new AgentRuntimeError(
+      "External CLI and ACP engines have been removed. Start a native Synax session.",
+      "BACKEND_REMOVED",
+      410,
     );
-  }
-  if (backendId === "codex") {
-    const { codexBackend } = await import("./backends/codex-backend.js");
-    const result = await codexBackend.models();
-    const requested = model ?? result.defaultModel;
-    const selected =
-      requested && requested !== "default"
-        ? result.models.find((m) => m.id === requested)
-        : result.models[0];
-    return caps(selected?.inputModalities, [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-      "image/gif",
-    ]);
-  }
-  return caps(undefined);
+  const { resolveGatewaySelection } =
+    await import("../../infrastructure/llm-runtime/gateway.js");
+  return nativeInputCapabilities(
+    await resolveGatewaySelection({ projectId, purpose: "agent", model }),
+  );
 }

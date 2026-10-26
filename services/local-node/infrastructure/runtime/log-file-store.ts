@@ -2,14 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_ROOT } from './env.js';
 import { formatLocalDay, LOG_RETENTION_DAYS, retentionCutoffDay } from './log-retention.js';
+import { diagnosticLogWriter, flushDiagnosticLogs } from './buffered-log-writer.js';
 
 const DAILY_LOG_PREFIX = 'api-';
 const DAILY_LOG_SUFFIX = '.log';
 const LEGACY_LOG_FILE = 'api-current.log';
 
 let trackedDay: string | null = null;
+let preparedLogDir: string | undefined;
 
 export function resolveLogDir(): string {
+  if (preparedLogDir) return preparedLogDir;
   const dataRoot = path.isAbsolute(DATA_ROOT)
     ? DATA_ROOT
     : path.resolve(process.cwd(), DATA_ROOT);
@@ -17,6 +20,7 @@ export function resolveLogDir(): string {
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }
+  preparedLogDir = logDir;
   return logDir;
 }
 
@@ -57,10 +61,11 @@ export function writeDailyLogLine(line: string): void {
     trackedDay = today;
     pruneOldDailyLogFiles();
   }
-  fs.appendFileSync(resolveDailyLogFilePath(today), `${line}\n`, 'utf8');
+  diagnosticLogWriter.write(resolveDailyLogFilePath(today), `${line}\n`);
 }
 
-export function clearDailyLogFilesForTests(): void {
+export async function clearDailyLogFilesForTests(): Promise<void> {
+  await flushDiagnosticLogs();
   const logDir = resolveLogDir();
   if (!fs.existsSync(logDir)) return;
   for (const entry of fs.readdirSync(logDir)) {

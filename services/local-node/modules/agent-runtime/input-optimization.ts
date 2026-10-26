@@ -184,7 +184,7 @@ function validateModelSelection(input: InputOptimizationRequest): string {
     (!configured && input.backendId && input.backendId !== "native") ||
     separator <= 0 ||
     separator === model.length - 1 ||
-    (!configured && (!provider || provider.kind === "acp"))
+    (!configured && (!provider || provider.kind !== "api"))
   )
     throw new AgentRuntimeError(
       "请在设置中选择输入优化 API 模型，或在输入框选择 API 模型 / Select an input optimization API model in Settings or an API model in the composer.",

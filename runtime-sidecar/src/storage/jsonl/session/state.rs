@@ -18,6 +18,8 @@ use super::SessionActor;
 /// [`Tx::commit`].
 #[derive(Default)]
 pub struct Tx {
+    /// Internal bookkeeping leaves every UI field and event unchanged.
+    pub control_only: bool,
     pub cursor: u64,
     pub revision: u64,
     pub epoch: u64,
@@ -66,7 +68,7 @@ impl SessionActor {
         super::super::layout::ensure_not_deleted(&handle.root, &self.id)?;
         // The projection budget is a commit invariant: an over-budget batch
         // would make the session unreadable forever.
-        tx.projection.encode()?;
+        if !tx.control_only { tx.projection.encode()?; }
         if std::env::var("SYNAX_RUNTIME_HOT_DISK_FULL").ok().as_deref() == Some("1") {
             return Err(RuntimeError::DiskFull);
         }
@@ -222,10 +224,7 @@ impl SessionActor {
             self.queue = queue.clone();
         }
         self.projection = Some(tx.projection);
-        self.header = tx.header.as_ref().map_or_else(
-            || self.header.clone(),
-            crate::storage::jsonl::segment::PValue::to_json,
-        );
+        if let Some(header) = &tx.header { self.header = header.to_json(); }
         for event in &tx.events {
             push_event(
                 self,
@@ -250,7 +249,8 @@ impl SessionActor {
             );
         }
         self.commit = commit_id;
-        self.publish(handle);
+        if tx.control_only { handle.publish_control(self); }
+        else { self.publish(handle); }
         for event in tx.fan_out {
             super::fan_out(self, event);
         }

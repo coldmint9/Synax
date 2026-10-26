@@ -95,7 +95,7 @@ export function MessageActionToolbar({
       role="toolbar"
       aria-label={zh ? "消息操作" : "Message actions"}
     >
-      {role === "user" &&
+      {role === "user" && onEdit &&
         button(
           "edit",
           zh ? "编辑消息" : "Edit message",

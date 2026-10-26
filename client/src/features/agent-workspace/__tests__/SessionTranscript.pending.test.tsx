@@ -106,19 +106,62 @@ it("does not show thinking while a session detail snapshot is refreshing", () =>
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
-it("reveals cached history while the active session is still reconciling", async () => {
+it("holds cached history behind a quiet transition until all change pages settle", async () => {
   useAgentSessionStore.setState({
     sessions: [{ id: "s1", status: "running", activeRunId: run.id } as AgentSession],
     detailLoading: false, detailRefreshing: true,
     messages: [{ id: "cached", sessionId: "s1", role: "assistant", content: "Cached answer", metadata: {}, runId: null, stepId: null, createdAt: "" }],
   });
   const { container } = render(<SessionTranscript />);
-  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
+  const viewport = container.querySelector('.session-chat-scroll');
+  const cached = screen.getByText('Cached answer');
+  expect(viewport).toHaveAttribute('data-preparing', 'true');
+  expect(viewport).toHaveAttribute('aria-hidden', 'true');
+  expect(screen.getByRole('status')).toHaveTextContent('正在同步最新消息');
+  expect(container.querySelector('.session-transcript-skeleton')).toBeNull();
+  act(() => useAgentSessionStore.setState({
+    messages: [...useAgentSessionStore.getState().messages, { id: 'new', sessionId: 's1', role: 'assistant', content: 'New answer', metadata: {}, runId: null, stepId: null, createdAt: '' }],
+  }));
+  expect(screen.getByText('Cached answer')).toBe(cached);
+  expect(viewport).toHaveAttribute('data-preparing', 'true');
   expect(useAgentSessionStore.getState().detailRefreshing).toBe(true);
+  act(() => useAgentSessionStore.setState({ detailRefreshing: false }));
+  await waitFor(() => expect(viewport).toHaveAttribute('data-preparing', 'false'));
   expect(screen.getByText('Cached answer')).toBeVisible();
+  expect(screen.getByText('New answer')).toBeVisible();
+  expect(container.querySelector('.session-transcript-loading')).toHaveAttribute('data-visible', 'false');
+  act(() => useAgentSessionStore.setState({ detailRefreshing: true }));
+  expect(viewport).toHaveAttribute('data-preparing', 'false');
+  expect(screen.queryByText('正在同步最新消息')).not.toBeInTheDocument();
 });
 
-it("shows the thinking placeholder for an already-running session without local pending state", () => {
+it("releases the transition on refresh failure and preserves the cached content with retry", () => {
+  useAgentSessionStore.setState({
+    detailLoading: false, detailRefreshing: true,
+    messages: [{ id: 'cached', sessionId: 's1', role: 'assistant', content: 'Cached answer', metadata: {}, runId: null, stepId: null, createdAt: '' }],
+  });
+  const { container } = render(<SessionTranscript />);
+  act(() => useAgentSessionStore.setState({ detailRefreshing: false, detailError: 'offline' }));
+  expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false');
+  expect(screen.getByText('Cached answer')).toBeVisible();
+  expect(screen.getByRole('alert')).toHaveTextContent('历史更新失败');
+  expect(screen.getByRole('button', { name: '重试' })).toBeVisible();
+});
+
+it("cancels the previous reveal when switching again during reconciliation", async () => {
+  useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: true });
+  const { container } = render(<SessionTranscript />);
+  act(() => useAgentSessionStore.setState({ selectedSessionId: 's2', detailRefreshing: false }));
+  act(() => useAgentSessionStore.setState({ selectedSessionId: 's3', detailRefreshing: true }));
+  const viewport = container.querySelector('.session-chat-scroll');
+  // Let an obsolete layout-reveal frame run; it must not expose s3 early.
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)); });
+  expect(viewport).toHaveAttribute('data-preparing', 'true');
+  act(() => useAgentSessionStore.setState({ detailRefreshing: false }));
+  await waitFor(() => expect(viewport).toHaveAttribute('data-preparing', 'false'));
+});
+
+it("shows the thinking placeholder for an already-running session without local pending state", async () => {
   const session = { id: "s1", status: "running", activeRunId: run.id } as AgentSession;
   const previousReply = {
     id: "old-reply",
@@ -138,6 +181,7 @@ it("shows the thinking placeholder for an already-running session without local 
     messages: [],
   });
   const { container } = render(<SessionTranscript />);
+  await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
   expect(screen.getByTestId("thinking-indicator")).toBeVisible();
   expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
 

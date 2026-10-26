@@ -18,6 +18,7 @@ import { workRuntime } from "./work-runtime.js";
 import { goalEvidenceSection } from "./control-runtime.js";
 import { conversationGitContextMessage } from "./conversation-git/context.js";
 import { subagentContextMessage } from "./subagent-context.js";
+import { buildProjectBuildInstructions } from "./project-build-instructions.js";
 
 const toolSchema = (value: unknown) => z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
 
@@ -36,10 +37,13 @@ export function buildNativeStepContext(sessionId: string, input: StreamTurnReque
   const memories = memoryManager.getRelevantMemories(session.projectId, prompt, 5);
   const skills = skillAgentBridge.listForPrompt({ profileId: profile.id, projectId: session.projectId,
     activeSkillIds: [...new Set([...session.skillIds, ...input.referenceContext?.skillIds ?? []])] });
-  const rules = session.profileId === "git-manager" ? null : loadProjectRulesSection(resolveSessionWorkDir(sessionId, session.projectId));
+  const workDir = resolveSessionWorkDir(sessionId, session.projectId);
+  const rules = session.profileId === "git-manager" ? null : loadProjectRulesSection(workDir);
+  const projectBuildInstructionsSection = buildProjectBuildInstructions(workDir);
   const messages = store.listMessages(sessionId);
   const evidence = !currentSession.parentSessionId && currentSession.sessionMetadata?.mode === "goal"
     ? goalEvidenceSection(currentSession, store.listToolCalls(sessionId)) : "";
+  const commandContext = toolRegistry.commandTasks.stepContext(sessionId, session.activeRunId, stepIndex);
   const systemPrompt = [buildLoopSystemPrompt({
     profile, context: session.contextSnapshotId ? store.getContextBundle(session.contextSnapshotId) : null,
     availableToolIds: tools.map(tool => tool.runtimeName),
@@ -50,10 +54,11 @@ export function buildNativeStepContext(sessionId: string, input: StreamTurnReque
     intentPromptSection: synaxAgent.isSynaxSession(currentSession) ? synaxAgent.buildIntentPromptSection(currentSession, prompt, stepIndex) : null,
     loopHintsOverride: synaxAgent.isSynaxSession(currentSession) ? synaxAgent.buildEffectiveLoopHints(currentSession) : null,
     projectRulesSection: rules,
+    projectBuildInstructionsSection,
     projectMemoriesSection: memories.length ? memories.map(memory => `${memory.title}: ${memory.content.slice(0, 400)}`).join("\n") : null,
     skillsSection: skills.length ? "Available skills; load selected skills before using their instructions:\n" + skills.map(skill => JSON.stringify({ id: skill.id, name: skill.label, description: skill.description })).join("\n") : null,
     selectedReferencesSection: input.referenceContext?.content,
-  }), capabilities.prompt, buildRuntimeEnvironment(sessionId, session.projectId), workRuntime.prompt(sessionId), synaxAgent.buildRuntimeStateSection(currentSession), evidence, conversationGitContextMessage(messages, sessionId), subagentContextMessage(messages, sessionId)].filter(Boolean).join("\n\n");
+  }), capabilities.prompt, buildRuntimeEnvironment(sessionId, session.projectId), workRuntime.prompt(sessionId), synaxAgent.buildRuntimeStateSection(currentSession), evidence, conversationGitContextMessage(messages, sessionId), subagentContextMessage(messages, sessionId), commandContext].filter(Boolean).join("\n\n");
   if (currentSession.sessionMetadata?.latestSystemPrompt !== systemPrompt) store.updateSessionMetadata(sessionId, { latestSystemPrompt: systemPrompt });
   return { systemPrompt, tools };
 }

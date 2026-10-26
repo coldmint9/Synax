@@ -11,6 +11,7 @@ const CONTROL_TOOLS: &[&str] = &[
     "goal.finish",
     "work.checkpoint",
     "design.implement",
+    "command.manage",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -126,6 +127,10 @@ pub(crate) fn final_answer(session: &Value, root: &Value, run: &Value, text: &st
     let decision = before_model(session, root, run);
     if !matches!(decision, Decision::Continue) {
         return decision;
+    }
+    if run.pointer("/metadata/commandTasks").and_then(Value::as_array).is_some_and(|tasks|
+        tasks.iter().any(|task| task["state"] != "settled" || task["deliveredStep"].is_null())) {
+        return Decision::Correct("Commands are still running or completion results are queued. Assess dependencies with command.manage, continue independent work after backgrounding, or wait. Aggregate completion results from the next step before finishing.".into());
     }
     if text.trim().is_empty() {
         return Decision::Correct(
@@ -244,5 +249,21 @@ mod tests {
             ])
             .is_none()
         );
+    }
+
+    #[test]
+    fn monitored_commands_must_settle_and_be_delivered_before_final_answer() {
+        let session = running();
+        for task in [
+            json!({"state":"assessment_required"}),
+            json!({"state":"background"}),
+            json!({"state":"settled"}),
+        ] {
+            assert!(matches!(final_answer(&session, &session,
+                &json!({"metadata":{"commandTasks":[task]}}), "Done"), Decision::Correct(_)));
+        }
+        assert!(matches!(final_answer(&session, &session,
+            &json!({"metadata":{"commandTasks":[{"state":"settled","deliveredStep":3}]}}), "Done"),
+            Decision::Finish(_)));
     }
 }

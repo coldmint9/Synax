@@ -12,13 +12,14 @@ import { ThinkingIndicator } from "./ThinkingIndicator";
 import { RetryIndicator } from "./RetryIndicator";
 import { hasDisplayableReasoning } from "./activityText";
 import { hasStreamingText } from "./streamingLiveBlocks";
-import { Skeleton } from "@/shared/ui/ui/Display";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { AgentConversationView } from "./AgentConversationView";
 import { sessionCompaction } from "./sessionCompaction";
 import { SessionNavigationPanel } from "./SessionNavigationPanel";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
+import { SessionTranscriptTransition } from "./SessionTranscriptTransition";
+import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
 import type { AgentRunStatus } from "../../adapters/transport/agentRuntime";
 
 const RUN_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
@@ -79,6 +80,7 @@ export function SessionTranscript({
     streamingLive,
     streamingCompletedSteps,
   } = useSessionTranscriptStatic();
+  const { environment } = useSessionWorkspaceEnvironment(sessionId);
   const compactionNotice = useAgentSessionStore(
     (s) => s.contextCompactionNotice,
   );
@@ -239,9 +241,11 @@ export function SessionTranscript({
   // Live events can populate messages before the initial history request ends.
   // Keep that partial snapshot behind the loader unless this is a local send.
   const waitingForHistory = loading && !pending;
-  // A cached page is already readable. Background reconciliation must not
-  // cover it with a skeleton until every change-feed page has arrived.
-  const revealed = useTranscriptReveal(scrollRef, sessionId, !loading || Boolean(pending), active);
+  // On entry, reconcile every page and restore the viewport before revealing
+  // it. Once revealed, ordinary background refreshes keep the page readable.
+  const revealed = useTranscriptReveal(
+    scrollRef, sessionId, detailReady || Boolean(pending), active,
+  );
   const preparing = !revealed && !error;
   const readingChanged = useCallback((reading: boolean) => {
     if (sessionId) setSessionHistoryReading(sessionId, reading);
@@ -255,6 +259,16 @@ export function SessionTranscript({
     readingChanged,
     active && !waitingForHistory,
   );
+  // The workspace cards use the authoritative runtime projection. Hydrate the
+  // transcript's full child-session records after that projection discovers a
+  // child, so the conversation timeline can attach the card to its task call.
+  useEffect(() => {
+    if (!sessionId || !environment?.subagents.length) return;
+    void useAgentSessionStore.getState().fetchChildSessions(
+      sessionId,
+      environment.subagents.map((child) => child.id),
+    );
+  }, [sessionId, environment?.subagents]);
   useLayoutEffect(() => {
     if (compacting) scrollToBottom(true);
   }, [compacting, compactionId]);
@@ -270,43 +284,52 @@ export function SessionTranscript({
   }, [pending?.requestId, active, scrollToBottom]);
 
   // Trigger 2: the AI's first response for this submission starts streaming.
-  const firstResponseStepRef = useRef<string | null>(null);
+  const firstResponseStepRef = useRef<{
+    sessionId: string | null;
+    stepId: string | null;
+  } | null>(null);
   useLayoutEffect(() => {
     const prev = firstResponseStepRef.current;
-    firstResponseStepRef.current = streamingStepId;
-    if (streamingStepId && !prev) scrollToBottom(true);
-  }, [streamingStepId, scrollToBottom]);
+    firstResponseStepRef.current = { sessionId, stepId: streamingStepId };
+    if (
+      active &&
+      (!preparing || pending) &&
+      prev?.sessionId === sessionId &&
+      streamingStepId &&
+      !prev.stepId
+    )
+      scrollToBottom(true);
+  }, [sessionId, streamingStepId, active, preparing, pending, scrollToBottom]);
 
   // Trigger 3: the run reaches a terminal state (task finished).
-  const runStatusRef = useRef<AgentRunStatus | undefined>(undefined);
+  const runStatusRef = useRef<{
+    sessionId: string | null;
+    status: AgentRunStatus | undefined;
+  } | null>(null);
   useLayoutEffect(() => {
     const status = latestRunStatus;
     const prev = runStatusRef.current;
-    runStatusRef.current = status;
+    runStatusRef.current = { sessionId, status };
     if (
+      active &&
+      (!preparing || pending) &&
+      prev?.sessionId === sessionId &&
       status &&
       RUN_TERMINAL_STATUSES.includes(status) &&
-      prev &&
-      !RUN_TERMINAL_STATUSES.includes(prev)
+      prev.status &&
+      !RUN_TERMINAL_STATUSES.includes(prev.status)
     )
       scrollToBottom(true);
-  }, [latestRunStatus, scrollToBottom]);
+  }, [sessionId, latestRunStatus, active, preparing, pending, scrollToBottom]);
 
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">
       <div className="session-transcript-viewport relative min-h-0 flex-1">
-        {preparing && (
-          <div role="status" className="session-transcript-loading absolute inset-0 z-20 overflow-hidden">
-            <div className="session-transcript-skeleton mx-auto w-full max-w-3xl space-y-6 px-[1.2rem] py-4">
-              <span className="sr-only">{locale === "zh" ? "正在加载对话" : "Loading conversation"}</span>
-              <Skeleton className="ml-auto h-16 w-2/3 rounded-xl" />
-              <Skeleton className="h-4 w-3/4 rounded-lg" />
-              <Skeleton className="h-4 w-full rounded-lg" />
-              <Skeleton className="h-4 w-1/2 rounded-lg" />
-              <Skeleton className="mt-8 h-24 w-3/4 rounded-xl" />
-            </div>
-          </div>
-        )}
+        <SessionTranscriptTransition
+          key={sessionId}
+          preparing={preparing}
+          hasCachedContent={!loading}
+        />
         <div
           ref={scrollRef}
           data-preparing={preparing ? "true" : "false"}

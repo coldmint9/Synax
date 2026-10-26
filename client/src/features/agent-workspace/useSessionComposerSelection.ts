@@ -3,7 +3,6 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   AgentSession,
-  BackendId,
   ReasoningEffort,
 } from "../../adapters/transport/agentRuntime";
 import type {
@@ -25,7 +24,6 @@ export interface SessionComposerSelection {
   providerId: string | null;
   modelId: string | null;
   capability: ModelCapability;
-  cliModel: string;
   reasoningEffort: ReasoningEffort;
 }
 
@@ -47,7 +45,7 @@ export function mediaSelectionFromMetadata(
 }
 
 interface SubmittedSelection extends SessionComposerSelection {
-  backendId: BackendId;
+  backendId: string;
 }
 
 interface SessionComposerSelectionState {
@@ -57,7 +55,7 @@ interface SessionComposerSelectionState {
   rememberSubmission: (
     projectId: string,
     sessionId: string,
-    backendId: BackendId,
+    backendId: string,
     selection: SessionComposerSelection,
   ) => void;
 }
@@ -65,7 +63,7 @@ interface SessionComposerSelectionState {
 export function sessionComposerSelectionKey(
   projectId: string,
   sessionId: string | null,
-  backendId: BackendId,
+  backendId: string,
 ) {
   return JSON.stringify([projectId, sessionId, backendId]);
 }
@@ -113,7 +111,7 @@ export const useSessionComposerSelections =
 export function useSessionComposerSelection(
   projectId: string,
   session: AgentSession | undefined,
-  backendId: BackendId,
+  backendId: string,
   globalConfig: GlobalConfig | null,
   providers: ProviderDef[],
   effectiveConfig: EffectiveConfig | null,
@@ -208,9 +206,6 @@ export function useSessionComposerSelection(
       (session ? matchingModel?.capability : submittedDefault?.capability) ??
       defaultSelection?.capability ??
       "chat",
-    cliModel: session
-      ? (model ?? "default")
-      : (submittedDefault?.cliModel ?? "default"),
     reasoningEffort:
       runtime.reasoningEffort ??
       (session ? "high" : (submittedDefault?.reasoningEffort ?? draftEffort)),

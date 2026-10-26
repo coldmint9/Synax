@@ -24,7 +24,7 @@ it('serves a history page without first loading the execution working set', asyn
   const response=await agentRuntimeRoutes.request('http://localhost/sessions/s/history-window?since=previous');
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual(page);
-  expect(history).toHaveBeenCalledWith('s',undefined,'previous',false);
+  expect(history).toHaveBeenCalledWith('s',undefined,'previous',false,undefined);
   expect(sessions).not.toHaveBeenCalled();
   expect(hydrate).not.toHaveBeenCalled();
   expect(execution).not.toHaveBeenCalled();

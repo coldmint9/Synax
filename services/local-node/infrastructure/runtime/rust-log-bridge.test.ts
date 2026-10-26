@@ -11,6 +11,19 @@ const native = (level = 'ERROR', message = '请求失败') => JSON.stringify({
 });
 
 describe('Rust structured log ingress', () => {
+  it('keeps message-less resource events structured at their native level', () => {
+    const emit = vi.fn();
+    const bridge = createRustLogBridge({ sidecarPid: 123, generation: 1 }, emit);
+    bridge.write(Buffer.from(JSON.stringify({ level: 'INFO', fields: {
+      event: 'resource.started', resource: 'command', queue_wait_ms: 0,
+    } }) + '\n'));
+    bridge.end();
+    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      level: 'info', message: 'resource.started',
+      context: expect.objectContaining({ event: 'resource.started', resource: 'command', queue_wait_ms: 0 }),
+    }));
+    expect(emit.mock.calls[0][0].context.output).toBeUndefined();
+  });
   it('preserves levels, timestamps and correlation across every possible UTF-8 split', () => {
     const bytes = Buffer.from(`${native()}\n`);
     for (let split = 0; split <= bytes.length; split++) {

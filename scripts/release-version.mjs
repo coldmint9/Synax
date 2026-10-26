@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -52,12 +52,12 @@ function sync(version) {
     ));
   }
 
-  for (const file of [
+  const versionedSources = [
     "cli/main.ts",
     "client/src/app/pages/AboutPage.tsx",
     "services/local-node/infrastructure/mcp/mcp-client-manager.ts",
-    "services/local-node/modules/agent-runtime/backends/codex-connection.ts",
-  ]) {
+  ];
+  for (const file of versionedSources) {
     const path = resolve(root, file);
     const source = readFileSync(path, "utf8");
     const updated = source
@@ -65,14 +65,6 @@ function sync(version) {
       .replace(/const VERSION = "\d+\.\d+\.\d+"/, `const VERSION = "${version}"`)
       .replace(/version: "\d+\.\d+\.\d+"/g, `version: "${version}"`);
     writeFileSync(path, updated);
-  }
-
-  const claudePath = resolve(root, "services/local-node/modules/agent-runtime/backends/claude-connection.ts");
-  if (existsSync(claudePath)) {
-    writeFileSync(
-      claudePath,
-      readFileSync(claudePath, "utf8").replace(/synax\/\d+\.\d+\.\d+/, `synax/${version}`),
-    );
   }
 }
 

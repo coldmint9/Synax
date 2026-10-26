@@ -20,7 +20,7 @@ use super::ops::{ensure_epoch, ensure_revision, settled_status, snapshot_of};
 use super::ops::{hash, parse_json, required_string, set_projection_state, value_to_bytes};
 
 /// Control operations that answer from live state and own no receipt.
-pub const RECEIPT_FREE: [&str; 2] = ["read", "execution_check"];
+pub const RECEIPT_FREE: [&str; 3] = ["read", "read_current", "execution_check"];
 
 const MAX_REQUEST_BYTES: usize = 512 * 1024;
 
@@ -52,54 +52,34 @@ impl SessionHandle {
             ));
         }
         let value = parse_json(payload)?;
-        let mut actor = self.actor.lock();
         if RECEIPT_FREE.contains(&operation) {
-            return actor.read_only_control(&self.id, operation, epoch, revision, &value);
+            // One immutable publication supplies the state and its fence.
+            // Reads never take the writer lock or cause list/disk writes.
+            let lake = self.read();
+            if operation == "read" {
+                ensure_epoch(&lake.state, epoch)?;
+                ensure_revision(&lake.state, revision)?;
+            }
+            let state_json = if operation == "execution_check" {
+                let expected = ExecutionLease::decode(&self.id, &value)?;
+                expected.assert_current(lake.state.active_run_id.as_deref(), lake.control.execution_lease.as_ref())?;
+                value_to_bytes(&json!({"executionLease":lake.control.execution_lease}))?
+            } else {
+                serde_json::to_vec(&*lake.control).map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?
+            };
+            return Ok(ControlCommandReceipt {
+                state_json, snapshot: snapshot_of(&lake.state, &self.id), event: None, reused: false,
+            });
+        }
+        let mut actor = self.actor.lock();
+        if operation == "lease_update" {
+            return actor.update_process_lease(&self.id, request_id, &value);
         }
         actor.control_write(&self.id, request_id, epoch, revision, operation, &value)
     }
 }
 
 impl SessionActor {
-    pub fn read_only_control(
-        &self,
-        session_id: &str,
-        operation: &str,
-        epoch: u64,
-        revision: u64,
-        value: &Value,
-    ) -> Result<ControlCommandReceipt, RuntimeError> {
-        if operation == "read" {
-            ensure_epoch(&self.state, epoch)?;
-            ensure_revision(&self.state, revision)?;
-        }
-        let state_json = match operation {
-            "execution_check" => {
-                let expected = ExecutionLease::decode(session_id, value)?;
-                expected.assert_current(
-                    self.state.active_run_id.as_deref(),
-                    self.control.execution_lease.as_ref(),
-                )?;
-                value_to_bytes(&json!({"executionLease": self.control.execution_lease}))?
-            }
-            "read" => value_to_bytes(
-                &to_value(&self.control)
-                    .map_err(|error| RuntimeError::InvalidCommand(error.to_string()))?,
-            )?,
-            other => {
-                return Err(RuntimeError::InvalidCommand(format!(
-                    "control operation {other} is not receipt-free"
-                )));
-            }
-        };
-        Ok(ControlCommandReceipt {
-            state_json,
-            snapshot: snapshot_of(&self.state, session_id),
-            event: None,
-            reused: false,
-        })
-    }
-
     pub fn control_write(
         &mut self,
         session_id: &str,

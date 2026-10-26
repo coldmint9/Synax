@@ -17,7 +17,6 @@ interface Props {
   value: SynaxPermissionTier;
   onChange: (value: SynaxPermissionTier) => void | Promise<void>;
   disabled?: boolean;
-  backendId?: string;
 }
 
 export function ComposerPermissionPicker({
@@ -25,7 +24,6 @@ export function ComposerPermissionPicker({
   value,
   onChange,
   disabled,
-  backendId,
 }: Props) {
   const { locale, t } = useLocale();
   const optionsRef = useRef<HTMLDivElement>(null);
@@ -46,20 +44,6 @@ export function ComposerPermissionPicker({
   }>({ scope: scope.current, pending: false, error: null });
   const pending = state.scope === scope.current && state.pending;
   const error = state.scope === scope.current ? state.error : null;
-  if (backendId === "codex") {
-    const label = zh ? "CLI 原生审批" : "Native CLI approvals";
-    return (
-      <span
-        role="note"
-        aria-label={label}
-        data-native-policy="true"
-        className="agent-permission-cycle agent-dock-composer-chip inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11px]"
-      >
-        <Shield size={12} aria-hidden />
-        <span>{label}</span>
-      </span>
-    );
-  }
   const description = `${t(SYNAX_PERMISSION_TIER_LABELS[value].descKey as Parameters<typeof t>[0])} · ${zh ? "下一步生效" : "Applies from the next step"}`;
   return (
     <div className="relative">

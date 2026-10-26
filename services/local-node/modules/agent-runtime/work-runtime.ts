@@ -1,3 +1,4 @@
+import { pendingCommandReason } from "./command-tasks.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { usesGoalWorkflow, workflowMode } from './workflow-mode.js';
 import { resolveSessionUserRequest } from './session-user-request.js';
@@ -282,6 +283,8 @@ class WorkRuntime {
     if (!summary.trim()) throw new AgentValidationError('Report completed work, remaining work and the next action before yielding.');
     if (await inputQueueService.getForceInjectId(input.sessionId))
       throw new AgentValidationError('New user input is waiting. Process it before yielding this round.');
+    const commands = input.runId ? pendingCommandReason(store.getRun(input.runId)) : null;
+    if (commands) throw new AgentValidationError(commands);
     if (this.pendingChildren(work) || interactionService.pending(input.sessionId))
       throw new AgentValidationError('Resolve active children and pending interactions before yielding the round.');
     // A handoff is not acceptance. Keep task, verification, plan and goal state intact.
@@ -310,6 +313,8 @@ class WorkRuntime {
     const session = store.getSession(input.sessionId);
     if (!input.runId || !input.stepId || session.activeRunId !== input.runId || session.status !== 'running')
       throw new AgentValidationError('Completion requires the active run checkpoint.');
+    const commands = pendingCommandReason(store.getRun(input.runId));
+    if (commands) throw new AgentValidationError(commands);
     this.syncPlan(work);
     if (!summary.trim()) throw new AgentValidationError('A final summary or concrete blocker is required.');
     // Chat/Plan end a conversational turn, not a formally accepted goal. Pending

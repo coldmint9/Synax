@@ -1,4 +1,3 @@
-import { codexBackend } from "./codex-backend.js";
 import { rustNativeBackend } from "./rust-native-backend.js";
 import { agentRuntimeStore } from "../session-store.js";
 import { sessionProcessManager } from "../session-process-manager.js";
@@ -44,8 +43,7 @@ const native: BackendAdapter = {
 };
 export function getBackendAdapter(id: BackendId): BackendAdapter {
   if (id === "native") return native;
-  if (id === "codex") return codexBackend;
-  throw new Error(`Unsupported backend '${id}'.`);
+  throw new Error(`Unsupported backend '${id}'. External engines are removed.`);
 }
 export function describeBackends() {
   return BACKENDS;

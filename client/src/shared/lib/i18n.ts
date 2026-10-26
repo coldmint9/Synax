@@ -316,7 +316,7 @@ const messages = {
     settingsAgentTimeoutDesc: "Agent 执行超时时间",
     settingsAdvancedTitle: "高级",
     settingsAllowProjectOverride: "允许工作区覆盖连接参数",
-    settingsAllowProjectOverrideDesc: "工作区可自定义 ACP 连接配置",
+    settingsAllowProjectOverrideDesc: "工作区可自定义模型连接配置",
     settingsOpenConfigFile: "打开配置文件",
     settingsOpenConfigFileDesc:
       "在系统编辑器中打开 JSON 配置文件，保存后自动同步",
@@ -1061,7 +1061,7 @@ const messages = {
     settingsAdvancedTitle: "Advanced",
     settingsAllowProjectOverride: "Allow workspace connection overrides",
     settingsAllowProjectOverrideDesc:
-      "Workspaces can customize ACP connection config",
+      "Workspaces can customize model connection config",
     settingsOpenConfigFile: "Open config file",
     settingsOpenConfigFileDesc:
       "Open the JSON config file in your system editor — changes sync automatically on save",

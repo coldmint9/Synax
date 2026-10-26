@@ -99,6 +99,46 @@ function groupParallelToolCalls(
   return result;
 }
 
+function readSubagentSessionId(value: unknown, seen = new Set<unknown>()): string | null {
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  const record = value as Record<string, unknown>;
+  for (const key of ["childSessionId", "taskId"]) {
+    if (typeof record[key] === "string" && record[key].trim()) return record[key].trim();
+  }
+  if (record.session && typeof record.session === "object") {
+    const id = (record.session as Record<string, unknown>).id;
+    if (typeof id === "string" && id.trim()) return id.trim();
+  }
+  for (const key of ["result", "output", "data", "payload"]) {
+    const nested = readSubagentSessionId(record[key], seen);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function childForTaskCall(
+  toolCall: ToolCallRecord,
+  parentSessionId: string,
+  childSessions: AgentSession[],
+  usedChildIds: Set<string>,
+  renderedChildIds: Set<string>,
+): AgentSession | undefined {
+  if (toolCall.toolId !== "subagent.delegate" && toolCall.toolId !== "subagent.lifecycle") return undefined;
+  const explicitId = readSubagentSessionId(toolCall.inputRef) ?? readSubagentSessionId(toolCall.outputRef);
+  if (explicitId) {
+    if (usedChildIds.has(explicitId) || renderedChildIds.has(explicitId)) return undefined;
+    const explicit = childSessions.find((child) => child.id === explicitId && child.parentSessionId === parentSessionId);
+    if (explicit) return explicit;
+  }
+  return childSessions
+    .filter((child) => child.parentSessionId === parentSessionId && !usedChildIds.has(child.id) && !renderedChildIds.has(child.id))
+    .sort((a, b) =>
+      Math.abs(Date.parse(a.createdAt) - Date.parse(toolCall.startedAt)) -
+      Math.abs(Date.parse(b.createdAt) - Date.parse(toolCall.startedAt)),
+    )[0];
+}
+
 function mergeConsecutiveBlocks(
   blocks: TurnContentBlock[],
 ): TurnContentBlock[] {
@@ -135,6 +175,10 @@ export function buildInterleavedTurns(
 ): InterleavedTurn[] {
   const sorted = [...steps].sort((a, b) => a.index - b.index);
   const lastStepByRun = new Map(sorted.map((step) => [step.runId, step.id]));
+  // A child can have several lifecycle records (start, inspect, wait, resume)
+  // and those records can land in different steps. The transcript owns one
+  // visual card per child session, so dedupe across the complete timeline.
+  const renderedChildIds = new Set<string>();
 
   const messagesByStep = new Map<string, AgentRuntimeMessage[]>();
   // A live upsert and a detail refresh can briefly overlap. Keep the newest
@@ -174,6 +218,7 @@ export function buildInterleavedTurns(
 
   return sorted.map((step) => {
     const items: Array<{ timestamp: number; block: TurnContentBlock }> = [];
+    const usedChildIds = new Set<string>();
 
     const stepMessages = messagesByStep.get(step.id) ?? [];
     for (const original of stepMessages) {
@@ -253,15 +298,10 @@ export function buildInterleavedTurns(
       });
 
       if (tc.mutability === "task" && childSessions) {
-        const child = childSessions.find(
-          (cs) =>
-            cs.parentSessionId === step.sessionId &&
-            Math.abs(
-              new Date(cs.createdAt).getTime() -
-                new Date(tc.startedAt).getTime(),
-            ) < 3000,
-        );
+        const child = childForTaskCall(tc, step.sessionId, childSessions, usedChildIds, renderedChildIds);
         if (child) {
+          usedChildIds.add(child.id);
+          renderedChildIds.add(child.id);
           items.push({
             timestamp: new Date(child.createdAt).getTime(),
             block: { type: "sub_session", session: child },

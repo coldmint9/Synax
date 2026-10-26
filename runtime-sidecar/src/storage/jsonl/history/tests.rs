@@ -1678,7 +1678,9 @@ fn truncate_history_preserves_the_compaction_seal_and_rejects_its_prefix() {
         message("target", 3, "Keep target"), message("tail", 4, "Remove tail")
     ])));
     for id in ["earlier", "old-message"] {
-        assert!(matches!(call(&ops, "s", id, "truncate_history",
+        // "earlier" already identifies the append request above. A distinct
+        // mutation needs its own key before the sealed-prefix guard can run.
+        assert!(matches!(call(&ops, "s", &format!("truncate-{id}"), "truncate_history",
             serde_json::json!({"messageId":id,"expectedRevision":before["revision"]})), Err(HistoryError::ReadOnlyHistory)));
     }
     ok(&ops, "s", "truncate", "truncate_history", serde_json::json!({"messageId":"target","expectedRevision":before["revision"]}));

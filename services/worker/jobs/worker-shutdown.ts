@@ -16,6 +16,7 @@ export function startExitWatchdog(timeoutMs = 5_000): () => void {
 export function createWorkerShutdown(options: {
   abort(reason: string): void;
   cleanup(reason: string): Promise<unknown>[];
+  flush?(): Promise<void>;
   report(error: unknown): void;
   exit(code: number): void;
   timeoutMs?: number;
@@ -48,6 +49,7 @@ export function createWorkerShutdown(options: {
           failed = true; options.report(result.reason);
         }
       } catch (error) { failed = true; options.report(error); }
+      try { await options.flush?.(); } catch (error) { failed = true; options.report(error); }
       finish(failed ? 1 : 0);
     })().catch(error => {
       try { options.report(error); } finally { finish(1); }

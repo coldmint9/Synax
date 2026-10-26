@@ -84,7 +84,7 @@ export function resolveSessionCapabilities(sessionId: string): SessionCapabiliti
   const session = agentSessionRuntime.get(sessionId);
   const profile = profileService.getForSession(session);
   const binding = resolveSessionBackend(sessionId);
-  const backend = BACKENDS.find((item) => item.id === binding.id)!;
+  const backend = BACKENDS.find((item) => item.id === binding.id);
   if (binding.id !== 'native') {
     return { backend, profile: { id: profile.id, label: profile.label, kind: profile.kind },
       tools: { available: [], visible: [] }, skills: { active: [], candidates: [] }, mcp: { servers: [] } };

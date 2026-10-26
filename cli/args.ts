@@ -100,6 +100,8 @@ export function parseArgs(argv: string[]): CliOptions {
       hasCommand = true;
     } else options.positionals.push(arg);
   }
+  if (options.backend && options.backend !== "native")
+    throw new Error("Only the native Synax engine is supported.");
   if (options.reply && !["once", "always", "reject"].includes(options.reply))
     throw new Error("Invalid permission reply.");
   if (
@@ -125,7 +127,6 @@ Usage:
   synax resume <session-id> [message]     Attach (TTY) or continue (non-TTY)
   synax watch <run-id> --session <id>     Observe an existing Run
   synax backends [--json]                List backend capabilities
-  synax models <backend-id>              List backend models
   synax projects [--json]                List projects
   synax sessions [--json]                List persisted sessions
   synax approve <permission-id> --session <id> [--reply once|always|reject]
@@ -138,7 +139,7 @@ Options:
   --token <token> | --token-file <path>   Runtime credentials; never passed in URLs
   --project <id>                         Project ID or SYNAX_PROJECT_ID
   --work-dir <path>                      Runtime-local working directory (default: cwd)
-  --backend <id>                         native, codex, claude-code, ACP...
+  --backend <id>                         native Synax engine (the only supported backend)
   --profile <id>                         Session profile (default: synax)
   --file <path>                          Attach a local file (repeatable, up to 10)
   --model <id>                           Backend model

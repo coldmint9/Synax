@@ -478,7 +478,7 @@ export function assertSpecialistToolAllowed(
 ): void {
   const snapshot = readSnapshot(session);
   if (!snapshot) return;
-  if (!snapshot.capabilities.includes(toolId))
+  if (!snapshot.capabilities.includes(toolId) && !(toolId === "command.manage" && snapshot.capabilities.includes("bash")))
     throw new AgentPermissionError(
       `Tool ${toolId} is not assigned to this specialist.`,
     );

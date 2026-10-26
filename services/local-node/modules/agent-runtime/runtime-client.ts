@@ -1,4 +1,4 @@
-import type { RuntimeAsset, InputCapabilities, InputModality } from './content-parts.js';
+import type { RuntimeAsset, InputCapabilities } from './content-parts.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -250,10 +250,6 @@ export class HttpRuntimeClient implements RuntimeClient {
 
   listBackends(): Promise<{ items: RuntimeBackendDescriptor[] }> {
     return this.request('/api/agent-runtime/backends');
-  }
-
-  listBackendModels(id: string): Promise<{ models: Array<{ id: string; label: string; efforts?: string[]; inputModalities?: InputModality[] }>; defaultModel?: string | null }> {
-    return this.request(`/api/agent-runtime/backends/${encodeId(id)}/models`);
   }
 
   listProjects(): Promise<{ items: Array<{ id: string; name: string; source?: { localPath?: string; kind?: string } }> }> {

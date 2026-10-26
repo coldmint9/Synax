@@ -130,18 +130,4 @@ describe("permission dropdown", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it.each(["codex"])(
-    "keeps native approval behavior for %s",
-    (backendId) => {
-      render(
-        <ComposerPermissionPicker
-          backendId={backendId}
-          value="boundary"
-          onChange={vi.fn()}
-        />,
-      );
-      expect(screen.getByRole("note")).toHaveTextContent("CLI 原生审批");
-      expect(screen.queryByRole("button")).not.toBeInTheDocument();
-    },
-  );
 });

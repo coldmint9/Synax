@@ -2,16 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { formatLocalDay, LOG_RETENTION_DAYS, retentionCutoffDay } from '../log-retention.js';
+import { flushDiagnosticLogs } from '../buffered-log-writer.js';
 
 describe('log-file-store', () => {
   beforeEach(async () => {
     const { clearDailyLogFilesForTests } = await import('../log-file-store.js');
-    clearDailyLogFilesForTests();
+    await clearDailyLogFilesForTests();
   });
 
   afterEach(async () => {
     const { clearDailyLogFilesForTests } = await import('../log-file-store.js');
-    clearDailyLogFilesForTests();
+    await clearDailyLogFilesForTests();
   });
 
   it('writes logs to a daily file named by local date', async () => {
@@ -19,6 +20,7 @@ describe('log-file-store', () => {
     const today = formatLocalDay(new Date());
 
     writeDailyLogLine('INFO hello');
+    await flushDiagnosticLogs();
 
     expect(getApiLogFilePath()).toBe(path.join(path.dirname(getApiLogFilePath()), `api-${today}.log`));
     expect(fs.readFileSync(getApiLogFilePath(), 'utf8')).toContain('INFO hello');
@@ -39,6 +41,7 @@ describe('log-file-store', () => {
 
     fs.writeFileSync(resolveDailyLogFilePath(expired), 'stale\n', 'utf8');
     writeDailyLogLine('INFO fresh');
+    await flushDiagnosticLogs();
 
     pruneOldDailyLogFiles();
 

@@ -286,6 +286,16 @@ impl JsonlStore {
         Ok(())
     }
 
+    /// Process identities must be durable before launch, but they do not
+    /// change the list row. Avoid rewriting its potentially large metadata.
+    pub fn flush_process_leases(&self, session_id: &str) -> JsonlResult<()> {
+        if let Some(handle) = self.root.sessions.get(session_id) {
+            handle.actor.lock().sync()?;
+            self.checkpoint(&handle, false);
+        }
+        Ok(())
+    }
+
     /// Release completed sessions from the hot cache once no operation still
     /// owns a handle. The durable list index remains available for listings.
     pub fn evict_idle(&self) -> usize {

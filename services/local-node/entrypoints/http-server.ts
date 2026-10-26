@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { localAgentNode } from "../composition/agent-node.js";
 import { API_SESSION_LOG_FILE, logger as pinoLogger } from "../infrastructure/runtime/logger.js";
+import { flushDiagnosticLogs } from "../infrastructure/runtime/buffered-log-writer.js";
 import { PORT, DATA_ROOT } from "../infrastructure/runtime/env.js";
 import { healthRoutes } from "../transport/http/health.js";
 import { projectRoutes } from "../transport/http/projects.js";
@@ -298,6 +299,7 @@ async function shutdownRuntime(): Promise<void> {
   await businessStore.flush();
   await stopRustRuntimeSidecar(rustRuntimeSidecar);
   rustRuntimeSidecar = null;
+  await flushDiagnosticLogs();
   process.exit(failed ? 1 : 0);
 }
 process.on("SIGINT", () => {

@@ -16,17 +16,13 @@ export function makeBackendBinding(
   model?: string | null,
   workDir?: string | null,
 ): BackendBinding {
+  validateBackendTurnInput(id);
   return {
     version: 1,
     id,
-    model: normalizeModel(id, model ?? null),
+    model: model || null,
     workDir: workDir ?? null,
   };
-}
-
-function normalizeModel(id: BackendId, model: string | null): string | null {
-  if (!model) return null;
-  return model;
 }
 
 export function readBackendBinding(
@@ -42,15 +38,14 @@ export function readBackendBinding(
       );
     return parsed.data;
   }
-  const identities = new Set(
-    runs
-      .filter((run) => run.model)
-      .map(() => "native"),
-  );
-  if (identities.size > 1)
-    throw new AgentValidationError(
-      "Legacy backend binding is ambiguous. Keep this history and start a new explicitly bound session.",
-    );
+  // Keep unbound legacy history from silently acquiring the native engine.
+  const legacy = session.sessionMetadata?.acp as { providerId?: string; engineModel?: string } | undefined;
+  const external = session.sessionMetadata?.nativeBackend as { id?: string; model?: string } | undefined;
+  const legacyModel = legacy?.engineModel ?? runs.find(run => run.model?.split("/")[0].endsWith("-acp"))?.model;
+  if (legacy || legacyModel || (external?.id && external.id !== "native")) return {
+    version: 1, id: legacy?.providerId || legacyModel?.split("/")[0] || external?.id || "retired",
+    model: legacyModel ?? external?.model ?? null, workDir: null,
+  };
   const previous = runs.find((run) => Boolean(run.model));
   return makeBackendBinding("native", previous?.model);
 }
@@ -77,33 +72,15 @@ export function resolveBackendModel(
   const previous = agentRuntimeStore
     .listRuns(sessionId)
     .find((run) => Boolean(run.model))?.model;
-  const model = normalizeModel(
-    binding.id,
-    input.model ?? previous ?? binding.model ?? null,
-  );
-  return model;
+  return input.model ?? previous ?? binding.model ?? null;
 }
 
 export function validateBackendTurnInput(
   id: string,
-  input: Partial<StreamTurnRequest>,
-): void {
-  if (id !== "codex") return;
-  if (
-    input.permissionTier !== undefined ||
-    input.permissionOverrides !== undefined
-  ) {
+  _input?: Partial<StreamTurnRequest>,
+): asserts id is BackendId {
+  if (id !== "native")
     throw new AgentValidationError(
-      "Native CLI backends use their own sandbox and approvals, not Synax permission tiers or overrides.",
+      "External CLI and ACP engines have been removed. Start a native Synax session.",
     );
-  }
-  if (
-    input.maxSteps !== undefined ||
-    input.maxTokens !== undefined ||
-    input.temperature !== undefined
-  ) {
-    throw new AgentValidationError(
-      "Native CLI backends control their own agent loop; Synax loop limits and temperature are unsupported.",
-    );
-  }
 }

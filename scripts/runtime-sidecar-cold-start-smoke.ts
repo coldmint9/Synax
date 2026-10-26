@@ -33,7 +33,7 @@ try {
 
   child = spawn(process.execPath, ['--import', 'tsx/esm', 'services/local-node/entrypoints/http-server.ts'], {
     cwd: process.cwd(),
-    env: { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', SYNAX_DESKTOP_SIDECAR: '1', LOG_LEVEL: 'info' },
+    env: { ...process.env, OPENAI_API_KEY: 'fixture-not-used', DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', SYNAX_DESKTOP_SIDECAR: '1', LOG_LEVEL: 'info' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -62,7 +62,7 @@ try {
   assert.equal(detail.status, 200, await detail.clone().text());
   const created = await fetch(`http://127.0.0.1:${port}/api/agent-runtime/sessions`, {
     method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ projectId: 'fixture', profileId: 'explorer', backendId: 'codex', prompt: 'New task', workDir: root }),
+    body: JSON.stringify({ projectId: 'fixture', profileId: 'explorer', backendId: 'native', prompt: 'New task', workDir: root }),
     signal: AbortSignal.timeout(5_000),
   });
   assert.equal(created.status, 201, await created.clone().text());

@@ -184,8 +184,9 @@ export class RustNativeBackend implements BackendAdapter {
           const previous = store.listToolCalls(sessionId).find(call => call.runId === run.id && call.modelToolCallId === event.toolCallId);
           let exec: ExecuteToolResult;
           if (previous) {
-            if (previous.status === "running") throw new Error("Tool execution has no terminal receipt; inspect its effects before recovery.");
-            exec = { record: previous, permission: previous.permissionDecisionId
+            const monitored = toolRegistry.commandTasks.receipt(previous);
+            if (previous.status === "running" && !monitored) throw new Error("Tool execution has no terminal receipt; inspect its effects before recovery.");
+            exec = monitored ?? { record: previous, permission: previous.permissionDecisionId
               ? store.listPermissions(sessionId).find(permission => permission.id === previous.permissionDecisionId) : undefined };
           } else {
             exec = await toolRegistry.execute(sessionId, event.toolName ?? "", event.input ?? {}, {
@@ -477,6 +478,7 @@ export class RustNativeBackend implements BackendAdapter {
       yield { type: "done", sessionId, runId: run.id };
     } finally {
       observation.abort();
+      await toolRegistry.commandTasks.stopRun(run.id);
       if (!waiting) { this.activeLoops.delete(sessionId); this.preparedContexts.delete(run.id); this.loopSequences.delete(run.id); }
     }
   }

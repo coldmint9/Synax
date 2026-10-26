@@ -33,6 +33,7 @@ import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 
 interface ContextValue {
+  canEditMessages: boolean;
   reason: string | null;
   forkReason: string | null;
   running: boolean;
@@ -351,6 +352,8 @@ export function SessionHistoryProvider({
     [sessionId, session, executing, zh, close, refresh],
   );
   const editReason = useCallback((messageId?: string): string | null => {
+    if (session?.parentSessionId)
+      return zh ? "子会话消息不支持编辑" : "Subagent messages cannot be edited";
     if (!sessionId || !messageId || isRuntimeResourceGone(sessionId))
       return zh ? "此消息尚未保存，暂时无法编辑" : "This message is not saved yet";
     if (session?.sessionMetadata?.historyRollbackEnabled === false)
@@ -363,7 +366,7 @@ export function SessionHistoryProvider({
     if (messageIndex.get(messageId)?.historyProjection)
       return zh ? "这是长消息预览，请勿用截断内容覆盖原消息" : "Load the full message before editing";
     return null;
-  }, [sessionId, session?.sessionMetadata?.historyRollbackEnabled, summary, checkpointIndex, messageIndex, zh]);
+  }, [sessionId, session?.parentSessionId, session?.sessionMetadata?.historyRollbackEnabled, summary, checkpointIndex, messageIndex, zh]);
   const edit = useCallback(async (messageId: string, message: string): Promise<boolean> => {
     if (!sessionId || !message.trim() || executing || resolver.current || forkInFlight.current || editInFlight.current)
       return false;
@@ -488,6 +491,7 @@ export function SessionHistoryProvider({
       const notLoaded =
         loadError || (zh ? "回复结束后可操作" : "Available once the run settles");
       return {
+      canEditMessages: !session?.parentSessionId,
       reason:
         summary && summary.sessionId === sessionId
           ? summary.stopRequired && session && ACTIVE_STATUSES.has(session.status)

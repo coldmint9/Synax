@@ -1,7 +1,7 @@
 /**
  * Quiesce scope for terminal lifecycle operations.
  *
- * Archiving a session runs a shutdown pipeline (interrupt the run, close ACP
+ * Archiving a session runs a shutdown pipeline (interrupt the run, close runtime
  * peers, stop background processes, cancel queued work) that legitimately
  * produces a burst of intermediate runtime events: stopping flags, cancelled
  * steps, interrupted runs. No consumer needs that play-by-play — the session

@@ -109,6 +109,12 @@ export class LoopComposition {
         await execute(op, signal);
       }
       const receipts = output.filter(({ call }) => group.some((entry) => entry.call.id === call.id));
+      if (receipts.some(({ exec }) => exec.record.status === "running" &&
+          (exec.toolResult?.result as { state?: string } | undefined)?.state !== "background")) {
+        this.cancelTail(program);
+        this.save(stepId, program);
+        break;
+      }
       if (receipts.some(({ exec }) => exec.record.status === "pending" || exec.interactionId || exec.toolResult?.suspend)) break;
       if (receipts.some(({ exec }) => ["failed", "denied", "cancelled"].includes(exec.record.status))) {
         this.cancelTail(program);

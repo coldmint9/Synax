@@ -4,6 +4,58 @@ import { hydrateHistoryValues, readHistoryList, readSessionList, sessionPages } 
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
+it('shares immutable transfers across six readers and reuses them on refresh without sharing mutable objects', async () => {
+  const command = vi.fn(async (input: { payload: { objectId: string } }) => {
+    await new Promise(resolve => setTimeout(resolve, 1));
+    return encode({ text: JSON.stringify({ id: input.payload.objectId, metadata: { original: true } }) });
+  });
+  const client = { historyCommand: command, historyCommandGlobal: command } as unknown as RuntimeSidecarClient;
+  const refs = Array.from({ length: 100 }, (_, i) => ({ $historyObject: `sha256:${i}` }));
+  const pages = await Promise.all(Array.from({ length: 6 }, () => hydrateHistoryValues(client, 's', refs)));
+  expect(command).toHaveBeenCalledTimes(100);
+  (pages[0][0] as unknown as { metadata: { original: boolean } }).metadata.original = false;
+  expect(pages[1][0]).toMatchObject({ metadata: { original: true } });
+  expect((await hydrateHistoryValues(client, 's', refs))[0]).toMatchObject({ metadata: { original: true } });
+  expect(command).toHaveBeenCalledTimes(100);
+  await hydrateHistoryValues(client, 'other-session', refs.slice(0, 1));
+  expect(command).toHaveBeenCalledTimes(101);
+});
+
+it('does not cache a failed transfer and validates each caller size even on a hit', async () => {
+  const command = vi.fn().mockRejectedValueOnce(new Error('connection lost'))
+    .mockResolvedValue(encode({ text: '{}' }));
+  const client = { historyCommand: command } as unknown as RuntimeSidecarClient;
+  await expect(hydrateHistoryValues(client, 's', [{ $historyObject: 'o' }])).rejects.toThrow('connection lost');
+  await expect(hydrateHistoryValues(client, 's', [{ $historyObject: 'o', bytes: 2 }])).resolves.toEqual([{}]);
+  await expect(hydrateHistoryValues(client, 's', [{ $historyObject: 'o', bytes: 3 }])).rejects.toThrow('incomplete');
+  expect(command).toHaveBeenCalledTimes(2);
+});
+
+it('evicts the least recently used objects at the cache entry bound', async () => {
+  const command = vi.fn(async () => encode({ text: '{}' }));
+  const client = { historyCommand: command } as unknown as RuntimeSidecarClient;
+  await hydrateHistoryValues(client, 's', Array.from({ length: 1025 }, (_, i) => ({ $historyObject: `o${i}` })));
+  await hydrateHistoryValues(client, 's', [{ $historyObject: 'o1024' }]);
+  expect(command).toHaveBeenCalledTimes(1025);
+  await hydrateHistoryValues(client, 's', [{ $historyObject: 'o0' }]);
+  expect(command).toHaveBeenCalledTimes(1026);
+});
+
+it('bounds retained object bytes and reads changed identities immediately', async () => {
+  const command = vi.fn(async (input: { payload: { objectId: string } }) => encode({
+    text: JSON.stringify({ id: 'same-row', version: input.payload.objectId, content: 'x'.repeat(2 * 1024 * 1024) }),
+  }));
+  const client = { historyCommand: command } as unknown as RuntimeSidecarClient;
+  for (let i = 0; i < 5; i++) {
+    const result = await hydrateHistoryValues(client, 's', [{ $historyObject: `version-${i}` }]);
+    expect(result[0]).toMatchObject({ version: `version-${i}` });
+  }
+  await hydrateHistoryValues(client, 's', [{ $historyObject: 'version-4' }]);
+  expect(command).toHaveBeenCalledTimes(5);
+  await hydrateHistoryValues(client, 's', [{ $historyObject: 'version-0' }]);
+  expect(command).toHaveBeenCalledTimes(6);
+});
+
 it('shares the two-object transfer budget across simultaneous history readers', async () => {
   const active = new Set<string>();
   let peak = 0;

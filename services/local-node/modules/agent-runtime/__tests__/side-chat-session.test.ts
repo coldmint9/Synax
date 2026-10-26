@@ -22,7 +22,7 @@ function source(backendId = "native", profileId = "synax"): AgentSession {
         workspaceLocation: { kind: "host", path: "/workspace/feature" },
       },
     },
-  } as AgentSession;
+  } as unknown as AgentSession;
 }
 
 describe("side chat creation contract", () => {
@@ -45,14 +45,8 @@ describe("side chat creation contract", () => {
     expect(parsed.sessionMetadata).not.toHaveProperty("parentSessionId");
   });
 
-  it("omits Synax permission and tool overrides for a Codex backend", () => {
-    const input = createSessionRequestSchema.parse(sideChatSessionRequest(source("codex"), "Side chat"));
-    expect(() => validateBackendTurnInput("codex", input)).not.toThrow();
-    expect(input.permissionTier).toBeUndefined();
-    expect(input.permissionOverrides).toBeUndefined();
-    expect(input.skillIds ?? []).toEqual([]);
-    expect(input.mcpServerIds ?? []).toEqual([]);
-    expect(profiles.assertCanStart(input.profileId, input).mode).toBe("primary");
+  it("rejects retired external backends", () => {
+    expect(() => createSessionRequestSchema.parse(sideChatSessionRequest(source("codex"), "Side chat"))).toThrow();
   });
 
   it("keeps the subagent guard for actual child sessions", () => {

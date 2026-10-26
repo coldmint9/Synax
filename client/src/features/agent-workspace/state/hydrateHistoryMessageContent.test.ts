@@ -18,6 +18,21 @@ const message = (id: string, content: string): AgentRuntimeMessage => ({
 describe("hydrateHistoryMessageContent", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each([0, -1, 1.5, Number.NaN])("rejects invalid continuation %s instead of endlessly loading", async next => {
+    vi.spyOn(agentRuntimeApi, "messageContentPage").mockResolvedValue({ text: "part", next, revision: 4 });
+    await expect(hydrateHistoryMessageContent("session", [message("m", "preview")], 4))
+      .rejects.toThrow("History content cursor did not advance");
+    expect(agentRuntimeApi.messageContentPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects content from a different revision without caching a mixed message", async () => {
+    vi.spyOn(agentRuntimeApi, "messageContentPage")
+      .mockResolvedValueOnce({ text: "first", next: 5, revision: 4 })
+      .mockResolvedValueOnce({ text: "changed", revision: 5 });
+    await expect(hydrateHistoryMessageContent("session", [message("m", "preview")], 4))
+      .rejects.toMatchObject({ code: "HISTORY_STALE" });
+  });
+
   it("loads every content page and preserves the other projected fields", async () => {
     vi.spyOn(agentRuntimeApi, "messageContentPage")
       .mockResolvedValueOnce({ text: "first ", next: 6, revision: 4 })

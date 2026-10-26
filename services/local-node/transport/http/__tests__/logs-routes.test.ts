@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { flushDiagnosticLogs } from '../../../infrastructure/runtime/buffered-log-writer.js';
 
 describe('log routes', () => {
   beforeEach(async () => {
     const { clearApiLogStoreForTests } = await import('../../../infrastructure/runtime/log-store.js');
     const { clearDailyLogFilesForTests } = await import('../../../infrastructure/runtime/log-file-store.js');
-    clearApiLogStoreForTests();
-    clearDailyLogFilesForTests();
+    await clearApiLogStoreForTests();
+    await clearDailyLogFilesForTests();
   });
 
   it('persists logs and exposes daily stats', async () => {
@@ -67,6 +68,7 @@ describe('log routes', () => {
   it('writes the current daily log file', async () => {
     const { getApiLogFilePath, logger } = await import('../../../infrastructure/runtime/logger.js');
     logger.info({ method: 'GET', path: '/api/health', status: 200, ms: 9 }, 'request');
+    await flushDiagnosticLogs();
 
     const text = fs.readFileSync(getApiLogFilePath(), 'utf8');
 

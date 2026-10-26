@@ -6,6 +6,58 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 const snapshot = { session: { id: 's', status: 'completed' }, run: null, cursor: 1400, liveChunks: [], completedStepIds: ['step'] };
 const remote = (overrides: object) => overrides as unknown as RuntimeSidecarClient;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+it('coalesces concurrent list and summary refreshes but fetches fresh mutable state after completion', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const sessionList = vi.fn(async () => { await gate; return encode({ items: [{ id: 's', status: 'running' }] }); });
+  const sessionSummary = vi.fn(async () => { await gate; return encode({ single: true, items: [{ id: 's', status: 'running' }] }); });
+  const facade = new RuntimeFacade(() => remote({ sessionList, sessionSummary }));
+  const lists = Array.from({ length: 6 }, () => facade.listSessionProjection());
+  const summaries = Array.from({ length: 6 }, () => facade.sessionSummaryAuthoritative('s'));
+  expect(sessionList).toHaveBeenCalledOnce();
+  expect(sessionSummary).toHaveBeenCalledOnce();
+  release();
+  await Promise.all([...lists, ...summaries]);
+  await facade.listSessionProjection();
+  await facade.sessionSummaryAuthoritative('s');
+  expect(sessionList).toHaveBeenCalledTimes(2);
+  expect(sessionSummary).toHaveBeenCalledTimes(2);
+});
+
+it('coalesces identical windows through hydration while keeping cursors and sessions independent', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const historyCommand = vi.fn(async (input: { sessionId: string; operation: string }) => {
+    await gate;
+    return encode(input.operation === 'object_value_chunk' ? { text: '{"id":"m","content":"hello"}' } : {
+      messages: [{ $historyObject: 'message-object' }], runs: [], steps: [], toolCalls: [], events: [], permissions: [], removed: [],
+      historyWindow: { revision: 1, epoch: 1, generation: 1, incremental: false },
+    });
+  });
+  const client = remote({ historyCommand });
+  const facade = new RuntimeFacade(() => client);
+  const reads = Array.from({ length: 6 }, () => facade.historyWindowAuthoritative('s'));
+  reads.push(facade.historyWindowAuthoritative('s', undefined, undefined, true));
+  reads.push(facade.historyWindowAuthoritative('other'));
+  expect(historyCommand).toHaveBeenCalledTimes(3);
+  release();
+  const pages = await Promise.all(reads);
+  expect(pages.every(page => page.messages[0].content === 'hello')).toBe(true);
+  expect(historyCommand.mock.calls.filter(([input]) => input.operation === 'object_value_chunk')).toHaveLength(2);
+  await facade.historyWindowAuthoritative('s');
+  expect(historyCommand.mock.calls.filter(([input]) => input.operation === 'history_sync')).toHaveLength(4);
+});
+
+it('releases failed coalesced reads so later requests can recover', async () => {
+  const sessionList = vi.fn().mockRejectedValueOnce(new Error('temporarily unavailable'))
+    .mockResolvedValue(encode({ items: [] }));
+  const facade = new RuntimeFacade(() => remote({ sessionList }));
+  const results = await Promise.allSettled([facade.listSessionProjection(), facade.listSessionProjection()]);
+  expect(results.every(result => result.status === 'rejected')).toBe(true);
+  expect(sessionList).toHaveBeenCalledOnce();
+  await expect(facade.listSessionProjection()).resolves.toEqual([]);
+});
 it('does not reconcile a conflicting fork request against a different committed receipt', async () => {
   const conflict = new RuntimeSidecarError({ type: 'error', code: 'REQUEST_CONFLICT', message: 'changed input' });
   const client = remote({ historyCommandGlobal: vi.fn(async () => encode({ copied: 1 })) });
@@ -100,6 +152,7 @@ it('awaits the store commit before reading the created projection', async () => 
 
 it('does not flush or read the UI projection for process lease mirrors', async () => {
   const client = remote({
+    connect: vi.fn(async () => ({ capabilities: ['control_current_v1'] })),
     snapshot: vi.fn(async () => ({ epoch: 1, revision: 2 })),
     controlCommand: vi.fn(async () => ({ stateJson: encode({}) })),
   });
@@ -112,8 +165,12 @@ it('does not flush or read the UI projection for process lease mirrors', async (
     payload: { leaseId: 'something' },
   });
   expect(ensure).not.toHaveBeenCalled();
-  expect(client.snapshot).toHaveBeenCalledOnce();
+  expect(client.snapshot).not.toHaveBeenCalled();
   expect(client.controlCommand).toHaveBeenCalledOnce();
+  expect(client.controlCommand).toHaveBeenCalledWith(expect.objectContaining({
+    epoch: 0, revision: 0, operation: 'lease_update',
+    payload: { operation: 'lease_open', lease: { leaseId: 'something' } },
+  }));
 });
 
 it('shares concurrent reads of the same history collection', async () => {
@@ -133,6 +190,20 @@ it('shares concurrent reads of the same history collection', async () => {
     [{ id: 'tool-1', sessionId: 's' }],
     [{ id: 'tool-1', sessionId: 's' }],
   ]);
+});
+
+it('reads current control state without a UI snapshot or revision lookup', async () => {
+  vi.spyOn(agentRuntimeStore, 'flushSession').mockResolvedValue();
+  const client = remote({
+    connect: vi.fn(async () => ({ capabilities: ['control_current_v1'] })),
+    snapshot: vi.fn(), uiSnapshot: vi.fn(),
+    controlCommand: vi.fn(async () => ({ stateJson: encode({ processLeases: [] }) })),
+  });
+  const facade = new RuntimeFacade(() => client);
+  await Promise.all([facade.controlState('s'), facade.controlState('s')]);
+  expect(client.controlCommand).toHaveBeenCalledOnce();
+  expect(client.snapshot).not.toHaveBeenCalled();
+  expect(client.uiSnapshot).not.toHaveBeenCalled();
 });
 it('does not hide failures or attempt SQL fallback when Rust already owns the projection', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });

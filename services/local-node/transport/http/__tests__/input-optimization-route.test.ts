@@ -60,7 +60,7 @@ it("accepts draft-only requests and forwards the selected model", async () => {
 it("accepts omitted current model for saved override selection", async () => {
   mocks.optimize.mockResolvedValue({ text: "优化" });
   expect(
-    (await request({ projectId: "p1", text: "原文", backendId: "codex" }))
+    (await request({ projectId: "p1", text: "原文", backendId: "native" }))
       .status,
   ).toBe(200);
 });

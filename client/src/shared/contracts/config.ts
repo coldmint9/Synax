@@ -1,6 +1,6 @@
 import type { MediaAdapter, MediaCapabilities, MediaModelSelection, ModelCapability } from "./media-generation";
 export type ProviderStatus = "live" | "experimental" | "inactive";
-export type ProviderKind = "acp" | "api";
+export type ProviderKind = "api";
 export type ApiFormat = "openai" | "openai-responses" | "anthropic" | "jev";
 
 export interface ProviderCaps {
@@ -154,7 +154,6 @@ export interface GlobalConfig {
   providers: ProviderDef[];
   defaultProviderId: string;
   defaultApiProviderId: string;
-  enabledAcpProviderIds: string[];
   providerConnections: Record<string, ProviderConnection>;
   mcpServers: McpServerConfig[];
   computerUse?: GlobalComputerUseSettings;
@@ -205,7 +204,6 @@ export interface UpdateGlobalConfigRequest {
   providers?: ProviderDef[];
   defaultProviderId?: string;
   defaultApiProviderId?: string;
-  enabledAcpProviderIds?: string[];
   providerConnections?: Record<string, ProviderConnection>;
   mcpServers?: McpServerConfig[];
   computerUse?: GlobalComputerUseSettings;

@@ -17,7 +17,8 @@
 
 | 工具 | 实际约束/行为 | 处理 | 依据 |
 | --- | --- | --- | --- |
-| `bash` | command 长度 1–4000，拒绝 NUL；workdir 必须可解析；每个管道/链段走权限判断；有限会话限制重定向；timeout 默认 30s、1–600s，background 时忽略 | 补路径基准和 command 的 NUL 限制，保留后台/超时/权限说明 | tools/bash.ts、tools/bash-command-policy.ts、tools/workspace.ts |
+| `bash` | command 长度 1–4000，拒绝 NUL；workdir 必须可解析；每个管道/链段走权限判断；有限会话限制重定向；timeout 默认 600s、1–600s，120s 未返回时触发依赖评估；显式短超时优先；async=true 在启动后立即返回 commandTaskId，共用完成队列；async=false 正常等待；async 与 background=true / shell & 互斥；background 常驻服务忽略超时 | 补路径基准和 command 的 NUL 限制，保留后台/超时/权限说明 | tools/bash.ts、tools/bash-command-policy.ts、tools/workspace.ts |
+| `command.manage` | 当前 run 内的 commandTaskId；action=wait/background/cancel；reason 必填；background 要求独立 nextStep；单独调用 | 支持 bash async=true 与 120s 监测产生的任务；wait 阻塞到完成、cancel 取消、background 解除等待；后台命令保留资源和取消所有权；完成结果在下一 step 自动注入并持久化，汇总前不允许结束 | command-tasks.ts、tool-registry.ts、native-step-context.ts |
 | `file.read` | 普通文本文件，扩展名/内容识别二进制；maxBytes 默认和上限 64000；没有 offset 参数 | 修正可用搜索工具名、路径说明、默认上限、截断后的读取建议 | tools/file-read.ts |
 | `file.write` | 非空 path、string content；完整覆盖并创建父目录；自动补读；已读文件变化可能拒绝写入 | 补路径基准、绝对路径授权与文件变化处理 | tools/file-write.ts、read-tracker.ts |
 | `file.generate` | Python 3 script 1–65,536 字符；timeoutMs 默认 30s、钳制 1–120s；synax.write/delete/move 暂存后统一校验和提交；120 文件、64 MiB、单文件 8 MiB、诊断各 8 KiB；仅无 NUL 的 UTF-8 | write 审批；删除/移动要求 file.delete；提交前检查 sandbox、writeScope、文件新鲜度，持有写锁并在失败时回滚；完整恢复才返回 rolledBack，否则报告 residualPaths；缺 Python 不注册；不进入 code mode 允许列表 | tools/file-generate.ts、file-generation/、infrastructure/runtime/python-runtime.ts |
@@ -114,7 +115,7 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 | `task.get` | 当前会话存在的 taskId | 补 ID 来源，保留返回完整详情说明 | tools/task-tools.ts |
 | `task.list` | 列本会话非 deleted 项；无参数 | 保留，符合实现 | tools/task-tools.ts |
 | `work.checkpoint` | goal 挂载；start 需新用户目标、objective 且没有活跃 children；continue 需 unmetRequirement/nextAction/expectedEvidence 且与计划验收匹配；complete/yield/blocked 条件不同 | 补各 action 条件和 evidence 来源，区分完成与让出回合 | tools/work-tools.ts、work-runtime.ts |
-| `verification.run` | goal、active Work；criterion 多个时复制一个，无验收项时显式提供；purpose/scope；宽泛套件需 broader=true 和具体 unresolved risk；禁止 stash/reset/restore/checkout/clean/后台脱离；默认120s、最大600s | 补未批准 criterion、宽泛 suite 与路径范围前置条件，保留已有超时/版本收据语义 | tools/verification.ts、work-runtime.ts |
+| `verification.run` | goal、active Work；criterion 多个时复制一个，无验收项时显式提供；purpose/scope；宽泛套件需 broader=true 和具体 unresolved risk；禁止 stash/reset/restore/checkout/clean/后台脱离；默认600s、最大600s；120s 未返回时由 command.manage 评估依赖 | 补未批准 criterion、宽泛 suite 与路径范围前置条件，保留已有超时/版本收据语义 | tools/verification.ts、work-runtime.ts |
 | `context.read` | kind 为 step/message/checkpoint；精确 ID 属当前会话或 children；message 只 user，step 取历史文本，checkpoint 取索引；offset 默认0、limit 默认6000 最大12000；不返回 tool results | 补各 ID/kind 与字符分页说明 | context-projection.ts |
 
 ## 项目自带会话 provider
@@ -155,3 +156,19 @@ Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止�
 - 未执行真实付费媒体生成、外部浏览器/桌面操作或所有项目测试。MCP/自定义工具的服务端说明不在本次修改范围。
 
 验证日志保存在本地 `.tmp/tool-contract-final-tests.log` 与 `.tmp/tool-contract-jev-test.log`。隔离工作区曾缺少未纳入 checkout 的 Git 技能资源，导致其额外 Git 检查失败；最终当前工作区的全部 11 项 Git 工具检查通过。
+
+### 命令异步执行
+
+有限任务可在调用时选择是否等待：
+
+```json
+{"command":"npm run build","async":true,"timeoutMs":600000}
+```
+
+权限、资源调度及启动校验完成后返回 `commandTaskId`，主会话可以继续独立工作。进程结束后，stdout、stderr、退出码与失败信息通过同一完成队列注入下一 step，并保留持久化结果。依赖该结果时调用 `command.manage`：
+
+```json
+{"commandTaskId":"<返回的 ID>","action":"wait","reason":"下一步依赖构建结果"}
+```
+
+`cancel` 会停止该任务；省略 `async` 或设置 `async:false` 则正常等待，120 秒后沿用依赖评估机制。异步任务仍遵守 `timeoutMs` 和会话取消，最终汇总前必须处理其结果。`background:true` 继续用于常驻服务，不能与 `async:true` 同时传入。

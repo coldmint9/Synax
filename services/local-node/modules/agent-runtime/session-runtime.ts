@@ -67,9 +67,6 @@ export class AgentSessionRuntime {
           "Cannot create a subagent while its ancestor is stopped or stopping.",
         );
     }
-    if (input.profileId === 'git-manager' && input.backendId && input.backendId !== 'native') {
-      throw new AgentValidationError('Git manager requires the scoped native tool runtime.');
-    }
     validateBackendTurnInput(input.backendId ?? "native", input);
     const profile = this.profiles.assertCanStart(input.profileId, {
       parentSessionId: input.parentSessionId,
@@ -79,29 +76,17 @@ export class AgentSessionRuntime {
         "Sub-session projectId must match parent session projectId.",
       );
     }
-    if (
-      input.backendId &&
-      input.backendId !== "native" &&
-      (input.skillIds?.length || input.mcpServerIds?.length)
-    ) {
-      throw new AgentValidationError(
-        "Synax Skills/MCP selection is not yet supported by this backend. Configure native backend tools separately.",
-      );
-    }
     const createdAt = nowIso();
-    const projectMcpServerIds =
-      input.backendId && input.backendId !== "native"
-        ? []
-        : (input.mcpServerIds ??
-          (() => {
-            try {
-              return getProjectSettings(input.projectId)
-                .mcpServers.filter((server) => server.enabled !== false)
-                .map((server) => server.id);
-            } catch {
-              return [];
-            }
-          })());
+    const projectMcpServerIds = input.mcpServerIds ??
+      (() => {
+        try {
+          return getProjectSettings(input.projectId)
+            .mcpServers.filter((server) => server.enabled !== false)
+            .map((server) => server.id);
+        } catch {
+          return [];
+        }
+      })();
     const sessionMetadata = seedSessionPermissionMetadata(
       normalizeSessionPromptMetadata(input.sessionMetadata),
       {

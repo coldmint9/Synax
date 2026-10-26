@@ -141,7 +141,7 @@ function createGlobalConfig(overrides?: Partial<GlobalConfig>): GlobalConfig {
     updatedAt: "2026-05-13T00:00:00.000Z",
     updatedBy: "tester",
     ...overrides,
-  };
+  } as unknown as GlobalConfig;
 }
 
 function createProjectConfig(

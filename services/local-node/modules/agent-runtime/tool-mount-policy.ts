@@ -15,6 +15,9 @@ import { readSessionPermissionConfig } from './session-permissions.js';
  * progressive disclosure.
  */
 export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): boolean {
+  if (tool.id === 'command.manage') return profile.allowedCapabilities.includes('command.manage') ||
+    profile.allowedCapabilities.includes('bash') ||
+    (Boolean(profile.mountAllTools) && !['subagent', 'git-merge-worker'].includes(profile.id));
   if (profile.id === 'subagent' || profile.id === 'git-merge-worker') return profile.allowedCapabilities.includes(tool.id);
   if (tool.id === 'presentation.select') return profile.id !== 'git-manager' && profile.allowedCapabilities.includes('skill.load');
   if (NATIVE_PROTOCOL_IDS.has(tool.id) && profile.id !== 'git-manager') return true;
@@ -46,6 +49,7 @@ const PLAN_TOOLS = new Set([
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'presentation.select', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
+  'command.manage',
   'design.read', 'design.write', 'design.preview', 'design.transition', 'design.implement',
   'git.merge.read', 'git.pr.read', 'worktree.list',
 ]);

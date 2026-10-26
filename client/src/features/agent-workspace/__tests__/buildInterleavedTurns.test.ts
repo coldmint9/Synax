@@ -3,6 +3,7 @@ import { buildInterleavedTurns } from "../buildInterleavedTurns";
 import type {
   AgentRunStep,
   AgentRuntimeMessage,
+  AgentSession,
   ToolCallRecord,
 } from "../../../adapters/transport/agentRuntime";
 
@@ -221,5 +222,90 @@ describe("buildInterleavedTurns", () => {
       type: "tool_call",
       call: { id: "tc-1", status: "completed", outputSummary: "done" },
     });
+  });
+
+  it("attaches a child by its persisted session id even when history arrives late", () => {
+    const child = {
+      id: "child-1",
+      parentSessionId: SESSION_ID,
+      createdAt: "2026-01-01T00:00:20.000Z",
+    } as AgentSession;
+    const turns = buildInterleavedTurns(
+      [makeStep()],
+      [makeToolCall({
+        toolId: "subagent.lifecycle",
+        mutability: "task",
+        startedAt: "2026-01-01T00:00:02.000Z",
+        inputRef: { action: "start", prompt: "Inspect the repository" },
+        outputRef: { result: { childSessionId: child.id, status: "running" } },
+      })],
+      [],
+      [child],
+    );
+
+    expect(turns[0].blocks).toEqual([
+      expect.objectContaining({ type: "tool_call" }),
+      { type: "sub_session", session: child },
+    ]);
+  });
+
+  it("pairs a delayed lifecycle start with the nearest unused child when ids are absent", () => {
+    const child = {
+      id: "child-2",
+      parentSessionId: SESSION_ID,
+      createdAt: "2026-01-01T00:00:25.000Z",
+    } as AgentSession;
+    const turns = buildInterleavedTurns(
+      [makeStep()],
+      [makeToolCall({ toolId: "subagent.lifecycle", mutability: "task", startedAt: "2026-01-01T00:00:02.000Z" })],
+      [],
+      [child],
+    );
+    expect(turns[0].blocks.some((block) => block.type === "sub_session" && block.session.id === child.id)).toBe(true);
+  });
+
+  it("renders one card when the same child appears in multiple lifecycle records", () => {
+    const child = {
+      id: "child-duplicate",
+      parentSessionId: SESSION_ID,
+      createdAt: "2026-01-01T00:00:25.000Z",
+    } as AgentSession;
+    const secondStep = makeStep({ id: "step-2", index: 2, startedAt: "2026-01-01T00:01:00.000Z", completedAt: "2026-01-01T00:01:05.000Z" });
+    const lifecycle = (id: string, stepId: string, startedAt: string): ToolCallRecord => makeToolCall({
+      id,
+      stepId,
+      toolId: "subagent.lifecycle",
+      mutability: "task",
+      startedAt,
+      inputRef: { action: "inspect", childSessionId: child.id },
+    });
+    const turns = buildInterleavedTurns(
+      [makeStep(), secondStep],
+      [
+        lifecycle("lifecycle-1", STEP_ID, "2026-01-01T00:00:02.000Z"),
+        lifecycle("lifecycle-2", "step-2", "2026-01-01T00:01:02.000Z"),
+      ],
+      [],
+      [child],
+    );
+    expect(turns.flatMap((turn) => turn.blocks).filter((block) => block.type === "sub_session")).toHaveLength(1);
+  });
+
+  it("deduplicates repeated explicit child ids in one step", () => {
+    const child = {
+      id: "child-same-step",
+      parentSessionId: SESSION_ID,
+      createdAt: "2026-01-01T00:00:25.000Z",
+    } as AgentSession;
+    const turns = buildInterleavedTurns(
+      [makeStep()],
+      [
+        makeToolCall({ id: "lifecycle-a", toolId: "subagent.lifecycle", mutability: "task", inputRef: { action: "start" }, outputRef: { childSessionId: child.id } }),
+        makeToolCall({ id: "lifecycle-b", toolId: "subagent.lifecycle", mutability: "task", inputRef: { action: "inspect", childSessionId: child.id } }),
+      ],
+      [],
+      [child],
+    );
+    expect(turns[0].blocks.filter((block) => block.type === "sub_session")).toHaveLength(1);
   });
 });

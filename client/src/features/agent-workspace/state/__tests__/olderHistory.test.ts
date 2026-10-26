@@ -41,6 +41,49 @@ afterEach(() => {
   store.setState(store.getInitialState());
 });
 
+it("releases a failed read so retry can load history without losing the visible messages", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow)
+    .mockRejectedValueOnce(Object.assign(new Error("timeout"), { code: "HISTORY_TIMEOUT" }))
+    .mockResolvedValueOnce(page(["m1", "m2"]));
+  await expect(store.getState().loadOlderHistory()).rejects.toMatchObject({ code: "HISTORY_TIMEOUT" });
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m3", "m4"]);
+  await store.getState().loadOlderHistory();
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m1", "m2", "m3", "m4"]);
+});
+
+it("rejects a non-advancing page instead of silently blocking further upward gestures", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow).mockResolvedValueOnce(page(["m3"], "older"));
+  await expect(store.getState().loadOlderHistory()).rejects.toThrow("History cursor did not advance");
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m3", "m4"]);
+});
+
+it("stops a stale-cursor rebuild when the server cycles between pages", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow)
+    .mockRejectedValueOnce({ code: "HISTORY_STALE" })
+    .mockResolvedValueOnce(page(["m8"], "c1"))
+    .mockResolvedValueOnce(page(["m7"], "c2"))
+    .mockResolvedValueOnce(page(["m6"], "c1"));
+  await expect(store.getState().loadOlderHistory()).rejects.toThrow("History cursor did not advance");
+  expect(agentRuntimeApi.historyWindow).toHaveBeenCalledTimes(4);
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m3", "m4"]);
+});
+
+it("stops rebuilding older pages after switching to another session", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow)
+    .mockRejectedValueOnce({ code: "HISTORY_STALE" })
+    .mockImplementationOnce(async () => {
+      store.setState({ selectedSessionId: "other" });
+      return page(["m8"], "c1");
+    });
+  await store.getState().loadOlderHistory();
+  expect(agentRuntimeApi.historyWindow).toHaveBeenCalledTimes(2);
+  expect(store.getState().messages.map(message => message.id)).toEqual(["m3", "m4"]);
+});
+
 it("prepends older pages without discarding recent messages or duplicating overlap", async () => {
   loaded();
   vi.mocked(agentRuntimeApi.historyWindow).mockResolvedValue(page(["m1", "m2", "m3"], undefined, "older"));
