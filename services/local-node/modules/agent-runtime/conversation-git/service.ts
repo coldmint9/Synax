@@ -529,6 +529,13 @@ export class ConversationGitService {
       if (input.action === 'replan' && ['preparing', 'checking', 'applying', 'merged', 'noop'].includes(mr.status))
         throw new GitMrError('Finish or stop the current operation before replanning.', 'INVALID_STATE');
     }, async (task, mr) => {
+      // Re-enter from durable progress. Repeated preparation/continuation and
+      // recovery after an already reconciled step must not repeat Git writes.
+      if (workerSessionId && (
+        (input.action === 'prepare' && ['conflicted', 'ready', 'check_failed'].includes(mr.status)) ||
+        (input.action === 'continue' && ['ready', 'check_failed'].includes(mr.status)) ||
+        (input.action === 'resume' && ['draft', 'conflicted', 'ready', 'check_failed'].includes(mr.status))
+      )) return `步骤已完成，继续当前合并状态：${mr.status}。`;
       if (!workerSessionId && (task.execution || input.action === 'pause')) {
         const worker = await import('./worker.js');
         if (input.action === 'pause') { await worker.pauseConversationMergeWorker(sessionId, objectId); return '合并已停止，候选结果已保留。'; }
@@ -646,16 +653,21 @@ export class ConversationGitService {
   }
 
   /** All projections are emitted only after their authority state is durable. */
-  async setWorkerExecution(sessionId: string, objectId: string, patch: Partial<ConversationMergeExecution>, expectedEpoch?: number, includeFiles = false, changedFileIds?: string[], changedFiles?: ConversationGitSnapshot['files']) {
+  async setWorkerExecution(sessionId: string, objectId: string, patch: Partial<ConversationMergeExecution>, fence?: number | { epoch: number; revision: number }, includeFiles = false, changedFileIds?: string[], changedFiles?: ConversationGitSnapshot['files']) {
     const updated = await this.lock(`conversation-task:${objectId}`, async () => {
       const { task, mr } = await this.binding(sessionId, objectId);
+      const expectedEpoch = typeof fence === 'object' ? fence.epoch : fence;
       if (expectedEpoch !== undefined && task.execution?.epoch !== expectedEpoch)
         throw new GitMrError('The merge worker generation changed.', 'WORKER_FENCED');
+      const reentry = typeof fence === 'object';
+      if (reentry && (task.execution?.revision !== fence.revision || patch.epoch !== fence.epoch + 1 ||
+          patch.status !== 'running' || !['paused', 'waiting_user', 'failed', 'recovery_required'].includes(task.execution.status)))
+        throw new GitMrError('The merge worker changed during re-entry; inspect its latest state before continuing.', 'WORKER_FENCED');
       if (task.execution && ['completed', 'cancelled'].includes(task.execution.status)) return { task, mr };
       if (task.execution?.status === 'cancelled_cleanup_pending' &&
           (expectedEpoch !== undefined || !['cancelled', 'cancelled_cleanup_pending', 'cancelling'].includes(patch.status ?? '')))
         throw new GitMrError('Cancelled merges may only retry isolated candidate cleanup.', 'WORKER_FENCED');
-      if (expectedEpoch !== undefined && task.execution && ['pausing', 'paused', 'cancelling', 'waiting_user', 'recovery_required'].includes(task.execution.status))
+      if (!reentry && expectedEpoch !== undefined && task.execution && ['pausing', 'paused', 'cancelling', 'waiting_user', 'recovery_required'].includes(task.execution.status))
         throw new GitMrError('The merge worker is stopped.', 'WORKER_FENCED');
       task.execution = { status: 'queued', phase: 'preparing', joinMode: 'blocking', epoch: 1, ...task.execution, ...patch,
         revision: (task.execution?.revision ?? 0) + 1, updatedAt: new Date().toISOString(),

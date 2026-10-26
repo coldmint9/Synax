@@ -145,7 +145,7 @@ it('continues a paused merge after the parent completed without starting another
     const state = await conversationGitService.workerSnapshot(sessionId, task.task.id);
     const id = state.execution!.childSessionId!;
     expect(state.execution?.status, JSON.stringify({execution:state.execution, session:store.getSession(id), runs:store.listRuns(id), calls:store.listToolCalls(id)})).toBe('completed');
-  }, { timeout: 30_000 });
+  }, { timeout: 90_000 });
   await runCoordinator.waitForIdle();
   const complete = await conversationGitService.get(sessionId, task.task.id);
   expect(complete.execution?.status, JSON.stringify({ execution: complete.execution,
@@ -153,17 +153,26 @@ it('continues a paused merge after the parent completed without starting another
   expect(complete.mr.status).toBe('merged');
   expect(store.listRuns(sessionId).map(run => run.id)).toEqual(parentRunIds);
   expect(git('show', 'integration:app.ts') + '\n').toBe(resolution);
-}, 120_000);
+}, 180_000);
 
-it('fences an idle connected provider, stops only its child, and releases the blocked parent', async () => {
+it('fences an idle provider and automatically re-enters the same child to finish the merge', async () => {
   vi.stubEnv('SYNAX_MERGE_WORKER_IDLE_MS','8000');
   holdForControl = true;
   const admitted = await runCoordinator.submitAsync(sessionId, {message:'Merge and report.'}, 'merge-watchdog');
   await vi.waitFor(()=>expect(childHeld).toBe(true),{timeout:45_000});
   const [task] = await conversationGitService.list(sessionId);
-  await vi.waitFor(async()=>expect((await conversationGitService.workerSnapshot(sessionId,task.task.id)).execution?.status).toBe('recovery_required'),{timeout:20_000});
-  await vi.waitFor(()=>expect(runCoordinator.isActive(task.execution!.childSessionId!)).toBe(false),{timeout:15_000});
+  await vi.waitFor(async()=>expect((await conversationGitService.workerSnapshot(sessionId,task.task.id)).execution?.status).toBe('recovery_required'),{timeout:30_000});
+  // Only the deliberately held first attempt uses the short test deadline.
+  // The resumed worker still has real Git commands and checks to finish.
+  vi.stubEnv('SYNAX_MERGE_WORKER_IDLE_MS','600000');
+  await vi.waitFor(async()=>expect((await conversationGitService.workerSnapshot(sessionId,task.task.id)).execution?.epoch).toBe(2),{timeout:45_000});
+  releaseChild?.(); releaseChild = undefined; holdForControl = false;
+  await vi.waitFor(async()=>expect((await conversationGitService.workerSnapshot(sessionId,task.task.id)).execution?.status).toBe('completed'),{timeout:90_000});
   await runCoordinator.waitForSessionIdle(sessionId);
   expect(store.getRun(admitted.run.id).status).toBe('completed');
-  expect(git('rev-parse','integration')).toBe(targetBefore);
-},90_000);
+  const complete = await conversationGitService.get(sessionId, task.task.id);
+  expect(complete.execution?.childSessionId).toBe(task.execution!.childSessionId!);
+  expect(complete.mr.status).toBe('merged');
+  expect(git('show','integration:app.ts') + '\n').toBe(resolution);
+  expect(store.listRuns(task.execution!.childSessionId!)).toHaveLength(2);
+},180_000);

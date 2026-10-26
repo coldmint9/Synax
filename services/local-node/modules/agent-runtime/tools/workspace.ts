@@ -28,9 +28,34 @@ const sessionWorkspaceRoots = new Map<string, string>();
  */
 const membershipCache = new Map<
   string,
-  { projectId: string; roots: ProjectWorkspaceRoot[] }
+  { projectId: string; roots: ProjectWorkspaceRoot[]; signature: string }
 >();
 const MAX_MEMBERSHIP_CACHE = 2048;
+
+/**
+ * What the cached roots were derived from. A session worker can rebind its own
+ * checkout, so the cache must notice a changed binding instead of serving the
+ * membership snapshot it captured before the switch.
+ */
+function membershipSignature(sessionId: string, binding: unknown): string {
+  const backend = binding as
+    | {
+        workspaceRoots?: unknown;
+        workspaceLocation?: unknown;
+        workDir?: unknown;
+        rootWorktrees?: unknown;
+        workspaceBindingRevision?: unknown;
+      }
+    | undefined;
+  return JSON.stringify([
+    backend?.workspaceRoots ?? null,
+    backend?.workspaceLocation ?? null,
+    backend?.workDir ?? null,
+    backend?.rootWorktrees ?? null,
+    backend?.workspaceBindingRevision ?? null,
+    sessionWorkspaceRoots.get(sessionId) ?? null,
+  ]);
+}
 
 export function invalidateSessionWorkspaceRoots(sessionId?: string): void {
   if (sessionId === undefined) membershipCache.clear();
@@ -256,10 +281,12 @@ export function resolveSessionWorkspaceRoots(
   sessionId: string,
   projectId: string,
 ): ProjectWorkspaceRoot[] {
-  const cached = membershipCache.get(sessionId);
-  if (cached && cached.projectId === projectId) return cached.roots;
   const binding = agentRuntimeStore.tryGetSession(sessionId)?.sessionMetadata
     ?.backend as { workspaceRoots?: ProjectWorkspaceRoot[] } | undefined;
+  const signature = membershipSignature(sessionId, binding);
+  const cached = membershipCache.get(sessionId);
+  if (cached && cached.projectId === projectId && cached.signature === signature)
+    return cached.roots;
   const project = readWorkspaceProject(projectId);
   const roots = binding?.workspaceRoots ?? (project ? projectWorkspaceRoots(project) : []);
   const resolved = withRootWorktrees(withSessionPrimary(
@@ -267,7 +294,7 @@ export function resolveSessionWorkspaceRoots(
   ), binding);
   if (membershipCache.size >= MAX_MEMBERSHIP_CACHE && !cached)
     membershipCache.delete(membershipCache.keys().next().value!);
-  membershipCache.set(sessionId, { projectId, roots: resolved });
+  membershipCache.set(sessionId, { projectId, roots: resolved, signature });
   return resolved;
 }
 

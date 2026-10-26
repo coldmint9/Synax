@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   GitCommitHorizontal,
   GitPullRequest,
+  Upload,
   LoaderCircle,
 } from "lucide-react";
 import { Button } from "../../../shared/ui/ui/Button";
@@ -11,6 +12,7 @@ import type {
 } from "../../../adapters/transport/agentRuntime";
 import { useWorkspaceGit } from "../workspaceGitStore";
 import { SessionCommitDialog } from "../SessionCommitDialog";
+import { SessionPushDialog } from "../SessionPushDialog";
 import "./gitActions.css";
 const GitActionDialog = lazy(() => import("./GitActionDialog"));
 export default function ComposerGitActions({
@@ -31,16 +33,20 @@ export default function ComposerGitActions({
     (repository) => repository.status === "ready" && repository.dirty,
   );
   const showCommit = dirtyRepositories.length > 0;
-  const showPr = repositories.some(
+  const pushRepositories = repositories.filter(
     (repository) =>
       repository.status === "ready" &&
       (repository.unpushedCommitCount ?? 0) > 0,
   );
+  const showPush = pushRepositories.length > 0;
+  const showPr = showPush;
   const [intent, setIntent] = useState<"pr" | null>(null);
   const [owner, setOwner] = useState<AgentSession | null>(null);
   const [commitTarget, setCommitTarget] = useState<WorkspaceRepositoryGit | null>(
     null,
   );
+  const [pushTarget, setPushTarget] = useState<WorkspaceRepositoryGit | null>(null);
+  const [pushOpen, setPushOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [commitOpen, setCommitOpen] = useState(false);
@@ -51,6 +57,8 @@ export default function ComposerGitActions({
     setIntent(null);
     setCommitOpen(false);
     setCommitTarget(null);
+    setPushOpen(false);
+    setPushTarget(null);
     setOwner(null);
     setLoading(false);
     setError("");
@@ -59,7 +67,7 @@ export default function ComposerGitActions({
       generation.current++;
     };
   }, [projectId, session?.id]);
-  const open = async (mode: "commit" | "pr") => {
+  const open = async (mode: "commit" | "pr" | "push") => {
     if (disabled || loading) return;
     const version = generation.current;
     setLoading(true);
@@ -75,6 +83,13 @@ export default function ComposerGitActions({
         if (!target) return;
         setCommitTarget(target);
         setCommitOpen(true);
+      } else if (mode === "push") {
+        const target =
+          pushRepositories.find((repository) => repository.role === "primary") ??
+          pushRepositories[0];
+        if (!target) return;
+        setPushTarget(target);
+        setPushOpen(true);
       } else {
         setIntent(mode);
       }
@@ -87,7 +102,7 @@ export default function ComposerGitActions({
       if (version === generation.current) setLoading(false);
     }
   };
-  if (!showCommit && !showPr && !intent && !commitOpen && !loading && !error)
+  if (!showCommit && !showPr && !showPush && !intent && !commitOpen && !pushOpen && !loading && !error)
     return null;
   return (
     <div className="composer-git-actions-wrap">
@@ -107,6 +122,18 @@ export default function ComposerGitActions({
             >
               <GitCommitHorizontal size={14} />
               <span>Commit</span>
+            </Button>
+          )}
+          {showPush && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled || loading}
+              onClick={() => void open("push")}
+              title="审阅并推送本地提交"
+            >
+              <Upload size={14} />
+              <span>Push</span>
             </Button>
           )}
           {showPr && (
@@ -170,6 +197,22 @@ export default function ComposerGitActions({
             setCommitTarget(null);
           }}
           onCommitted={() => void reload?.()}
+        />
+      )}
+      {pushOpen && owner && pushTarget && (
+        <SessionPushDialog
+          isOpen
+          sessionId={owner.id}
+          rootId={pushTarget.rootId}
+          rootName={pushTarget.name}
+          branch={pushTarget.branch}
+          pendingCount={pushTarget.unpushedCommitCount}
+          repositories={pushRepositories}
+          onClose={() => {
+            setPushOpen(false);
+            setPushTarget(null);
+          }}
+          onPushed={() => void reload?.()}
         />
       )}
     </div>

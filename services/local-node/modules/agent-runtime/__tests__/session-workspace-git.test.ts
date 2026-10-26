@@ -39,13 +39,14 @@ import {
   invalidateSessionEnvironment,
 } from '../session-environment.js'
 import { getWorkspaceGitChanges } from '../workspace-git-changes.js'
-import { commitSessionWorkspace } from '../session-git-commit.js'
+import { commitSessionWorkspace, pushSessionWorkspace } from '../session-git-commit.js'
 
 const sessionId = 'multi-root-workspace-git-test'
 const relativePath = 'src/shared.txt'
 let fixtureDirectory = ''
 let primary: ProjectWorkspaceRoot
 let reference: ProjectWorkspaceRoot
+let expectConflictModel = false
 
 function git(root: ProjectWorkspaceRoot, ...args: string[]): string {
   return execFileSync('git', args, { cwd: root.path, encoding: 'utf8', timeout: 10_000 })
@@ -92,6 +93,8 @@ function repositoryState(root: ProjectWorkspaceRoot) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.generateGatewayTextResult.mockReset()
+  expectConflictModel = false
   invalidateSessionEnvironment(sessionId)
   fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-workspace-git-'))
   fixtureDirectory = fs.realpathSync(fixtureDirectory)
@@ -119,9 +122,15 @@ afterEach(() => {
     fixtureDirectory = ''
     vi.unstubAllEnvs()
   }
-  expect(mocks.generateGatewayTextResult).not.toHaveBeenCalled()
-  expect(mocks.startAuxUsage).not.toHaveBeenCalled()
-  expect(mocks.finishAuxUsage).not.toHaveBeenCalled()
+  if (!expectConflictModel) {
+    expect(mocks.generateGatewayTextResult).not.toHaveBeenCalled()
+    expect(mocks.startAuxUsage).not.toHaveBeenCalled()
+    expect(mocks.finishAuxUsage).not.toHaveBeenCalled()
+  } else {
+    expect(mocks.generateGatewayTextResult).toHaveBeenCalled()
+    expect(mocks.startAuxUsage).toHaveBeenCalledWith(sessionId, 'git-conflict-resolution')
+    expect(mocks.finishAuxUsage).toHaveBeenCalled()
+  }
 })
 
 describe('session workspace Git roots', () => {
@@ -147,7 +156,7 @@ describe('session workspace Git roots', () => {
         ],
       })
       await expect(getSessionEnvironmentFile(sessionId, relativePath, 'input', root.id)).resolves.toEqual({
-        sessionId, path: relativePath, kind: 'input', content: `${root.id} working\n`, truncated: false,
+        sessionId, path: relativePath, kind: 'input', content: `${root.id} working\n`, truncated: false, workspacePath: root.path,
       })
       const diff = await getSessionEnvironmentFile(sessionId, relativePath, 'diff', root.id)
       expect(diff).toMatchObject({ sessionId, path: relativePath, kind: 'diff', truncated: false })
@@ -168,6 +177,7 @@ describe('session workspace Git roots', () => {
       kind: 'input',
       content: 'reference-only\n',
       truncated: false,
+      workspacePath: reference.path,
     })
   })
 
@@ -438,5 +448,231 @@ describe('detached branch creation retry', () => {
       rootId: primary.id, message: 'test: retry', branchName: 'topic/retry', push: false,
     })
     expect(result.branch).toBe('topic/retry')
+  }, 20_000)
+})
+
+describe('conflict-safe commit and push', () => {
+  function createConflict(): void {
+    git(primary, 'reset', '--hard', 'HEAD')
+    git(primary, 'checkout', '-qb', 'conflict-source')
+    writeSharedFile(primary, 'source\n')
+    git(primary, 'add', '--', relativePath)
+    git(primary, 'commit', '--quiet', '-m', 'source change')
+    git(primary, 'checkout', '-q', 'main')
+    writeSharedFile(primary, 'target\n')
+    git(primary, 'add', '--', relativePath)
+    git(primary, 'commit', '--quiet', '-m', 'target change')
+    try {
+      git(primary, 'merge', 'conflict-source')
+    } catch {
+      // The fixture intentionally leaves Git in an unresolved merge state.
+    }
+  }
+
+  it('rejects competing conflict markers without changing HEAD or the index', async () => {
+    createConflict()
+    expectConflictModel = true
+    mocks.generateGatewayTextResult.mockResolvedValue({ finishReason: 'stop', text: '{"resolutions":[null]}' })
+    const before = repositoryState(primary)
+
+    await expect(commitSessionWorkspace(sessionId, {
+      rootId: primary.id,
+      message: 'test: do not commit unresolved conflict',
+      push: false,
+    })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+
+    expect(repositoryState(primary)).toEqual(before)
+    expect(git(primary, 'status', '--porcelain=v1')).toBe(`UU ${relativePath}\n`)
+  }, 20_000)
+
+  it('automatically stages an unambiguous conflict resolution before committing', async () => {
+    createConflict()
+    fs.writeFileSync(
+      path.join(primary.path, relativePath),
+      '<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> conflict-source\n',
+    )
+
+    const result = await commitSessionWorkspace(sessionId, {
+      rootId: primary.id,
+      message: 'test: resolve conflict automatically',
+      push: false,
+    })
+
+    expect(result.pushed).toBeNull()
+    expect(git(primary, 'status', '--porcelain=v1')).toBe('')
+    expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('same\n')
+    expect(git(primary, 'rev-list', '--parents', '-n', '1', 'HEAD').split(' ')).toHaveLength(3)
+  }, 20_000)
+
+  it('never pushes a branch while its worktree has an unresolved conflict', async () => {
+    createConflict()
+
+    await expect(pushSessionWorkspace(sessionId, { rootId: primary.id }))
+      .rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(git(primary, 'status', '--porcelain=v1')).toBe(`UU ${relativePath}\n`)
+  }, 20_000)
+
+  function remoteForPrimary(): string {
+    const remote = path.join(fixtureDirectory, 'remote.git')
+    execFileSync('git', ['init', '--quiet', '--bare', '--initial-branch=main', remote])
+    git(primary, 'remote', 'add', 'origin', remote)
+    git(primary, 'push', '--quiet', '-u', 'origin', 'main')
+    return remote
+  }
+
+  it('automatically resolves competing edits with the project model, then commits and pushes clean content', async () => {
+    createConflict()
+    const remote = remoteForPrimary()
+    const untouched = repositoryState(reference)
+    expectConflictModel = true
+    mocks.generateGatewayTextResult.mockResolvedValue({ finishReason: 'stop', text: JSON.stringify({ resolutions: ['target and source\n'] }) })
+    const result = await commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: combine both changes' })
+    expect(result.pushed).toBe(true)
+    expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('target and source\n')
+    expect(execFileSync('git', ['--git-dir', remote, 'show', `main:${relativePath}`], { encoding: 'utf8' })).toBe('target and source\n')
+    expect(repositoryState(reference)).toEqual(untouched)
+    const request = mocks.generateGatewayTextResult.mock.calls[0][0]
+    expect(request).toMatchObject({ projectId: primary.id, purpose: 'git-conflict-resolution' })
+    expect(JSON.parse(request.messages[1].content).sides).toEqual({ base: 'primary before\n', ours: 'target\n', theirs: 'source\n' })
+  }, 20_000)
+
+  it('resolves already staged marker content before committing', async () => {
+    createConflict()
+    git(primary, 'add', '--', relativePath)
+    expectConflictModel = true
+    mocks.generateGatewayTextResult.mockResolvedValue({ finishReason: 'stop', text: JSON.stringify({ resolutions: ['combined\n'] }) })
+    await commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: staged conflict', push: false })
+    expect(git(primary, 'show', `HEAD:${relativePath}`)).toBe('combined\n')
+  }, 20_000)
+
+  it.each(['length', 'invalid', 'markers', 'unavailable'])('preserves every file when model resolution is %s', async kind => {
+    createConflict()
+    expectConflictModel = true
+    const before = repositoryState(primary)
+    if (kind === 'unavailable') mocks.generateGatewayTextResult.mockRejectedValue(new Error('Provider unavailable'))
+    else mocks.generateGatewayTextResult.mockResolvedValue({
+      finishReason: kind === 'length' ? 'length' : 'stop',
+      text: kind === 'invalid' ? 'not JSON' : JSON.stringify({ resolutions: [kind === 'markers' ? '<<<<<<< still broken\n' : 'partial'] }),
+    })
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: resolve', push: false })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(repositoryState(primary)).toEqual(before)
+  }, 20_000)
+
+  it('does not overwrite an edit made while the model is resolving', async () => {
+    createConflict()
+    const beforeHead = git(primary, 'rev-parse', 'HEAD')
+    expectConflictModel = true
+    mocks.generateGatewayTextResult.mockImplementation(async () => {
+      writeSharedFile(primary, 'concurrent edit\n')
+      return { finishReason: 'stop', text: JSON.stringify({ resolutions: ['combined\n'] }) }
+    })
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: resolve', push: false })).rejects.toMatchObject({ code: 'GIT_CONFLICT_STATE_CHANGED' })
+    expect(fs.readFileSync(path.join(primary.path, relativePath), 'utf8')).toBe('concurrent edit\n')
+    expect(git(primary, 'rev-parse', 'HEAD')).toBe(beforeHead)
+    expect(git(primary, 'ls-files', '-u')).not.toBe('')
+  }, 20_000)
+
+  it.each(['binary', 'delete'])('does not silently stage a %s conflict without markers', async kind => {
+    git(primary, 'reset', '--hard', 'HEAD')
+    const base = kind === 'binary' ? 'base\0bytes' : 'base\n'
+    writeSharedFile(primary, base)
+    git(primary, 'commit', '-qam', 'base')
+    git(primary, 'checkout', '-qb', 'structural-conflict')
+    if (kind === 'delete') git(primary, 'rm', '--', relativePath)
+    else writeSharedFile(primary, 'source\0bytes')
+    git(primary, 'commit', '-qam', 'source')
+    git(primary, 'checkout', '-q', 'main')
+    writeSharedFile(primary, kind === 'binary' ? 'target\0bytes' : 'target\n')
+    git(primary, 'commit', '-qam', 'target')
+    try { git(primary, 'merge', 'structural-conflict') } catch { /* expected */ }
+    const before = repositoryState(primary)
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: resolve', push: false })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(repositoryState(primary)).toEqual(before)
+  }, 20_000)
+
+  it('does not inspect or stage excluded untracked conflicts', async () => {
+    fs.writeFileSync(path.join(primary.path, 'untracked.txt'), '<<<<<<< a\na\n=======\nb\n>>>>>>> b\n')
+    await commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: tracked only', push: false, includeUntracked: false })
+    expect(git(primary, 'ls-files')).not.toContain('untracked.txt')
+  }, 20_000)
+
+  it('does not misread rename source records or trim paths while resolving', async () => {
+    const renamed = 'src/ 空格\n文件 .txt '
+    git(primary, 'mv', relativePath, renamed)
+    fs.writeFileSync(path.join(primary.path, renamed), '<<<<<<< a\nsame\n=======\nsame\n>>>>>>> b\n')
+    await commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: renamed conflict', push: false })
+    expect(git(primary, 'show', `HEAD:${renamed}`)).toBe('same\n')
+  }, 20_000)
+
+  it('blocks pushing conflict markers in outgoing history even if a later commit fixed them', async () => {
+    git(primary, 'reset', '--hard', 'HEAD')
+    const remote = remoteForPrimary()
+    const remoteHead = git(primary, 'rev-parse', 'HEAD').trim()
+    writeSharedFile(primary, '<<<<<<< a\na\n=======\nb\n>>>>>>> b\n')
+    git(primary, 'commit', '-qam', 'bad commit')
+    writeSharedFile(primary, 'fixed\n')
+    git(primary, 'commit', '-qam', 'fix markers')
+    await expect(pushSessionWorkspace(sessionId, { rootId: primary.id })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'main'], { encoding: 'utf8' }).trim()).toBe(remoteHead)
+  }, 20_000)
+
+  it('rejects conflict markers introduced by a clean filter into the actual index', async () => {
+    const filter = path.join(fixtureDirectory, 'filter.cjs')
+    fs.writeFileSync(filter, "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('<<<<<<< filter\\na\\n=======\\nb\\n>>>>>>> filter\\n'));\n")
+    git(primary, 'config', 'filter.inject.clean', `node "${filter}"`)
+    fs.writeFileSync(path.join(primary.path, '.gitattributes'), `${relativePath} filter=inject\n`)
+    const head = git(primary, 'rev-parse', 'HEAD')
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: clean filter', push: false })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(git(primary, 'rev-parse', 'HEAD')).toBe(head)
+  }, 20_000)
+
+  it('rejects oversized text conflicts without staging or truncating them', async () => {
+    const content = 'x'.repeat(140_000) + '\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n'
+    writeSharedFile(primary, content)
+    const before = repositoryState(primary)
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: huge', push: false })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(repositoryState(primary)).toEqual(before)
+  }, 20_000)
+
+  it('does not write any successful resolutions when another file remains ambiguous', async () => {
+    createConflict()
+    const extra = path.join(primary.path, 'another.txt')
+    const safe = '<<<<<<< ours\nsame\n=======\nsame\n>>>>>>> theirs\n'
+    fs.writeFileSync(extra, safe)
+    expectConflictModel = true
+    mocks.generateGatewayTextResult.mockResolvedValue({ finishReason: 'stop', text: '{"resolutions":[null]}' })
+    const before = repositoryState(primary)
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: all or none', push: false })).rejects.toMatchObject({ code: 'GIT_UNRESOLVED_CONFLICTS' })
+    expect(repositoryState(primary)).toEqual(before)
+    expect(fs.readFileSync(extra, 'utf8')).toBe(safe)
+  }, 20_000)
+
+  it('finishes a resolved merge even when the result matches HEAD', async () => {
+    createConflict()
+    writeSharedFile(primary, '<<<<<<< ours\ntarget\n=======\ntarget\n>>>>>>> theirs\n')
+    const result = await commitSessionWorkspace(sessionId, { rootId: primary.id, message: 'fix: record merge', push: false })
+    expect(result.committedFiles).toBe(0)
+    expect(git(primary, 'rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ')).toHaveLength(3)
+  }, 20_000)
+
+  it('does not create a new named branch in the middle of a rebase', async () => {
+    git(primary, 'switch', '--detach')
+    fs.mkdirSync(path.join(primary.path, '.git', 'rebase-merge'))
+    const before = repositoryState(primary)
+    await expect(commitSessionWorkspace(sessionId, { rootId: primary.id, branchName: 'topic/must-not-exist', message: 'fix: no rebase', push: false }))
+      .rejects.toMatchObject({ code: 'GIT_OPERATION_IN_PROGRESS' })
+    expect(repositoryState(primary)).toEqual(before)
+    expect(git(primary, 'branch', '--list', 'topic/must-not-exist')).toBe('')
+  }, 20_000)
+
+  it('allows an ordinary push without staging dirty worktree files', async () => {
+    const remote = remoteForPrimary()
+    git(primary, 'commit', '-qam', 'outgoing')
+    writeSharedFile(primary, 'keep uncommitted\n')
+    const before = repositoryState(primary)
+    const result = await pushSessionWorkspace(sessionId, { rootId: primary.id })
+    expect(result.pushed).toBe(true)
+    expect(repositoryState(primary)).toEqual(before)
+    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'main'], { encoding: 'utf8' }).trim()).toBe(before.head)
   }, 20_000)
 })

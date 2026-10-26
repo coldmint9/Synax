@@ -49,5 +49,9 @@ export const conversationGitProposalSchema = z.object({
 }).strict();
 
 export const conversationGitAnalyzeSchema = z.object({ objectId: id, expectedVersion: z.number().int().positive(), expectedTaskRevision: z.number().int().positive() }).strict();
+export const conversationGitResumeSchema = z.object({
+  objectId: id,
+  instructions: z.string().trim().min(1).max(16_000).optional().describe('Current user decisions or additional merge instructions to deliver to the resumed worker.'),
+}).strict();
 export const conversationGitConfigureSchema = conversationGitAnalyzeSchema.extend({ checks: z.array(conversationGitCheckSchema).min(1).max(10).refine(checks => new Set(checks.map(check => check.id)).size === checks.length, 'Check IDs must be unique.') }).strict();
 export const conversationGitSliceSchema = z.object({ side: z.enum(['base', 'target', 'source', 'result']), byteOffset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), maxBytes: z.coerce.number().int().min(4).max(256 * 1024).default(64 * 1024), expectedRevision: z.string().min(1).max(256) }).strict();

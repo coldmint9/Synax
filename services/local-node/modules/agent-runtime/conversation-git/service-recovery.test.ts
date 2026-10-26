@@ -91,6 +91,18 @@ async function interruptedRequest(snapshot: ConversationGitSnapshot, operation: 
 }
 
 describe('merge command recovery after a host interruption', { timeout: 60_000 }, () => {
+  it('re-enters a stopped generation once and fences concurrent stops or repeated admissions', async () => {
+    const snapshot = await create();
+    const stopped = await service.setWorkerExecution('session', snapshot.task.id, { status: 'waiting_user', epoch: 1, phase: 'resolving' });
+    const fence = { epoch: stopped.epoch, revision: stopped.revision };
+    const running = await service.setWorkerExecution('session', snapshot.task.id, { status: 'running', epoch: 2 }, fence);
+    expect(running).toMatchObject({ status: 'running', epoch: 2 });
+    await expect(service.setWorkerExecution('session', snapshot.task.id, { status: 'running', epoch: 2 }, fence)).rejects.toMatchObject({ code: 'WORKER_FENCED' });
+    const paused = await service.setWorkerExecution('session', snapshot.task.id, { status: 'paused', stopRequested: 'pause' });
+    await service.setWorkerExecution('session', snapshot.task.id, { status: 'cancelling', stopRequested: 'cancel' });
+    await expect(service.setWorkerExecution('session', snapshot.task.id, { status: 'running', epoch: 3 }, { epoch: paused.epoch, revision: paused.revision })).rejects.toMatchObject({ code: 'WORKER_FENCED' });
+    expect((await service.workerSnapshot('session', snapshot.task.id)).execution).toMatchObject({ status: 'cancelling', stopRequested: 'cancel' });
+  });
   it('repairs a pending resume with no outcome using durable task state even if its old PID is alive', async () => {
     const snapshot = await create();
     await service.setWorkerExecution('session',snapshot.task.id,{ status:'running',epoch:2,joinMode:'async',phase:'resolving' });

@@ -63,7 +63,7 @@ const ProjectRow = memo(function ProjectRow({ sessionId, root, summary, selected
     </button>
     {selected && root.status === 'ready' && <div className="shadow-project-branch">
       <RepositoryBranchPicker key={`${sessionId}:${root.rootId}:${root.workspacePath}`} sessionId={sessionId} rootId={root.rootId}
-        branch={root.branch} disabled={locked} onSwitched={() => onBranchChanged(root.rootId)} />
+        branch={branch} disabled={locked} onSwitched={() => onBranchChanged(root.rootId)} />
     </div>}
     </div>
     {expanded && <div className="shadow-worktrees" id={`shadow-trees-${root.rootId}`}>

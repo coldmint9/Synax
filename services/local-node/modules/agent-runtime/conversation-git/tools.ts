@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RegisteredTool } from '../contracts.js';
 import { conversationGitService } from './service.js';
-import { conversationGitInputSchema, conversationGitProposalSchema, conversationGitReadSchema, conversationGitAnalyzeSchema, conversationGitConfigureSchema } from './schemas.js';
+import { conversationGitInputSchema, conversationGitProposalSchema, conversationGitReadSchema, conversationGitAnalyzeSchema, conversationGitConfigureSchema, conversationGitResumeSchema } from './schemas.js';
 import type { ConversationGitSnapshot } from './contracts.js';
 
 function compact(snapshot: ConversationGitSnapshot) {
@@ -11,18 +11,29 @@ function compact(snapshot: ConversationGitSnapshot) {
 function workerReceipt(snapshot:ConversationGitSnapshot) {
   return { reference:snapshot.reference, objectId:snapshot.task.id, taskRevision:snapshot.task.revision, execution:snapshot.execution,
     mr:{id:snapshot.mr.id,status:snapshot.mr.status,version:snapshot.mr.version,target:snapshot.mr.target,candidateOid:snapshot.mr.candidateOid},
-    summary:snapshot.execution?.summary, error:snapshot.execution?.error };
+    summary:snapshot.execution?.summary, error:snapshot.execution?.error,
+    ...(['failed', 'recovery_required', 'waiting_user', 'paused'].includes(snapshot.execution?.status ?? '')
+      ? { nextTool: 'git.merge.resume', nextArgs: { objectId: snapshot.task.id } } : {}) };
 }
-async function runWorker(sessionId:string, objectId:string, signal?:AbortSignal) {
-  const { startConversationMergeWorker, waitForConversationMergeWorker } = await import('./worker.js');
-  const snapshot = await startConversationMergeWorker(sessionId, objectId);
-  await waitForConversationMergeWorker(sessionId, snapshot, signal);
-  return conversationGitService.get(sessionId, objectId);
+async function runWorker(sessionId:string, objectId:string, signal?:AbortSignal, resume?: { instructions?: string }) {
+  const { startConversationMergeWorker, resumeConversationMergeWorker, waitForConversationMergeWorker } = await import('./worker.js');
+  let snapshot = resume
+    ? await resumeConversationMergeWorker(sessionId, objectId, resume.instructions)
+    : await startConversationMergeWorker(sessionId, objectId);
+  // One automatic re-entry per invocation. Persistent failures return a bounded
+  // receipt to the agent instead of spinning or reopening a user stop.
+  for (let attempt = 0; ; attempt++) {
+    snapshot = await waitForConversationMergeWorker(sessionId, snapshot, signal);
+    snapshot = await conversationGitService.get(sessionId, objectId);
+    if (attempt >= 1 || signal?.aborted || snapshot.stale || snapshot.execution?.stopRequested ||
+        !['failed', 'recovery_required'].includes(snapshot.execution?.status ?? '')) return snapshot;
+    snapshot = await resumeConversationMergeWorker(sessionId, objectId, resume?.instructions);
+  }
 }
 export const conversationGitTools: RegisteredTool[] = [
   {
     id:'git.merge.create', label:'Create interactive merge task', category:'task', internalGate:'none', mutability:'task', resumeBehavior:'auto',
-    description:'Create a persistent Git merge task in this conversation and delegate its isolated merge work to a dedicated child agent. Waits for a terminal summary or an explicit asynchronous handoff from the child; child source code and transcript remain isolated. Reuse git.merge.read for existing tasks.',
+    description:'Create a persistent Git merge task in this conversation and delegate its isolated merge work to a dedicated child agent. Waits for a terminal summary or an explicit asynchronous handoff from the child; child source code and transcript remain isolated. Use git.merge.read and git.merge.resume for existing tasks instead of creating another task.',
     progressiveDetails:'Use only within the user-authorized merge scope. Source/target must be local branches in a registered session root. Supply grounded verification commands; the worker never skips verification, pushes remote branches, or deletes source branches. The card provides stop, continue and cancel controls. Do not copy the child transcript into the parent context.',
     inputSchema:conversationGitInputSchema,
     async execute(input){
@@ -33,8 +44,8 @@ export const conversationGitTools: RegisteredTool[] = [
     },
   },
   {
-    id:'git.merge.analyze',label:'Analyze merge in an isolated worktree',category:'write',internalGate:'write',mutability:'write',resumeBehavior:'none',
-    description:'Start the dedicated merge child for an existing draft task. The child owns all internal merge steps and returns only a bounded summary to this conversation.',
+    id:'git.merge.analyze',label:'Analyze merge in an isolated worktree',category:'write',internalGate:'write',mutability:'write',resumeBehavior:'auto',
+    description:'Start or re-enter the dedicated merge child for an existing task. Joins an active worker and automatically recovers failed/interrupted workers using the same task and isolated candidate. The child returns only a bounded summary. Use git.merge.resume to continue a paused/waiting task or pass new user decisions.',
     inputSchema:conversationGitAnalyzeSchema,
     async execute(input){
       const {objectId}=conversationGitAnalyzeSchema.parse(input.args);
@@ -43,13 +54,23 @@ export const conversationGitTools: RegisteredTool[] = [
     },
   },
   {
+    id:'git.merge.resume',label:'Resume an existing merge task',category:'write',internalGate:'write',mutability:'write',resumeBehavior:'auto',
+    description:'Re-enter an existing merge task after interruption, failure or user input. Reuses the same task, child and isolated candidate; joins an already active worker and returns completed/cancelled tasks unchanged. Pass the current user decisions in instructions. Within the authorized merge scope, resume recoverable failures automatically instead of asking the user to click Continue or recreate the task. Respect explicit user stops; resume paused tasks only when continuation is requested.',
+    inputSchema:conversationGitResumeSchema,
+    async execute(input){
+      const {objectId,instructions}=conversationGitResumeSchema.parse(input.args);
+      const snapshot=await runWorker(input.sessionId,objectId,input.abortSignal,{instructions});
+      return {result:workerReceipt(snapshot),displaySummary:`智能合并任务：${snapshot.execution?.summary??snapshot.mr.status}`,artifacts:[]};
+    },
+  },
+  {
     id:'git.merge.configure',label:'Configure merge verification',category:'task',internalGate:'none',mutability:'task',resumeBehavior:'auto',
-    description:'Set grounded verification commands for a stopped or waiting merge task. Use after the worker reports missing verification. This changes configuration only; the user can Continue the same card afterward.',
+    description:'Set grounded verification commands for a stopped or waiting merge task. Use after the worker reports missing verification, then call git.merge.resume on the same objectId to continue within the authorized merge scope.',
     inputSchema:conversationGitConfigureSchema,
     async execute(input){
       const {objectId,...args}=conversationGitConfigureSchema.parse(input.args);
       const snapshot=await conversationGitService.configureChecks(input.sessionId,objectId,{...args,requestId:`tool_${createHash('sha256').update(input.toolCallId).digest('hex')}`});
-      return {result:compact(snapshot),displaySummary:'已更新验证配置，可以继续原合并任务。',artifacts:[]};
+      return {result:compact(snapshot),displaySummary:'已更新验证配置，可调用 git.merge.resume 继续原合并任务。',artifacts:[]};
     },
   },
   {

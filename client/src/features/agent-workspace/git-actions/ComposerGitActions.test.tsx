@@ -25,6 +25,11 @@ vi.mock("../SessionCommitDialog", () => ({
     </div>
   ),
 }));
+vi.mock("../SessionPushDialog", () => ({
+  SessionPushDialog: ({ sessionId, rootId, repositories, onClose }: any) => (
+    <div role="dialog" aria-label="push"><span>{sessionId}</span><span>{rootId}</span><span>{repositories?.length} repositories</span><button onClick={onClose}>Done</button></div>
+  ),
+}));
 import ComposerGitActions from "./ComposerGitActions";
 import type { AgentSession } from "../../../adapters/transport/agentRuntime";
 const session = { id: "owner", projectId: "p" } as AgentSession;
@@ -68,6 +73,7 @@ describe("explicit composer Git entries", () => {
     const { container } = render(<ComposerGitActions projectId="p" ensureSession={vi.fn()} onOpenConversation={vi.fn()} />);
     expect(Boolean(screen.queryByRole("button", { name: "Commit", exact: true }))).toBe(commitVisible);
     expect(Boolean(screen.queryByRole("button", { name: "PR", exact: true }))).toBe(prVisible);
+    expect(Boolean(screen.queryByRole("button", { name: "Push", exact: true }))).toBe(prVisible);
     if (!commitVisible && !prVisible) expect(container).toBeEmptyDOMElement();
   });
   it("hides actions until a usable repository is available", () => {
@@ -103,6 +109,19 @@ describe("explicit composer Git entries", () => {
     render(<ComposerGitActions projectId="p" ensureSession={vi.fn()} onOpenConversation={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Commit", exact: true })).toBeVisible();
     expect(screen.getByRole("button", { name: "PR", exact: true })).toBeVisible();
+  });
+  it("opens Push review with all pending repositories and prefers the primary root", async () => {
+    git.repositories = [
+      { status: "ready", dirty: false, unpushedCommitCount: 1, rootId: "reference", role: "reference" },
+      { status: "ready", dirty: false, unpushedCommitCount: 2, rootId: "primary", role: "primary" },
+    ] as typeof git.repositories;
+    const ensure = vi.fn().mockResolvedValue(session);
+    render(<ComposerGitActions projectId="p" ensureSession={ensure} onOpenConversation={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Push", exact: true }));
+    const dialog = await screen.findByRole("dialog", { name: "push" });
+    expect(dialog).toHaveTextContent("primary");
+    expect(dialog).toHaveTextContent("2 repositories");
+    expect(ensure).toHaveBeenCalledTimes(1);
   });
   it("uses the existing owner and blocks history/running actions", async () => {
     const ensure = vi.fn();

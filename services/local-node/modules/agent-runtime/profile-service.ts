@@ -3,6 +3,10 @@ import {
   resolveSpecialistProfile,
 } from "./specialist-profile.js";
 import { subagentBaseProfile, resolveSubagentProfile } from "./subagent-profile.js";
+import {
+  CONVERSATION_MERGE_WORKER_PROFILE_ID,
+  conversationMergeWorkerProfile,
+} from "./conversation-git/worker-profile.js";
 import type {
   AgentProfile,
   AgentProfileKind,
@@ -31,6 +35,7 @@ const denyWrite = (
 export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
   subagentBaseProfile,
   specialistBaseProfile,
+  conversationMergeWorkerProfile,
   {
     id: "planner",
     label: "Planner",
@@ -239,6 +244,10 @@ export class ProfileService {
     input: { parentSessionId?: string | null } = {},
   ): AgentProfile {
     const profile = this.get(profileId);
+    if (profile.id === CONVERSATION_MERGE_WORKER_PROFILE_ID && !input.parentSessionId)
+      throw new AgentValidationError(
+        "Git merge worker sessions require a parent and a bound merge task.",
+      );
     if (["specialist", "subagent"].includes(profile.id) && !input.parentSessionId)
       throw new AgentValidationError(
         "Specialist sessions require a parent and a task snapshot.",

@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   ChevronRight,
+  CloudUpload,
   FileDiff,
   Folder,
   FolderOpen,
@@ -53,6 +54,7 @@ import { SessionBackgroundProcesses } from "./SessionBackgroundProcesses";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker";
 import { WorkspaceProjectSwitcher } from "./WorkspaceProjectSwitcher";
 import { SessionCommitDialog } from "./SessionCommitDialog";
+import { SessionPushDialog } from "./SessionPushDialog";
 import { getProjectThemeColor } from "./projectThemeColor";
 import { useShellStore } from "../../shared/state/shellStore";
 
@@ -814,6 +816,7 @@ function RepositoryCard({
 }) {
   const { t } = useLocale();
   const [commitOpen, setCommitOpen] = useState(false);
+  const [pushOpen, setPushOpen] = useState(false);
   const [branchRequest, setBranchRequest] = useState(0);
   const changedCount = environment.changedFiles.length;
   const unavailable = repository && repository.status !== "ready";
@@ -843,6 +846,18 @@ function RepositoryCard({
         restoreFocus: false,
         run: () => setCommitOpen(true),
       },
+      ...(repository && (repository.unpushedCommitCount ?? 0) > 0
+        ? [
+            {
+              type: "action" as const,
+              id: "push",
+              label: t("workspacePushOnly"),
+              disabled: Boolean(loading || unavailable),
+              restoreFocus: false,
+              run: () => setPushOpen(true),
+            },
+          ]
+        : []),
     ],
   }));
   return (
@@ -899,6 +914,18 @@ function RepositoryCard({
             <GitCommit size={10} />
             <span>{t("workspaceCommitPush")}</span>
           </button>
+          {repository && (repository.unpushedCommitCount ?? 0) > 0 && (
+            <button
+              type="button"
+              className="ws-repo-action"
+              onClick={() => setPushOpen(true)}
+              disabled={loading || unavailable}
+              title={t("workspacePushOnly")}
+            >
+              <CloudUpload size={10} />
+              <span>{t("workspacePushOnly")}</span>
+            </button>
+          )}
           <button
             type="button"
             className="ws-icon-button"
@@ -926,6 +953,18 @@ function RepositoryCard({
             void reload();
           }}
           onCommitted={() => void reload()}
+        />
+      )}
+      {pushOpen && repository && (
+        <SessionPushDialog
+          isOpen
+          sessionId={environment.sessionId}
+          rootId={repository.rootId}
+          rootName={repository.name}
+          branch={repository.branch}
+          pendingCount={repository.unpushedCommitCount}
+          onClose={() => setPushOpen(false)}
+          onPushed={() => void reload()}
         />
       )}
     </section>

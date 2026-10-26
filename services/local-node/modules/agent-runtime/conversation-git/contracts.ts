@@ -8,6 +8,8 @@ export interface ConversationMergeExecution {
   joinMode: 'blocking' | 'async';
   revision: number;
   epoch: number;
+  /** Persist across a failed stop so automatic recovery cannot undo user intent. */
+  stopRequested?: 'pause' | 'cancel';
   summary?: string;
   error?: string;
   updatedAt: string;

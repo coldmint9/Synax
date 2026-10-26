@@ -72,6 +72,46 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(directory, { recursive: true, force: true }));
 
 describe('conversation merge service with real isolated Git operations', { timeout: 60_000 }, () => {
+  it('re-enters completed worker steps without repeating Git work or replacing its candidate', async () => {
+    let snapshot = await act(await create(), 'prepare');
+    const { agentRuntimeStore } = await import('../session-store.js');
+    const worker = await import('./worker.js');
+    const stored = await store.read<any>('conversation-tasks', snapshot.task.id);
+    stored.execution = { status: 'running', childSessionId: 'child', epoch: 2, revision: 1, joinMode: 'blocking', phase: 'checking' };
+    await store.write('conversation-tasks', stored);
+    const local = vi.spyOn(worker, 'hasLocalConversationMergeWorker').mockReturnValue(true);
+    const child = vi.spyOn(agentRuntimeStore, 'tryGetSession').mockReturnValue({ parentSessionId: 'session', sessionMetadata: { mergeWorker: { objectId: stored.id, epoch: 2 } } } as any);
+    const prepare = vi.spyOn(gitMr, 'prepare');
+    const resume = vi.spyOn(gitMr, 'resume');
+    const continued = vi.spyOn(gitMr, 'continue');
+    const candidate = snapshot.mr.candidateOid;
+    const version = snapshot.mr.version;
+    try {
+      for (const action of ['prepare', 'resume', 'continue'] as const) {
+        snapshot = await service.action('session', stored.id, { action, requestId: request(), expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision }, 'child');
+        expect(snapshot.mr).toMatchObject({ status: 'ready', candidateOid: candidate, version });
+      }
+      expect(prepare).not.toHaveBeenCalled(); expect(resume).not.toHaveBeenCalled(); expect(continued).not.toHaveBeenCalled();
+      expect(git('rev-parse', 'integration')).toBe(snapshot.mr.targetOid);
+    } finally { local.mockRestore(); child.mockRestore(); }
+  });
+
+  it('accepts a source deletion in a modify/delete conflict and preserves it on retry', async () => {
+    git('checkout', 'feature/a'); git('rm', 'app.ts'); git('commit', '-m', 'remove old implementation');
+    git('checkout', 'integration'); commit('app.ts', 'export const value = 2;\n'); git('checkout', 'main');
+    let snapshot = await act(await create(), 'prepare');
+    const file = await service.file('session', snapshot.task.id, snapshot.files.find(file => file.path === 'app.ts')!.id);
+    expect(file).toMatchObject({ conflicted: true, sourceExists: false, targetExists: true });
+    const input = { requestId: request(), expectedVersion: snapshot.mr.version, expectedTaskRevision: snapshot.task.revision, expectedRevision: file.revision, choice: 'source' as const, resolve: true };
+    snapshot = await service.saveFile('session', snapshot.task.id, file.id, input);
+    const retry = await service.saveFile('session', snapshot.task.id, file.id, input);
+    expect(retry.mr.version).toBe(snapshot.mr.version);
+    snapshot = await act(snapshot, 'continue');
+    expect(snapshot.mr.status).toBe('ready');
+    expect(fs.existsSync(path.join(snapshot.mr.worktree!, 'app.ts'))).toBe(false);
+    expect(git('ls-tree', '--name-only', snapshot.mr.candidateOid!, '--', 'app.ts')).toBe('');
+  });
+
   it('creates only a draft and persists one stable anchor without GET side effects', async () => {
     const snapshot = await create({ autoFinalize: true } as unknown as Partial<ConversationGitCreate>, { runId: 'run', stepId: 'step', toolCallId: 'call' });
     expect(snapshot.mr.status).toBe('draft');

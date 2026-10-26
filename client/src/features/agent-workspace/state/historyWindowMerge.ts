@@ -1,6 +1,6 @@
 import type { HistoryWindowResponse } from "../../../adapters/transport/agentRuntime";
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
-import { previewTimelineMessage } from "./timelineHistoryIndex";
+import { previewTimelineMessage, seedTimelineIndex } from "./timelineHistoryIndex";
 
 type Transcript = Pick<
   SessionDetailCacheEntry,
@@ -139,14 +139,18 @@ export function mergeRefreshedHistory(
   }
   const olderCursor = previous.historyWindow.olderCursor;
   const sameRevision = previous.historyWindow.revision === latest.historyWindow!.revision;
+  const combined = combine(previous, latest);
+  // Reconcile navigation with the retained transcript too. The latest server
+  // window alone omits turns that the reader has already paged into view.
+  const timeline = seedTimelineIndex({ ...latest, ...combined, historyWindow: latest.historyWindow! });
   return {
     ...latest,
-    ...combine(previous, latest),
-    timelineMessages: sameRevision ? previous.timelineMessages : latest.timelineMessages,
-    timelineRuns: sameRevision ? previous.timelineRuns : latest.timelineRuns,
-    timelineSteps: sameRevision ? previous.timelineSteps : latest.timelineSteps,
-    timelineToolCalls: sameRevision ? previous.timelineToolCalls : latest.timelineToolCalls,
-    timelineIndexLoaded: sameRevision ? previous.timelineIndexLoaded : latest.timelineIndexLoaded,
+    ...combined,
+    timelineMessages: sameRevision ? (previous.timelineMessages ?? timeline.timelineMessages) : timeline.timelineMessages,
+    timelineRuns: sameRevision ? (previous.timelineRuns ?? timeline.timelineRuns) : timeline.timelineRuns,
+    timelineSteps: sameRevision ? (previous.timelineSteps ?? timeline.timelineSteps) : timeline.timelineSteps,
+    timelineToolCalls: sameRevision ? (previous.timelineToolCalls ?? timeline.timelineToolCalls) : timeline.timelineToolCalls,
+    timelineIndexLoaded: sameRevision ? previous.timelineIndexLoaded : !olderCursor,
     timelineIndexError: sameRevision ? previous.timelineIndexError : undefined,
     // Events and permissions are a recent snapshot, not archival pages.
     events: latest.events,

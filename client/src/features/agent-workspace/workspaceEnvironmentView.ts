@@ -27,6 +27,7 @@ export interface WorkspaceEnvironmentRepository {
   workspacePath: string;
   branch: string;
   headCommitSha: string;
+  unpushedCommitCount?: number;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -81,6 +82,7 @@ export function buildWorkspaceEnvironmentView({
       workspacePath: facts?.workspacePath ?? root.workspacePath,
       branch: facts?.branch ?? "",
       headCommitSha: facts?.headCommitSha ?? "",
+      unpushedCommitCount: facts?.unpushedCommitCount ?? 0,
       dirty: facts?.dirty ?? false,
       additions: facts?.additions ?? 0,
       deletions: facts?.deletions ?? 0,

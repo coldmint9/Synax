@@ -188,6 +188,102 @@ afterEach(() => {
 });
 
 describe("conversation merge workbench", () => {
+  describe("merge graph visibility and execution state", () => {
+    const withCommits = (value = snapshot()) => ({
+      ...value,
+      commits: [
+        { oid: "target", parents: ["base"], subject: "Target change",
+          refs: ["main"], author: "A", date: "2026-10-23" },
+        { oid: "source", parents: ["base"], subject: "Source change",
+          refs: ["feature/session"], author: "B", date: "2026-10-23" },
+        { oid: "base", parents: [], subject: "Common base",
+          refs: [], author: "A", date: "2026-10-22" },
+      ],
+    });
+    beforeEach(() => {
+      // Treat the rendered graph as visible; observer lifecycle is covered in CommitGraph.test.tsx.
+      vi.stubGlobal("IntersectionObserver", undefined);
+      vi.mocked(conversationGitApi.get).mockResolvedValue(withCommits());
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("shows the animated merge preview above files without expanding history", async () => {
+      const { container } = mount();
+      const graph = await screen.findByRole("region", { name: "提交关系与待合并预览" });
+      expect(graph).toBeVisible();
+      expect(graph.closest("details")).toBeNull();
+      expect(within(graph).getByText("待合并")).toBeVisible();
+      expect(graph.querySelectorAll("path.is-pending")).toHaveLength(2);
+      await waitFor(() => expect(graph).toHaveAttribute("data-motion", "running"));
+      expect(
+        graph.compareDocumentPosition(container.querySelector(".conversation-git-files")!),
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    it("pauses and resumes the visible preview with execution controls", async () => {
+      vi.mocked(conversationGitApi.action)
+        .mockResolvedValueOnce(withCommits(snapshot("paused")))
+        .mockResolvedValueOnce(withCommits());
+      mount();
+      const graph = await screen.findByRole("region", { name: "提交关系与待合并预览" });
+      await waitFor(() => expect(graph).toHaveAttribute("data-motion", "running"));
+      fireEvent.click(screen.getByRole("button", { name: "停止" }));
+      await screen.findByRole("button", { name: "继续" });
+      expect(graph).toHaveAttribute("data-motion", "paused");
+      expect(within(graph).getByText("待合并")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "继续" }));
+      await waitFor(() => expect(graph).toHaveAttribute("data-motion", "running"));
+    });
+
+    it.each(["queued", "pausing", "paused", "waiting_user", "failed", "recovery_required", "cancelling"] as const)(
+      "keeps the preview static while execution is %s",
+      async (status) => {
+        vi.mocked(conversationGitApi.get).mockResolvedValue(withCommits(snapshot(status)));
+        mount();
+        const graph = await screen.findByRole("region", { name: "提交关系与待合并预览" });
+        expect(graph).toBeVisible();
+        expect(graph).toHaveAttribute("data-motion", "paused");
+      },
+    );
+
+    it("keeps read-only history static and removes stale merge projections", async () => {
+      const view = mount(true);
+      const graph = await screen.findByRole("region", { name: "提交关系与待合并预览" });
+      expect(graph).toHaveAttribute("data-motion", "paused");
+      view.unmount();
+      vi.mocked(conversationGitApi.get).mockResolvedValue({ ...withCommits(), stale: true });
+      mount();
+      const staleGraph = await screen.findByRole("region", { name: "提交关系与待合并预览" });
+      expect(staleGraph).toHaveAttribute("data-motion", "paused");
+      expect(staleGraph.querySelector(".is-pending")).toBeNull();
+    });
+
+    it("replaces the preview with actual commit history after a completion event", async () => {
+      const { container } = mount();
+      await screen.findByText("待合并");
+      const completed = withCommits(snapshot("completed"));
+      completed.task.revision = 3;
+      completed.mr.version = 8;
+      completed.mr.status = "merged";
+      completed.mr.candidateOid = "merged";
+      completed.commits.unshift({
+        oid: "merged", parents: ["target", "source"], subject: "Merged changes",
+        refs: ["main"], author: "A", date: "2026-10-23",
+      });
+      vi.mocked(conversationGitApi.get).mockResolvedValue(completed);
+      emit({
+        type: "conversation_git_state", taskId: reference.objectId,
+        taskRevision: 3, mrVersion: 8, status: "merged", eventSeq: 3,
+        execution: completed.execution,
+      });
+      await waitFor(() => expect(container.querySelector(".is-pending")).toBeNull());
+      expect(container.querySelector(".conversation-git-history")).not.toHaveAttribute("open");
+      fireEvent.click(screen.getByText("提交关系"));
+      expect(await screen.findByText("Merged changes")).toBeVisible();
+      expect(screen.getByRole("region", { name: "提交关系与待合并预览" })).toHaveAttribute("data-motion", "paused");
+    });
+  });
+
   it("opens a conflict file directly without the duplicate preview actions", async () => {
     mount();
     fireEvent.click(
@@ -240,6 +336,9 @@ describe("conversation merge workbench", () => {
       await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
     );
     const dialog = await screen.findByRole("dialog", { name: "合并编辑器" });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "继续" })).toBeEnabled(),
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "继续" }));
     await waitFor(() => expect(editor.flush).toHaveBeenCalledOnce());
     expect(conversationGitApi.action).not.toHaveBeenCalled();

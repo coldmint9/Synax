@@ -63,16 +63,39 @@ it("preserves arrays for a sync watermark without changes", () => {
   expect(merged.historyWindow?.syncCursor).toBe("next");
 });
 
-it("does not evict browsed history, then compacts both cache and painted state on return to tail", () => {
-  const page = entry(300);
+it("keeps browsed history when the reader returns to the live tail", () => {
+  const page = prependHistory(entry(100, 200), { ...entry(200), historyWindow: entry(200).historyWindow! });
   store.setState({ ...store.getInitialState(), selectedSessionId: "s", messages: page.messages, sessionDetailCache: { s: page } });
   setSessionHistoryReading("s", true);
   store.getState().compactHistoryTail();
   expect(store.getState().messages).toHaveLength(300);
   setSessionHistoryReading("s", false);
   store.getState().compactHistoryTail();
-  expect(store.getState().messages).toHaveLength(100);
+  expect(store.getState().messages).toHaveLength(300);
   expect(store.getState().messages).toBe(store.getState().sessionDetailCache.s.messages);
+  expect(store.getState().sessionDetailCache.s.historyWindow?.olderCursor).toBeUndefined();
+  expect(store.getState().sessionDetailCache.s.timelineMessages).toBe(page.timelineMessages);
+});
+
+it("retains loaded pages and navigation when a live message arrives at the bottom", () => {
+  const page = prependHistory(entry(100, 200), { ...entry(200), historyWindow: entry(200).historyWindow! });
+  store.setState({ ...store.getInitialState(), selectedSessionId: "s", messages: page.messages, sessionDetailCache: { s: page } });
+  store.getState().applyLiveEvent({ type: "message", message: entry(1, 300).messages[0] }, "s");
+  expect(store.getState().messages.map(message => message.id)).toEqual(entry(301).messages.map(message => message.id));
+  expect(store.getState().sessionDetailCache.s.timelineMessages).toHaveLength(301);
+  expect(store.getState().sessionDetailCache.s.historyWindow?.olderCursor).toBeUndefined();
+});
+
+it("still bounds parked and persisted history after the reader leaves the session", () => {
+  const page = prependHistory(entry(100, 200), { ...entry(200), historyWindow: entry(200).historyWindow! });
+  store.setState({ ...store.getInitialState(), selectedSessionId: "s", messages: page.messages,
+    sessions: [{ id: "s", status: "completed" }, { id: "other", status: "completed" }] as never,
+    sessionDetailCache: { s: page, other: entry(0) }, refreshDetail: vi.fn(async () => {}) });
+  expect(toPersistedEntry(page, "terminal")?.messages).toHaveLength(100);
+  expect(page.messages).toHaveLength(300);
+  store.getState().openPanel("other");
+  expect(store.getState().sessionDetailCache.s.messages).toHaveLength(100);
+  expect(store.getState().sessionDetailCache.s.historyPagesLoaded).toBe(false);
 });
 
 it("reopens a warm tail immediately without requesting history", () => {

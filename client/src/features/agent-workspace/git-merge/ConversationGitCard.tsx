@@ -638,6 +638,26 @@ function ConversationGitCardInstance({
                     : "点击文件查看合并结果。")}
               </p>
             </div>
+            {!finished && (
+              <CommitGraph
+                commits={snapshot.commits}
+                pendingMerge={
+                  !cleanupPending && !snapshot.stale
+                    ? {
+                        key: mr.id,
+                        target: mr.target,
+                        sources: mr.steps.map((step) => step.branch),
+                        parents: [
+                          mr.targetOid,
+                          ...mr.steps.map((step) => step.oid),
+                        ],
+                        candidateOid: mr.candidateOid,
+                      }
+                    : undefined
+                }
+                animate={!readOnly && execution?.status === "running"}
+              />
+            )}
             {fileIndex.current.ids.length > 0 && (
               <section className="conversation-git-files">
                 <div className="conversation-git-section-heading">
@@ -725,7 +745,7 @@ function ConversationGitCardInstance({
                 </div>
               </div>
             )}
-            {snapshot.commits.length > 0 && (
+            {finished && snapshot.commits.length > 0 && (
               <details className="conversation-git-history">
                 <summary>提交关系</summary>
                 <CommitGraph commits={snapshot.commits} animate={false} />

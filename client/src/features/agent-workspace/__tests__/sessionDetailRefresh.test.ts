@@ -187,6 +187,34 @@ describe("versioned transcript refresh", () => {
 });
 
 describe("loaded history across refreshes", () => {
+  it.each([false, true])("keeps all browsed messages and navigation on refresh at the bottom (incremental=%s)", async incremental => {
+    const messages = Array.from({ length: 300 }, (_, i) => message(`m${i}`));
+    const historyWindow = { revision: 1, generation: 1, epoch: 1, syncCursor: "sync",
+      hasEarlier: false, latest: true, detailsTruncated: false };
+    store.setState({
+      sessions: [{ ...session, sessionMetadata: { historyStorage: 3 } }], messages,
+      sessionDetailCache: { [session.id]: {
+        messages, runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+        sessionStats: null, sessionTodos: [], sessionInvocationUsage: null,
+        cachedAt: Date.now(), historyPagesLoaded: true, historyWindow,
+        timelineMessages: messages,
+      } },
+    });
+    vi.spyOn(api, "historyWindow").mockResolvedValue({
+      messages: incremental ? [message("m300")] : [...messages.slice(-99), message("m300")],
+      runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+      historyWindow: { ...historyWindow, revision: 2, incremental, syncCursor: "next",
+        hasEarlier: !incremental, olderCursor: incremental ? undefined : "recent-boundary" },
+    });
+    await store.getState().refreshDetail();
+    await vi.waitFor(() => expect(store.getState().detailRefreshing).toBe(false));
+    const cached = store.getState().sessionDetailCache[session.id];
+    expect(store.getState().messages.map(message => message.id)).toEqual([...messages.map(message => message.id), "m300"]);
+    expect(cached.timelineMessages?.map(message => message.id)).toEqual(store.getState().messages.map(message => message.id));
+    expect(cached.historyWindow?.olderCursor).toBeUndefined();
+    expect(cached.historyPagesLoaded).toBe(true);
+  });
+
   it("keeps browsed older pages when the latest window refreshes in the same epoch", async () => {
     const versioned = { ...session, sessionMetadata: { historyStorage: 3 } } as AgentSession;
     const older = { id: "old", content: "old" } as never;

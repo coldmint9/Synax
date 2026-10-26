@@ -841,6 +841,23 @@ export interface SessionGitCommitResult {
   committedFiles: number;
 }
 
+export interface SessionGitCommitSummary {
+  sha: string;
+  subject: string;
+  body: string;
+  author: string;
+  email: string;
+  authoredAt: string;
+}
+
+export interface SessionGitCommitsToPushResult {
+  rootId: string;
+  branch: string;
+  headCommitSha: string;
+  upstream: string;
+  commits: SessionGitCommitSummary[];
+}
+
 export interface SessionMcpServerSummary {
   id: string;
   name: string;
@@ -1421,10 +1438,15 @@ export const agentRuntimeApi = {
         body: JSON.stringify(body),
       },
     ),
-  pushSessionWorkspace: (sessionId: string, body: { rootId?: string }) =>
+  pushSessionWorkspace: (sessionId: string, body: { rootId?: string; expectedHeadSha?: string; expectedBranch?: string; expectedUpstream?: string }) =>
     request<{ rootId: string; branch: string; pushed: true; upstream: string }>(
       `/sessions/${encodeURIComponent(sessionId)}/git/push`,
       { method: "POST", body: JSON.stringify(body) },
+    ),
+  listSessionWorkspaceCommits: (sessionId: string, rootId?: string, signal?: AbortSignal) =>
+    request<SessionGitCommitsToPushResult>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/commits-to-push${rootId ? `?rootId=${encodeURIComponent(rootId)}` : ""}`,
+      { cache: "no-store", signal, silent: true },
     ),
   openSessionFileInSystemTerminal: (
     sessionId: string,

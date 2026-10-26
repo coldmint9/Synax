@@ -122,6 +122,8 @@ The standalone defaults apply to `start:local`. The development profile defaults
 
 ## Local Git merge requests
 
+Workspace Commit / Commit & Push checks for conflicts before staging. Identical changes and conflicts with an unchanged base side resolve directly; other text conflicts use the project's configured model, replacing only conflict blocks. Unavailable models, incomplete results, concurrent file edits, and binary or structural conflicts stop the commit and preserve the conflict state. Push checks the index, worktree, and every outgoing commit for conflict markers. Push alone does not create resolution commits; use Commit to resolve conflicts first.
+
 Open **Git** from an imported project's header to create a local MR. Select a target and one or more ordered sources, using merge commits, per-source squash, or fast-forward-only. Synax prepares the entire batch in an isolated worktree before updating the local target.
 
 - Conversation merges run in a dedicated subagent. The parent keeps the task card and bounded summaries, waits by default, and can be released by an explicit background handoff.

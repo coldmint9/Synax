@@ -21,6 +21,15 @@ import {
   AgentValidationError,
 } from "./runtime-errors.js";
 
+import {
+  autoResolveWorkspaceConflicts,
+  assertNoWorkspaceConflicts,
+  assertNoStagedConflictMarkers,
+  assertNoOutgoingConflictMarkers,
+  assertNoSequencedGitOperation,
+} from "./session-git-conflicts.js";
+export { resolveConflictText } from "./session-git-conflict-text.js";
+
 const MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_SUBJECT_LEN = 200;
@@ -70,9 +79,97 @@ export interface SessionGitPushResult {
   upstream: string;
 }
 
-export async function pushSessionWorkspace(
+export interface SessionGitCommitSummary {
+  sha: string;
+  subject: string;
+  body: string;
+  author: string;
+  email: string;
+  authoredAt: string;
+}
+
+export interface SessionGitCommitsToPushResult {
+  rootId: string;
+  branch: string;
+  headCommitSha: string;
+  upstream: string;
+  commits: SessionGitCommitSummary[];
+}
+
+/**
+ * Read the commits that would be sent by the next push without mutating the
+ * checkout. The range uses the configured upstream when present and falls
+ * back to commits that are not reachable from any local remote tracking ref.
+ */
+export async function listSessionWorkspaceCommits(
   sessionId: string,
   input: { rootId?: string } = {},
+): Promise<SessionGitCommitsToPushResult> {
+  const session = getSession(sessionId);
+  const root = resolveSessionRepository(sessionId, session.projectId, input.rootId, true);
+  const workspacePath = root.path;
+  const branch = (await runGit(workspacePath, ["symbolic-ref", "--short", "HEAD"])).stdout.trim();
+  if (!branch || branch === "HEAD") {
+    throw new AgentValidationError("Push requires a named Git branch.");
+  }
+  const upstreamRef = (
+    await runGit(
+      workspacePath,
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      true,
+    )
+  ).stdout.trim();
+  const format = "%H%x00%an%x00%ae%x00%aI%x00%s%x00%b";
+  const headCommitSha = (await runGit(workspacePath, ["rev-parse", "--verify", "HEAD"], true)).stdout.trim();
+  const logArgs = [
+    "log",
+    "--reverse",
+    "-z",
+    `--format=${format}`,
+    ...(upstreamRef ? [`${upstreamRef}..${headCommitSha}`] : [headCommitSha, "--not", "--remotes"]),
+  ];
+  const log = await runGit(workspacePath, logArgs, true);
+  if (!log.ok) {
+    const head = await runGit(workspacePath, ["rev-parse", "--verify", "HEAD"], true);
+    if (!head.ok) {
+      return {
+        rootId: root.id,
+        branch,
+        headCommitSha: "",
+        upstream: upstreamRef || `origin/${branch}`,
+        commits: [],
+      };
+    }
+    throw new AgentRuntimeError(
+      `Could not read commits to push${formatGitFailure(log) ? `: ${formatGitFailure(log)}` : ""}`,
+      "GIT_LOG_FAILED",
+      502,
+    );
+  }
+  const fields = log.stdout.split("\0");
+  const commits: SessionGitCommitSummary[] = [];
+  for (let index = 0; index + 5 < fields.length; index += 6) {
+    commits.push({
+      sha: fields[index],
+      author: fields[index + 1],
+      email: fields[index + 2],
+      authoredAt: fields[index + 3],
+      subject: fields[index + 4],
+      body: fields[index + 5].trim(),
+    });
+  }
+  return {
+    rootId: root.id,
+    branch,
+    headCommitSha,
+    upstream: upstreamRef || `origin/${branch}`,
+    commits,
+  };
+}
+
+export async function pushSessionWorkspace(
+  sessionId: string,
+  input: { rootId?: string; expectedHeadSha?: string; expectedBranch?: string; expectedUpstream?: string } = {},
 ): Promise<SessionGitPushResult> {
   const session = getSession(sessionId);
   const root = resolveSessionRepository(sessionId, session.projectId, input.rootId, true);
@@ -81,14 +178,31 @@ export async function pushSessionWorkspace(
   if (!branch || branch === "HEAD") {
     throw new AgentValidationError("Push requires a named Git branch.");
   }
+  await assertNoWorkspaceConflicts(workspacePath, "push", false);
+  await assertNoSequencedGitOperation(workspacePath, "push");
   const upstreamRef = (await runGit(
     workspacePath,
     ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
     true,
   )).stdout.trim();
+  if (input.expectedHeadSha) {
+    const head = (await runGit(workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
+    if (head !== input.expectedHeadSha || branch !== input.expectedBranch ||
+        (upstreamRef || `origin/${branch}`) !== input.expectedUpstream) {
+      throw new AgentRuntimeError("分支或待推送提交已变化，请刷新后重新审阅。", "GIT_PUSH_REVIEW_CHANGED", 409);
+    }
+  }
+  // Pin the checked commit and publish only this branch, even when Git is
+  // configured to push multiple refs or automatically include tags.
+  const pushHead = input.expectedHeadSha ?? (await runGit(workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
+  const tracking = (await runGit(workspacePath, ["for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", `refs/heads/${branch}`])).stdout.trim().split("\0");
+  const pushArgs = ["push", "--no-follow-tags", "--", tracking[0] || "origin",
+    `${pushHead}:${tracking[1] || `refs/heads/${branch}`}`];
+  await assertNoStagedConflictMarkers(workspacePath);
+  await assertNoOutgoingConflictMarkers(workspacePath, upstreamRef, pushHead);
   const push = await runGit(
     workspacePath,
-    upstreamRef ? ["push"] : ["push", "--set-upstream", "origin", branch],
+    pushArgs,
     true,
   );
   if (!push.ok) {
@@ -98,6 +212,13 @@ export async function pushSessionWorkspace(
       "GIT_PUSH_FAILED",
       502,
     );
+  }
+  if (!upstreamRef) {
+    // An explicit SHA refspec cannot set tracking automatically. Establish it
+    // after publishing, without reporting a completed push as failed.
+    const tracking = await runGit(workspacePath,
+      ["branch", `--set-upstream-to=origin/${branch}`, branch], true);
+    if (!tracking.ok) logger.warn({ sessionId, branch }, "[git-push] pushed but could not set upstream");
   }
   invalidateSessionEnvironment(sessionId);
   return {
@@ -408,6 +529,11 @@ export async function commitSessionWorkspace(
       422,
     );
   }
+  await assertNoSequencedGitOperation(workspacePath, "commit");
+  if (input.branchName && input.branchName !== branch &&
+    (await runGit(workspacePath, ["ls-files", "-u", "-z"])).stdout) {
+    throw new AgentRuntimeError("Resolve the current Git operation before changing branches.", "GIT_UNRESOLVED_CONFLICTS", 409);
+  }
 
   if (branch && input.branchName && input.branchName !== branch) {
     try {
@@ -438,6 +564,17 @@ export async function commitSessionWorkspace(
     }
   }
 
+  try {
+    await autoResolveWorkspaceConflicts(workspacePath, includeUntracked, { sessionId, projectId: session.projectId });
+  } finally {
+    invalidateSessionEnvironment(sessionId);
+  }
+
+  // A branch switch can restore a stash or expose another in-progress Git
+  // operation. Recheck immediately before staging so the commit path cannot
+  // turn an unmerged index or conflict marker into a normal commit.
+  await assertNoWorkspaceConflicts(workspacePath, "commit", includeUntracked);
+
   await runGit(workspacePath, [
     "add",
     includeUntracked ? "-A" : "-u",
@@ -455,7 +592,7 @@ export async function commitSessionWorkspace(
   if (staged.some(file => file.split("/").at(-1) === ".DS_Store"))
     throw new AgentValidationError(".DS_Store must never be committed. Unstage it before committing.");
   // Only excluded metadata (`status` still lists it) leaves an empty index.
-  if (staged.length === 0) {
+  if (staged.length === 0 && !(await runGit(workspacePath, ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"], true)).ok) {
     throw new AgentRuntimeError(
       "There is nothing to commit.",
       "GIT_NOTHING_TO_COMMIT",
@@ -472,6 +609,8 @@ export async function commitSessionWorkspace(
     "-m",
     message,
   ];
+  await assertNoStagedConflictMarkers(workspacePath);
+  await assertNoSequencedGitOperation(workspacePath, "commit");
   const commit = await runGit(workspacePath, commitArgs, true);
   if (!commit.ok) {
     const detail = formatGitFailure(commit);
@@ -502,19 +641,19 @@ export async function commitSessionWorkspace(
 
     pushed = false;
     upstream = upstreamRef || null;
-    const pushArgs = upstream
-      ? ["push"]
-      : ["push", "--set-upstream", "origin", branch];
-    const push = await runGit(workspacePath, pushArgs, true);
-    if (push.ok) {
+    try {
+      const push = await pushSessionWorkspace(sessionId, {
+        rootId: root.id, expectedHeadSha: commitSha, expectedBranch: branch,
+        expectedUpstream: upstreamRef || `origin/${branch}`,
+      });
       pushed = true;
-      if (!upstream) upstream = `origin/${branch}`;
-    } else {
-      const detail = formatGitFailure(push);
+      upstream = push.upstream;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       throw new AgentRuntimeError(
         `Committed ${commitSha.slice(0, 8)} locally, but the push failed.${detail ? ` ${detail}` : ""}`,
-        "GIT_PUSH_FAILED",
-        502,
+        error instanceof AgentRuntimeError ? error.code : "GIT_PUSH_FAILED",
+        error instanceof AgentRuntimeError ? error.status : 502,
       );
     }
   }

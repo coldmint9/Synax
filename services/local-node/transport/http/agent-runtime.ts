@@ -127,6 +127,7 @@ import {
 } from "../../modules/agent-runtime/session-git-branches.js";
 import {
   commitSessionWorkspace,
+  listSessionWorkspaceCommits,
   pushSessionWorkspace,
 } from "../../modules/agent-runtime/session-git-commit.js";
 import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
@@ -2367,12 +2368,29 @@ agentRuntimeRoutes.post("/sessions/:sessionId/git/push", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
   const parsed = z
-    .object({ rootId: z.string().min(1).optional() })
+    .object({
+      rootId: z.string().min(1).optional(),
+      expectedHeadSha: z.string().regex(/^[0-9a-f]{40,64}$/).optional(),
+      expectedBranch: z.string().min(1).optional(),
+      expectedUpstream: z.string().min(1).optional(),
+    })
     .safeParse(body.data ?? {});
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     return c.json(
       await pushSessionWorkspace(c.req.param("sessionId"), parsed.data),
+    );
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.get("/sessions/:sessionId/git/commits-to-push", async (c) => {
+  try {
+    c.header("Cache-Control", "no-store");
+    return c.json(
+      await listSessionWorkspaceCommits(c.req.param("sessionId"), {
+        rootId: c.req.query("rootId") || undefined,
+      }),
     );
   } catch (error) {
     return runtimeError(c, error);

@@ -250,8 +250,6 @@ export function SessionTranscript({
   const readingChanged = useCallback((reading: boolean) => {
     if (sessionId) setSessionHistoryReading(sessionId, reading);
     onReadingHistoryChange?.(reading);
-    if (!reading && useAgentSessionStore.getState().selectedSessionId === sessionId)
-      useAgentSessionStore.getState().compactHistoryTail();
   }, [sessionId, onReadingHistoryChange]);
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,

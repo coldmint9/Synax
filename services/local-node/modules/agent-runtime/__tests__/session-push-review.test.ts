@@ -1,0 +1,78 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ root: vi.fn(), invalidate: vi.fn() }));
+vi.mock('../session-store.js', () => ({ agentRuntimeStore: { getSession: () => ({ id: 's', projectId: 'p' }) } }));
+vi.mock('../session-environment.js', () => ({ resolveSessionRepository: mocks.root, invalidateSessionEnvironment: mocks.invalidate }));
+vi.mock('../session-git-branches.js', () => ({ switchSessionGitBranch: vi.fn() }));
+import { listSessionWorkspaceCommits, pushSessionWorkspace } from '../session-git-commit.js';
+let directory: string;
+let repo: string;
+let remote: string;
+const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const commit = (subject: string) => { git('commit', '--allow-empty', '-qm', subject); return git('rev-parse', 'HEAD'); };
+beforeEach(() => {
+  vi.clearAllMocks();
+  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-push-review-'));
+  repo = path.join(directory, 'checkout');
+  remote = path.join(directory, 'remote.git');
+  fs.mkdirSync(repo);
+  vi.stubEnv('GIT_CONFIG_GLOBAL', path.join(directory, 'gitconfig'));
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+  git('init', '-q', '--initial-branch=main', '--template=');
+  git('config', 'user.name', 'Test');
+  git('config', 'user.email', 'test@example.com');
+  git('config', 'commit.gpgsign', 'false');
+  git('init', '-q', '--bare', remote);
+  git('remote', 'add', 'origin', remote);
+  commit('initial');
+  git('push', '-qu', 'origin', 'main');
+  mocks.root.mockReturnValue({ id: 'root', path: repo });
+});
+afterEach(() => { fs.rmSync(directory, { recursive: true, force: true }); vi.unstubAllEnvs(); });
+it('reviews only outgoing commits with bodies and preserves uncommitted files', async () => {
+  const first = commit('feat: review\n\nMultiple lines\nincluding \x1e record separator');
+  const second = commit('fix: button');
+  fs.writeFileSync(path.join(repo, 'untracked.txt'), 'keep me');
+  const before = git('status', '--porcelain');
+  const review = await listSessionWorkspaceCommits('s', { rootId: 'root' });
+  expect(review).toMatchObject({ rootId: 'root', branch: 'main', headCommitSha: second, upstream: 'origin/main' });
+  expect(review.commits.map(c => c.sha)).toEqual([first, second]);
+  expect(review.commits[0]).toMatchObject({ author: 'Test', subject: 'feat: review', body: 'Multiple lines\nincluding \x1e record separator' });
+  expect(git('status', '--porcelain')).toBe(before);
+  expect(mocks.root).toHaveBeenCalledWith('s', 'p', 'root', true);
+  await pushSessionWorkspace('s', { rootId: 'root', expectedHeadSha: review.headCommitSha, expectedBranch: review.branch, expectedUpstream: review.upstream });
+  expect((await listSessionWorkspaceCommits('s', { rootId: 'root' })).commits).toEqual([]);
+  expect(git('status', '--porcelain')).toBe(before);
+});
+it('reviews and publishes a branch without an upstream', async () => {
+  git('checkout', '-qb', 'feature/review');
+  const sha = commit('feature');
+  const review = await listSessionWorkspaceCommits('s');
+  expect(review.commits.map(c => c.sha)).toEqual([sha]);
+  expect(review.upstream).toBe('origin/feature/review');
+  await pushSessionWorkspace('s', { expectedHeadSha: sha, expectedBranch: review.branch, expectedUpstream: review.upstream });
+  expect(git('rev-parse', '--abbrev-ref', '@{u}')).toBe('origin/feature/review');
+});
+it('rejects changes made after review without sending unreviewed commits', async () => {
+  const sha = commit('reviewed');
+  commit('unreviewed');
+  await expect(pushSessionWorkspace('s', { expectedHeadSha: sha, expectedBranch: 'main', expectedUpstream: 'origin/main' })).rejects.toMatchObject({ code: 'GIT_PUSH_REVIEW_CHANGED' });
+  expect(git('rev-list', '--count', 'origin/main..HEAD')).toBe('2');
+});
+it('uses the reviewed upstream even if push.default and pushRemote differ', async () => {
+  git('checkout', '-qb', 'topic');
+  git('branch', '--set-upstream-to=origin/main');
+  git('config', 'branch.topic.pushRemote', 'missing');
+  git('config', 'push.default', 'matching');
+  const sha = commit('topic');
+  const review = await listSessionWorkspaceCommits('s');
+  await pushSessionWorkspace('s', { expectedHeadSha: sha, expectedBranch: review.branch, expectedUpstream: review.upstream });
+  expect(git('rev-parse', 'origin/main')).toBe(sha);
+});
+it('does not silently omit older commits from a long review', async () => {
+  for (let index = 0; index < 205; index++) commit(`change ${index}`);
+  expect((await listSessionWorkspaceCommits('s')).commits).toHaveLength(205);
+}, 30000);

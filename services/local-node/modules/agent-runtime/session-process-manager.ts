@@ -52,6 +52,7 @@ import {
   ensureSessionTitleGenerated,
   maybeScheduleSessionTitleFromStreamChunk,
 } from "./session-title-service.js";
+import { syncWorkerSessionBinding } from "./session-binding-sync.js";
 
 const ACTIVE_SESSION_WAIT_MS = 25;
 const ACTIVE_SESSION_TIMEOUT_MS = 5_000;
@@ -900,6 +901,9 @@ export class SessionProcessManager {
     }
 
     if (message.type === "runtime:event") {
+      // A worker switches its own checkout; mirror the binding into this
+      // process's caches before clients are told to refetch.
+      await syncWorkerSessionBinding(message.event);
       runtimeBus.emit(message.event);
       this.notifyRuntimeEvent(message.event);
       const owner = this.children.get(sessionId);

@@ -2007,7 +2007,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       const id = state.selectedSessionId;
       if (!id || isSessionHistoryReading(id)) return;
       const current = state.sessionDetailCache[id];
-      if (!current) return;
+      if (!current || current.historyPagesLoaded) return;
       const entry = compactSessionTail(current);
       if (entry === current) return;
       set({ messages: entry.messages, runs: entry.runs, steps: entry.steps,
@@ -2654,7 +2654,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                             merged[collection], beforeRead[collection], s[collection],
                           );
                         }
-                        if (!isSessionHistoryReading(targetSessionId)) merged = compactSessionTail(merged);
+                        // Loaded pages belong to this visit, even at the live
+                        // edge. Inactive-cache and disk persistence still trim.
+                        if (!isSessionHistoryReading(targetSessionId) && !merged.historyPagesLoaded)
+                          merged = compactSessionTail(merged);
                         // This response was reconciled against the runtime, so the
                         // entry no longer carries a restore-time provenance.
                         merged.restored = undefined;
@@ -3108,7 +3111,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
               } : {}),
             };
-            const entry = isSessionHistoryReading(event.message.sessionId) ? base : compactSessionTail(base);
+            const entry = isSessionHistoryReading(event.message.sessionId) || base.historyPagesLoaded
+              ? base : compactSessionTail(base);
             return {
               messages: entry.messages, runs: entry.runs, steps: entry.steps,
               toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
