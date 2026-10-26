@@ -22,10 +22,11 @@ it('gives run realtime sole projection ownership, then restores the durable snap
   realtime.onmessage({ data: JSON.stringify(record(1, { type: 'step_started', step })) });
   realtime.onmessage({ data: JSON.stringify(record(2, { type: 'message_delta', stepId: 'step', delta: 'once' })) });
   durable.handlers.get('snapshot')({ data: JSON.stringify({ session: { id: 's', ...state }, run, cursor: 10,
-    liveChunks: [{ type: 'step_started', step }], completedStepIds: [] }) });
+    liveChunks: [{ type: 'step_started', step }], completedStepIds: [], queuedInputs: [], queueRevision: 3 }) });
   durable.handlers.get('chunk')({ data: JSON.stringify(record(11, { type: 'message_delta', stepId: 'step', delta: 'once' })) });
   expect(events.mock.calls.filter(([event]) => event.type === 'message_delta')).toHaveLength(1);
   expect(events.mock.calls.some(([event]) => event.type === 'runtime_snapshot')).toBe(false);
+  expect(events).toHaveBeenCalledWith({ type: 'input_queue_changed', sessionId: 's', queueRevision: 3 });
   realtime.handlers.get('realtime_reset')();
   expect(durable.close).toHaveBeenCalledOnce();
   expect(sources).toHaveLength(3);

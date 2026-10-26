@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAgentSessionStore } from "../../state/agentSessionStore";
 import {
   applyDockLiveEvent,
@@ -41,6 +41,7 @@ function setForm(status: "pending" | "answered"): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   useAgentSessionStore.setState({ interactionState: null });
 });
 
@@ -68,6 +69,16 @@ const toolCall = {
 /** The dock renders the waiting state a human must act on, so a checkpoint
  *  must never be lost to a stale "running" or "completed" shortcut. */
 describe("dock session status", () => {
+  it("refreshes the dock queue after automatic consumption without a selected transcript", async () => {
+    const loadQueue = vi.spyOn(useAgentSessionStore.getState(), "loadInputQueue").mockResolvedValue();
+    useAgentSessionStore.setState({ selectedSessionId: null });
+    const current = state("running");
+    expect(applyDockLiveEvent(current, { type: "input_queue_changed", sessionId: "s1", queueRevision: 2 })).toBe(current);
+    expect(loadQueue).toHaveBeenCalledWith("s1");
+    applyDockLiveEvent(current, { type: "input_queue_changed", sessionId: "other", queueRevision: 2 });
+    expect(loadQueue).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps waiting_input when the session patch reports it", () => {
     expect(applyDockSessionPatch(state("running"), { status: "waiting_input" }))
       .toMatchObject({ status: "waiting_input" });

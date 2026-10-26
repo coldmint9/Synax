@@ -209,14 +209,15 @@ export const useAgentDockStore = create<AgentDockStoreState>((set, get) => ({
           s.session.status === "waiting_permission";
 
         if (shouldQueue) {
-          const { items } = await agentRuntimeApi.enqueueInput(
-            s.session.sessionId,
-            { message: content, contentParts, model },
-          );
+          await agentRuntimeApi.enqueueInput(s.session.sessionId, {
+            message: content,
+            contentParts,
+            model,
+          });
           if (!isCurrentSession()) return;
-          useAgentSessionStore
+          await useAgentSessionStore
             .getState()
-            .setInputQueue(s.session.sessionId, items);
+            .loadInputQueue(s.session.sessionId);
           clearAcceptedDraft();
           return;
         }

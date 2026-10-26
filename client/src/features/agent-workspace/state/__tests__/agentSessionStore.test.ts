@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentRuntimeApi } from "../../../../adapters/transport/agentRuntime";
+import { agentRuntimeApi, type QueuedInput } from "../../../../adapters/transport/agentRuntime";
 import {
   resetWorkspaceSessionCache,
   useAgentSessionStore,
@@ -12,6 +12,8 @@ vi.mock("../../../../adapters/transport/agentRuntime", () => ({
       totalCount: 0,
       countByStatus: {},
     })),
+    listInputQueue: vi.fn(async () => ({ items: [] })),
+    enqueueInput: vi.fn(async () => ({ items: [] })),
     createSession: vi.fn(async (body) => ({
       session: {
         id: "ars_new",
@@ -72,6 +74,7 @@ afterEach(() => {
       pendingToolCalls: [],
     },
     streamingCompletedSteps: [],
+    inputQueues: {},
   });
   vi.clearAllMocks();
 });
@@ -148,6 +151,73 @@ describe("useAgentSessionStore.loadMoreSessions", () => {
       limit: 20,
       offset: 20,
     });
+  });
+});
+
+describe("useAgentSessionStore input queue", () => {
+  const item: QueuedInput = { id: "consumed-item", message: "Queued input", model: null, enqueuedAt: "" };
+
+  it("coalesces changes during a queue read without publishing the stale snapshot", async () => {
+    let releaseFirst!: (value: { items: QueuedInput[] }) => void;
+    let firstStarted!: () => void;
+    const firstStartedPromise = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const firstResponse = new Promise<{ items: QueuedInput[] }>(
+      (resolve) => {
+        releaseFirst = resolve;
+      },
+    );
+    let calls = 0;
+    vi.mocked(agentRuntimeApi.listInputQueue).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) {
+        firstStarted();
+        return firstResponse;
+      }
+      return { items: [] };
+    });
+
+    const firstLoad = useAgentSessionStore
+      .getState()
+      .loadInputQueue("session-a");
+    await firstStartedPromise;
+    const secondLoad = useAgentSessionStore
+      .getState()
+      .loadInputQueue("session-a");
+    const thirdLoad = useAgentSessionStore.getState().loadInputQueue("session-a");
+    const published: QueuedInput[][] = [];
+    const unsubscribe = useAgentSessionStore.subscribe(state => {
+      published.push(state.inputQueues["session-a"]);
+    });
+    // Let a concurrent newer read finish before releasing the stale one.
+    // Without serialization the stale response is the last state published.
+    await Promise.resolve();
+
+    releaseFirst({ items: [item] });
+    await Promise.all([firstLoad, secondLoad, thirdLoad]);
+    unsubscribe();
+
+    expect(agentRuntimeApi.listInputQueue).toHaveBeenCalledTimes(2);
+    expect(published).toEqual([[]]);
+    expect(useAgentSessionStore.getState().inputQueues["session-a"]).toEqual(
+      [],
+    );
+  });
+
+  it("reconciles the queue after enqueueing instead of applying the enqueue response snapshot", async () => {
+    vi.mocked(agentRuntimeApi.enqueueInput).mockResolvedValue({
+      items: [item],
+    });
+    vi.mocked(agentRuntimeApi.listInputQueue).mockResolvedValue({ items: [] });
+
+    await useAgentSessionStore.getState().enqueueSessionInput("session-a", {
+      message: "queued message",
+    });
+
+    expect(useAgentSessionStore.getState().inputQueues["session-a"]).toEqual(
+      [],
+    );
   });
 });
 

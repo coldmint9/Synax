@@ -320,6 +320,12 @@ let activeDetailRefresh: {
   promise: Promise<void>;
   again: boolean;
 } | null = null;
+
+// A change during a read requires a fresh snapshot, not another concurrent
+// request whose response can arrive out of order. Coalesce bursts into a
+// trailing read and never publish a snapshot invalidated while in flight.
+const inputQueueLoads = new Map<string, { again: boolean; promise: Promise<void> }>();
+
 let activeOlderHistory: { sessionId: string; promise: Promise<void> } | null =
   null;
 let activeTimelineIndex: { sessionId: string; promise: Promise<void> } | null =
@@ -2992,43 +2998,55 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     loadInputQueue: async (sessionId) => {
+      const pending = inputQueueLoads.get(sessionId);
+      if (pending) {
+        pending.again = true;
+        return pending.promise;
+      }
+      const refresh = { again: false, promise: Promise.resolve() };
+      refresh.promise = (async () => {
+        do {
+          refresh.again = false;
+          try {
+            const { items } = await agentRuntimeApi.listInputQueue(sessionId);
+            if (!refresh.again) get().setInputQueue(sessionId, items);
+          } catch {
+            /* silent */
+          }
+        } while (refresh.again);
+      })();
+      inputQueueLoads.set(sessionId, refresh);
       try {
-        const { items } = await agentRuntimeApi.listInputQueue(sessionId);
-        get().setInputQueue(sessionId, items);
-      } catch {
-        /* silent */
+        await refresh.promise;
+      } finally {
+        if (inputQueueLoads.get(sessionId) === refresh)
+          inputQueueLoads.delete(sessionId);
       }
     },
 
     enqueueSessionInput: async (sessionId, body) => {
-      const { items } = await agentRuntimeApi.enqueueInput(sessionId, body);
-      get().setInputQueue(sessionId, items);
+      await agentRuntimeApi.enqueueInput(sessionId, body);
+      await get().loadInputQueue(sessionId);
     },
 
     removeQueuedInput: async (sessionId, itemId) => {
-      const { items } = await agentRuntimeApi.removeQueuedInput(
-        sessionId,
-        itemId,
-      );
-      get().setInputQueue(sessionId, items);
+      await agentRuntimeApi.removeQueuedInput(sessionId, itemId);
+      await get().loadInputQueue(sessionId);
     },
 
     forceQueuedInput: async (sessionId, itemId) => {
-      const { items } = await agentRuntimeApi.forceQueuedInput(
-        sessionId,
-        itemId,
-      );
-      get().setInputQueue(sessionId, items);
+      await agentRuntimeApi.forceQueuedInput(sessionId, itemId);
+      await get().loadInputQueue(sessionId);
     },
 
     moveQueuedInput: async (sessionId, itemId, target) => {
       try {
-        const { items } = await agentRuntimeApi.moveQueuedInput(
+        await agentRuntimeApi.moveQueuedInput(
           sessionId,
           itemId,
           target,
         );
-        get().setInputQueue(sessionId, items);
+        await get().loadInputQueue(sessionId);
       } catch (error) {
         await get().loadInputQueue(sessionId);
         throw error;

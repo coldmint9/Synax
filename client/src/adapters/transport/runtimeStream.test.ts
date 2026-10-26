@@ -57,6 +57,12 @@ describe('runtime stream projection', () => {
     expect(projector.record(event)).toEqual([{ type: 'input_queue_changed', sessionId: 'session', queueRevision: 3 }]);
     expect(projector.record(event)).toEqual([]);
   });
+  it('reconciles an empty queue on reconnect even when consumption is already behind the snapshot cursor', () => {
+    const projector = new RuntimeStreamProjector();
+    const events = projector.snapshot({ ...snapshot, cursor: 12, queuedInputs: [], queueRevision: 3 });
+    expect(events).toContainEqual({ type: 'input_queue_changed', sessionId: 'session', queueRevision: 3 });
+    expect(projector.record({ ...record, chunk: { type: 'input_queue_changed', queueRevision: 3 } })).toEqual([]);
+  });
   it('ends live output from a committed Rust finish command and ignores receipt replay', () => {
     const projector = new RuntimeStreamProjector();
     projector.snapshot(snapshot);

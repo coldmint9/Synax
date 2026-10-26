@@ -35,6 +35,7 @@ export interface RuntimeSnapshot {
   liveChunks: RuntimeChunk[]
   completedStepIds: string[]
   queuedInputs?: unknown[]
+  queueRevision?: number
   forceInjectItemId?: string | null
 }
 
@@ -81,7 +82,7 @@ export class RuntimeStreamProjector {
       if (chunk.type === 'step_started' && chunk.step && !this.completedSteps.has(chunk.step.id))
         this.stepId = chunk.step.id
     }
-    return [{
+    const output: SessionLiveEvent[] = [{
       type: 'runtime_snapshot',
       sessionId: value.session.id,
       session: value.session,
@@ -90,6 +91,12 @@ export class RuntimeStreamProjector {
       liveChunks: value.liveChunks,
       completedStepIds: value.completedStepIds,
     }]
+    // Reconnect snapshots advance the replay cursor past queue consumption.
+    // Keep queue reconciliation separate from runtime_snapshot: the run
+    // realtime feed can suppress that event while owning the live transcript.
+    if (value.queuedInputs !== undefined)
+      output.push({ type: 'input_queue_changed', sessionId: value.session.id, queueRevision: value.queueRevision ?? 0 })
+    return output
   }
 
   record(value: RuntimeStreamRecord): SessionLiveEvent[] {

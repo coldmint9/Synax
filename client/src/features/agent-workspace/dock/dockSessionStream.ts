@@ -205,6 +205,10 @@ export function applyDockLiveEvent(
   event: SessionLiveEvent,
 ): DockSessionState {
   switch (event.type) {
+    case "input_queue_changed":
+      if (state.sessionId === event.sessionId)
+        void useAgentSessionStore.getState().loadInputQueue(event.sessionId);
+      return state;
     case "thought_delta":
       return {
         ...state,
