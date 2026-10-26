@@ -5,6 +5,7 @@ import {
   openWorkspaceFile,
   openWorkspaceSubagent,
   openWorkspaceTab,
+  replaceWorkspaceDiffWithFile,
   useSessionWorkspaceStore,
 } from "../sessionWorkspaceStore";
 
@@ -81,6 +82,21 @@ describe("sessionWorkspaceStore", () => {
         rootId: "web",
       }),
     ]);
+  });
+
+  it("replaces the active diff tab with the file tab in the same position", () => {
+    openWorkspaceFile("session-a", "README.md");
+    openWorkspaceDiff("session-a", "src/index.ts", "api");
+
+    replaceWorkspaceDiffWithFile("session-a", "src/index.ts", "api");
+
+    const workspace = useSessionWorkspaceStore.getState().sessions["session-a"];
+    expect(workspace.tabs.map((tab) => tab.id)).toEqual([
+      "file:README.md",
+      "file@api:src/index.ts",
+    ]);
+    expect(workspace.activeTabId).toBe("file@api:src/index.ts");
+    expect(workspace.tabs[1].kind).toBe("file");
   });
 
   it("leaves fullscreen when the last tab closes", () => {

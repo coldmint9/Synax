@@ -110,6 +110,24 @@ describe("global Monaco file viewer", () => {
     expect(view.container.querySelector(".code-viewer-gutter")).toBeNull();
     expect(holder.harness.models).toHaveLength(1);
   });
+  it("toggles Monaco's native find and replace widget from the toolbar and shortcut", async () => {
+    const { editor } = await renderEditor();
+    const findButton = screen.getByRole("button", { name: "查找/替换" });
+
+    fireEvent.click(findButton);
+    expect(holder.harness.editors[0].trigger).toHaveBeenCalledWith(
+      "keyboard",
+      "editor.action.startFindReplaceAction",
+      null,
+    );
+    fireEvent.click(findButton);
+    expect(holder.harness.editors[0].trigger).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(editor, { key: "f", ctrlKey: true });
+    expect(holder.harness.editors[0].trigger).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(editor, { key: "f", ctrlKey: true });
+    expect(holder.harness.editors[0].trigger).toHaveBeenCalledTimes(2);
+  });
   it("edits and immediately flushes the debounce buffer before Command+S", async () => {
     const { editor } = await renderEditor();
     fireEvent.input(editor, { target: { value: "const changed = true\n" } });

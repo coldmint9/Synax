@@ -23,6 +23,65 @@ function post(id: string, action: string, body: unknown = {}) {
 }
 
 describe("session management", () => {
+  it("creates a hidden temporary chat from a fixed history snapshot and deletes only that chat", async () => {
+    const source = await create();
+    const run = await admitActiveFixtureRun(source.id);
+    const seed = async (id: string, content: string) => runtimeFacade.historyCommandGlobal({
+      scopeId: source.id, requestId: id, operation: "append_entities", payload: { objects: [{
+        kind: "runtime.message", value: { id, sessionId: source.id, runId: null, stepId: null,
+          role: "user", content, metadata: {}, createdAt: new Date().toISOString() },
+      }] },
+    });
+    await seed("before-open", "Context before opening");
+    const body = { requestId: "temporary-chat", workspaceMode: "reuse_worktree" };
+    const response = await post(source.id, "side-chat", body);
+    expect(response.status, await response.clone().text()).toBe(201);
+    const { session: side } = await response.json();
+    expect(side.parentSessionId).toBeNull();
+    expect(side.profileId).toBe("synax");
+    expect(side.sessionMetadata).toMatchObject({ sideChat: true, sideChatSourceSessionId: source.id, mode: "chat" });
+    expect(side.activeRunId).toBeNull();
+    expect(side.contextSnapshotId).toBeTruthy();
+    expect(side.contextSnapshotId).not.toBe(source.contextSnapshotId);
+    const contexts = await runtimeFacade.listHistoryObjects(side.id, "list_contexts") as Array<{ id: string; sessionId: string }>;
+    expect(contexts).toContainEqual(expect.objectContaining({ id: side.contextSnapshotId, sessionId: side.id }));
+    const copied = await runtimeFacade.listMessageHistory(side.id) as Array<{ content: string }>;
+    expect(copied.some((message) => message.content === "Context before opening")).toBe(true);
+    await seed("after-open", "Later source message");
+    expect(await runtimeFacade.listMessageHistory(side.id)).toEqual(copied);
+    expect((await (await post(source.id, "side-chat", body)).json()).sessionId).toBe(side.id);
+    const list = await (await agentRuntimeRoutes.request("/sessions?projectId=project-alpha")).json();
+    expect(list.items.map((item: { id: string }) => item.id)).toEqual([source.id]);
+    expect(list.totalCount).toBe(1);
+    const search = await (await agentRuntimeRoutes.request("/sessions/search?projectId=project-alpha&q=Context")).json();
+    expect(search.items.map((item: { session: { id: string } }) => item.session.id)).not.toContain(side.id);
+    const badges = await (await agentRuntimeRoutes.request("/sessions/badges?projectIds=project-alpha")).json();
+    expect(badges.items.map((item: { id: string }) => item.id)).toEqual([source.id]);
+    const deleted = await post(side.id, "delete-permanently");
+    expect(deleted.status, await deleted.clone().text()).toBe(200);
+    expect(await runtimeFacade.sessionExists(side.id)).toBe(false);
+    expect((await runtimeFacade.sessionSummaryAuthoritative(source.id)).activeRunId).toBe(run.id);
+    expect((await (await agentRuntimeRoutes.request("/session-archives")).json()).items).toHaveLength(0);
+    const next = await (await post(source.id, "side-chat", { ...body, requestId: "next-temporary-chat" })).json();
+    expect(next.sessionId).not.toBe(side.id);
+    const nextMessages = await runtimeFacade.listMessageHistory(next.sessionId) as Array<{ content: string }>;
+    expect(nextMessages.some((message) => message.content === "Later source message")).toBe(true);
+  });
+
+  it("uses chat mode for a temporary conversation and requires reuse of the source workspace", async () => {
+    const source = await create();
+    agentRuntimeStore.updateSessionMetadata(source.id, { mode: "goal", goal: { objective: "Main task" } });
+    await agentRuntimeStore.flushSession(source.id);
+    expect((await post(source.id, "side-chat", { requestId: "new-tree", workspaceMode: "new_worktree" })).status).toBe(400);
+    const response = await post(source.id, "side-chat", { requestId: "goal-side", workspaceMode: "reuse_worktree" });
+    expect(response.status, await response.clone().text()).toBe(201);
+    const { session } = await response.json();
+    expect(session.sessionMetadata.mode).toBe("chat");
+    expect(session.sessionMetadata.goal).toBeUndefined();
+    expect(session.sessionMetadata.backend.workDir).toBe(process.cwd());
+    expect((await runtimeFacade.sessionSummaryAuthoritative(source.id)).sessionMetadata?.mode).toBe("goal");
+  });
+
   it("forks a running session without stopping it and stops it before permanent deletion", async () => {
     const source = await create();
     const run = await admitActiveFixtureRun(source.id);

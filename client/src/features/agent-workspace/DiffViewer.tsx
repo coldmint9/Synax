@@ -1,12 +1,13 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { FileDiff, RefreshCw } from "lucide-react";
+import { FileDiff, FilePenLine, RefreshCw } from "lucide-react";
 import { parsePatch } from "diff";
 
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { renderLines } from "../../shared/ui/file-viewer/UnifiedDiffContent";
 import { MonacoTextEditor } from "../../shared/ui/file-viewer/MonacoTextEditor";
+import { replaceWorkspaceDiffWithFile } from "./state/sessionWorkspaceStore";
 
 const MonacoDiffEditor = lazy(() =>
   import("../../shared/ui/file-viewer/MonacoDiffEditor"),
@@ -165,6 +166,15 @@ export const DiffViewer = memo(function DiffViewer({
             <span className="diff-stat diff-stat--del">-{snapshot.removed}</span>
           </span>
         ) : null}
+        <button
+          type="button"
+          className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+          onClick={() => replaceWorkspaceDiffWithFile(sessionId, path, rootId)}
+          aria-label="打开文件"
+          title="打开文件"
+        >
+          <FilePenLine size={11} />
+        </button>
         <button
           type="button"
           className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"

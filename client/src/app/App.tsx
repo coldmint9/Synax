@@ -1,5 +1,6 @@
 import { PageLoading } from "./layouts/CachedWorkbenchPage";
 import { GlobalSessionSearch } from "../features/agent-workspace/GlobalSessionSearch";
+import { SideChatLifecycle } from "../features/agent-workspace/SideChatLifecycle";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
@@ -45,6 +46,7 @@ export default function App() {
 
   return (
     <ContextMenuProvider>
+    <SideChatLifecycle />
     <WorkspaceFileMutationHost />
     <DesktopUpdateProvider>
       <GlobalSessionSearch />

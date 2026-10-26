@@ -26,9 +26,11 @@ interface Detail {
 export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId,
   showHeader = true,
+  onSessionChange,
 }: {
   sessionId: string;
   showHeader?: boolean;
+  onSessionChange?: (session: AgentSession) => void;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const { t } = useLocale();
@@ -53,11 +55,12 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
         messages: messages.items,
         toolCalls: toolCalls.items,
       });
+      onSessionChange?.(session);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "无法加载子会话");
     }
-  }, [sessionId]);
+  }, [sessionId, onSessionChange]);
 
   useEffect(() => {
     if (destroyed) return;

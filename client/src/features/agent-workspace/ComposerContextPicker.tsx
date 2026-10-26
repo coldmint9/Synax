@@ -412,19 +412,12 @@ function ContextPickerContent({
         ) : (
           <>
             {onOpenSideChat && sessionId && (
-              <button
-                type="button"
-                className="session-context-picker-option session-context-picker-option--featured"
-                onClick={() => {
-                  close();
-                  onOpenSideChat();
-                }}
-              >
+              <button type="button" className="session-context-picker-option session-context-picker-option--featured" onClick={() => {
+                close();
+                onOpenSideChat();
+              }}>
                 <PanelRightOpen size={15} aria-hidden="true" />
-                <span>
-                  {t("sideChatMenuLabel")}
-                  <small>{t("sideChatMenuDescription")}</small>
-                </span>
+                <span>{t("sideChatMenuLabel")}<small>{t("sideChatMenuDescription")}</small></span>
               </button>
             )}
             {onAttachFiles && (

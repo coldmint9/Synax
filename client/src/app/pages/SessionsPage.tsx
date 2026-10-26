@@ -4,7 +4,6 @@ import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 import { useSessionDetailPolling } from "../../features/agent-workspace/useSessionDetailPolling";
 import { useSessionLiveStream } from "../../features/agent-workspace/useSessionLiveStream";
@@ -39,6 +38,7 @@ import {
   useResizablePanel,
 } from "../../features/agent-workspace/useResizablePanel";
 import { useMediaQuery } from "../../shared/hooks/useMediaQuery";
+import { useSideChatStore } from "../../features/agent-workspace/state/sideChatStore";
 
 const LEFT_PANEL_DEFAULT = 260;
 const LEFT_PANEL_MIN = 210;
@@ -138,10 +138,7 @@ export default memo(function SessionsPage() {
     null,
   );
   const [layoutWidth, setLayoutWidth] = useState(0);
-  const [sideChatOpen, setSideChatOpen] = useState(false);
-  const [sideChatSession, setSideChatSession] = useState<
-    AgentSession | undefined
-  >();
+  const sideChat = useSideChatStore((s) => agentSessionId ? s.chats[agentSessionId] : undefined);
   useEffect(() => {
     if (!layoutElement) return;
     const measure = () => setLayoutWidth(layoutElement.clientWidth);
@@ -173,12 +170,6 @@ export default memo(function SessionsPage() {
   useEffect(() => {
     if (narrowWorkspace) leftPanel.setCollapsed(true);
   }, [narrowWorkspace, leftPanel.setCollapsed]);
-
-  useEffect(() => {
-    setSideChatOpen(false);
-    setSideChatSession(undefined);
-  }, [agentSessionId]);
-
   // A terminal session patch can arrive before the durable stream's final
   // message record. Keep that stream attached until it clears its realtime
   // ownership, then let the status-driven cleanup release it.
@@ -201,23 +192,16 @@ export default memo(function SessionsPage() {
     hasWorkspaceContent &&
     workspaceState.presentation === "focus";
   const canCreateSession = listView === "sessions" && Boolean(projectId);
-
-  useEffect(() => {
-    if (selectedSubagent) setSideChatOpen(false);
-  }, [selectedSubagent?.sessionId]);
-
   const sideChatVisible = Boolean(
     showTranscript &&
-    sideChatOpen &&
+    sideChat &&
     agentSession &&
     !workspaceFullscreen &&
     !selectedSubagent,
   );
   const openSideChat = useCallback(() => {
-    if (!agentSessionId || !agentSession) return;
-    useSessionWorkspaceStore.getState().closeSubagent(agentSessionId);
-    setSideChatOpen(true);
-  }, [agentSession, agentSessionId]);
+    if (agentSession) useSideChatStore.getState().start(agentSession);
+  }, [agentSession]);
 
   const sidePanelViews: SessionSidePanelView[] = [
     {
@@ -251,7 +235,7 @@ export default memo(function SessionsPage() {
         />
       ),
     });
-  if (sideChatOpen && agentSession)
+  if (sideChat && agentSessionId)
     sidePanelViews.push({
       id: "side-chat",
       label: t("sideChatTitle"),
@@ -261,12 +245,8 @@ export default memo(function SessionsPage() {
       onResizeKeyDown: sideChatPanel.resizeWithKeyboard,
       content: (
         <SideChatPanel
-          key={agentSession.id}
-          projectId={projectId}
-          parentSession={agentSession}
-          session={sideChatSession}
-          onClose={() => setSideChatOpen(false)}
-          onSessionReady={setSideChatSession}
+          key={sideChat.requestId}
+          ownerSessionId={agentSessionId}
         />
       ),
     });
@@ -419,9 +399,9 @@ export default memo(function SessionsPage() {
           readingHistory={historyReading}
           projectId={projectId}
           focus={false}
+          onOpenSideChat={openSideChat}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
-          onOpenSideChat={openSideChat}
         />
       ) : null}
     </div>

@@ -10,6 +10,7 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 import {
   isAgentWorkspaceSession,
+  isSideChatSession,
   isWorkflowSession,
   listRootSessions,
   type SessionListView,
@@ -76,7 +77,9 @@ export function useSessionList(
 
   const projectSessions = useMemo(() => {
     if (!routeProjectId) return [];
-    return sessions.filter((s) => s.projectId === routeProjectId);
+    return sessions.filter(
+      (s) => s.projectId === routeProjectId && !isSideChatSession(s),
+    );
   }, [routeProjectId, sessions]);
 
   const storeTotal = useAgentSessionStore((s) => s.sessionListTotal);
@@ -128,7 +131,9 @@ export function useSessionList(
         : isAgentWorkspaceSession(s),
     );
     if (search.enabled) {
-      const list = search.items.map((item) => item.session);
+      const list = search.items
+        .filter((item) => !isSideChatSession(item.session))
+        .map((item) => item.session);
       const tree = list
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
         .map((session) => ({

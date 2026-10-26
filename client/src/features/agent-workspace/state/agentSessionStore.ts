@@ -1430,6 +1430,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               const added = state.sessions.filter(
                 (session) =>
                   (!before.has(session.id) ||
+                    session.sessionMetadata?.sideChat === true ||
                     session.id === state.selectedSessionId ||
                     (items.length === SESSION_PAGE_SIZE &&
                       (Number(session.sessionMetadata?.pinned === true) <
@@ -1510,6 +1511,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         updateSessionListRows((row) => (row.id === session.id ? session : row));
         return;
       }
+      if (isRuntimeResourceGone(sessionId)) return;
       set((state) => {
         const index = state.sessions.findIndex((item) => item.id === session.id);
         if (index === -1)
@@ -1518,7 +1520,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             sessionListTotal:
               state.sessionListTotal === null
                 ? null
-                : state.sessionListTotal + 1,
+                : state.sessionListTotal + (session.sessionMetadata?.sideChat === true ? 0 : 1),
           };
         const live = state.sessions[index];
         // A read must not overwrite a patch that landed later.
@@ -1739,6 +1741,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     discardRemovedSessions: (deletedSessionIds, projectId) => {
+      const newlyRemoved = new Set(deletedSessionIds.filter((id) => !isRuntimeResourceRemoved(id)));
       markRuntimeResourcesRemoved(deletedSessionIds);
       // A deleted or archived row must not repaint from disk on the next start.
       scheduleDeletePersistedDetail(deletedSessionIds);
@@ -1764,6 +1767,9 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (shouldClosePanel) get().resetSessionDetailForDraft();
       const nextCache = { ...get().sessionDetailCache };
       for (const id of deleted) delete nextCache[id];
+      const temporaryIds = new Set(get().sessions
+        .filter((session) => deleted.has(session.id) && session.sessionMetadata?.sideChat === true)
+        .map((session) => session.id));
       set({
         sessions: get().sessions.filter((session) => !deleted.has(session.id)),
         childSessions: Object.fromEntries(
@@ -1778,11 +1784,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessionListTotal:
           get().sessionListTotal === null
             ? null
-            : Math.max(0, get().sessionListTotal! - deleted.size),
+            : Math.max(0, get().sessionListTotal! - [...newlyRemoved].filter((id) => !temporaryIds.has(id)).length),
         sessionListOffset: Math.max(
           0,
           get().sessionListOffset -
-            get().sessions.filter((session) => deleted.has(session.id)).length,
+            get().sessions.filter((session) => deleted.has(session.id) && !temporaryIds.has(session.id)).length,
         ),
       });
     },

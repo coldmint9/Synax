@@ -1,0 +1,36 @@
+.side-chat-island-anchor {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: 4px;
+}
+.side-chat-island-anchor .synax-island-material.liquid-glass-surface[data-glass-state] {
+  min-height: 30px;
+  padding: 2px 5px;
+}
+.side-chat-island-trigger {
+  display: grid;
+  min-height: 26px;
+  min-width: 30px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--ui-subtle);
+  transition: color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.side-chat-island-trigger:hover {
+  background: color-mix(in srgb, var(--ui-signal) 10%, transparent);
+  color: var(--ui-text);
+}
+.side-chat-island-trigger[data-active="true"] {
+  background: hsl(var(--electric-purple) / 0.14);
+  color: hsl(var(--electric-purple));
+  box-shadow: 0 0 0 1px hsl(var(--electric-purple) / 0.32);
+}
+.side-chat-island-trigger:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-chat-island-trigger { transition: none; }
+}

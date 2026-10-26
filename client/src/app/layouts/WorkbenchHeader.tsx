@@ -31,6 +31,7 @@ import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/s
 import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
+import { SideChatIsland } from "../../features/agent-workspace/SideChatIsland";
 import type { ActivityPanel } from "./ActivityBar";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { useMacWindowButtons } from "../../adapters/electron/useMacWindowButtons";
@@ -314,7 +315,10 @@ export function WorkbenchHeader({
         <div className="wh-actions workbench-header__actions">
           <BackendConnectionStatus />
           {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
-            <SubagentIsland sessionId={selectedSessionId} />
+            <>
+              <SubagentIsland sessionId={selectedSessionId} />
+              <SideChatIsland sessionId={selectedSessionId} />
+            </>
           ) : null}
           <GoalToolbar sessionId={hasProject ? goalSessionId : null} />
           <Tooltip content={terminalLabel}>

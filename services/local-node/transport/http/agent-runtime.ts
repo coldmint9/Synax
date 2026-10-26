@@ -203,7 +203,7 @@ agentRuntimeRoutes.use('*', async (c, next) => {
       // when the working set is skipped.
       const metadataOnly =
         (c.req.method === 'PATCH' && /\/(title|pin|mode|permissions)$/.test(c.req.path)) ||
-        (c.req.method === 'POST' && c.req.path.endsWith('/fork'));
+        (c.req.method === 'POST' && /\/(fork|side-chat)$/.test(c.req.path));
       const loadsWorkingSet =
         c.req.method !== 'GET' &&
         !metadataOnly &&
@@ -282,7 +282,9 @@ agentRuntimeRoutes.get("/sessions/search", async (c) => {
             session.projectId === projectId &&
             !session.parentSessionId &&
             !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
+            !session.sessionMetadata?.deletedAt &&
+            !session.sessionMetadata?.forkPreparing &&
+            session.sessionMetadata?.sideChat !== true,
         );
       const lowered = q.toLocaleLowerCase();
       const matches = (
@@ -364,7 +366,8 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
               selected.has(session.projectId) &&
               !session.parentSessionId &&
               !session.sessionMetadata?.archivedAt &&
-              !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
+              !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing &&
+              session.sessionMetadata?.sideChat !== true,
           )
           .map((session) => ({
             id: session.id,
@@ -934,7 +937,9 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
         .filter(
           (session) =>
             !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
+            !session.sessionMetadata?.deletedAt &&
+            !session.sessionMetadata?.forkPreparing &&
+            session.sessionMetadata?.sideChat !== true,
         )
         .filter(
           (session) =>
@@ -1024,6 +1029,7 @@ agentRuntimeRoutes.get("/session-archives", async (c) => {
         if (
           !archivedAt ||
           !archiveBatchId ||
+          session.sessionMetadata?.sideChat === true ||
           session.sessionMetadata?.deletedAt ||
           (projectId && session.projectId !== projectId)
         )
@@ -1309,6 +1315,7 @@ async function archiveInactiveSessionsRoute(c: Context) {
     const toArchive = allSessions.filter(
       (s) =>
         !keep.has(s.status) &&
+        s.sessionMetadata?.sideChat !== true &&
         !s.sessionMetadata?.runtimeControl &&
         !runCoordinator.isActive(s.id),
     );
@@ -3207,22 +3214,25 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/edit", async (c) => {
     return runtimeError(c, error);
   }
 });
-for (const action of ["rollback", "fork", "fork-full"] as const) {
+for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
   agentRuntimeRoutes.post(
-    action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
+    action === "side-chat" ? "/sessions/:sessionId/side-chat" : action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
       const parsed = (
-        action === "fork-full" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
+        action === "fork-full" || action === "side-chat" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
       ).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
+        const temporary = action === "side-chat";
+        if (temporary && input.workspaceMode !== "reuse_worktree")
+          throw new AgentValidationError("Side chats reuse the current workspace.");
         {
           if (action !== "rollback") {
-            const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId])).digest("hex");
+            const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId, ...(temporary ? ["side-chat"] : [])])).digest("hex");
             const targetId = `ars_fork_${forkIdentity.slice(0, 32)}`;
             return (await singleForkRequest(targetId, JSON.stringify([sessionId, input.checkpointId, input.workspaceMode]), async () => {
             let existing: AgentSession | undefined;
@@ -3284,10 +3294,26 @@ for (const action of ["rollback", "fork", "fork-full"] as const) {
             sessionMetadata.forkRequestFingerprint = forkFingerprint;
             sessionMetadata.forkRequestId = input.requestId;
             sessionMetadata.forkHostId = process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
-            const target = existing ? { ...existing, sessionMetadata } : agentSessionRuntime.create({
+            // Temporary chats start from a committed history snapshot without
+            // joining the subagent tree or inheriting an active goal/run.
+            if (temporary) {
+              for (const key of ["goal", "plan", "activeWorkId", "parentSessionId", "subagentName", "roleName", "roleDescription"])
+                delete sessionMetadata[key];
+              Object.assign(sessionMetadata, {
+                mode: "chat", source: "session-page", sideChat: true,
+                sideChatSourceSessionId: sessionId,
+                sideChatOpenedAt: existing?.sessionMetadata?.sideChatOpenedAt ?? new Date().toISOString(),
+                // Rust remaps context ids alongside copied history objects.
+                sideChatContextSnapshotId: source.contextSnapshotId,
+              });
+            } else {
+              for (const key of ["sideChat", "sideChatSourceSessionId", "sideChatOpenedAt", "sideChatContextSnapshotId"])
+                delete sessionMetadata[key];
+            }
+            let target = existing ? { ...existing, sessionMetadata } : agentSessionRuntime.create({
               projectId: source.projectId,
               nodeId: source.nodeId,
-              profileId: source.profileId,
+              profileId: temporary ? "synax" : source.profileId,
               prompt: source.prompt,
               backendId: sourceBackend.id as CreateSessionRequest["backendId"],
               model: sourceBackend.model,
@@ -3296,13 +3322,24 @@ for (const action of ["rollback", "fork", "fork-full"] as const) {
               reasoningEffort: source.reasoningEffort ?? undefined,
               skillIds: source.skillIds,
               mcpServerIds: source.mcpServerIds,
+              ...(temporary ? {
+                permissionTier: source.sessionMetadata?.permissionTier as CreateSessionRequest["permissionTier"],
+                permissionOverrides: source.sessionMetadata?.permissionOverrides as CreateSessionRequest["permissionOverrides"],
+              } : {}),
               sessionMetadata,
             }, { id: targetId, forkPreparing: true });
+            if (temporary && !existing) {
+              // Carry all workspace bindings (including reference worktrees)
+              // without borrowing the source session's lifecycle.
+              target = agentRuntimeStore.updateSessionMetadata(target.id, {
+                backend: { ...(target.sessionMetadata?.backend as object), ...sourceBackend },
+              });
+            }
             // The fork inherits the source prompt, so its initial title would
             // duplicate the source. Number it before the copy is reported.
             // Read the authoritative projection: the local cache can still
             // show a sibling fork's pre-suffix title.
-            const siblingTitles = (
+            const siblingTitles = temporary ? [] : (
               (await runtimeFacade.listSessionProjection()) as AgentSession[]
             )
               .filter(
@@ -3313,7 +3350,7 @@ for (const action of ["rollback", "fork", "fork-full"] as const) {
                   !sibling.sessionMetadata?.archivedAt,
               )
               .map((sibling) => sibling.title);
-            const forkTitle = forkSessionTitle({
+            const forkTitle = temporary ? "Side chat" : forkSessionTitle({
               sourceTitle: source.title ?? target.title,
               existingTitles: siblingTitles,
             });
@@ -3323,7 +3360,7 @@ for (const action of ["rollback", "fork", "fork-full"] as const) {
               sourceSessionId: sessionId,
               targetSessionId: target.id,
               checkpointId: input.checkpointId,
-              fullHistory: action === "fork-full",
+              fullHistory: action === "fork-full" || temporary,
               revision: input.revision,
               requestId: input.requestId,
               sessionMetadata: target.sessionMetadata ?? {},
@@ -3338,6 +3375,10 @@ for (const action of ["rollback", "fork", "fork-full"] as const) {
                 activeRunId: null,
                 completedAt: null,
                 resultSummary: null,
+                ...(temporary ? {
+                  contextSnapshotId: typeof forked.sessionMetadata?.sideChatContextSnapshotId === "string"
+                    ? forked.sessionMetadata.sideChatContextSnapshotId : null,
+                } : {}),
                 updatedAt: new Date().toISOString(),
                 ...(forkTitle ? { title: forkTitle } : {}),
                 sessionMetadata: {

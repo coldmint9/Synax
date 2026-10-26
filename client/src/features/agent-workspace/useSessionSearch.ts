@@ -4,6 +4,7 @@ import {
   type SessionSearchResponse,
 } from "../../adapters/transport/agentRuntime";
 import { AppError } from "../../shared/lib/appError";
+import { isSideChatSession } from "./sessionBuckets";
 
 type SearchState = SessionSearchResponse & {
   key: string;
@@ -53,12 +54,13 @@ async function searchWithRetry(
 ): Promise<SessionSearchResponse> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await agentRuntimeApi.searchSessions(
+      const result = await agentRuntimeApi.searchSessions(
         projectId,
         query,
         offset,
         signal,
       );
+      return { ...result, items: result.items.filter((item) => !isSideChatSession(item.session)) };
     } catch (error) {
       if (
         signal.aborted ||

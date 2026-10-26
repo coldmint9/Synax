@@ -34,6 +34,11 @@ function makeSession(overrides: Partial<AgentSession>): AgentSession {
 }
 
 describe("sessionBuckets", () => {
+  it("keeps temporary side chats out of the session list even when they are root Synax sessions", () => {
+    const root = makeSession({ id: "main", profileId: "synax", sessionMetadata: { source: "session-page" } });
+    const temporary = makeSession({ id: "side", profileId: "synax", sessionMetadata: { source: "session-page", sideChat: true } });
+    expect(listRootSessions([temporary, root])).toEqual([root]);
+  });
   it.each(["agent-dock", "goal-dock"])(
     "restores the %s session source",
     (source) => {

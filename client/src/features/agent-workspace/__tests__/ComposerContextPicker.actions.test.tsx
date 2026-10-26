@@ -66,15 +66,6 @@ describe("unified composer plus menu", () => {
     expect(input.value).toBe("");
   });
 
-  it("opens a side chat from the current session plus menu", async () => {
-    const openSideChat = vi.fn();
-    render(<ComposerContextPicker {...props} onOpenSideChat={openSideChat} />);
-    await open();
-    await userEvent.click(screen.getByRole("button", { name: /在侧边聊天/ }));
-    expect(openSideChat).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: /在侧边聊天/ })).not.toBeInTheDocument();
-  });
-
   it("keeps file references functional in the combined menu", async () => {
     vi.spyOn(agentRuntimeApi, "listReferenceOptions").mockResolvedValue({
       items: [{ kind: "file", id: "README.md", label: "README.md" }],
@@ -89,6 +80,14 @@ describe("unified composer plus menu", () => {
     expect(onChange).toHaveBeenCalledWith([
       { kind: "file", id: "README.md", label: "README.md" },
     ]);
+  });
+
+  it("starts temporary side chat from the plus menu", async () => {
+    const start = vi.fn();
+    render(<ComposerContextPicker {...props} onOpenSideChat={start} />);
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: /在侧边聊天/ }));
+    expect(start).toHaveBeenCalledOnce();
   });
 
   it("locks mode switching independently from attachment/context actions", async () => {

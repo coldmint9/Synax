@@ -8,6 +8,7 @@ export interface MonacoTextEditorProps {
   onDirty?: () => void;
   onSave?: () => void;
   registerFlush?: (flush: (() => void) | null) => void;
+  registerFindToggle?: (toggle: (() => void) | null) => void;
   ariaLabel?: string;
   plainText?: boolean;
 }

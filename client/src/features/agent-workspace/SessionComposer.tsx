@@ -548,8 +548,8 @@ export function SessionComposer({
   ]);
 
   const commands = useComposerCommands({
-    onAttachFiles: media.add,
     onOpenSideChat,
+    onAttachFiles: media.add,
     projectId,
     sessionId,
     backendId,

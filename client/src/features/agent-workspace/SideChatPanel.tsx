@@ -1,199 +1,79 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, PanelRightClose, RefreshCw, X } from "lucide-react";
-import type { AgentSession } from "../../adapters/transport/agentRuntime";
-import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
+import { MessageCircle, RefreshCw, X } from "lucide-react";
+import { AlertDialog, DialogBody, DialogContainer, DialogFooter, DialogHeader, DialogPanel, DialogTitle } from "@/shared/ui/ui/Dialog";
+import { Button } from "@/shared/ui/ui/Button";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { upsertSideChatSession, useSideChatStore } from "./state/sideChatStore";
 import { SessionComposer } from "./SessionComposer";
 import { SubagentReadonlyView } from "./SubagentReadonlyView";
-import { sideChatSessionRequest } from "./sideChatSession";
 
-interface Props {
-  projectId: string;
-  parentSession: AgentSession;
-  session?: AgentSession;
-  onClose: () => void;
-  onSessionReady: (session: AgentSession) => void;
-}
-
-export function SideChatPanel({
-  projectId,
-  parentSession,
-  session: initialSession,
-  onClose,
-  onSessionReady,
-}: Props) {
+export function SideChatPanel({ ownerSessionId }: { ownerSessionId: string }) {
   const { t } = useLocale();
-  const sideChatTitle = t("sideChatTitle");
-  const [session, setSession] = useState<AgentSession | undefined>(
-    initialSession,
-  );
-  const [preparing, setPreparing] = useState(!initialSession);
-  const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const creationRef = useRef<{
-    sourceId: string;
-    promise: ReturnType<typeof agentRuntimeApi.createSession>;
-  } | null>(null);
+  const chat = useSideChatStore((state) => state.chats[ownerSessionId]);
   const liveSession = useAgentSessionStore((state) =>
-    session?.id
-      ? state.sessions.find((item) => item.id === session.id)
-      : undefined,
+    state.sessions.find((item) => item.id === chat?.session?.id),
   );
-  const currentSession = liveSession ?? session;
-
-  useEffect(() => {
-    setSession(initialSession);
-    setPreparing(!initialSession);
-    setError(null);
-  }, [initialSession?.id]);
-
-  useEffect(() => {
-    closeRef.current?.focus({ preventScroll: true });
-  }, []);
-
-  const handleClose = () => {
-    onClose();
-    requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLButtonElement>('[data-side-chat-trigger="true"]')
-        ?.focus({ preventScroll: true });
-    });
-  };
-
-  useEffect(() => {
-    if (initialSession || session || !parentSession.id) return;
-    let active = true;
-    setPreparing(true);
-    setError(null);
-    // Parent status updates, Activity reveals and StrictMode effect replay must
-    // observe the same creation request rather than create extra sessions.
-    if (creationRef.current?.sourceId !== parentSession.id) {
-      creationRef.current = {
-        sourceId: parentSession.id,
-        promise: agentRuntimeApi.createSession(
-          sideChatSessionRequest(parentSession, sideChatTitle),
-        ),
-      };
+  const session = liveSession ?? chat?.session;
+  const [confirmClose, setConfirmClose] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { closeRef.current?.focus({ preventScroll: true }); }, [ownerSessionId]);
+  if (!chat) return null;
+  const deleting = chat.status === "closing";
+  const destroy = async () => {
+    try {
+      await useSideChatStore.getState().destroy(ownerSessionId);
+      // The temporary icon disappears with the window; return to its creator.
+      document.querySelector<HTMLButtonElement>('[data-side-chat-trigger="true"]')?.focus({ preventScroll: true });
+    } catch {
+      // Keep the confirmation, conversation and error visible for retry.
     }
-    void creationRef.current.promise
-      .then(({ session: created }) => {
-        if (!active) return;
-        useAgentSessionStore.setState((state) =>
-          (state.projectId !== null && state.projectId !== created.projectId) ||
-          state.sessions.some((item) => item.id === created.id)
-            ? state
-            : { sessions: [created, ...state.sessions] },
-        );
-        setSession(created);
-        setPreparing(false);
-        onSessionReady(created);
-        void useAgentSessionStore.getState().refreshSessions();
-      })
-      .catch((reason) => {
-        if (!active) return;
-        setError(reason instanceof Error ? reason.message : String(reason));
-        setPreparing(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [
-    initialSession,
-    onSessionReady,
-    parentSession,
-    projectId,
-    session,
-    sideChatTitle,
-    attempt,
-  ]);
+  };
 
   return (
     <section className="side-chat" aria-label={t("sideChatTitle")}>
       <header className="side-chat-header">
-        <span className="side-chat-header-icon" aria-hidden="true">
-          <MessageCircle size={15} />
-        </span>
+        <span className="side-chat-header-icon" aria-hidden="true"><MessageCircle size={15} /></span>
         <div className="min-w-0 flex-1">
-          <strong className="block truncate text-xs">
-            {t("sideChatTitle")}
-          </strong>
-          <span className="block truncate text-[10px] text-muted-foreground">
-            {t("sideChatSubtitle")}
-          </span>
+          <strong className="block truncate text-xs">{t("sideChatTitle")}</strong>
+          <span className="block truncate text-[11px] text-muted-foreground">{t("sideChatSubtitle")}</span>
         </div>
-        <span className="side-chat-context-pill" title={t("sideChatContext")}>
-          {t("sideChatContext")}
-        </span>
-        <button
-          ref={closeRef}
-          type="button"
-          className="side-chat-close"
-          aria-label={t("sideChatClose")}
-          title={t("sideChatClose")}
-          onClick={handleClose}
-        >
-          <PanelRightClose size={15} />
-        </button>
+        <button ref={closeRef} type="button" className="side-chat-close" aria-label={t("sideChatClose")} title={t("sideChatClose")}
+          disabled={deleting} onClick={() => setConfirmClose(true)}><X size={15} /></button>
       </header>
-
+      <p className="px-3 py-2 text-xs text-muted-foreground">{t("sideChatContext")}</p>
       <div className="side-chat-body">
-        {preparing ? (
-          <div className="side-chat-empty" role="status" aria-live="polite">
-            <span className="side-chat-empty-icon" aria-hidden="true">
-              <RefreshCw size={17} className="animate-spin" />
-            </span>
+        {chat.status === "creating" || (deleting && !session) ? (
+          <div className="side-chat-empty" role="status">
+            <RefreshCw size={17} className="animate-spin" aria-hidden="true" />
             <strong>{t("sideChatPreparing")}</strong>
-            <p>{t("sideChatContext")}</p>
           </div>
-        ) : error ? (
-          <div className="side-chat-empty" role="alert">
-            <span
-              className="side-chat-empty-icon side-chat-empty-icon--error"
-              aria-hidden="true"
-            >
-              <X size={17} />
-            </span>
-            <strong>{t("sideChatError")}</strong>
-            <p>{error}</p>
-            <button
-              type="button"
-              className="rounded-md px-3 py-1.5 text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              onClick={() => {
-                creationRef.current = null;
-                setAttempt((value) => value + 1);
-              }}
-            >
-              {t("planRetry")}
-            </button>
-          </div>
-        ) : currentSession ? (
-          <SubagentReadonlyView
-            key={currentSession.id}
-            sessionId={currentSession.id}
-            showHeader={false}
-          />
+        ) : session ? (
+          <SubagentReadonlyView key={session.id} sessionId={session.id} showHeader={false} onSessionChange={upsertSideChatSession} />
         ) : (
           <div className="side-chat-empty">
-            <span className="side-chat-empty-icon" aria-hidden="true">
-              <MessageCircle size={17} />
-            </span>
-            <strong>{t("sideChatEmptyTitle")}</strong>
-            <p>{t("sideChatEmptyDescription")}</p>
+            <strong>{t("sideChatError")}</strong>
+            <Button variant="secondary" size="sm" onClick={() => useSideChatStore.getState().retry(ownerSessionId)}>{t("planRetry")}</Button>
           </div>
         )}
       </div>
-
-      {currentSession ? (
-        <div className="side-chat-composer">
-          <SessionComposer
-            projectId={projectId}
-            session={currentSession}
-            layout="footer"
-          />
-        </div>
+      {chat.error && !confirmClose ? <p role="alert" className="px-3 py-2 text-xs text-danger">{chat.error}</p> : null}
+      {session && !deleting ? (
+        <div className="side-chat-composer"><SessionComposer projectId={session.projectId} session={session} layout="footer" /></div>
       ) : null}
+      <AlertDialog open={confirmClose} onClose={() => setConfirmClose(false)} dismissible={!deleting}>
+        <DialogContainer size="sm"><DialogPanel>
+          <DialogHeader><DialogTitle>{t("sideChatCloseConfirmTitle")}</DialogTitle></DialogHeader>
+          <DialogBody>
+            {t("sideChatCloseConfirmDescription")}
+            {chat.error ? <p role="alert" className="mt-3 text-xs text-danger">{chat.error}</p> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button autoFocus variant="ghost" size="sm" disabled={deleting} onClick={() => setConfirmClose(false)}>{t("commonCancel")}</Button>
+            <Button variant="primary" size="sm" pending={deleting} disabled={deleting} onClick={() => void destroy()}>{t("sideChatCloseConfirmAction")}</Button>
+          </DialogFooter>
+        </DialogPanel></DialogContainer>
+      </AlertDialog>
     </section>
   );
 }

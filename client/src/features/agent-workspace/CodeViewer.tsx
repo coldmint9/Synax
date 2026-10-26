@@ -1,6 +1,6 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Download, Save } from "lucide-react";
+import { Download, Save, Search } from "lucide-react";
 import {
   agentRuntimeApi,
   type SessionEnvironmentInputSource,
@@ -131,6 +131,7 @@ export const CodeViewer = memo(function CodeViewer({
   const loadedWorkspacePath = useRef<string | undefined>(undefined);
   const dirtyRef = useRef(false);
   const editorFlush = useRef<(() => void) | null>(null);
+  const editorFindToggle = useRef<(() => void) | null>(null);
   const saveFlight = useRef<{
     identity: string;
     promise: Promise<boolean>;
@@ -498,6 +499,17 @@ export const CodeViewer = memo(function CodeViewer({
             <Save size={11} className={saving ? "animate-pulse" : ""} />
           </button>
         )}
+        {dataCurrent && !showPreview && (
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+            onClick={() => editorFindToggle.current?.()}
+            aria-label="查找/替换"
+            title="查找/替换 (⌘F / Ctrl+F)"
+          >
+            <Search size={11} />
+          </button>
+        )}
         {inputSource?.assetId && (
           <a
             className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
@@ -612,6 +624,9 @@ export const CodeViewer = memo(function CodeViewer({
             onSave={() => void save()}
             registerFlush={(flush) => {
               editorFlush.current = flush;
+            }}
+            registerFindToggle={(toggle) => {
+              editorFindToggle.current = toggle;
             }}
           />
         )}

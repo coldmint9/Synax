@@ -1149,6 +1149,14 @@ export const agentRuntimeApi = {
     request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
       method: "POST", body: JSON.stringify({}), silent: true,
     }),
+  createSideChat: (sessionId: string, requestId: string) =>
+    request<{ sessionId: string; session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/side-chat`, {
+      method: "POST", body: JSON.stringify({ requestId, workspaceMode: "reuse_worktree" }), silent: true,
+    }),
+  destroySideChatOnUnload: (sessionId: string) =>
+    request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
+      method: "POST", body: JSON.stringify({}), silent: true, keepalive: true,
+    }),
   updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
     request<{ session: AgentSession }>(
       `/sessions/${encodeURIComponent(sessionId)}/mode`,

@@ -521,6 +521,50 @@ export function openWorkspaceFile(
   });
 }
 
+/** Replace the active diff tab with its editable file tab in place. */
+export function replaceWorkspaceDiffWithFile(
+  sessionId: string,
+  path: string,
+  rootId?: string,
+): void {
+  const store = useSessionWorkspaceStore.getState();
+  const current = store.sessions[sessionId];
+  const active = current?.tabs.find((tab) => tab.id === current.activeTabId);
+  if (
+    !active ||
+    active.kind !== "diff" ||
+    active.path !== path ||
+    active.rootId !== rootId
+  ) {
+    openWorkspaceFile(sessionId, path, null, rootId);
+    return;
+  }
+  const name = path.split(/[\\/]/).pop() || path;
+  const next = {
+    kind: "file" as const,
+    title: name,
+    path,
+    ...(rootId ? { rootId } : {}),
+  };
+  const nextId = tabIdentity(next);
+  const existing = current.tabs.find((tab) => tab.id === nextId);
+  const tabs = existing
+    ? current.tabs.filter((tab) => tab.id !== active.id)
+    : current.tabs.map((tab) =>
+        tab.id === active.id ? { ...next, id: nextId } : tab,
+      );
+  useSessionWorkspaceStore.setState({
+    sessions: {
+      ...useSessionWorkspaceStore.getState().sessions,
+      [sessionId]: {
+        ...current,
+        tabs,
+        activeTabId: nextId,
+      },
+    },
+  });
+}
+
 export function openWorkspaceInputSource(
   sessionId: string,
   source: SessionEnvironmentInputSource,

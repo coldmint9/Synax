@@ -157,6 +157,9 @@
   background: color-mix(in srgb, var(--background) 94%, var(--ui-panel-soft));
 }
 .side-chat-composer .agent-session-composer--footer {
+  position: static;
+  inset: auto;
+  pointer-events: auto;
   padding: 0.55rem 0.65rem 0.65rem;
 }
 .side-chat-composer .agent-session-composer-shell {

@@ -22,6 +22,7 @@ export default function MonacoTextEditorSurface(props: MonacoTextEditorProps) {
     let frame = 0;
     let observer: ResizeObserver | undefined,
       theme: MutationObserver | undefined;
+    let onFindShortcut: ((event: KeyboardEvent) => void) | undefined;
     const disposables: monaco.IDisposable[] = [];
     const flush = () => {
       if (!model || !changed || !latest.current.onChange) return;
@@ -106,6 +107,38 @@ export default function MonacoTextEditorSurface(props: MonacoTextEditorProps) {
           `${latest.current.onChange ? "编辑文件" : "查看文件"} ${latest.current.path}`,
       });
       instance.current = { model, editor, update };
+      const toggleFind = () => {
+        const controller = editor?.getContribution?.(
+          "editor.contrib.findController",
+        ) as
+          | {
+              getState?: () => { isRevealed?: boolean };
+              closeFindWidget?: () => void;
+            }
+          | undefined;
+        const state = controller?.getState?.();
+        if (state?.isRevealed) {
+          controller?.closeFindWidget?.();
+        } else {
+          editor?.trigger(
+            "keyboard",
+            "editor.action.startFindReplaceAction",
+            null,
+          );
+        }
+      };
+      latest.current.registerFindToggle?.(toggleFind);
+      onFindShortcut = (event: KeyboardEvent) => {
+        if (
+          !(event.metaKey || event.ctrlKey) ||
+          event.key.toLowerCase() !== "f"
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFind();
+      };
+      host.current.addEventListener("keydown", onFindShortcut, true);
       disposables.push(
         model.onDidChangeContent(() => {
           if (updating || !latest.current.onChange) return;
@@ -152,9 +185,13 @@ export default function MonacoTextEditorSurface(props: MonacoTextEditorProps) {
       alive = false;
       instance.current = null;
       latest.current.registerFlush?.(null);
+      latest.current.registerFindToggle?.(null);
       cancelAnimationFrame(frame);
       observer?.disconnect();
       theme?.disconnect();
+      if (onFindShortcut) {
+        host.current?.removeEventListener("keydown", onFindShortcut, true);
+      }
       window.removeEventListener("resize", layout);
       document.removeEventListener("visibilitychange", visibility);
       for (const disposable of disposables) disposable.dispose();
