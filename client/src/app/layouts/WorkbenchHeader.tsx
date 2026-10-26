@@ -10,7 +10,7 @@ import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import { IslandPopoverPanel } from "./IslandOverlays";
 import { IslandSelection } from "./IslandSelection";
-import { SessionToolbarTarget } from "../../features/agent-workspace/SessionToolbarPortal";
+import { SessionToolbarTarget, SessionToolbarActionsTarget } from "../../features/agent-workspace/SessionToolbarPortal";
 import { Button } from "@/shared/ui/ui/Button";
 import {
   GitMerge,
@@ -332,6 +332,7 @@ export function WorkbenchHeader({
             </button>
           </Tooltip>
           <ThemeToggle />
+          {activePanel === "sessions" && hasProject ? <SessionToolbarActionsTarget /> : null}
         </div>
         <WindowChrome />
       </div>

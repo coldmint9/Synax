@@ -2,7 +2,9 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { WorkQuickActions } from "../../../features/agent-workspace/WorkQuickActions";
+import { SessionToolbarProvider } from "../../../features/agent-workspace/SessionToolbarPortal";
 import { WorkbenchHeader } from "../WorkbenchHeader";
 import { useTerminalStore } from "../../../features/terminal/terminalStore";
 import {
@@ -88,6 +90,32 @@ async function openRemoval(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("workbench action state", () => {
+  it("hosts the widget toggle beside the global actions and removes it outside sessions", async () => {
+    const user = userEvent.setup();
+    function Harness({ panel }: { panel: "sessions" | "git" }) {
+      const [expanded, setExpanded] = useState(true);
+      return <SessionToolbarProvider>
+        <WorkbenchHeader {...base} activePanel={panel} />
+        <WorkQuickActions expanded={expanded} onToggle={() => setExpanded(value => !value)} controlsId="widgets" />
+      </SessionToolbarProvider>;
+    }
+    const view = render(<Harness panel="sessions" />, { wrapper });
+    const header = screen.getByRole("banner", { name: "Workspace toolbar" });
+    const button = within(header).getByRole("button", { name: "Collapse work widgets" });
+    expect(button.closest(".workbench-header__actions")).not.toBeNull();
+    expect(button).toHaveAttribute("aria-controls", "widgets");
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).toHaveAccessibleName("Expand work widgets");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    view.rerender(<Harness panel="git" />);
+    expect(screen.queryByRole("button", { name: "Collapse work widgets" })).not.toBeInTheDocument();
+    view.rerender(<Harness panel="sessions" />);
+    expect(within(header).getByRole("button", { name: "Collapse work widgets" })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("shows running sessions elsewhere and updates the count when switching workspaces or sessions finish", () => {
     badgeState.badges = {
       p: { waitingInput: 0, unreadFailed: 0, running: 4, unreadCompleted: 0, total: 4 },

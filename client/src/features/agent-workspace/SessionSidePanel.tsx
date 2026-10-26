@@ -1,7 +1,6 @@
 import {
   Activity,
   useId,
-  type CSSProperties,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
@@ -24,11 +23,13 @@ export interface SessionSidePanelView {
 }
 
 export function SessionSidePanel({
+  id,
   views,
   activeViewId,
   minWidth,
   maxWidth,
 }: {
+  id?: string;
   views: SessionSidePanelView[];
   activeViewId: string | null;
   minWidth: number;
@@ -42,6 +43,7 @@ export function SessionSidePanel({
 
   return (
     <aside
+      id={id}
       className="session-side-panel"
       hidden={!active}
       aria-label={active?.label}
@@ -52,24 +54,22 @@ export function SessionSidePanel({
       data-resizing={active?.resizing ? "true" : undefined}
       style={
         active && !fullscreen
-          ? { width: collapsed ? 40 : active.width }
+          ? { width: collapsed ? 0 : active.width }
           : undefined
       }
     >
-      <div id={contentId} className="session-side-panel-content">
+      <div
+        id={contentId}
+        className="session-side-panel-content"
+        aria-hidden={collapsed}
+        inert={collapsed}
+      >
         {views.map((view) => (
           <Activity
             key={view.id}
             mode={view.id === activeViewId ? "visible" : "hidden"}
           >
-            <div
-              className="session-side-panel-view"
-              style={
-                {
-                  "--side-panel-content-width": `${view.width - (view.presentation === "inset" ? 6 : 0)}px`,
-                } as CSSProperties
-              }
-            >
+            <div className="session-side-panel-view">
               {view.content}
             </div>
           </Activity>

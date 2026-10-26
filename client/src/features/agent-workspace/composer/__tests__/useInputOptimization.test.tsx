@@ -3,20 +3,18 @@ import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useInputOptimization } from "../useInputOptimization";
 const mocks = vi.hoisted(() => ({ optimize: vi.fn() }));
-it("previews streamed text without replacing the draft before validation", async () => {
-  let delta!: (text: string) => void;
+it("keeps the draft until the final validated rewrite is available", async () => {
   let complete!: (value: { text: string; status: string }) => void;
-  mocks.optimize.mockImplementation((_input, _signal, onDelta) => {
-    delta = onDelta;
+  mocks.optimize.mockImplementation(() => {
     return new Promise((resolve) => { complete = resolve; });
   });
   const { result } = setup();
   act(() => { void result.current.optimize(); });
-  act(() => delta("- 整理需求"));
-  expect(result.current.streamingText).toBe("- 整理需求");
+  expect(result.current.pending).toBe(true);
   expect(result.current.content).toBe("原始需求");
-  await act(async () => complete({ text: "- 整理需求", status: "optimized" }));
-  expect(result.current.content).toBe("- 整理需求");
+  await act(async () => complete({ text: "请帮我整理需求。", status: "optimized" }));
+  expect(result.current.content).toBe("请帮我整理需求。");
+  expect(result.current.pending).toBe(false);
   expect(result.current.canUndo).toBe(true);
 });
 vi.mock("../../../../adapters/transport/inputOptimization", () => ({

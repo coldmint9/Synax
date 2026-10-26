@@ -1,10 +1,14 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
 import { useShellStore } from "../../../shared/state/shellStore";
+import {
+  SessionToolbarProvider,
+  SessionToolbarActionsTarget,
+} from "../SessionToolbarPortal";
 import SessionsPage from "../../../app/pages/SessionsPage";
 
 vi.mock("../useSessionDetailPolling", () => ({
@@ -18,10 +22,6 @@ vi.mock("../../../shared/hooks/useMediaQuery", () => ({
 }));
 vi.mock("../../../app/layouts/WorkbenchIsland", () => ({
   WorkbenchIslandSlot: () => null,
-}));
-vi.mock("../WorkQuickActions", () => ({
-  WorkQuickActions: ({ showDetailsButton }: { showDetailsButton: boolean }) =>
-    showDetailsButton ? <button>Task details</button> : null,
 }));
 vi.mock("../SessionTranscript", () => ({
   SessionTranscript: () => <div data-testid="parent-transcript">主对话</div>,
@@ -105,7 +105,12 @@ afterEach(() => {
 function mount() {
   return render(
     <MemoryRouter initialEntries={["/projects/project/sessions/parent"]}>
-      <SessionsPage />
+      <SessionToolbarProvider>
+        <header aria-label="Workspace toolbar">
+          <SessionToolbarActionsTarget />
+        </header>
+        <SessionsPage />
+      </SessionToolbarProvider>
     </MemoryRouter>,
   );
 }
@@ -218,28 +223,27 @@ describe("Subagent conversation layout", () => {
     expect(filter).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "关闭子代理对话" }));
     expect(pane).toHaveAttribute("data-collapsed", "true");
-    expect(pane.style.width).toBe("40px");
+    expect(pane.style.width).toBe("0px");
     expect(screen.getByTestId("command-rail")).toHaveAttribute(
       "data-inset-right",
-      "40",
+      "0",
     );
     fireEvent.click(screen.getByRole("button", { name: "展开工作组件" }));
     expect(screen.getByRole("textbox", { name: "Widget filter" })).toBe(filter);
     expect(filter).toHaveValue("unchanged");
   });
 
-  it("hides widgets for workspace content and restores their width and mounted state on close", () => {
+  it("keeps widgets visible when opening content and toggles them directly from the header", () => {
     useSessionWorkspaceStore.getState().closeSubagent("parent");
     const { container } = mount();
     const pane = container.querySelector<HTMLElement>(".session-side-panel")!;
+    const header = screen.getByRole("banner", { name: "Workspace toolbar" });
+    const toggle = within(header).getByRole("button", { name: "收起工作组件" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(toggle).toHaveAttribute("aria-controls", pane.id);
     const filter = screen.getByRole("textbox", { name: "Widget filter" });
     fireEvent.change(filter, { target: { value: "kept" } });
     drag(pane, 1000, 900);
-    expect(pane.style.width).toBe("400px");
-    expect(
-      screen.queryByRole("button", { name: "Task details" }),
-    ).not.toBeInTheDocument();
-
     act(() =>
       useSessionWorkspaceStore.getState().openTab("parent", {
         kind: "file",
@@ -248,31 +252,42 @@ describe("Subagent conversation layout", () => {
       }),
     );
     expect(screen.getByTestId("workspace-content")).toBeVisible();
-    expect(pane).not.toBeVisible();
-    expect(filter).not.toBeVisible();
+    expect(pane).toBeVisible();
+    expect(pane.style.width).toBe("400px");
+    const activeTabId =
+      useSessionWorkspaceStore.getState().sessions.parent.activeTabId!;
+    fireEvent.click(toggle);
+    expect(pane).toHaveAttribute("data-collapsed", "true");
+    expect(pane.style.width).toBe("0px");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("workspace-content")).toBeVisible();
     expect(screen.getByTestId("command-rail")).toHaveAttribute(
       "data-inset-right",
       "0",
     );
-    expect(screen.getByRole("button", { name: "Task details" })).toBeVisible();
-
-    const activeTabId =
-      useSessionWorkspaceStore.getState().sessions.parent.activeTabId!;
-    act(() =>
-      useSessionWorkspaceStore.getState().closeTab("parent", activeTabId),
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(
+      within(header).getByRole("button", { name: "展开工作组件" }),
     );
-    expect(screen.queryByTestId("workspace-content")).not.toBeInTheDocument();
     expect(pane).toBeVisible();
     expect(pane.style.width).toBe("400px");
     expect(screen.getByRole("textbox", { name: "Widget filter" })).toBe(filter);
     expect(filter).toHaveValue("kept");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.activeTabId,
+    ).toBe(activeTabId);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() =>
+      useSessionWorkspaceStore.getState().closeTab("parent", activeTabId),
+    );
+    expect(pane).toBeVisible();
     expect(screen.getByTestId("command-rail")).toHaveAttribute(
       "data-inset-right",
       "400",
     );
   });
 
-  it("keeps widgets hidden while another content tab remains and restores their collapsed state", () => {
+  it("keeps the manual collapsed state when opening and closing content tabs", () => {
     useSessionWorkspaceStore.getState().closeSubagent("parent");
     const { container } = mount();
     const pane = container.querySelector<HTMLElement>(".session-side-panel")!;
@@ -290,16 +305,17 @@ describe("Subagent conversation layout", () => {
         path: "main.ts",
       });
     });
-    expect(pane).not.toBeVisible();
+    expect(pane).toHaveAttribute("data-collapsed", "true");
+    expect(pane.style.width).toBe("0px");
     const diffTab =
       useSessionWorkspaceStore.getState().sessions.parent.activeTabId!;
     act(() => useSessionWorkspaceStore.getState().closeTab("parent", diffTab));
     expect(screen.getByTestId("workspace-content")).toBeVisible();
-    expect(pane).not.toBeVisible();
-    act(() => useSessionWorkspaceStore.getState().showDashboard("parent"));
-    expect(pane).toBeVisible();
     expect(pane).toHaveAttribute("data-collapsed", "true");
-    expect(pane.style.width).toBe("40px");
+    expect(pane.style.width).toBe("0px");
+    act(() => useSessionWorkspaceStore.getState().showDashboard("parent"));
+    expect(pane).toHaveAttribute("data-collapsed", "true");
+    expect(pane.style.width).toBe("0px");
     expect(screen.getByRole("button", { name: "展开工作组件" })).toBeVisible();
     expect(
       useSessionWorkspaceStore.getState().sessions.parent.tabs,
@@ -361,7 +377,48 @@ describe("Subagent conversation layout", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "关闭子代理对话" }));
     expect(container.querySelector(".session-side-panel")).toHaveAttribute(
-      "hidden",
+      "data-collapsed",
+      "true",
     );
+  });
+
+  it("opens widgets inline from the header on narrow screens without a dialog", () => {
+    narrow = true;
+    useSessionWorkspaceStore.getState().closeSubagent("parent");
+    const { container } = mount();
+    const pane = container.querySelector(".session-side-panel");
+    expect(pane).toHaveAttribute("data-collapsed", "true");
+    expect(pane).toHaveStyle({ width: "0px" });
+    fireEvent.click(screen.getByRole("button", { name: "展开工作组件" }));
+    expect(pane).toBeVisible();
+    expect(screen.getByTestId("dashboard")).toBeVisible();
+    expect(container.querySelector(".work-page")).toHaveAttribute(
+      "data-side-panel",
+      "true",
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByTestId("command-rail")).toHaveAttribute(
+      "data-inset-right",
+      "0",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "收起工作组件" }));
+    expect(pane).toHaveAttribute("data-collapsed", "true");
+    expect(pane).toHaveStyle({ width: "0px" });
+  });
+
+  it("can restore widgets from a focused file without closing the file", () => {
+    useSessionWorkspaceStore.getState().closeSubagent("parent");
+    useSessionWorkspaceStore
+      .getState()
+      .openTab("parent", { kind: "file", title: "main.ts", path: "main.ts" });
+    useSessionWorkspaceStore.getState().enterFocus("parent");
+    const { container } = mount();
+    expect(container.querySelector(".session-side-panel")).not.toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "展开工作组件" }));
+    expect(container.querySelector(".session-side-panel")).toBeVisible();
+    expect(screen.getByTestId("workspace-content")).toBeVisible();
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.presentation,
+    ).toBe("dock");
   });
 });

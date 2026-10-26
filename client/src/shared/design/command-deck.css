@@ -134,7 +134,8 @@
 .workbench-header__sidebar-pill .wh-view-btn[aria-pressed="true"]:hover {
   background: color-mix(in srgb, var(--theme-accent) 22%, transparent);
 }
-.workbench-header__sidebar-target { display: contents; }
+.workbench-header__sidebar-target,
+.workbench-header__actions-target { display: contents; }
 @container workbench-toolbar (max-width: 1000px) {
   .workbench-header__bar { gap: 8px; }
   .workbench-header__workspace .wh-project-label { max-width: 180px; }
@@ -263,7 +264,6 @@
 .wh-pill-btn--danger-soft { color: hsl(var(--destructive)); background: hsl(var(--destructive) / .08); border-color: transparent; }
 .wh-pill-btn:disabled { opacity: .4; cursor: not-allowed; }
 .wh-pill-btn:active:not(:disabled) { box-shadow: var(--ui-shadow-inset); }
-.work-quick-actions.wh-pill { position: absolute; top: 14px; right: 10px; z-index: 25; height: 32px; padding: 2px; border: 1px solid var(--ui-line); background: var(--ui-panel); box-shadow: var(--ui-shadow-control); }
 @media (max-width: 760px) {
   .synax-island-material.liquid-glass-surface[data-glass-state] { gap: 1px; padding: 4px; min-height: 40px; }
   .wh-project-label { max-width: 70px; }

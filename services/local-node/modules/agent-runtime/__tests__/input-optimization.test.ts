@@ -41,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("uses the selected API model without tools and sends the intent-expansion contract", async () => {
+it("uses the selected API model without tools and expands intent directly in the user's request", async () => {
   expect(await optimizeInput(input)).toEqual({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
     status: "optimized",
@@ -56,13 +56,16 @@ it("uses the selected API model without tools and sends the intent-expansion con
   });
   expect(request.tools).toBeUndefined();
   expect(request.messages[0].content).toContain(
-    "intent expander",
+    "intent-expanding editor",
   );
   expect(request.messages[0].content).toContain(
-    "goal-oriented, task-oriented brief",
+    "Expand the intent already implied by the draft",
   );
   expect(request.messages[0].content).toContain(
-    "marked as an inference or as a suggestion to confirm",
+    "Output only the rewritten user message",
+  );
+  expect(request.messages[0].content).toContain(
+    "instead of asking questions or requesting more information",
   );
   expect(request.messages[0].content).toContain(
     "never claim that any work has been changed, fixed, or completed",
@@ -71,19 +74,19 @@ it("uses the selected API model without tools and sends the intent-expansion con
   expect(signal).toBeInstanceOf(AbortSignal);
 });
 
-it("expands a very short, context-poor draft into an explicit goal and work", async () => {
-  const draft = "做成可视化动态交互的页面";
-  const expanded =
-    "目标：做一个可视化、动态、可交互的页面。\n\n任务：\n1. 明确要展示的数据与来源\n2. 实现图表的动态交互";
-  mocks.generate.mockResolvedValue({ text: expanded, finishReason: "stop" });
+it.each([
+  { draft: "帮我检查下", rewritten: "请帮我检查一下，指出存在的问题并给出改进建议。" },
+  { draft: "做成可视化动态交互的页面", rewritten: "请将其做成可视化页面，支持动态展示和交互操作。" },
+])("expands implied intent as a direct user request: $draft", async ({ draft, rewritten }) => {
+  mocks.generate.mockResolvedValue({ text: rewritten, finishReason: "stop" });
 
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: expanded,
+    text: rewritten,
     status: "optimized",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(
-    "very short, so most of its context is implicit",
+    "Expand its implied goal and work into a concise user request",
   );
 });
 
@@ -152,15 +155,21 @@ it("falls back to the original draft when the provider keeps violating the contr
   expect(mocks.generate).toHaveBeenCalledTimes(1);
 });
 
-it("accepts an expansion that marks missing information for confirmation", async () => {
-  const draft = "做成可视化动态交互的页面";
-  const expanded =
-    "目标：做一个可视化、动态、可交互的页面。\n\n待确认：\n- 要展示的内容与数据来源";
-  mocks.generate.mockResolvedValue({ text: expanded, finishReason: "stop" });
-  expect(await optimizeInput({ ...input, text: `  ${draft}  ` })).toEqual({
-    text: expanded,
-    status: "optimized",
+it.each([
+  "**目标（推断）**：你希望我对某个对象做一次检查/审阅。\n\n**需要你补充的信息（当前缺失）**：\n- 检查对象：哪段代码或文件路径。",
+  "请帮我检查一下。\n\n**需要你补充的信息（当前缺失）**：\n- 检查对象和关注点。",
+  "目标：检查某个对象。\n\n待确认：\n- 需要检查的内容。",
+  "你希望我检查某个对象，但草稿未指明具体对象。",
+  "**Missing information**:\n- Please provide the code to review.",
+  "You want to review something, but the subject is unspecified.",
+])("keeps the original when the model returns analysis or clarification: %s", async (text) => {
+  const draft = "  帮我检查下  ";
+  mocks.generate.mockResolvedValue({ text, finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: draft,
+    status: "preserved",
   });
+  expect(mocks.generate).toHaveBeenCalledTimes(1);
 });
 
 it("preserves the draft without retrying when the model claims completion", async () => {
@@ -188,6 +197,16 @@ it("preserves confirmation content that was already in the draft", async () => {
   });
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: "做成一个可交互的页面，数据源待确认。",
+    status: "optimized",
+  });
+});
+
+it("allows report sections when they were already part of the user's draft", async () => {
+  const draft = "做成交互页面。\n\n待确认：\n- 数据来源";
+  const rewritten = "请做成一个可交互的页面。\n\n待确认：\n- 数据来源";
+  mocks.generate.mockResolvedValue({ text: rewritten, finishReason: "stop" });
+  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+    text: rewritten,
     status: "optimized",
   });
 });

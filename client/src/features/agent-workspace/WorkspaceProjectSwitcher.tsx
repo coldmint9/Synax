@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, Folder, Folders, RefreshCw, Trash2 } from 'lucide-react';
+import { Bot, Check, Folder, Folders, Trash2 } from 'lucide-react';
 import type { GitWorkspaceSummary, GitWorktreeSummary } from '../../adapters/transport/project';
 import { agentRuntimeApi } from '../../adapters/transport/agentRuntime';
 import { useLocale } from '../../shared/hooks/useLocale';
@@ -232,9 +232,6 @@ export function WorkspaceProjectSwitcher({ sessionId, projectId, repositories, s
   }, [projectId, zh]);
 
   return <section className="shadow-projects" aria-label={zh ? '工作区项目' : 'Workspace projects'}>
-    <div className="shadow-projects-heading"><span>{zh ? '工作区项目' : 'Workspace projects'}<span className="shadow-project-total">{repositories.length}</span></span>
-      <button type="button" disabled={deleting} aria-label={zh ? '刷新全部项目' : 'Refresh all projects'} onClick={() => { setRefresh(value => value + 1); void reload(); }}><RefreshCw size={13} /></button>
-    </div>
     <div className="shadow-project-list" ref={list}>
       {repositories.map(root => <ProjectRow key={root.rootId} sessionId={sessionId} root={root} summary={summaries[root.rootId]} selected={selectedRootId === root.rootId}
         locked={Boolean(binding) || deleting} running={running} zh={zh} error={actionError?.rootId === root.rootId ? actionError.text : errors[root.rootId]}

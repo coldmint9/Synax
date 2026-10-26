@@ -1,16 +1,7 @@
 import "../../features/agent-workspace/sessionPerformance.css";
 import "../../features/agent-workspace/workPage.css";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Plus } from "lucide-react";
-import {
-  Dialog,
-  DialogContainer,
-  DialogPanel,
-  DialogCloseButton,
-  DialogHeader,
-  DialogTitle,
-  DialogBody,
-} from "@/shared/ui/ui/Dialog";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { AgentSession } from "../../adapters/transport/agentRuntime";
@@ -71,12 +62,7 @@ function readSidebarView(): SidebarView {
 export default memo(function SessionsPage() {
   useSessionDetailPolling();
   const { t, locale } = useLocale();
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  useEffect(() => {
-    const close = () => setDetailsOpen(false);
-    document.addEventListener("terminal:open", close);
-    return () => document.removeEventListener("terminal:open", close);
-  }, []);
+  const sidePanelId = useId();
   const navigate = useNavigate();
   const { projectId = "" } = useParams();
   const leftPanel = useResizablePanel(
@@ -182,6 +168,9 @@ export default memo(function SessionsPage() {
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
   const narrowWorkspace = useMediaQuery("(max-width: 767px)");
   useEffect(() => {
+    widgetPanel.setCollapsed(!wideWorkspace);
+  }, [wideWorkspace, widgetPanel.setCollapsed]);
+  useEffect(() => {
     if (narrowWorkspace) leftPanel.setCollapsed(true);
   }, [narrowWorkspace, leftPanel.setCollapsed]);
 
@@ -189,16 +178,6 @@ export default memo(function SessionsPage() {
     setSideChatOpen(false);
     setSideChatSession(undefined);
   }, [agentSessionId]);
-
-  useEffect(
-    () => setDetailsOpen(false),
-    [
-      agentSessionId,
-      workspaceState.activeTabId,
-      workspaceState.tabs,
-      wideWorkspace,
-    ],
-  );
 
   // A terminal session patch can arrive before the durable stream's final
   // message record. Keep that stream attached until it clears its realtime
@@ -251,12 +230,7 @@ export default memo(function SessionsPage() {
       onResize: widgetPanel.startResize,
       onResizeKeyDown: widgetPanel.resizeWithKeyboard,
       content: (
-        <WorkspaceWidgetDock
-          sessionId={agentSessionId}
-          scope={projectId}
-          collapsed={widgetPanel.collapsed}
-          onToggle={() => widgetPanel.setCollapsed((value) => !value)}
-        />
+        <WorkspaceWidgetDock sessionId={agentSessionId} scope={projectId} />
       ),
     },
   ];
@@ -300,7 +274,7 @@ export default memo(function SessionsPage() {
     ? "subagent"
     : sideChatVisible
       ? "side-chat"
-      : wideWorkspace && !hasWorkspaceContent
+      : !workspaceFullscreen
         ? "widgets"
         : null;
   const activeSidePanel = sidePanelViews.find(
@@ -311,7 +285,7 @@ export default memo(function SessionsPage() {
   const commandRailRight =
     showTranscript && !narrowWorkspace && activeSidePanel
       ? activeSidePanel.collapsed
-        ? 40
+        ? 0
         : activeSidePanel.width
       : 0;
 
@@ -319,9 +293,7 @@ export default memo(function SessionsPage() {
     <div
       className="agent-page-shell work-page relative flex h-full min-h-0"
       data-subagent={showTranscript && selectedSubagent ? "true" : undefined}
-      data-side-panel={
-        activeSidePanel && activeSidePanelId !== "widgets" ? "true" : undefined
-      }
+      data-side-panel={activeSidePanel ? "true" : undefined}
       data-new-session-entry={
         location.state?.fromNewSession ? "true" : undefined
       }
@@ -373,12 +345,6 @@ export default memo(function SessionsPage() {
             <div
               className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${sidePanelFullscreen ? "hidden" : "flex"}`}
             >
-              {agentSessionId && (
-                <WorkQuickActions
-                  showDetailsButton={!wideWorkspace || hasWorkspaceContent}
-                  onShowDetails={() => setDetailsOpen(true)}
-                />
-              )}
               <div
                 hidden={hasWorkspaceContent}
                 className={
@@ -400,6 +366,7 @@ export default memo(function SessionsPage() {
               )}
             </div>
             <SessionSidePanel
+              id={sidePanelId}
               views={sidePanelViews}
               activeViewId={activeSidePanelId}
               minWidth={RIGHT_PANEL_MIN}
@@ -431,24 +398,20 @@ export default memo(function SessionsPage() {
           </div>
         )}
       </>
-      <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)}>
-        <DialogContainer size="sm">
-          <DialogPanel className="work-details-dialog">
-            <DialogCloseButton />
-            <DialogHeader>
-              <DialogTitle>
-                {locale === "zh" ? "任务详情" : "Task details"}
-              </DialogTitle>
-            </DialogHeader>
-            <DialogBody>
-              <SessionWorkspacePanel
-                sessionId={agentSessionId}
-                mode="dashboard"
-              />
-            </DialogBody>
-          </DialogPanel>
-        </DialogContainer>
-      </Dialog>
+      {showTranscript && !selectedSubagent && !sideChatVisible ? (
+        <WorkQuickActions
+          expanded={activeSidePanelId === "widgets" && !widgetPanel.collapsed}
+          controlsId={sidePanelId}
+          onToggle={() => {
+            if (workspaceFullscreen && agentSessionId) {
+              useSessionWorkspaceStore.getState().exitFocus(agentSessionId);
+              widgetPanel.setCollapsed(false);
+            } else {
+              widgetPanel.setCollapsed((value) => !value);
+            }
+          }}
+        />
+      ) : null}
       {showTranscript && agentSessionId ? (
         <AgentCommandRail
           hidden={hasWorkspaceContent || sidePanelFullscreen}
