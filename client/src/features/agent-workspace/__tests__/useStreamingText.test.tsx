@@ -10,7 +10,9 @@ const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
 
 it("reveals a burst over successive frames and stops when caught up", () => {
   const text = "这是持续输出的回复，包含中文和英文 streaming output。";
-  const view = renderHook(() => useStreamingText(text, true));
+  const view = renderHook(({ text }) => useStreamingText(text, true), { initialProps: { text: "这" } });
+  expect(view.result.current).toBe("这");
+  view.rerender({ text });
   advance(32);
   const first = view.result.current;
   expect(first.length).toBeGreaterThan(0);
@@ -85,4 +87,15 @@ it("does not animate historical content, reduced motion, or a hidden window", ()
   act(() => document.dispatchEvent(new Event("visibilitychange")));
   expect(live.result.current).toBe("Flush when window becomes hidden");
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shows the first non-empty packet synchronously and smooths later packets", () => {
+  const view = renderHook(({ text }) => useStreamingText(text, true), { initialProps: { text: "" } });
+  view.rerender({ text: "首个 token 👨‍👩‍👧‍👦" });
+  expect(view.result.current).toBe("首个 token 👨‍👩‍👧‍👦");
+  expect(vi.getTimerCount()).toBe(0);
+  view.rerender({ text: "首个 token 👨‍👩‍👧‍👦 后续继续平滑展示" });
+  expect(view.result.current).toBe("首个 token 👨‍👩‍👧‍👦");
+  advance(STREAM_REVEAL_MS + 32);
+  expect(view.result.current).toBe("首个 token 👨‍👩‍👧‍👦 后续继续平滑展示");
 });

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, mkdir, realpath } from "node:fs/promises";
+import { access, lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { DATA_ROOT } from "../infrastructure/runtime/env.js";
@@ -11,10 +11,10 @@ import {
 import { decodeWslOutput, wslCommandSpec, wslHomeDirectory } from "../infrastructure/wsl/wsl.js";
 import type { GitHistoryRef, GitHistoryPage, GitCommitDetail } from "./git-history-contracts.js";
 import type { GitActionInput, GitActionResult } from "./git-history-contracts.js";
-import type { MergeRequest, MergeFileSave } from "./git-mr/contracts.js";
-import { readFile as readMergeFile, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
+import type { MergeRequest, MergeFile, MergeFileSave, MergeFileSlice, MergeFileSliceInput } from "./git-mr/contracts.js";
+import { readFile as readMergeFile, readFileSlice as readMergeFileSlice, writeFile as writeMergeFile, fileId } from "./git-mr/files.js";
 import { GitMrStore } from "./git-mr/store.js";
-import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, type GitWorktreeSummary, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
+import { cleanupReasons, MAX_WORKTREE_CLEANUP_PATHS, MAX_WORKTREE_CHANGE_ENTRIES, WORKTREE_DIRTY_REASON, type GitWorktreeSummary, type GitWorktreeChanges, type GitWorktreeCleanupPreview, type GitWorktreeCleanupResponse } from "./git-worktree-management-contracts.js";
 export type { GitWorktreeSummary } from "./git-worktree-management-contracts.js";
 
 const execFileAsync = promisify(execFile);
@@ -155,22 +155,34 @@ export async function gitHistoryState(repository: RepositoryInput): Promise<GitA
 }
 
 /** Reuse the merge file service's stage parsing, path checks and revision guard. */
-export async function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave) {
+export function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave, slice?: undefined, signal?: AbortSignal): Promise<MergeFile>;
+export function gitHistoryConflict(repository: RepositoryInput, filename: string, save: undefined, slice: MergeFileSliceInput, signal?: AbortSignal): Promise<MergeFileSlice>;
+export async function gitHistoryConflict(repository: RepositoryInput, filename: string, save?: MergeFileSave, slice?: MergeFileSliceInput, signal?: AbortSignal) {
   const context = await assertRepository(repository);
   return withRepositoryLock(context, async () => {
-    const state = await gitHistoryState(repository);
-    if (!state.operation || !state.conflicts.includes(filename)) throw new GitWorkspaceError("Active conflict not found.", 404);
     const run = (args: string[]) => git(context.location, context.root, args);
+    const [head, branch, operation, unmerged] = await Promise.all([
+      run(['rev-parse', '--verify', 'HEAD']), run(['branch', '--show-current']), historyOperation(context),
+      run(['--literal-pathspecs', 'ls-files', '--unmerged', '-z', '--', filename]),
+    ]);
+    const state = { head: head.stdout.trim(), branch: branch.stdout.trim(), operation };
+    if (!state.operation || !unmerged.stdout) throw new GitWorkspaceError('Active conflict not found.', 404);
     const source = (await run(["rev-parse", state.operation === "merge" ? "MERGE_HEAD" : state.operation === "rebase" ? "REBASE_HEAD" : "CHERRY_PICK_HEAD"])).stdout.trim().split("\n")[0];
     const id = createHash("sha256").update(JSON.stringify(context)).update(state.head).update(source).update(filename).digest("hex");
-    const mr: MergeRequest = { id, projectId: "git-workbench", title: "Working tree conflict", target: state.branch || "HEAD", targetOid: state.head, strategy: "merge_commit", steps: [{ branch: "incoming", oid: source, status: "conflicted" }], status: "conflicted", version: 1, currentStep: 0, worktree: context.root, location: context.location, repository: context.root, commonDir: context.root, autoFinalize: false, allowCheckedOutTarget: true, checks: [], checkResults: [], events: [], createdAt: "", updatedAt: "" };
+    const manifestId = createHash('sha256').update(JSON.stringify(context)).update(state.head).update(source).digest('hex');
+    const mr: MergeRequest = { id: manifestId, projectId: "git-workbench", title: "Working tree conflict", target: state.branch || "HEAD", targetOid: state.head, strategy: "merge_commit", steps: [{ branch: "incoming", oid: source, status: "conflicted" }], status: "conflicted", version: 1, currentStep: 0, worktree: context.root, location: context.location, repository: context.root, commonDir: context.root, autoFinalize: false, allowCheckedOutTarget: true, checks: [], checkResults: [], events: [], createdAt: "", updatedAt: "" };
     const store = new GitMrStore();
     try {
+      if (slice) {
+        const result = await readMergeFileSlice(mr, fileId(filename), slice, signal);
+        if (result.revision !== slice.expectedRevision) throw new GitWorkspaceError('Conflict file changed. Reload before reading another page.', 409);
+        return result;
+      }
       if (save) {
         const previous = await writeMergeFile(mr, fileId(filename), save);
         if (save.resolve) return { ...previous, conflicted: false, result: save.content ?? (save.choice === "target" ? previous.target : save.choice === "source" ? previous.source : "") };
       }
-      const result = await readMergeFile(mr, fileId(filename));
+      const result = await readMergeFile(mr, fileId(filename), false, signal);
       result.targetLabel = state.operation === "rebase" ? "当前基底 · stage 2" : `${state.branch || "HEAD"} · 本地`;
       result.sourceLabel = state.operation === "rebase" ? "重放提交 · stage 3" : `${source.slice(0, 8)} · 来源`;
       if (save?.resolutionState) await store.write("history-drafts", { id, projectId: "git-workbench", revision: result.revision, resolutionState: save.resolutionState });
@@ -794,19 +806,57 @@ function validateCleanupPaths(paths: string[]): void {
     throw new GitWorkspaceError("Invalid worktree path list.");
 }
 
-/** Every item acquires the repository lock and re-reads both usage and Git state. */
+const DIRTY_REMOVAL_REFUSAL = /contains modified or untracked files/i;
+
+/**
+ * Removes already confirmed cleanup candidates in one pass.
+ *
+ * The preview already established Git state for every candidate, so re-running a
+ * full status scan per path only delays the batch. Each item keeps the cheap live
+ * guards - it must still be a listed worktree of this project and must not be the
+ * primary, locked, prunable or actively used tree - and Git itself refuses a tree
+ * that became dirty after the preview because --force is never passed.
+ */
 export async function cleanupGitWorktrees(repository: RepositoryInput, projectId: string, paths: string[], readUsage?: ReadWorktreeSessionUsage): Promise<GitWorktreeCleanupResponse> {
   validateCleanupPaths(paths);
+  const requested = [...new Set(paths)];
   const results: GitWorktreeCleanupResponse["results"] = [];
-  for (const worktreePath of new Set(paths)) {
-    let branch: string | null = null;
-    try {
-      await removeGitWorktree(repository, projectId, worktreePath, { readUsage, onTarget: target => { branch = target.branch; } });
-      results.push({ path: worktreePath, branch, status: "removed" });
-    } catch (error) {
-      results.push({ path: worktreePath, branch, status: error instanceof GitWorkspaceError && [404, 409].includes(error.status) ? "skipped" : "failed", reason: error instanceof Error ? error.message : String(error) });
+  if (!requested.length) return { results };
+  const context = await assertRepository(repository);
+  await withRepositoryLock(context, async () => {
+    const usage = await readUsage?.();
+    const summary = await listGitWorkspaces(context.location, projectId, usage?.sessionCounts, usage?.activeSessionCounts, { includeHistory: false, inspectStatus: false });
+    for (const worktreePath of requested) {
+      const requestedPath = await canonical(context.location, worktreePath).catch(() => normalized(context.location, worktreePath));
+      const target = summary.worktrees.find(item => samePath(context.location, item.path, requestedPath));
+      if (!target) {
+        results.push({ path: worktreePath, branch: null, status: "skipped", reason: "该路径不是本仓库的工作树。" });
+        continue;
+      }
+      const blocked = target.primary
+        ? "主工作树不可删除"
+        : target.locked
+          ? "工作树已锁定"
+          : target.prunable
+            ? "工作树目录缺失，请改用清理记录"
+            : (target.activeSessionCount ?? 0) > 0
+              ? "工作树仍被活跃会话占用"
+              : null;
+      if (blocked) {
+        results.push({ path: worktreePath, branch: target.branch, status: "skipped", reason: blocked });
+        continue;
+      }
+      try {
+        await git(context.location, context.root, ["worktree", "remove", "--", target.path]);
+        results.push({ path: worktreePath, branch: target.branch, status: "removed" });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        results.push(DIRTY_REMOVAL_REFUSAL.test(detail)
+          ? { path: worktreePath, branch: target.branch, status: "skipped", reason: "工作树在确认后出现了未提交修改，已跳过。" }
+          : { path: worktreePath, branch: target.branch, status: "failed", reason: detail });
+      }
     }
-  }
+  });
   return { results };
 }
 
@@ -832,7 +882,11 @@ export async function removeGitWorktree(
         404,
       );
     options.onTarget?.(target);
-    const reasons = cleanupReasons(target);
+    // A forced removal may discard uncommitted work, but it never overrides the
+    // primary, locked, missing or in-use guards.
+    const reasons = cleanupReasons(target).filter((reason) =>
+      !(options.force && reason === WORKTREE_DIRTY_REASON),
+    );
     if (reasons.length) throw new GitWorkspaceError(reasons.join("；"), 409);
     // Listing Git status can take time; check live occupancy again just before removal.
     const latestUsage = await options.readUsage?.();
@@ -856,9 +910,58 @@ export async function removeGitWorktree(
     await git(context.location, context.root, [
       "worktree",
       "remove",
+      ...(options.force ? ["--force"] : []),
       "--",
       target.path,
     ]);
+  });
+}
+
+/** Local changes a forced removal would discard, listed so the user confirms them by name. */
+export async function listWorktreeChanges(repository: RepositoryInput, worktreePath: string): Promise<GitWorktreeChanges> {
+  const context = await assertRepository(repository);
+  const requested = await canonical(context.location, worktreePath).catch(() => normalized(context.location, worktreePath));
+  const target = (await rawWorktrees(context)).find((item) => samePath(context.location, item.path, requested));
+  if (!target) throw new GitWorkspaceError("The selected path is not a worktree of this project.", 404);
+  if (target.prunable) throw new GitWorkspaceError("The worktree directory is missing.", 409);
+  const { stdout } = await git(context.location, target.path, ["--no-optional-locks", "status", "--porcelain", "--untracked-files=normal"]);
+  const entries = stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => ({ code: line.slice(0, 2).trim() || "?", path: line.slice(3) }));
+  return {
+    path: worktreePath,
+    entries: entries.slice(0, MAX_WORKTREE_CHANGE_ENTRIES),
+    total: entries.length,
+    truncated: entries.length > MAX_WORKTREE_CHANGE_ENTRIES,
+  };
+}
+
+/** Clear exactly one absent checkout. Never scan status or prune unrelated entries. */
+export async function removeMissingGitWorktree(repositoryPath: RepositoryInput, worktreePath: string): Promise<void> {
+  const context = await assertRepository(repositoryPath);
+  await withRepositoryLock(context, async () => {
+    const requested = normalized(context.location, worktreePath);
+    const worktrees = await rawWorktrees(context);
+    const index = worktrees.findIndex(item => samePath(context.location, item.path, requested));
+    if (index < 0) throw new GitWorkspaceError('The selected path is not a worktree of this project.', 404);
+    const target = worktrees[index];
+    if (index === 0) throw new GitWorkspaceError('主工作树不可删除', 409);
+    if (target.locked) throw new GitWorkspaceError('工作树已锁定', 409);
+    let exists: boolean;
+    if (context.location.kind === 'wsl') {
+      const result = await execute(context.location, context.root, 'sh', ['-c', 'if [ -e "$1" ] || [ -L "$1" ]; then printf present; else printf missing; fi', 'worktree-exists', target.path]);
+      exists = result.stdout !== 'missing';
+    } else {
+      exists = await lstat(target.path).then(() => true, error => {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+        throw error;
+      });
+    }
+    if (exists || !target.prunable) throw new GitWorkspaceError('工作树目录仍存在，请刷新后使用普通删除。', 409);
+    // Git removes the registration of an absent checkout, keeping refs intact.
+    // No --force: a directory restored concurrently still gets Git's protection.
+    await git(context.location, context.root, ['worktree', 'remove', '--', target.path]);
   });
 }
 

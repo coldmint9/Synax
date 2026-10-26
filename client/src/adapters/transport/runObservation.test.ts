@@ -24,7 +24,7 @@ it.each(['turn', 'continue'] as const)('submits %s once and observes over the sh
   expect(fetch).toHaveBeenCalledWith('/api/agent-runtime/sessions/session-1/runs', expect.objectContaining({ method: 'POST', body: expect.any(String) }))
   expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({ mode, requestId: expect.any(String), message: 'hello' })
   const source = events.sources[0]
-  expect(source.url).toBe('/api/agent-runtime/sessions/session-1/runs/run-1/stream')
+  expect(source.url).toBe('/api/agent-runtime/sessions/session-1/runs/run-1/stream?realtime=1')
   source.onmessage({ data: '{"type":"message_delta","delta":"text"}', lastEventId: '42' })
   source.onmessage({ data: '{"type":"message_delta","delta":"text"}', lastEventId: '42' })
   source.onmessage({ data: '[DONE]', lastEventId: '42' })

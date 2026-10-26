@@ -63,6 +63,7 @@ impl SessionActor {
     /// Apply a validated transaction: append its frames, seal them, update the
     /// in-memory state and publish.
     pub fn write(&mut self, handle: &super::SessionHandle, tx: Tx) -> Result<(), RuntimeError> {
+        super::super::layout::ensure_not_deleted(&handle.root, &self.id)?;
         // The projection budget is a commit invariant: an over-budget batch
         // would make the session unreadable forever.
         tx.projection.encode()?;

@@ -6,17 +6,27 @@ import { createConversationGitRoutes } from '../conversation-git.js';
 import { GitMrError } from '../../../modules/git-mr/errors.js';
 import type { ConversationGitService } from '../../../modules/agent-runtime/conversation-git/service.js';
 function fixture(){
- const service={list:vi.fn().mockResolvedValue([]),create:vi.fn().mockResolvedValue({reference:{objectId:'task'}}),get:vi.fn().mockResolvedValue({}),file:vi.fn().mockResolvedValue({}),action:vi.fn().mockResolvedValue({}),saveFile:vi.fn().mockResolvedValue({}),applyProposal:vi.fn().mockResolvedValue({})};
+ const service={list:vi.fn().mockResolvedValue([]),create:vi.fn().mockResolvedValue({reference:{objectId:'task'},task:{id:'task'}}),startWorker:vi.fn().mockResolvedValue({reference:{objectId:'task'},task:{id:'task'}}),get:vi.fn().mockResolvedValue({}),file:vi.fn().mockResolvedValue({}),fileSlice:vi.fn().mockResolvedValue({content:'page',byteOffset:0,nextByteOffset:4,totalBytes:4,eof:true,revision:'r1'}),action:vi.fn().mockResolvedValue({}),saveFile:vi.fn().mockResolvedValue({}),applyProposal:vi.fn().mockResolvedValue({})};
  const app=new Hono();app.route('/sessions/:sessionId/git-tasks',createConversationGitRoutes(service as unknown as ConversationGitService));
  return {app,service};
 }
 const json=(body:unknown,method='POST')=>({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 const input={requestId:'request-1',title:'Merge auth',target:'main',sources:['feature/auth'],strategy:'merge_commit'};
 describe('conversation Git HTTP boundary',()=>{
+ it('reads bounded content pages with scope, revision and cancellation signal', async()=>{
+  const {app,service}=fixture();
+  const url='/sessions/owner/git-tasks/task/files/file/content?side=result&byteOffset=0&maxBytes=65536&expectedRevision=r1';
+  expect((await app.request(url)).status).toBe(200);
+  expect(service.fileSlice).toHaveBeenCalledWith('owner','task','file',{side:'result',byteOffset:0,maxBytes:65536,expectedRevision:'r1'},expect.any(AbortSignal));
+  expect((await app.request(url.replace('65536','999999999'))).status).toBe(400);
+  expect((await app.request(url.replace('&expectedRevision=r1',''))).status).toBe(400);
+  expect(service.fileSlice).toHaveBeenCalledTimes(1);
+ });
  it('binds creation and reads to URL owner, never accepts caller project/path/autoFinalize',async()=>{
   const {app,service}=fixture();
   expect((await app.request('/sessions/owner/git-tasks/create',json(input))).status).toBe(201);
   expect(service.create).toHaveBeenCalledWith('owner',input);
+  expect(service.startWorker).toHaveBeenCalledWith('owner','task');
   for(const extra of [{projectId:'other'},{repository:'/other'},{sessionId:'other'},{autoFinalize:true}]){
    expect((await app.request('/sessions/owner/git-tasks/create',json({...input,...extra}))).status).toBe(400);
   }

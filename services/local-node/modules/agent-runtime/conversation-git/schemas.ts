@@ -17,7 +17,7 @@ export const conversationGitInputSchema = z.object({
 }).strict();
 export const conversationGitCreateSchema = conversationGitInputSchema.extend({ requestId: id });
 export const conversationGitActionSchema = z.object({
-  action: z.enum(['prepare', 'continue', 'checks', 'finalize', 'cancel', 'resume', 'replan']),
+  action: z.enum(['prepare', 'continue', 'checks', 'finalize', 'cancel', 'pause', 'resume', 'replan']),
   skipChecks: z.boolean().optional(),
   requestId: id,
   expectedVersion: z.number().int().positive(),
@@ -39,7 +39,7 @@ export const conversationGitApplySchema = z.object({
   expectedVersion: z.number().int().positive(),
   expectedTaskRevision: z.number().int().positive(),
 }).strict();
-export const conversationGitReadSchema = z.object({ objectId: id.optional(), fileId: id.optional(), side: z.enum(['base','target','source','result']).optional(), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(48000).default(24000) }).strict().refine(value => !value.fileId || !!value.objectId, 'fileId requires objectId.');
+export const conversationGitReadSchema = z.object({ objectId: id.optional(), fileId: id.optional(), side: z.enum(['base','target','source','result']).optional(), offset: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(48000).default(24000), byteOffset: z.number().int().min(0).optional(), expectedRevision: z.string().min(1).max(256).optional() }).strict().refine(value => !value.fileId || !!value.objectId, 'fileId requires objectId.').refine(value => value.byteOffset === undefined || Boolean(value.side && value.fileId && value.expectedRevision), 'Byte paging requires side, fileId and expectedRevision.');
 export const conversationGitProposalSchema = z.object({
   objectId: id,
   fileId: id,
@@ -49,3 +49,5 @@ export const conversationGitProposalSchema = z.object({
 }).strict();
 
 export const conversationGitAnalyzeSchema = z.object({ objectId: id, expectedVersion: z.number().int().positive(), expectedTaskRevision: z.number().int().positive() }).strict();
+export const conversationGitConfigureSchema = conversationGitAnalyzeSchema.extend({ checks: z.array(conversationGitCheckSchema).min(1).max(10).refine(checks => new Set(checks.map(check => check.id)).size === checks.length, 'Check IDs must be unique.') }).strict();
+export const conversationGitSliceSchema = z.object({ side: z.enum(['base', 'target', 'source', 'result']), byteOffset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER), maxBytes: z.coerce.number().int().min(4).max(256 * 1024).default(64 * 1024), expectedRevision: z.string().min(1).max(256) }).strict();

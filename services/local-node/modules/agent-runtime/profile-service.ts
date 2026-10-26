@@ -86,6 +86,7 @@ export const BUILTIN_AGENT_PROFILES: AgentProfile[] = [
       "webSearch",
       "diff.read",
       "file.write",
+      "file.generate",
       "file.patch",
       "file.delete",
       "task.create",
@@ -213,7 +214,7 @@ export class ProfileService {
 
   list(): AgentProfile[] {
     return [...this.profiles.values()].filter(
-      (profile) => profile.status === "active" && !["specialist", "explorer", "reviewer"].includes(profile.id),
+      (profile) => profile.status === "active" && !["specialist", "explorer", "reviewer", "git-merge-worker"].includes(profile.id),
     );
   }
 

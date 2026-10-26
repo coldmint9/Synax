@@ -51,7 +51,7 @@ describe("SessionLiveTurn", () => {
     expect(container.querySelectorAll(".session-activity-group")).toHaveLength(1);
     rerender(<SessionLiveTurn {...props} steps={[persisted]} streamingCompletedSteps={[]} />);
     expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
-    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("thinking-indicator")).toContainElement(screen.getByRole("status"));
     expect(screen.getByRole("status")).toHaveAccessibleName();
   });
 
@@ -86,9 +86,8 @@ describe("SessionLiveTurn", () => {
         streamingLive={{ ...EMPTY_STREAMING_BUFFERS, blocks }}
       />,
     );
-    expect(screen.getAllByText("Locating BUI styles elsewhere")).toHaveLength(
-      1,
-    );
+    expect(screen.queryByText("Locating BUI styles elsewhere")).toBeNull();
+    expect(screen.getByText("正在搜索代码")).toBeInTheDocument();
     expect(
       screen.getAllByText("bui-tool|bui-activity|StreamingTextBlock"),
     ).toHaveLength(1);

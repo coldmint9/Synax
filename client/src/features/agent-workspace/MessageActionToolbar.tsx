@@ -102,6 +102,9 @@ export function MessageActionToolbar({
           <Pencil size={15} />,
           onEdit,
           Boolean(disabledReason || busy || !onEdit),
+          disabledReason || (busy
+            ? (zh ? "正在处理消息操作" : "A message action is in progress")
+            : (zh ? "此消息暂时无法编辑" : "This message cannot be edited yet")),
         )}
       {button(
         "copy",
@@ -117,7 +120,7 @@ export function MessageActionToolbar({
       )}
       {role === "assistant" && (
         <>
-          <Menu>
+          {!forkDisabledReason && !busy && onFork ? <Menu>
             <Tooltip delay={350} content={forkDisabledReason || (zh ? "从此处分叉" : "Fork from here")}>
               <MenuButton
                 aria-label={zh ? "从此处分叉" : "Fork from here"}
@@ -138,8 +141,8 @@ export function MessageActionToolbar({
                 </MenuAction>
               </LiquidGlassSurface>
             </MenuItems>
-          </Menu>
-          {button(
+          </Menu> : null}
+          {!disabledReason && !busy && onRollback && !rollbackDisabled ? button(
             "rollback",
             zh ? "回滚到此处" : "Roll back to here",
             <RotateCcw size={15} />,
@@ -151,7 +154,7 @@ export function MessageActionToolbar({
                   ? "已经位于此处，没有后续内容"
                   : "Already at this checkpoint"
                 : unavailable),
-          )}
+          ) : null}
         </>
       )}
       {stamp && (

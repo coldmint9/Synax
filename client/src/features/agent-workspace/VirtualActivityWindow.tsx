@@ -40,29 +40,21 @@ const EDGE_SLOP = 2;
  *
  *   frame      visual layer — the edge fades that report content off-screen
  *   viewport   scroll layer — a height budget of `visibleRows * rowHeight`
- *   row        a block box of exactly `rowHeight`, never a flex item that can
- *              shrink under its content
+ *   row        a block box of exactly `rowHeight` while collapsed
  *
- * Because rows inside the window are one line each (see ActivityRowScope), the
- * offsets are `index * rowHeight` and only the rows near the window mount.
- * Nothing measures the DOM, so a record can never be squeezed into a
- * neighbouring one.
- *
- * The fixed geometry is a reading aid, not a lock: a row that the reader opens
- * takes the window over, and the list then lays its records out in place.
+ * Collapsed rows never measure themselves, so offsets are `index * rowHeight`
+ * and only the rows near the window mount. Opening one record is the single
+ * exception: that row reports its natural height, the window keeps every other
+ * row on the fixed budget, and virtualization stays on. Opening one record
+ * must never unfold the whole list.
  */
 export function VirtualActivityWindow({
   rows,
-  windowed: liveWindow = false,
+  windowed = false,
   animate = false,
   visibleRows = 7,
   rowHeight = 30,
 }: Props) {
-  // The reader can take the window: opening a record stops the fixed row budget
-  // so the body gets its natural height instead of dropping the disclosure.
-  const [readerOwned, setReaderOwned] = useState(false);
-  const takeOver = useCallback(() => setReaderOwned(true), []);
-  const windowed = liveWindow && !readerOwned;
   const viewport = useRef<HTMLDivElement | null>(null);
   const previousRows = useRef(rows);
   const [knownKeys, setKnownKeys] = useState(() => rows.map((row) => row.key));
@@ -94,22 +86,67 @@ export function VirtualActivityWindow({
     const timer = window.setTimeout(() => setDeparting([]), 160);
     return () => window.clearTimeout(timer);
   }, [departing, animate]);
+  /** False once the reader opens a record or scrolls away from the newest one. */
+  const following = useRef(true);
+  /** The one record the reader opened; every other row stays one line. */
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [expandedHeight, setExpandedHeight] = useState(rowHeight);
+  const observer = useRef<ResizeObserver | null>(null);
+
+  const claimRow = useCallback(
+    (key: string) => {
+      following.current = false;
+      setExpandedHeight(rowHeight);
+      setExpandedKey(key);
+    },
+    [rowHeight],
+  );
+
+  // Only the opened row is measured, and only while it is mounted. A row that
+  // scrolls out of the window keeps its last measured height, so the scroll
+  // range never collapses under the reader.
+  const measureExpandedRow = useCallback((node: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!node) return;
+    const measure = () => {
+      const height = node.getBoundingClientRect().height;
+      if (height <= 0) return;
+      setExpandedHeight((previous) => (Math.abs(previous - height) < 0.5 ? previous : height));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const next = new ResizeObserver(measure);
+    next.observe(node);
+    observer.current = next;
+  }, []);
+  useEffect(() => () => observer.current?.disconnect(), []);
+
   const renderedRows = rows.map((row) => ({ ...row, departing: false }));
   const keys = new Set(rows.map((row) => row.key));
   if (animate) for (const { row, index } of departing) {
     if (!keys.has(row.key)) renderedRows.splice(Math.min(index, renderedRows.length), 0, { ...row, departing: true });
   }
-  /** False once the reader scrolls away from the newest record. */
-  const following = useRef(true);
-  const totalHeight = renderedRows.length * rowHeight;
+
+  const expandedIndex = expandedKey === null
+    ? -1
+    : renderedRows.findIndex((row) => row.key === expandedKey && !row.departing);
+  /** Pixel offset of every row; only the opened row differs from `rowHeight`. */
+  const offsets = new Array<number>(renderedRows.length + 1);
+  offsets[0] = 0;
+  for (let index = 0; index < renderedRows.length; index += 1) {
+    offsets[index + 1] =
+      offsets[index] + (index === expandedIndex ? expandedHeight : rowHeight);
+  }
+  const totalHeight = offsets[renderedRows.length];
   const budget = visibleRows * rowHeight;
   const scrollable = windowed && totalHeight > budget;
   const [scrollTop, setScrollTop] = useState(() =>
     windowed ? Math.max(0, totalHeight - budget) : 0,
   );
 
-  // Every commit changes either the row count or the reader's position: keep
-  // the newest record in view unless the reader took over the window.
+  // Every commit changes either the row count, the opened row or the reader's
+  // position: keep the newest record in view unless the reader took over.
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element || !scrollable || !following.current) return;
@@ -118,13 +155,30 @@ export function VirtualActivityWindow({
     setScrollTop((previous) => (previous === newest ? previous : newest));
   });
 
+  // An opened record that grows past the window's bottom edge brings its own
+  // body into view. Rows that still fit stay where the reader clicked them.
+  useLayoutEffect(() => {
+    const element = viewport.current;
+    if (!element || !scrollable || expandedIndex < 0) return;
+    const top = expandedIndex * rowHeight;
+    const bottom = top + expandedHeight;
+    if (bottom <= element.scrollTop + budget) return;
+    const target = expandedHeight >= budget ? top : bottom - budget;
+    if (Math.abs(element.scrollTop - target) < 0.5) return;
+    element.scrollTop = target;
+    setScrollTop(target);
+  }, [budget, expandedHeight, expandedIndex, rowHeight, scrollable]);
+
   let start = 0;
   let end = renderedRows.length;
   if (scrollable) {
-    start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS);
+    while (start < renderedRows.length && offsets[start + 1] <= scrollTop) start += 1;
+    start = Math.max(0, start - OVERSCAN_ROWS);
+    end = start;
+    while (end < renderedRows.length && offsets[end] < scrollTop + budget) end += 1;
     end = Math.min(
       renderedRows.length,
-      Math.max(visibleRows, Math.ceil((scrollTop + budget) / rowHeight)) + OVERSCAN_ROWS,
+      Math.max(start + visibleRows, end + OVERSCAN_ROWS),
     );
   }
   const fadeTop = scrollable && scrollTop > EDGE_SLOP;
@@ -165,19 +219,37 @@ export function VirtualActivityWindow({
           <div
             aria-hidden="true"
             className="session-process-window-spacer"
-            style={{ height: start * rowHeight }}
+            style={{ height: offsets[start] }}
           />
         )}
-        {renderedRows.slice(start, end).map((row) => (
-          <div key={row.key} data-row-key={row.key} data-departing={row.departing || undefined} aria-hidden={row.departing || undefined} inert={row.departing || undefined} className="session-process-window-row">
-            <ActivityRowScope compact={windowed} onTakeOver={takeOver}>{row.node}</ActivityRowScope>
-          </div>
-        ))}
+        {renderedRows.slice(start, end).map((row) => {
+          const rowExpanded = !row.departing && row.key === expandedKey;
+          return (
+            <div
+              key={row.key}
+              ref={rowExpanded ? measureExpandedRow : undefined}
+              data-row-key={row.key}
+              data-row-expanded={rowExpanded || undefined}
+              data-departing={row.departing || undefined}
+              aria-hidden={row.departing || undefined}
+              inert={row.departing || undefined}
+              className="session-process-window-row"
+            >
+              <ActivityRowScope
+                compact={windowed}
+                active={!windowed || rowExpanded}
+                onExpand={windowed ? () => claimRow(row.key) : undefined}
+              >
+                {row.node}
+              </ActivityRowScope>
+            </div>
+          );
+        })}
         {end < renderedRows.length && (
           <div
             aria-hidden="true"
             className="session-process-window-spacer"
-            style={{ height: (renderedRows.length - end) * rowHeight }}
+            style={{ height: offsets[renderedRows.length] - offsets[end] }}
           />
         )}
       </div>

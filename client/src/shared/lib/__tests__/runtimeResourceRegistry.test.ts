@@ -62,6 +62,8 @@ describe('handleError for a session the user deleted', () => {
 
     const notifications = useNotificationStore.getState().notifications
     expect(notifications).toHaveLength(1)
-    expect(notifications[0]?.message).toContain('ars_untouched')
+    // 主文案走状态码兜底，资源 id 留在 detail 里供排查。
+    expect(notifications[0]?.message).toBe('目标不存在或已被移除')
+    expect(notifications[0]?.detail).toContain('ars_untouched')
   })
 })

@@ -35,7 +35,9 @@ export interface ProviderModelDef {
   id: string;
   label: string;
   isDefault?: boolean;
+  /** Model output capability used for context planning, not a default request cap. */
   maxTokens?: number;
+  inputLimit?: number;
   /** Input context window in tokens (1_000_000 when the 1M input-context checkbox is set). */
   contextLimit?: number;
 }

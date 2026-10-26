@@ -645,7 +645,7 @@ impl FileStore {
         &mut self,
         ctx: &FileContext,
         value: &serde_json::Value,
-    ) -> Option<serde_json::Value> {
+    ) -> Result<Option<serde_json::Value>, HistoryError> {
         (|| -> Result<serde_json::Value, HistoryError> {
             let pin = required_string(value, "pinId")?;
             if let Some(existing) = ctx.index.aux_value(&format!("pin\0{pin}")) {
@@ -677,8 +677,7 @@ impl FileStore {
                 ("objectId", text(&root)),
                 ("metadata", metadata),
             ]))
-        })()
-        .ok()
+        })().map(Some)
     }
 
     pub fn begin(
@@ -907,6 +906,34 @@ impl FileStore {
         Ok(())
     }
 
+    /// Conversation edits share the durable restore journal, but need no pin
+    /// or file before-images. The caller builds an immutable transcript root.
+    pub fn restore_transcript(
+        &mut self,
+        ctx: &FileContext,
+        value: &serde_json::Value,
+    ) -> Result<serde_json::Value, HistoryError> {
+        if self.saved_restore(ctx).is_some() || self.session_has_writer(ctx)? {
+            return Err(busy("another history operation or writer is active"));
+        }
+        let mut restore = Restore {
+            session_id: ctx.session_id.into(),
+            request_id: ctx.request_id.into(),
+            checkpoint_id: String::new(),
+            target: required_string(value, "objectId")?.into(),
+            expected_revision: required_u64(value, "expectedRevision")?,
+            files: Vec::new(),
+            metadata: value["metadata"].clone(),
+            state: "prepared".into(),
+        };
+        self.resume_restore(ctx, &mut restore)?;
+        Ok(object(&[
+            ("revision", number(restore.expected_revision + 1)),
+            ("metadata", restore.metadata),
+            ("requestId", text(&restore.request_id)),
+        ]))
+    }
+
     pub fn restore_checkpoint(
         &mut self,
         ctx: &FileContext,
@@ -961,7 +988,9 @@ impl FileStore {
                 if ctx.index.aux_value(&claim_key(&file)).is_some() {
                     return Err(busy("a file has an active writer"));
                 }
-                if !same(&self.file_snapshot(&file, false)?, &change.after) {
+                if value["force"].as_bool() != Some(true)
+                    && !same(&self.file_snapshot(&file, false)?, &change.after)
+                {
                     return Err(busy(format!("independent change at {}", file.display())));
                 }
             }

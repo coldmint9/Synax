@@ -298,7 +298,7 @@ export function InputQueueStrip({
         ))}
       </ul>
       {error && (
-        <p role="alert" className="px-2 py-1 text-xs text-danger">
+        <p data-error-toast="off" role="alert" className="px-2 py-1 text-xs text-danger">
           {error}
         </p>
       )}

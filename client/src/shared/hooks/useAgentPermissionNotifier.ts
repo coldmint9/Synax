@@ -43,6 +43,8 @@ export function useAgentPermissionNotifier(
                 type: "warning",
                 message: `会话等待审批: ${data.patch.blockedReason ?? "权限请求"}`,
                 duration: 0,
+                // 用户关掉浮层后再次进入等待审批，必须重新提醒。
+                resurface: true,
                 actions: [
                   {
                     label: "前往审批",

@@ -1,24 +1,26 @@
 import {
   act,
+  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationGitSnapshot } from "../../../adapters/transport/conversationGit";
-import { AppError } from "../../../shared/lib/appError";
-
-const store = vi.hoisted(() => ({
-  ingestConversationMessages: vi.fn(),
-  submitOrEnqueueSessionInput: vi.fn().mockResolvedValue("sent"),
-}));
+import type { SessionLiveEvent } from "../../../adapters/transport/sessionLive";
+const store = vi.hoisted(() => ({ ingestConversationMessages: vi.fn() }));
 const scope = vi.hoisted(() => ({
   sessionId: "session-a",
   workspacePath: "/repo",
   roots: [],
 }));
+const live = vi.hoisted(() => ({
+  handler: null as ((event: SessionLiveEvent) => void) | null,
+  release: vi.fn(),
+}));
+const editor = vi.hoisted(() => ({ flush: vi.fn(async () => true) }));
 vi.mock("../SessionTranscriptContext", () => ({
   useTranscriptSession: () => scope,
 }));
@@ -27,40 +29,60 @@ vi.mock("../state/agentSessionStore", () => ({
     select(store),
 }));
 vi.mock("../workspaceRefresh", () => ({ refreshWorkspace: vi.fn() }));
+vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
+  addSessionLiveListener: (_: string, handler: typeof live.handler) => {
+    live.handler = handler;
+    return live.release;
+  },
+}));
 vi.mock("../../../adapters/transport/conversationGit", () => ({
   conversationGitApi: {
     get: vi.fn(),
     action: vi.fn(),
     file: vi.fn(),
     saveFile: vi.fn(),
-    applyProposal: vi.fn(),
   },
 }));
-vi.mock("../../../shared/ui/file-viewer/FileViewerDialog", () => ({
-  FileViewerDialog: ({ file, readOnly, onSave, onClose }: any) => (
-    <div role="dialog" aria-label="合并编辑器">
-      <span>{file.path}</span>
-      <button
-        disabled={readOnly}
-        onClick={() =>
-          onSave({
-            expectedRevision: file.revision,
-            content: "edited",
-            resolve: false,
-          })
-        }
-      >
-        保存草稿
-      </button>
-      <button onClick={onClose}>关闭编辑器</button>
-    </div>
-  ),
-}));
-
+vi.mock("../../../shared/ui/file-viewer/FileViewerDialog", async () => {
+  const { useEffect } = await import("react");
+  return {
+    FileViewerDialog: ({
+      file,
+      readOnly,
+      onSave,
+      onClose,
+      controls,
+      registerDraftFlush,
+    }: any) => {
+      useEffect(() => {
+        registerDraftFlush?.(editor.flush);
+        return () => registerDraftFlush?.(null);
+      }, []);
+      return (
+        <div role="dialog" aria-label="合并编辑器">
+          <span>{file.path}</span>
+          <button
+            disabled={readOnly}
+            onClick={() =>
+              onSave({
+                expectedRevision: file.revision,
+                content: "edited",
+                resolve: false,
+              })
+            }
+          >
+            保存草稿
+          </button>
+          <button onClick={onClose}>关闭编辑器</button>
+          {controls}
+        </div>
+      );
+    },
+  };
+});
 import ConversationGitCard from "./ConversationGitCard";
 import { conversationGitApi } from "../../../adapters/transport/conversationGit";
 import { refreshWorkspace } from "../workspaceRefresh";
-
 const reference = {
   schema: "synax.git-merge",
   schemaVersion: 1,
@@ -68,10 +90,27 @@ const reference = {
   sessionId: "session-a",
   projectId: "project",
   rootId: "root",
-  title: "合并会话刷新",
+  title: "智能合并",
 } as const;
+const file = {
+  id: "file-1",
+  path: "src/auth.ts",
+  status: "U",
+  conflicted: true,
+  kind: "text" as const,
+  base: "base",
+  target: "target",
+  source: "source",
+  result: "<<<<<<< HEAD\ntarget\n=======\nsource\n>>>>>>> branch",
+  revision: "rev-1",
+  targetExists: true,
+  sourceExists: true,
+  baseExists: true,
+};
 function snapshot(
-  status: ConversationGitSnapshot["mr"]["status"] = "draft",
+  status: NonNullable<
+    ConversationGitSnapshot["execution"]
+  >["status"] = "running",
 ): ConversationGitSnapshot {
   return {
     reference,
@@ -83,471 +122,361 @@ function snapshot(
       mrId: "mr-1",
       previousMrIds: [],
       messageId: "anchor",
-      createdAt: "2026-10-22T00:00:00Z",
-      updatedAt: "2026-10-22T00:00:00Z",
+      createdAt: "2026-10-23",
+      updatedAt: "2026-10-23",
       revision: 2,
     },
     mr: {
       id: "mr-1",
       projectId: "project",
-      rootId: "root",
       title: reference.title,
       target: "main",
       targetOid: "target",
       strategy: "merge_commit",
-      steps: [{ branch: "feature/session", oid: "source", status: "pending" }],
-      status,
+      steps: [
+        { branch: "feature/session", oid: "source", status: "conflicted" },
+      ],
+      status: "conflicted",
       version: 7,
-      currentStep: status === "ready" ? 1 : 0,
-      candidateOid: "candidate",
-      candidateTree: "tree",
+      currentStep: 0,
       repository: "/repo",
       commonDir: "/repo/.git",
-      createdAt: "2026-10-22",
-      updatedAt: "2026-10-22",
+      createdAt: "2026-10-23",
+      updatedAt: "2026-10-23",
       checks: [],
       checkResults: [],
       autoFinalize: false,
       allowCheckedOutTarget: false,
       events: [],
     },
-    files: [],
+    execution: {
+      status,
+      phase: "resolving",
+      childSessionId: "child",
+      joinMode: "blocking",
+      revision: 1,
+      epoch: 1,
+      updatedAt: "2026-10-23",
+      summary: "正在解决冲突",
+    },
+    files: [file],
     proposals: [],
-    commits: [
-      {
-        oid: "source",
-        parents: ["target"],
-        subject: "刷新会话",
-        author: "Mint",
-        date: "2026-10-22",
-        refs: ["feature/session"],
-      },
-      {
-        oid: "target",
-        parents: [],
-        subject: "共同祖先",
-        author: "Mint",
-        date: "2026-10-21",
-        refs: ["main"],
-      },
-    ],
+    commits: [],
     stale: false,
     messages: [],
   };
 }
-const file = {
-  id: "file-1",
-  path: "src/auth.ts",
-  status: "U",
-  conflicted: true,
-  kind: "text" as const,
-  base: "base",
-  target: "target content",
-  source: "source content",
-  result: "unresolved",
-  revision: "rev-1",
-  targetExists: true,
-  sourceExists: true,
-  baseExists: true,
-};
 const mount = (readOnly = false) =>
   render(<ConversationGitCard reference={reference} readOnly={readOnly} />);
+const emit = (event: SessionLiveEvent) =>
+  act(() => {
+    live.handler?.(event);
+  });
 beforeEach(() => {
   vi.clearAllMocks();
   scope.sessionId = "session-a";
+  live.handler = null;
+  editor.flush.mockResolvedValue(true);
   vi.mocked(conversationGitApi.get).mockResolvedValue(snapshot());
   vi.mocked(conversationGitApi.file).mockResolvedValue(file);
-  store.submitOrEnqueueSessionInput.mockResolvedValue("sent");
+  vi.mocked(conversationGitApi.action).mockResolvedValue(snapshot("paused"));
+  vi.mocked(conversationGitApi.saveFile).mockResolvedValue(snapshot("paused"));
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
 });
 
-describe("conversation Git task", () => {
-  it("keeps one task card while preparing and uses both concurrency versions", async () => {
-    const next = snapshot("conflicted");
-    next.files = [file];
-    next.messages = [
-      {
-        id: "receipt",
-        sessionId: "session-a",
-        runId: null,
-        stepId: null,
-        role: "assistant",
-        content: "已准备",
-        metadata: {},
-        createdAt: "now",
-      },
-    ];
-    vi.mocked(conversationGitApi.action).mockResolvedValue(next);
+describe("conversation merge workbench", () => {
+  it("opens a conflict file directly without the duplicate preview actions", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "开始分析" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "合并编辑器" });
+    expect(
+      within(dialog).getByRole("button", { name: "保存草稿" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("对比两侧")).toBeNull();
+    expect(screen.queryByText("生成解决建议")).toBeNull();
+    expect(conversationGitApi.file).toHaveBeenCalledOnce();
+  });
+  it("exposes only pause/resume and cancel execution controls with both concurrency tokens", async () => {
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "停止" }));
     await waitFor(() =>
       expect(conversationGitApi.action).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
+        reference.sessionId,
+        reference.objectId,
         expect.objectContaining({
-          action: "prepare",
+          action: "pause",
           expectedVersion: 7,
           expectedTaskRevision: 2,
           requestId: expect.any(String),
         }),
       ),
     );
-    expect(
-      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
-    ).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-object-id="task-1"]')).toHaveLength(
-      1,
-    );
-    expect(store.ingestConversationMessages).toHaveBeenCalledWith(
-      "session-a",
-      next.messages,
-    );
-    expect(refreshWorkspace).toHaveBeenCalledWith("session-a", "root");
+    expect(await screen.findByRole("button", { name: "继续" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "运行检查" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /确认更新/ })).toBeNull();
   });
-  it("does not request or mutate a task belonging to another transcript", async () => {
-    scope.sessionId = "other";
+  it("requires one explicit cancel decision and sends the terminal cancel command", async () => {
     mount();
-    expect(screen.getByText(/此任务属于另一个会话/)).toBeInTheDocument();
-    expect(conversationGitApi.get).not.toHaveBeenCalled();
-    expect(conversationGitApi.action).not.toHaveBeenCalled();
-  });
-  it("makes history read-only and does not submit assistant requests", async () => {
-    mount(true);
-    expect(
-      await screen.findByRole("button", { name: "开始分析" }),
-    ).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "让助手解释" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "开始分析" }));
-    expect(conversationGitApi.action).not.toHaveBeenCalled();
-  });
-  it("requires explicit confirmation when checks are absent", async () => {
-    vi.mocked(conversationGitApi.get).mockResolvedValue(snapshot("ready"));
-    vi.mocked(conversationGitApi.action).mockResolvedValue(snapshot("merged"));
-    mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "确认跳过检查" }),
-    );
-    expect(conversationGitApi.action).not.toHaveBeenCalled();
-    expect(
-      screen.getByText(/本任务没有配置检查，本次确认将跳过验证/),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认更新本地 main" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认取消" }));
     await waitFor(() =>
       expect(conversationGitApi.action).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        expect.objectContaining({ action: "finalize" }),
+        reference.sessionId,
+        reference.objectId,
+        expect.objectContaining({ action: "cancel" }),
       ),
     );
   });
-  it("does not equate ready with tests passed", async () => {
-    const value = snapshot("ready");
-    value.mr.checks = [
-      { id: "test", executable: "npm", args: ["test"], timeoutMs: 5000 },
-    ];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    mount();
-    expect(
-      await screen.findByRole("button", { name: "运行检查" }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "确认更新 main" }),
-    ).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "确认更新 main" }));
-    expect(screen.getByRole("button", { name: "确认更新本地 main" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("checkbox", { name: "跳过验证检查，我已审阅候选改动" }));
-    expect(screen.getByRole("button", { name: "确认更新本地 main" })).toBeEnabled();
-    expect(screen.getByText("0/1 通过")).toBeInTheDocument();
-  });
-  it("renders stale recovery without offering publish", async () => {
-    const value = snapshot("ready");
-    value.stale = true;
-    value.staleReason = "main moved";
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.action).mockResolvedValue(snapshot());
-    mount();
-    fireEvent.click(await screen.findByRole("button", { name: "重新分析" }));
-    await waitFor(() =>
-      expect(conversationGitApi.action).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        expect.objectContaining({ action: "replan", expectedTaskRevision: 2 }),
-      ),
-    );
-  });
-  it("saves a whole-file decision with the file, task and MR revisions", async () => {
-    const value = snapshot("conflicted");
-    value.files = [file];
-    const saved = snapshot("conflicted");
-    saved.files = [{ ...file, conflicted: false }];
-    saved.mr.version = 8;
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.saveFile).mockResolvedValue(saved);
+  it("flushes the editor before resuming and keeps a failed draft paused", async () => {
+    vi.mocked(conversationGitApi.get).mockResolvedValue(snapshot("paused"));
+    editor.flush.mockResolvedValue(false);
     mount();
     fireEvent.click(
       await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
     );
+    const dialog = await screen.findByRole("dialog", { name: "合并编辑器" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "继续" }));
+    await waitFor(() => expect(editor.flush).toHaveBeenCalledOnce());
+    expect(conversationGitApi.action).not.toHaveBeenCalled();
+  });
+  it("saves paused edits as drafts without marking a file resolved", async () => {
+    vi.mocked(conversationGitApi.get).mockResolvedValue(snapshot("paused"));
+    mount();
     fireEvent.click(
-      await screen.findByRole("button", { name: "采用目标全文" }),
+      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: "保存草稿" }));
     await waitFor(() =>
       expect(conversationGitApi.saveFile).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        "file-1",
+        reference.sessionId,
+        reference.objectId,
+        file.id,
         expect.objectContaining({
+          content: "edited",
+          resolve: false,
           expectedRevision: "rev-1",
           expectedVersion: 7,
           expectedTaskRevision: 2,
-          choice: "target",
-          resolve: true,
         }),
       ),
     );
   });
-  it("keeps a stale write error and refreshes authoritative state", async () => {
-    vi.mocked(conversationGitApi.action).mockRejectedValue(
-      new AppError("分支版本已过期", {
-        level: "business",
-        code: "STALE_VERSION",
-        statusCode: 409,
-      }),
-    );
+  it("projects a burst of state events without fetching a snapshot per event", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "开始分析" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "分支版本已过期",
+    await screen.findByRole("button", { name: "停止" });
+    act(() => {
+      for (let i = 0; i < 1000; i++)
+        live.handler?.({
+          type: "conversation_git_state",
+          taskId: reference.objectId,
+          taskRevision: i + 3,
+          mrVersion: 7,
+          status: "conflicted",
+          eventSeq: i + 2,
+          execution: {
+            ...snapshot().execution!,
+            revision: i + 2,
+            summary: `进度 ${i}`,
+          },
+        });
+    });
+    await waitFor(() =>
+      expect(screen.getByText("进度 999")).toBeInTheDocument(),
     );
+    expect(conversationGitApi.get).toHaveBeenCalledOnce();
+    emit({
+      type: "conversation_git_state",
+      taskId: reference.objectId,
+      taskRevision: 1,
+      mrVersion: 1,
+      status: "conflicted",
+      eventSeq: 1,
+      execution: snapshot("paused").execution,
+    });
+    expect(screen.getByRole("button", { name: "停止" })).toBeEnabled();
+  });
+  it("performs a followup read when reconnect arrives during the first snapshot", async () => {
+    let finish!: (value: ConversationGitSnapshot) => void;
+    vi.mocked(conversationGitApi.get)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValue(snapshot("paused"));
+    mount();
+    emit({ type: "domain_reconnected", sessionId: reference.sessionId });
+    await act(async () => finish(snapshot()));
+    await screen.findByRole("button", { name: "继续" });
     expect(conversationGitApi.get).toHaveBeenCalledTimes(2);
   });
-  it("omits revision chrome, explanatory assistant actions and the stepper", async () => {
-    mount();
-    await screen.findByRole("button", { name: "开始分析" });
-    expect(screen.queryByRole("button", { name: "让助手解释" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "合并任务进度" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/· v7|版本 2/)).not.toBeInTheDocument();
-    expect(store.submitOrEnqueueSessionInput).not.toHaveBeenCalled();
-  });
-  it("sends an explicit verification bypass only after the user selects it", async () => {
-    const value = snapshot("check_failed");
-    value.mr.checks = [{ id: "unit", executable: "node", args: ["test"], timeoutMs: 1000 }];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.action).mockResolvedValue(snapshot("merged"));
-    mount();
-    fireEvent.click(await screen.findByRole("button", { name: "确认更新 main" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "跳过验证检查，我已审阅候选改动" }));
-    fireEvent.click(screen.getByRole("button", { name: "确认更新本地 main" }));
-    await waitFor(() => expect(conversationGitApi.action).toHaveBeenCalledWith("session-a", "task-1", expect.objectContaining({ action: "finalize", skipChecks: true, expectedVersion: 7, expectedTaskRevision: 2 })));
-  });
-  it("keeps one renderer and state while opening and closing focus view", async () => {
-    mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "展开专注视图" }),
-    );
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-object-id="task-1"]')).toHaveLength(
-      1,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "关闭专注视图" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(conversationGitApi.get).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows actual proposals but rejects a stale proposal revision", async () => {
-    const value = snapshot("conflicted");
-    value.files = [file];
-    value.proposals = [
-      {
-        id: "proposal",
-        mrId: "mr-1",
-        fileId: file.id,
-        revision: "older",
-        content: "proposed",
-        rationale: "保留两侧逻辑",
-        createdAt: "2026-10-22",
-      },
+  it("rebuilds a reconnect manifest then replays concurrent deltas instead of losing missed files", async () => {
+    const initial = snapshot();
+    initial.files = [
+      { ...file, id: "a", path: "a.ts" },
+      { ...file, id: "b", path: "b.ts" },
     ];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
+    let complete!: (value: ConversationGitSnapshot) => void;
+    vi.mocked(conversationGitApi.get)
+      .mockResolvedValueOnce(initial)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
     mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
-    );
-    fireEvent.click(await screen.findByRole("tab", { name: "助手建议" }));
+    await screen.findByRole("button", { name: /a.ts 冲突/ });
+    emit({ type: "domain_reconnected", sessionId: reference.sessionId });
+    emit({
+      type: "conversation_git_state",
+      taskId: reference.objectId,
+      taskRevision: 11,
+      mrVersion: 11,
+      eventSeq: 11,
+      status: "conflicted",
+      changedFiles: [{ ...file, id: "b", path: "b.ts", conflicted: false }],
+    });
+    const recovered = snapshot();
+    recovered.task.revision = 10;
+    recovered.mr.version = 10;
+    recovered.files = [
+      { ...file, id: "a", path: "a.ts", conflicted: false },
+      { ...file, id: "b", path: "b.ts" },
+      { ...file, id: "c", path: "c.ts" },
+    ];
+    await act(async () => complete(recovered));
     expect(
-      await screen.findByRole("button", { name: "采纳建议到草稿" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByText("此建议依据的文件已变化，请让助手重新生成。"),
+      await screen.findByRole("button", { name: /a.ts 已解决/ }),
     ).toBeInTheDocument();
-    expect(conversationGitApi.applyProposal).not.toHaveBeenCalled();
-  });
-
-  it("saves a current proposal as a draft and never silently resolves it", async () => {
-    const value = snapshot("conflicted");
-    value.files = [file];
-    value.proposals = [
-      {
-        id: "proposal",
-        mrId: "mr-1",
-        fileId: file.id,
-        revision: file.revision,
-        content: "proposed",
-        rationale: "保留两侧逻辑",
-        createdAt: "2026-10-22",
-      },
-    ];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.applyProposal).mockResolvedValue({
-      ...value,
-      mr: { ...value.mr, version: 8 },
-    });
-    vi.mocked(conversationGitApi.file)
-      .mockResolvedValueOnce(file)
-      .mockResolvedValue({ ...file, result: "proposed", revision: "rev-2" });
-    mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
-    );
-    fireEvent.click(await screen.findByRole("tab", { name: "助手建议" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "采纳建议到草稿" }),
-    );
-    await waitFor(() =>
-      expect(conversationGitApi.applyProposal).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        expect.objectContaining({
-          proposalId: "proposal",
-          expectedVersion: 7,
-          expectedTaskRevision: 2,
-        }),
-      ),
-    );
-    expect(conversationGitApi.saveFile).not.toHaveBeenCalled();
-    expect(await screen.findByText(/建议已保存为草稿/)).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("tab", { name: "当前结果" })).toHaveAttribute("aria-selected", "true"));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "确认此结果" })).toBeEnabled(),
-    );
-  });
-
-  it("confirms a clean inline result with explicit resolve and content", async () => {
-    const value = snapshot("conflicted");
-    value.files = [file];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.file).mockResolvedValue({
-      ...file,
-      result: "const clean = true;",
-    });
-    vi.mocked(conversationGitApi.saveFile).mockResolvedValue({
-      ...value,
-      files: [{ ...file, conflicted: false }],
-    });
-    mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "确认此结果" }));
-    await waitFor(() =>
-      expect(conversationGitApi.saveFile).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        "file-1",
-        expect.objectContaining({
-          content: "const clean = true;",
-          resolve: true,
-          expectedRevision: "rev-1",
-          expectedVersion: 7,
-        }),
-      ),
-    );
-  });
-
-  it("does not confirm an inline result containing conflict markers", async () => {
-    const value = snapshot("conflicted");
-    value.files = [file];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    vi.mocked(conversationGitApi.file).mockResolvedValue({
-      ...file,
-      result: "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> source",
-    });
-    mount();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
-    );
-    const confirm = await screen.findByRole("button", { name: "确认此结果" });
-    expect(confirm).toBeDisabled();
-    fireEvent.click(confirm);
-    expect(conversationGitApi.saveFile).not.toHaveBeenCalled();
-    expect(screen.getByText(/仍有冲突标记/)).toBeInTheDocument();
-  });
-
-  it("shows compact check names and keeps the full command inside details", async () => {
-    const value = snapshot("ready");
-    value.mr.checks = [
-      {
-        id: "auth-regression",
-        executable: "/usr/local/bin/node",
-        args: ["--test", "very-long-test-file-name.js"],
-        timeoutMs: 60000,
-      },
-    ];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    mount();
-    expect(await screen.findByText("auth-regression")).toBeInTheDocument();
-    const check = screen.getByText("auth-regression").closest("details");
-    expect(check).toBeTruthy();
-    expect(check!.querySelector("summary")).toHaveTextContent(
-      "auth-regression",
-    );
-    expect(check!.querySelector("summary")).not.toHaveTextContent(
-      "/usr/local/bin/node",
-    );
     expect(
-      within(check!).getByText(
-        "/usr/local/bin/node --test very-long-test-file-name.js",
-      ),
+      screen.getByRole("button", { name: /b.ts 已解决/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /c.ts 冲突/ }),
     ).toBeInTheDocument();
   });
-
-  it("allows cancelling a checking operation while its request is still pending", async () => {
-    const value = snapshot("ready");
-    value.mr.checks = [
-      { id: "check", executable: "node", args: ["test.js"], timeoutMs: 60000 },
-    ];
-    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
-    let finish: (value: ConversationGitSnapshot) => void = () => {};
-    vi.mocked(conversationGitApi.action).mockImplementation(
-      (_session, _task, input) =>
-        input.action === "checks"
-          ? new Promise((resolve) => {
-              finish = resolve;
-            })
-          : Promise.resolve(snapshot("cancelled")),
-    );
+  it("rejects a late manifest before it can downgrade the snapshot file watermark", async () => {
+    const newest = snapshot();
+    newest.task.revision = 20;
+    newest.mr.version = 20;
+    newest.files = [{ ...file, id: "a", path: "a.ts", conflicted: false }];
+    const older = snapshot();
+    older.task.revision = 17;
+    older.mr.version = 17;
+    older.files = [{ ...file, id: "a", path: "a.ts", conflicted: true }];
+    vi.mocked(conversationGitApi.get)
+      .mockResolvedValueOnce(newest)
+      .mockResolvedValueOnce(older);
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "运行检查" }));
-    const checking = {
-      ...value,
-      mr: { ...value.mr, status: "checking" as const, version: 8 },
-    };
-    vi.mocked(conversationGitApi.get).mockResolvedValue(checking);
-    await waitFor(
-      () => expect(screen.getByRole("button", { name: "取消" })).toBeEnabled(),
-      { timeout: 3000 },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    await screen.findByRole("button", { name: /a.ts 已解决/ });
+    emit({
+      type: "conversation_git_state",
+      taskId: reference.objectId,
+      taskRevision: 15,
+      mrVersion: 15,
+      eventSeq: 15,
+      status: "conflicted",
+      files: [{ ...file, id: "a", path: "a.ts", conflicted: true }],
+    });
+    emit({ type: "domain_reconnected", sessionId: reference.sessionId });
     await waitFor(() =>
-      expect(conversationGitApi.action).toHaveBeenCalledWith(
-        "session-a",
-        "task-1",
-        expect.objectContaining({ action: "cancel", expectedVersion: 8 }),
-      ),
+      expect(conversationGitApi.get).toHaveBeenCalledTimes(2),
     );
+    await act(async () => Promise.resolve());
+    expect(
+      screen.getByRole("button", { name: /a.ts 已解决/ }),
+    ).toBeInTheDocument();
+  });
+  it("applies file changes incrementally and coalesces refreshes for the open file", async () => {
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /src\/auth.ts 冲突/ }),
+    );
+    await screen.findByRole("dialog", { name: "合并编辑器" });
+    vi.useFakeTimers();
+    act(() => {
+      for (let index = 0; index < 100; index++)
+        live.handler?.({
+          type: "conversation_git_state",
+          taskId: reference.objectId,
+          taskRevision: index + 3,
+          mrVersion: 8,
+          status: "conflicted",
+          eventSeq: index + 2,
+          changedFiles: [{ ...file, conflicted: false }],
+          changedFileIds: [file.id],
+        });
+    });
     await act(async () => {
-      finish({
-        ...value,
-        mr: { ...value.mr, status: "cancelled", version: 9 },
-      });
+      await vi.advanceTimersByTimeAsync(300);
     });
+    expect(conversationGitApi.file).toHaveBeenCalledTimes(2);
+    expect(conversationGitApi.get).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: /src\/auth.ts 已解决/ }),
+    ).toBeInTheDocument();
+  });
+  it("does not poll and releases subscriptions and pending reads on unmount", async () => {
+    const view = mount();
+    await screen.findByRole("button", { name: "停止" });
+    vi.useFakeTimers();
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(conversationGitApi.get).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+    view.unmount();
+    expect(live.release).toHaveBeenCalledOnce();
+  });
+  it("retains action receipts when the view closes before the response", async () => {
+    let finish!: (value: ConversationGitSnapshot) => void;
+    vi.mocked(conversationGitApi.action).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const view = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "停止" }));
+    view.unmount();
+    await act(async () => finish(snapshot("paused")));
+    expect(store.ingestConversationMessages).toHaveBeenCalledWith(
+      reference.sessionId,
+      [],
+    );
+    expect(refreshWorkspace).toHaveBeenCalled();
+  });
+  it("virtualizes repository-sized file lists and only loads the selected file", async () => {
+    const value = snapshot();
+    value.files = Array.from({ length: 1200 }, (_, index) => ({
+      id: `f${index}`,
+      path: `file-${index}.ts`,
+      status: "UU",
+      conflicted: true,
+    }));
+    vi.mocked(conversationGitApi.get).mockResolvedValue(value);
+    mount();
+    await screen.findByRole("button", { name: /file-0.ts 冲突/ });
+    expect(
+      screen.getAllByRole("button", { name: /file-\d+.ts 冲突/ }).length,
+    ).toBeLessThan(20);
+    expect(conversationGitApi.file).not.toHaveBeenCalled();
+  });
+  it("keeps history and a foreign session from issuing execution commands", async () => {
+    const view = mount(true);
+    await screen.findByText("正在解决冲突");
+    expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
+    view.unmount();
+    scope.sessionId = "other";
+    mount();
+    expect(screen.getByText(/另一个会话/)).toBeInTheDocument();
+    expect(conversationGitApi.action).not.toHaveBeenCalled();
   });
 });

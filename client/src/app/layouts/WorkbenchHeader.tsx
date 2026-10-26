@@ -10,6 +10,7 @@ import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import { IslandPopoverPanel } from "./IslandOverlays";
 import { IslandSelection } from "./IslandSelection";
+import { SessionToolbarTarget, SessionToolbarActionsTarget } from "../../features/agent-workspace/SessionToolbarPortal";
 import { Button } from "@/shared/ui/ui/Button";
 import {
   GitMerge,
@@ -21,15 +22,19 @@ import type { ProjectSummary } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 import {
+  projectSessionActivity,
   useProjectSessionBadges,
   type ProjectSessionBadge,
 } from "../../features/agent-workspace/projectSessionBadges";
+import { useWorkspaceCopy } from "../../features/workspace/workspaceCopy";
 import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/sessionWorkspaceStore";
 import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
 import type { ActivityPanel } from "./ActivityBar";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
+import { useMacWindowButtons } from "../../adapters/electron/useMacWindowButtons";
+import { WindowChrome } from "./WindowChrome";
 
 export type ChromeMode =
   | "global"
@@ -63,9 +68,13 @@ function ProjectSessionBadgeMark({
   showCount?: boolean;
 }) {
   const { t } = useLocale();
-  if (!badge?.total) return null;
+  const c = useWorkspaceCopy();
+  const activity = projectSessionActivity(badge);
+  if (!badge || !activity) return null;
 
   const label = [
+    badge.waitingInput > 0 ? c.activityWaiting.replace("{count}", String(badge.waitingInput)) : "",
+    badge.unreadFailed > 0 ? c.activityFailed.replace("{count}", String(badge.unreadFailed)) : "",
     badge.running > 0 ? t("projectBadgeRunning", { count: badge.running }) : "",
     badge.unreadCompleted > 0
       ? t("projectBadgeUnread", { count: badge.unreadCompleted })
@@ -83,12 +92,12 @@ function ProjectSessionBadgeMark({
     >
       <span
         className="project-session-badge__dot"
-        data-status={badge.running > 0 ? "running" : "unread"}
+        data-status={activity.status}
         aria-hidden="true"
       />
-      {showCount && badge.running > 0 && (
+      {showCount && (
         <span className="project-session-badge__count" aria-hidden="true">
-          {badge.running}
+          {activity.count}
         </span>
       )}
     </span>
@@ -115,10 +124,25 @@ function ProjectSwitcher({
   onOpen?: () => void;
 }) {
   const { badges, refresh } = useProjectSessionBadges(projects.map(project => project.id));
+  const otherBadges = projects.reduce<ProjectSessionBadge>(
+    (counts, project) => {
+      const badge = badges[project.id];
+      if (project.id !== currentProjectId && badge) {
+        counts.waitingInput += badge.waitingInput;
+        counts.unreadFailed += badge.unreadFailed;
+        counts.running += badge.running;
+        counts.unreadCompleted += badge.unreadCompleted;
+        counts.total += badge.total;
+      }
+      return counts;
+    },
+    { waitingInput: 0, unreadFailed: 0, running: 0, unreadCompleted: 0, total: 0 },
+  );
   return <WorkspaceSwitcher
     hasProject={hasProject} projectName={projectName} currentProjectId={currentProjectId}
     projects={projects} onProjectSwitch={onProjectSwitch} onCreateProject={onCreateProject}
     onRemoveRequest={onRemoveRequest}
+    otherActivity={projectSessionActivity(otherBadges)}
     onOpen={() => { onOpen?.(); void refresh(); }}
     renderBadge={id => <ProjectSessionBadgeMark badge={badges[id]} showCount />}
   />;
@@ -221,6 +245,7 @@ export function WorkbenchHeader({
   onCreateProject,
   onRemoveProject,
 }: WorkbenchHeaderProps) {
+  const leadingRef = useMacWindowButtons();
   const { t, locale } = useLocale();
   const location = useLocation();
   const terminalOpen = useTerminalStore((state) => state.open);
@@ -266,18 +291,21 @@ export function WorkbenchHeader({
   return (
     <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
       <div className="workbench-header__bar">
-        <div className="project-switcher-anchor workbench-header__workspace">
-          <ProjectSwitcher
-            hasProject={hasProject}
-            projectName={projectName}
-            currentProjectId={currentProjectId}
-            projects={projects}
-            onProjectSwitch={onProjectSwitch}
-            onCreateProject={onCreateProject}
-            onRemoveRequest={handleRemoveClick}
-            onOpen={() => setProjectSwitcherUsed(true)}
-          />
-          <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
+        <div className="workbench-header__leading" ref={leadingRef}>
+          <div className="project-switcher-anchor workbench-header__workspace">
+            <ProjectSwitcher
+              hasProject={hasProject}
+              projectName={projectName}
+              currentProjectId={currentProjectId}
+              projects={projects}
+              onProjectSwitch={onProjectSwitch}
+              onCreateProject={onCreateProject}
+              onRemoveRequest={handleRemoveClick}
+              onOpen={() => setProjectSwitcherUsed(true)}
+            />
+            <ProjectImportHint hasProject={hasProject} targetActivated={projectSwitcherUsed} onImport={onCreateProject} />
+          </div>
+          {activePanel === "sessions" && hasProject ? <SessionToolbarTarget /> : null}
         </div>
         <div className="workbench-header__navigation">
           <MainNavTabs activePanel={activePanel} hasProject={hasProject} onPanelToggle={onPanelToggle} />
@@ -304,7 +332,9 @@ export function WorkbenchHeader({
             </button>
           </Tooltip>
           <ThemeToggle />
+          {activePanel === "sessions" && hasProject ? <SessionToolbarActionsTarget /> : null}
         </div>
+        <WindowChrome />
       </div>
       <WorkspaceRemoveDialog workspace={deleteTarget} currentProjectId={currentProjectId}
         onRemove={onRemoveProject} onClose={() => setDeleteTarget(null)} />

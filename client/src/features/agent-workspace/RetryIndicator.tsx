@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { RotateCw, WifiOff } from "lucide-react";
 import type { LlmRetryState } from "../../adapters/transport/sessionLive";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { StatusIndicator } from "../../shared/ui/StatusIndicator";
 
 export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
   const { locale } = useLocale();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     setNow(Date.now());
-    if (retry.phase === "recovered" || retry.nextRetryAt == null) return;
+    if (retry.phase === "recovered" || retry.phase === "exhausted" || retry.nextRetryAt == null) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [retry.nextRetryAt, retry.phase]);
@@ -68,21 +69,21 @@ export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
               : `${attempt} · Retrying in ${seconds}s`;
   const Icon = retry.reason === "network" ? WifiOff : RotateCw;
   return (
-    <div data-testid="retry-indicator" className="flex items-start gap-2 rounded-md border border-warning/20 bg-warning/5 px-3 py-2 text-[11px] text-foreground">
-      <Icon size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden />
-      <div className="min-w-0">
-        <div role="status" aria-live="polite" aria-atomic="true" className="font-medium">
-          {reason}
-          <span className="sr-only">{` · ${attempt} · ${announcement}`}</span>
-        </div>
-        <div className="mt-1 tabular-nums text-muted-foreground">{status}</div>
-        <details className="mt-1 text-muted-foreground">
-          <summary className="cursor-pointer">
-            {zh ? "错误详情" : "Error details"}
-          </summary>
-          <p className="mt-1 whitespace-pre-wrap break-words">{retry.error}</p>
-        </details>
-      </div>
-    </div>
+    <StatusIndicator
+      data-testid="retry-indicator"
+      active={retry.phase !== "exhausted"}
+      tone={retry.phase === "exhausted" ? "danger" : "warning"}
+      icon={<Icon size={14} />}
+      label={reason}
+      announcement={`${reason} · ${attempt} · ${announcement}`}
+      description={<span className="tabular-nums">{status}</span>}
+    >
+      <details className="text-muted-foreground">
+        <summary className="cursor-pointer">
+          {zh ? "错误详情" : "Error details"}
+        </summary>
+        <p data-error-toast="off" role="alert" className="mt-1 whitespace-pre-wrap break-words">{retry.error}</p>
+      </details>
+    </StatusIndicator>
   );
 }

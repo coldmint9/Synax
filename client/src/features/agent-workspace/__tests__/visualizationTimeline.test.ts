@@ -57,6 +57,16 @@ it("loads saved visual replies when bounded history omitted their metadata", () 
   expect(visualizationReplyParts({ ...truncated, metadata: { partial: true } })[0].type).toBe("text");
 });
 
+it("requests a saved snapshot for native replies with a declaration but no preview metadata", () => {
+  const old = { ...message, metadata: { engine: "rust" } };
+  expect(visualizationReplyParts(old)[0]).toMatchObject({
+    type: "visualization", reference: { historyMessage: old },
+  });
+  expect(visualizationReplyParts(old, { loadMissing: false })[0].type).toBe("text");
+  expect(visualizationReplyParts({ ...old, metadata: { partial: true } })[0].type).toBe("text");
+  expect(visualizationReplyParts({ ...old, content: `\`\`\`text\n${content}\n\`\`\`` })[0].type).toBe("text");
+});
+
 it("keeps text → preview → text together outside a folded work log, without duplicate cards", () => {
   const entries = buildConversationTimeline(
     [],

@@ -50,7 +50,9 @@ it("keeps an elapsed countdown nonnegative and clears the timer on unmount", () 
 
 it("supports English status and exhausted retries", () => {
   useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: "en" } }));
-  render(<RetryIndicator retry={{ ...retry, reason: "upstream", phase: "exhausted", attempt: 10 }} />);
+  render(<RetryIndicator retry={{ ...retry, reason: "upstream", phase: "exhausted", attempt: 10, nextRetryAt: Date.now() + 1000 }} />);
   expect(screen.getByRole("status")).toHaveTextContent("Upstream service unavailable");
   expect(screen.getByText("Failed after 10 retries")).toBeVisible();
+  expect(screen.getByTestId("retry-indicator")).toHaveAttribute("data-active", "false");
+  expect(vi.getTimerCount()).toBe(0);
 });

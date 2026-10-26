@@ -113,7 +113,7 @@ export function PlanHistoryPanel({
           {zh ? "加载版本…" : "Loading versions…"}
         </div>
       )}
-      {error && <p className="mt-2 text-[10px] text-danger">{error}</p>}
+      {error && <p data-error-toast="off" role="alert" className="mt-2 text-[10px] text-danger">{error}</p>}
       {plans && !loading && (
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap gap-1.5" role="list" aria-label={zh ? "计划版本" : "Plan versions"}>

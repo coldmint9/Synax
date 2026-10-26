@@ -4,6 +4,24 @@ import { hydrateHistoryValues, readHistoryList, readSessionList, sessionPages } 
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
+it('shares the two-object transfer budget across simultaneous history readers', async () => {
+  const active = new Set<string>();
+  let peak = 0;
+  const command = vi.fn(async (input: { payload: { objectId: string; offset: number } }) => {
+    const { objectId, offset } = input.payload;
+    active.add(objectId); peak = Math.max(peak, active.size);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    if (!offset) return encode({ text: '{"id":', next: 6 });
+    active.delete(objectId);
+    return encode({ text: JSON.stringify(objectId) + '}', next: null });
+  });
+  const client = { historyCommand: command, historyCommandGlobal: command } as unknown as RuntimeSidecarClient;
+  const results = await Promise.all(Array.from({ length: 6 }, (_, index) =>
+    hydrateHistoryValues(client, 'same-session', [{ $historyObject: `object-${index}` }], index % 2 === 0)));
+  expect(peak).toBe(2);
+  expect(results.flat()).toEqual(Array.from({ length: 6 }, (_, index) => ({ id: `object-${index}` })));
+});
+
 it('waits asynchronously for the session index without treating partial discovery as an empty list', async () => {
   const sessionList = vi.fn()
     .mockResolvedValueOnce(encode({ items: [], loading: true }))

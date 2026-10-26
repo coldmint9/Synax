@@ -6,6 +6,17 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 const snapshot = { session: { id: 's', status: 'completed' }, run: null, cursor: 1400, liveChunks: [], completedStepIds: ['step'] };
 const remote = (overrides: object) => overrides as unknown as RuntimeSidecarClient;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+it('does not reconcile a conflicting fork request against a different committed receipt', async () => {
+  const conflict = new RuntimeSidecarError({ type: 'error', code: 'REQUEST_CONFLICT', message: 'changed input' });
+  const client = remote({ historyCommandGlobal: vi.fn(async () => encode({ copied: 1 })) });
+  const facade = new RuntimeFacade(() => client);
+  vi.spyOn(facade, 'historyCommandGlobal').mockResolvedValue({ copied: 1 });
+  vi.spyOn(facade, 'historyCommand').mockRejectedValue(conflict);
+  const status = vi.spyOn(facade, 'forkCopyResult');
+  const release = vi.spyOn(facade, 'releaseForkAssets');
+  await expect(facade.cloneHistoryAuthoritative({ sourceSessionId: 's', targetSessionId: 'copy', checkpointId: 'p', revision: 1, requestId: 'request' })).rejects.toBe(conflict);
+  expect(status).not.toHaveBeenCalled(); expect(release).not.toHaveBeenCalled();
+});
 it('reads a persisted projection without touching legacy session storage', async () => {
   const read = vi.spyOn(agentRuntimeStore, 'getSession').mockImplementation(() => { throw new Error('unexpected SQL read'); });
   const client = remote({ uiSnapshot: vi.fn(async () => encode(snapshot)), seedUi: vi.fn() });
@@ -243,8 +254,24 @@ it('returns one history page and forwards opaque incremental cursors without hyd
   const since = Buffer.from(JSON.stringify(rawCursor)).toString('base64url');
   const result = await facade.historyWindowAuthoritative('s', undefined, since);
   expect(historyCommand).toHaveBeenCalledOnce();
-  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor} }));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation:'history_sync', payload:{cursor:undefined, since:rawCursor, transcript:true, limit:100} }));
   expect(all).not.toHaveBeenCalled();
   expect(result.historyWindow.syncCursor).toBe(since);
   expect(result.messages).toEqual([{id:'m',content:'new'}]);
+});
+
+it('requests a 100-message tail and resumes client eviction boundaries within the runtime generation', async () => {
+  const historyCommand = vi.fn(async () => encode({
+    messages: [], runs: [], steps: [], toolCalls: [], events: [], permissions: [], removed: [],
+    historyWindow: { revision: 2, epoch: 1, generation: 1, incremental: false },
+  }));
+  const facade = new RuntimeFacade(() => remote({ historyCommand }));
+  const before = { generation: 1, rows: { messages: 'm100', steps: 'step80' } };
+  const result = await facade.historyWindowAuthoritative('s', undefined, undefined, false, JSON.stringify(before));
+  expect(historyCommand).toHaveBeenCalledWith(expect.objectContaining({ operation: 'history_sync',
+    payload: { cursor: undefined, since: undefined, transcript: true, limit: 100, before },
+  }));
+  expect(result.historyWindow.messageLimit).toBe(100);
+  await expect(facade.historyWindowAuthoritative('s', undefined, undefined, false, '{')).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
+  expect(historyCommand).toHaveBeenCalledTimes(1);
 });

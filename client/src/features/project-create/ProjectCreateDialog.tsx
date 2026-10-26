@@ -71,6 +71,7 @@ function ProjectCreateForm({
   const [distribution, setDistribution] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const active = useRef(true);
@@ -116,19 +117,29 @@ function ProjectCreateForm({
     active.current = false;
     onClose();
   };
-  const addSelections = (selections: Selection[]) => {
+  const addSelections = async (selections: Selection[]) => {
     if (!active.current || locked.current) return;
+    setNotice("");
+    let resolved;
+    try {
+      resolved = await Promise.all(selections.map(selection => projectApi.resolveWorkspacePath(
+        locationKind === "wsl" ? { kind: "wsl", distribution, path: selection.path } : { kind: "host", path: selection.path },
+      )));
+    } catch (cause) {
+      if (active.current) setError(cause instanceof Error ? cause.message : c.unknownError);
+      return;
+    }
+    if (!active.current) return;
+    const redirected = resolved.filter(item => item.redirected);
+    if (redirected.length) setNotice(redirected.map(item => `${c.worktreeRedirected}${item.location.path}`).join("\n"));
     const current = membersRef.current;
     const keys = new Set(current.map(memberKey));
     const additions: Member[] = [];
     let duplicate = false;
-    for (const selection of selections) {
+    for (const selection of resolved) {
       const member: Member = {
         name: selection.name,
-        location:
-          locationKind === "wsl"
-            ? { kind: "wsl", distribution, path: selection.path }
-            : { kind: "host", path: selection.path },
+        location: selection.location,
       };
       const key = memberKey(member);
       if (keys.has(key)) {
@@ -168,8 +179,8 @@ function ProjectCreateForm({
       return;
     }
     try {
-      const selection = await openDirectoryPicker();
-      if (active.current && selection) addSelections([selection]);
+      const selections = await openDirectoryPicker({ multiple: true });
+      if (active.current && selections.length) await addSelections(selections);
     } catch (cause) {
       if (active.current)
         setError(
@@ -327,6 +338,7 @@ function ProjectCreateForm({
                         return (
                           <WorkspaceProjectRow
                             key={key}
+                            projectId={key}
                             name={member.name}
                             path={memberPath(member)}
                             primary={primary}
@@ -385,6 +397,7 @@ function ProjectCreateForm({
                     <p className="project-create-hint">{c.primaryHint}</p>
                   )}
                 </section>
+                {notice && <p className="project-create-hint" role="status">{notice}</p>}
                 {error && (
                   <p className="project-create-error" role="alert">
                     <AlertCircle size={16} aria-hidden="true" />
@@ -421,12 +434,10 @@ function ProjectCreateForm({
             distribution={locationKind === "wsl" ? distribution : undefined}
             onClose={finishPicker}
             onSelect={(selection) => {
-              addSelections([selection]);
-              finishPicker();
+              void addSelections([selection]).finally(finishPicker);
             }}
             onSelectMultiple={(selections) => {
-              addSelections(selections);
-              finishPicker();
+              void addSelections(selections).finally(finishPicker);
             }}
             labels={{ title: c.pickerTitle, confirmMultiple: c.pickerConfirm }}
           />

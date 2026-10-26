@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { SessionHistoryProvider,useSessionHistory } from '../SessionHistoryContext';
 import { MessageActionToolbar } from '../MessageActionToolbar';
 import { TurnBody } from '../TurnBody';
-import userEvent from '@testing-library/user-event';
 import { UserMessageBlock } from '../UserMessageBlock';
 import { conversationHistoryApi } from '../../../adapters/transport/conversationHistory';
 import { useShellStore } from '../../../shared/state/shellStore';
@@ -12,15 +11,16 @@ import { useAgentSessionStore } from '../state/agentSessionStore';
 import type { AgentRuntimeMessage, AgentSession } from '../../../adapters/transport/agentRuntime';
 vi.mock('../useConversationHistoryVisit',()=>({useConversationHistoryVisit:vi.fn()}));
 vi.mock('../../../adapters/transport/runtimeEventBus',()=>({subscribe:()=>()=>{}}));
-vi.mock('../../../adapters/transport/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn()}}));
+vi.mock('../../../adapters/transport/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn(),edit:vi.fn()}}));
 const cp={id:'cp',kind:'reply' as const,messageId:'msg',stepId:null,available:true,reason:null,hasLaterHistory:true,initialInput:false};
 const session={id:'s',status:'completed',sessionMetadata:{backend:{id:'native'}}} as unknown as AgentSession;
-function Trigger({action='rollback'}: {action?: 'rollback' | 'edit' | 'fork'}){const history=useSessionHistory();return action==='fork' ? <MessageActionToolbar role="assistant" text="Reply" busy={history?.busy} onFork={mode=>void history?.request('fork',cp,undefined,mode)}/> : <button onClick={()=>void history?.request(action,cp,'Edited')}>Open</button>;}
+function Trigger({action='rollback'}: {action?: 'rollback' | 'edit' | 'fork'}){const history=useSessionHistory();return action==='fork' ? <MessageActionToolbar role="assistant" text="Reply" busy={history?.busy} onFork={mode=>void history?.request('fork',cp,undefined,mode)}/> : <button onClick={()=>void (action === 'edit' ? history?.edit('msg','Edited') : history?.request(action,cp,'Edited'))}>Open</button>;}
 beforeEach(()=>{
  vi.clearAllMocks();useShellStore.setState(s=>({preferences:{...s.preferences,locale:'zh'}}));
  vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[cp]});
- vi.mocked(conversationHistoryApi.preview).mockImplementation(async(_session,_checkpoint,_action,files=true)=>({checkpointId:'cp',revision:0,removedMessages:2,files:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'committed.ts',kind:'committed',reason:'Committed'}],conflicts:files?[{root:'/project',path:'manual.ts',reason:'Human edit'}]:[],canApply:!files}));
+ vi.mocked(conversationHistoryApi.preview).mockImplementation(async(_session,_checkpoint,_action,mode='session')=>({checkpointId:'cp',revision:0,removedMessages:2,files:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'committed.ts',kind:'committed',reason:'Committed'}],conflicts:mode === 'session_and_workspace'?[{root:'/project',path:'manual.ts',reason:'Human edit'}]:[],canApply:mode !== 'session_and_workspace'}));
  vi.mocked(conversationHistoryApi.apply).mockResolvedValue({sessionId:'s',revision:1});
+ vi.mocked(conversationHistoryApi.edit).mockResolvedValue({sessionId:'s',revision:1});
  vi.spyOn(useAgentSessionStore.getState(),'cancelSessionRun').mockResolvedValue();
  vi.spyOn(useAgentSessionStore.getState(),'openPanel').mockImplementation(()=>{});
  vi.spyOn(useAgentSessionStore.getState(),'resetConversationHistory').mockImplementation(()=>{});
@@ -28,79 +28,91 @@ beforeEach(()=>{
 });
 afterEach(()=>vi.restoreAllMocks());
 describe('history impact confirmation',()=>{
+ it('keeps compressed input readable but disables editing and rejects resubmission',async()=>{
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:4,reason:null,
+     checkpoints:[{...cp,kind:'input',available:false,canRollback:false,reason:'READ_ONLY_HISTORY: compacted'}]});
+   render(<SessionHistoryProvider session={session} messages={[{id:'msg',role:'user',metadata:{}} as AgentRuntimeMessage]}>
+     <UserMessageBlock messageId="msg" content="Original user requirement"/>
+   </SessionHistoryProvider>);
+   await waitFor(()=>expect(screen.getByRole('button',{name:'编辑消息'})).toHaveAttribute('aria-disabled','true'));
+   fireEvent.click(screen.getByRole('button',{name:'编辑消息'}));
+   expect(screen.getByText('Original user requirement')).toBeInTheDocument();
+   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+   expect(conversationHistoryApi.edit).not.toHaveBeenCalled();
+ });
  function Reply(){return <TurnBody entryId="reply" turn={{stepId:'step',index:0,status:'completed',duration:null,completedAt:null,blocks:[{type:'text',content:'Reply',messageId:'msg'}]}}/>;}
  it('does not invent fork-only checkpoints when an ordinary session has no saved boundaries',async()=>{
    vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,rollbackEnabled:false,reason:null,checkpoints:[]});
    const messages=[{id:'msg',role:'assistant',stepId:'step',metadata:{}}] as AgentRuntimeMessage[];
    render(<SessionHistoryProvider session={session} messages={messages}><Reply/></SessionHistoryProvider>);
    await waitFor(()=>expect(conversationHistoryApi.list).toHaveBeenCalled());
-   const rollback=screen.getByRole('button',{name:'回滚到此处'});
-   expect(rollback).toHaveAttribute('aria-disabled','true');
-   expect(screen.getByRole('button',{name:'从此处分叉'})).toBeDisabled();
-   await userEvent.hover(rollback);
-   expect(await screen.findByRole('tooltip')).toHaveTextContent('此消息没有可用的会话检查点');
+   expect(screen.queryByRole('button',{name:'回滚到此处'})).not.toBeInTheDocument();
+   expect(screen.queryByRole('button',{name:'从此处分叉'})).not.toBeInTheDocument();
    expect(screen.queryByText(/分叉会话不支持回滚/)).not.toBeInTheDocument();
-   fireEvent.click(rollback);
    expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
  });
  it('allows a saved checkpoint in a fork to reach the rollback preview',async()=>{
    const forked={...session,sessionMetadata:{...session.sessionMetadata,forkedFromSessionId:'source'}};
    render(<SessionHistoryProvider session={forked} messages={[]}><Reply/></SessionHistoryProvider>);
-   const rollback=screen.getByRole('button',{name:'回滚到此处'});
+   const rollback=await screen.findByRole('button',{name:'回滚到此处'});
    await waitFor(()=>expect(rollback).not.toHaveAttribute('aria-disabled','true'));
    fireEvent.click(rollback);
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',true));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
  });
- it('preserves the actual reason when a stored checkpoint cannot roll back',async()=>{
+ it('hides history actions when a stored checkpoint is unavailable',async()=>{
    vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[{...cp,canRollback:false,reason:'检查点暂不可用'}]});
    render(<SessionHistoryProvider session={session} messages={[]}><Reply/></SessionHistoryProvider>);
    await waitFor(()=>expect(conversationHistoryApi.list).toHaveBeenCalled());
-   await userEvent.hover(screen.getByRole('button',{name:'回滚到此处'}));
-   expect(await screen.findByRole('tooltip')).toHaveTextContent('检查点暂不可用');
+   expect(screen.queryByRole('button',{name:'回滚到此处'})).not.toBeInTheDocument();
+   expect(screen.queryByRole('button',{name:'从此处分叉'})).not.toBeInTheDocument();
  });
  it('confirms irreversible trimming without exposing file restoration',async()=>{
    function Trim(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,destructive:true})}>Trim</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><Trim/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Trim'}));
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
-   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
+   expect(screen.queryByRole('radio')).not.toBeInTheDocument();
    expect(screen.getByText(/后续消息和执行记录将被永久删除/)).toBeInTheDocument();
    fireEvent.click(screen.getByRole('button',{name:'永久截取到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('shows committed-file preservation and allows conversation-only trimming through a conflict',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   expect(await screen.findByText('另有 1 项变更不在回滚范围，将保留。')).toBeInTheDocument();
-   expect(screen.getByRole('button',{name:'回滚到此处'})).toBeDisabled();
-   fireEvent.click(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'}));
+   expect(await screen.findByText('仅裁剪会话历史，已有工作目录中的文件保持不变。')).toBeInTheDocument();
+   expect(screen.queryByText(/变更不在回滚范围/)).not.toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
+   fireEvent.click(await screen.findByRole('radio',{name:'会话记录 + 工作区'}));
+   expect(screen.getByTestId('workspace-overwrite-warning')).toBeInTheDocument();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenLastCalledWith('s','cp','rollback','session_and_workspace'));
+   await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).toBeDisabled());
+   fireEvent.click(screen.getByRole('radio',{name:'仅会话记录'}));
    await waitFor(()=>expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled());
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('restricts reconstructed checkpoints to conversation-only rollback',async()=>{
    function Reconstructed(){const history=useSessionHistory();return <button onClick={()=>void history?.request('rollback',{...cp,transcriptOnly:true})}>Restore imported</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><Reconstructed/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Restore imported'}));
-   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback',false));
-   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).toBeDisabled();
-   expect(screen.getByRole('checkbox',{name:'同时撤销本会话记录的未提交文件变更'})).not.toBeChecked();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','rollback','session'));
+   expect(screen.getByRole('radio',{name:'会话记录 + 工作区'})).toBeDisabled();
+   expect(screen.getByRole('radio',{name:'仅会话记录'})).toBeChecked();
    expect(screen.getByText(/此边界由旧消息补建/)).toBeInTheDocument();
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.objectContaining({mode:'session'})));
  });
  it('submits edits without opening a confirmation modal',async()=>{
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','edit',expect.objectContaining({includeFiles:false})));
+   await waitFor(()=>expect(conversationHistoryApi.edit).toHaveBeenCalledWith('s',expect.objectContaining({messageId:'msg',message:'Edited'})));
    expect(screen.queryByText('编辑并重新发送')).not.toBeInTheDocument();
  });
  it('flags expired file history as out of scope without spelling out the rule',async()=>{
    vi.mocked(conversationHistoryApi.preview).mockResolvedValue({checkpointId:'cp',revision:0,removedMessages:2,files:[],conflicts:[],exclusions:'',warnings:[],preservedFiles:[{root:'/project',path:'expired.ts',kind:'expired',reason:'Expired'}],canApply:true});
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger/></SessionHistoryProvider>);fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   const hint=await screen.findByText('另有 1 项变更不在回滚范围，将保留。');
-   expect(hint).toHaveAttribute('title','expired.ts · 超过 24 小时未访问，撤销记录已清理');
-   expect(screen.getByRole('button',{name:'回滚到此处'})).not.toBeDisabled();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalled());
+   expect(screen.queryByText('另有 1 项变更不在回滚范围，将保留。')).not.toBeInTheDocument();
  });
  it.each([['reuse_worktree', '在原工作空间中'], ['new_worktree', '在新的工作树上']] as const)('executes %s directly from the two-option pop', async (mode, label) => {
    render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
@@ -144,7 +156,7 @@ describe('history impact confirmation',()=>{
    function DoubleTrigger(){const h=useSessionHistory();return <button onClick={()=>{void h?.request('fork',cp,undefined,'new_worktree');void h?.request('fork',cp,undefined,'reuse_worktree');}}>Double</button>;}
    render(<SessionHistoryProvider session={session} messages={[]}><DoubleTrigger/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Double'}));
-   expect(conversationHistoryApi.preview).toHaveBeenCalledOnce();
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledOnce());
    await act(async()=>{resolve({checkpointId:'cp',revision:0,removedMessages:0,files:[],conflicts:[],exclusions:'',canApply:true});});
    expect(conversationHistoryApi.apply).toHaveBeenCalledOnce();
  });
@@ -167,7 +179,7 @@ describe('history impact confirmation',()=>{
    fireEvent.change(screen.getByRole('textbox',{name:'编辑已发送消息'}),{target:{value:'Updated'}});
    fireEvent.click(screen.getByRole('button',{name:'发送'}));
    await waitFor(()=>expect(stop).toHaveBeenCalledWith('s'));
-   await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','edit',expect.objectContaining({message:'Updated'})));
+   await waitFor(()=>expect(conversationHistoryApi.edit).toHaveBeenCalledWith('s',expect.objectContaining({messageId:'msg',message:'Updated'})));
  });
  it('stops a running session before rollback preview, then applies only after confirmation', async () => {
    const running={...session,status:'running' as const};
@@ -190,7 +202,7 @@ describe('history impact confirmation',()=>{
    fireEvent.click(screen.getByRole('button',{name:'回滚到此处'}));
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','rollback',expect.anything()));
  });
- it('stops a running session before previewing and sending an edit', async () => {
+ it('stops a running session before sending an edit without a checkpoint preview', async () => {
    const running={...session,status:'running' as const};
    const calls:string[]=[];
    vi.spyOn(useAgentSessionStore.getState(),'cancelSessionRun').mockImplementation(async()=>{calls.push('stop');});
@@ -199,14 +211,14 @@ describe('history impact confirmation',()=>{
      return {checkpointId:'cp',revision:0,removedMessages:1,files:[],conflicts:[],
        exclusions:'',canApply:true};
    });
-   vi.mocked(conversationHistoryApi.apply).mockImplementation(async()=>{
+   vi.mocked(conversationHistoryApi.edit).mockImplementation(async()=>{
      calls.push('apply');
      return {sessionId:'s',revision:1};
    });
    render(<SessionHistoryProvider session={running} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
    expect(calls).toEqual([]);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
-   await waitFor(()=>expect(calls).toEqual(['stop','preview','apply']));
+   await waitFor(()=>expect(calls).toEqual(['stop','apply']));
  });
  it('allows forking a running source without stopping it', async () => {
    const running={...session,status:'running' as const};
@@ -237,8 +249,46 @@ it('blocks edit/resend for an append-only fork before requesting any history mut
    render(<SessionHistoryProvider session={forked} messages={[]}><Trigger action="edit"/></SessionHistoryProvider>);
    fireEvent.click(screen.getByRole('button',{name:'Open'}));
    expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
-   expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
+   expect(conversationHistoryApi.edit).not.toHaveBeenCalled();
    expect(screen.getByRole('note')).toHaveTextContent('只追加历史');
+});
+it('edits a persisted message when there are no checkpoints and checkpoint loading fails', async () => {
+  vi.mocked(conversationHistoryApi.list).mockRejectedValue(new Error('Checkpoint service unavailable'));
+  render(<SessionHistoryProvider session={session} messages={[]}><UserMessageBlock messageId="msg" content="Original"/></SessionHistoryProvider>);
+  const edit = screen.getByRole('button', {name:'编辑消息'});
+  expect(edit).not.toHaveAttribute('aria-disabled','true');
+  fireEvent.click(edit);
+  fireEvent.change(screen.getByRole('textbox'),{target:{value:'Updated'}});
+  fireEvent.click(screen.getByRole('button',{name:'发送'}));
+  await waitFor(()=>expect(conversationHistoryApi.edit).toHaveBeenCalledWith('s',expect.objectContaining({messageId:'msg',message:'Updated'})));
+  expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
+  expect(conversationHistoryApi.apply).not.toHaveBeenCalled();
+});
+it('shows send errors, retains the draft, and retries with the same request identity', async () => {
+  vi.mocked(conversationHistoryApi.edit).mockRejectedValueOnce(new Error('Network unavailable'));
+  render(<SessionHistoryProvider session={session} messages={[]}><UserMessageBlock messageId="msg" content="Original"/></SessionHistoryProvider>);
+  fireEvent.click(screen.getByRole('button',{name:'编辑消息'}));
+  fireEvent.change(screen.getByRole('textbox'),{target:{value:'Updated'}});
+  fireEvent.click(screen.getByRole('button',{name:'发送'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Network unavailable');
+  expect(screen.getByRole('textbox')).toHaveValue('Updated');
+  fireEvent.click(screen.getByRole('button',{name:'发送'}));
+  await waitFor(()=>expect(screen.queryByRole('textbox')).not.toBeInTheDocument());
+  expect(vi.mocked(conversationHistoryApi.edit).mock.calls[0]).toEqual(vi.mocked(conversationHistoryApi.edit).mock.calls[1]);
+});
+it('blocks truncated message previews even without checkpoints', () => {
+  const messages=[{id:'msg',role:'user',historyProjection:{truncated:true}}] as unknown as AgentRuntimeMessage[];
+  render(<SessionHistoryProvider session={session} messages={messages}><UserMessageBlock messageId="msg" content="Preview"/></SessionHistoryProvider>);
+  expect(screen.getByRole('button',{name:'编辑消息'})).toHaveAttribute('aria-disabled','true');
+});
+it('guards duplicate edit submissions before a render occurs', async () => {
+  let resolve!: (value: {sessionId:string;revision:number}) => void;
+  vi.mocked(conversationHistoryApi.edit).mockImplementationOnce(()=>new Promise(r=>{resolve=r;}));
+  function Double(){const h=useSessionHistory();return <button onClick={()=>{void h?.edit('msg','Updated');void h?.edit('msg','Updated');}}>Double edit</button>;}
+  render(<SessionHistoryProvider session={session} messages={[]}><Double/></SessionHistoryProvider>);
+  fireEvent.click(screen.getByRole('button',{name:'Double edit'}));
+  expect(conversationHistoryApi.edit).toHaveBeenCalledOnce();
+  await act(async()=>{resolve({sessionId:'s',revision:1});});
 });
 describe('checkpoint request scheduling',()=>{
   function Boundary({session}: {session: AgentSession}){

@@ -2,6 +2,8 @@ import type { AgentRun, AgentRunStep, AgentRuntimeMessage, AgentSession, Permiss
 import type { LlmRetryState, SessionLiveEvent } from './sessionLive'
 
 export interface RuntimeChunk {
+  firstTokenTiming?: import("../../../../packages/runtime-protocol/first-token-timing").FirstTokenTiming;
+  realtimeSequence?: number;
   execution?: import("./agentRuntime").ToolExecutionProgress;
   type: string
   run?: AgentRun

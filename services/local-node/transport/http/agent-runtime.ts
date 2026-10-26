@@ -1,10 +1,14 @@
 import type { Context } from "hono";
+import { getRunRealtimeChannel } from "../../modules/agent-runtime/run-realtime-channel.js";
+import { singleForkRequest } from "../../modules/agent-runtime/fork-request.js";
+import { forkSessionTitle } from "../../modules/agent-runtime/session-title-service.js";
 import { Hono } from "hono";
 import { matchedRoutes } from 'hono/route';
 import { createConversationGitRoutes } from './conversation-git.js';
 import { createRemotePrRoutes } from './remote-pr.js';
 import { streamSSE } from "hono/streaming";
-import { createHash } from "node:crypto";
+import { BoundedEventWriter } from '../../modules/realtime/bounded-event-writer.js';
+import { createHash, randomUUID } from "node:crypto";
 import * as z from "zod/v4";
 import { assertLlmProviderConfigured } from "../../infrastructure/llm-runtime/provider-check.js";
 import {
@@ -20,6 +24,7 @@ import {
 } from "../../modules/agent-runtime/agent-stream-proxy.js";
 import {
   resolveSessionBackend,
+  readBackendBinding,
   validateBackendTurnInput,
 } from "../../modules/agent-runtime/backends/backend-binding.js";
 import { backendIdSchema } from "../../modules/agent-runtime/backends/backend-contracts.js";
@@ -144,8 +149,9 @@ import {
   resolveRegisteredProjectWorkDir,
 } from "../../modules/agent-runtime/tools/workspace.js";
 import { listTurnReferenceOptions } from "../../modules/agent-runtime/turn-references.js";
-import { hydrateCompletedVisualizations } from "../../modules/agent-runtime/visualization-integration.js";
+import { loadHistoricalVisualization } from "../../modules/agent-runtime/visualization-history.js";
 import { workRuntime } from "../../modules/agent-runtime/work-runtime.js";
+import { bindSessionWorktree } from '../../modules/agent-runtime/session-worktree-binding.js';
 import { workflowMode } from "../../modules/agent-runtime/workflow-mode.js";
 import {
   GitWorkspaceError,
@@ -168,7 +174,7 @@ import {
   readWorkspaceProject,
   workspaceRootLocation,
 } from "../../modules/project-workspace.js";
-import { workspaceLocationHostPath } from "../../modules/workspace-location.js";
+import { workspaceLocationHostPath, type WorkspaceLocation } from "../../modules/workspace-location.js";
 import { ensureSessionRecovered } from '../../modules/agent-runtime/session-recovery.js';
 import { subagentTemplateRoutes } from "./subagent-templates.js";
 export const agentRuntimeRoutes = new Hono();
@@ -184,13 +190,35 @@ agentRuntimeRoutes.use('*', async (c, next) => {
   try {
     // History queries already read the authoritative Rust index. Hydrating the
     // execution working set here would drain every history page before paging.
-    const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+    const historyRead = (c.req.method === 'GET' || c.req.method === 'POST' && c.req.path.endsWith('/checkpoints')) && /\/(summary|history-window|history-timeline|checkpoints|snapshot|stream)$|\/messages\/[^/]+\/content$/.test(c.req.path);
     if (historyRead) { await next(); return; }
+    // Permanent deletion owns its hydration: retries must also reach archived
+    // or already removed roots to finish any interrupted cleanup.
+    if (c.req.method === 'POST' && c.req.path.endsWith('/delete-permanently')) { await next(); return; }
     if (id && !['search', 'badges'].includes(id)) {
       await ensureSessionRecovered(id);
-      await agentRuntimeStore.hydrateSessionSummary(id);
-      if (c.req.method !== 'GET' && !c.req.path.endsWith('/runtime-ticket')) await agentRuntimeStore.hydrateSession(id);
-      if (/\/(cancel|archive)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
+      // Metadata-only mutations (pin / mode / permission rules) never read the
+      // transcript, so they must not pay for a full history load. Everything
+      // else loads the working set before it runs, and that load already
+      // refreshes the summary, so the separate summary read is only needed
+      // when the working set is skipped.
+      const metadataOnly =
+        (c.req.method === 'PATCH' && /\/(title|pin|mode|permissions)$/.test(c.req.path)) ||
+        (c.req.method === 'POST' && c.req.path.endsWith('/fork'));
+      const loadsWorkingSet =
+        c.req.method !== 'GET' &&
+        !metadataOnly &&
+        !c.req.path.endsWith('/runtime-ticket');
+      if (!loadsWorkingSet) await agentRuntimeStore.hydrateSessionSummary(id);
+      if (loadsWorkingSet) {
+        // Run admission validates current work, permissions and interactions.
+        // Do not hydrate sealed history first only to evict it again in the
+        // admission/worker execution projection.
+        if (c.req.method === 'POST' && c.req.path.endsWith('/runs'))
+          await agentRuntimeStore.hydrateExecutionSession(id);
+        else await agentRuntimeStore.hydrateSession(id);
+      }
+      if (/\/(cancel|archive|delete-permanently)$/.test(c.req.path) || c.req.method === 'DELETE') await agentRuntimeStore.hydrateSessions();
     } else if (c.req.method !== 'GET' && /\/(sessions(?:\/(search|badges|archive-inactive|clear-inactive))?|session-archives(?:\/[^/]+(?:\/restore)?)?)$/.test(c.req.path) && !(c.req.method === 'POST' && /\/sessions$/.test(c.req.path))) {
       // Collection reads use the authoritative summary index directly. Loading
       // the execution mirror first would walk the same index a second time.
@@ -255,7 +283,7 @@ agentRuntimeRoutes.get("/sessions/search", async (c) => {
             session.projectId === projectId &&
             !session.parentSessionId &&
             !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt,
+            !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
         );
       const lowered = q.toLocaleLowerCase();
       const matches = (
@@ -336,7 +364,7 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
             (session) =>
               selected.has(session.projectId) &&
               !session.sessionMetadata?.archivedAt &&
-              !session.sessionMetadata?.deletedAt,
+              !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
           )
           .map((session) => ({
             id: session.id,
@@ -361,11 +389,12 @@ agentRuntimeRoutes.post(
 );
 for (const route of ["/sessions/:sessionId", "/sessions/:sessionId/*"]) {
   agentRuntimeRoutes.use(route, async (c, next) => {
+    if (c.req.method === 'POST' && c.req.path.endsWith('/delete-permanently')) return next();
     const id = c.req.param("sessionId");
     if (id) {
       {
         try {
-          const historyRead = c.req.method === 'GET' && /\/(summary|history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
+          const historyRead = (c.req.method === 'GET' || c.req.method === 'POST' && c.req.path.endsWith('/checkpoints')) && /\/(summary|history-window|history-timeline|checkpoints)$|\/messages\/[^/]+\/content$/.test(c.req.path);
           const projected = projectSessionState(
             (historyRead ? await runtimeFacade.sessionSummaryAuthoritative(id) :
               (await runtimeFacade.uiSnapshotAuthoritative(id)).session) as never,
@@ -841,6 +870,7 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
       assertLlmProviderConfigured(parsed.data.projectId);
     }
     let createInput = parsed.data;
+    let referenceSelection: { rootId: string; location: WorkspaceLocation } | undefined;
     if (parsed.data.gitWorkspace) {
       const selected = await resolveGitWorkspaceSelection(
         projectLocation ??
@@ -848,17 +878,22 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
         gitScope,
         parsed.data.gitWorkspace,
       );
+      const referenceRootId = parsed.data.gitWorkspace.rootId;
+      if (referenceRootId && referenceRootId !== parsed.data.projectId)
+        referenceSelection = { rootId: referenceRootId, location: selected.location ?? { kind: 'host', path: selected.workDir } };
+      const executionLocation = referenceSelection ? resolveProjectWorkspaceLocation(parsed.data.projectId) : selected.location;
       createInput = {
         ...parsed.data,
-        workDir: selected.location
-          ? workspaceLocationHostPath(selected.location)
+        workDir: executionLocation
+          ? workspaceLocationHostPath(executionLocation)
           : selected.workDir,
         sessionMetadata: {
           ...(parsed.data.sessionMetadata ?? {}),
-          ...(selected.location
-            ? { workspaceLocation: selected.location }
+          ...(executionLocation
+            ? { workspaceLocation: executionLocation }
             : {}),
           gitWorkspace: {
+            rootId: referenceRootId ?? parsed.data.projectId,
             kind: selected.kind,
             branch: selected.branch,
             path: selected.workDir,
@@ -867,6 +902,12 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
       };
     }
     const session = agentSessionRuntime.create(createInput);
+    if (referenceSelection) {
+      const backend = readBackendBinding(session);
+      agentRuntimeStore.updateSessionMetadata(session.id, { backend: {
+        ...backend, rootWorktrees: { [referenceSelection.rootId]: referenceSelection.location }, workspaceBindingRevision: 0,
+      } });
+    }
     if (parsed.data.mediaGeneration) {
       agentRuntimeStore.updateSession(session.id, {
         status: "completed",
@@ -893,10 +934,10 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     return runtimeError(c, error);
   }
 });
-agentRuntimeRoutes.post("/sessions/:id/context/compact", (c) => {
+agentRuntimeRoutes.post("/sessions/:id/context/compact", async (c) => {
   try {
     return c.json(
-      sessionProcessManager.beginContextCompaction(c.req.param("id")),
+      await sessionProcessManager.beginContextCompaction(c.req.param("id")),
       202,
     );
   } catch (error) {
@@ -916,7 +957,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
         .filter(
           (session) =>
             !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt,
+            !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
         )
         .filter(
           (session) =>
@@ -1097,6 +1138,23 @@ agentRuntimeRoutes.post("/session-archives/:batchId/restore", async (c) => {
     return runtimeError(c, error);
   }
 });
+async function permanentlyDeleteSessions(sessionIds: string[], parentId: string | null = null) {
+  for (const id of sessionIds) await agentRuntimeStore.flushSession(id);
+  if (parentId && !sessionIds.includes(parentId)) {
+    const parent = agentRuntimeStore.getSession(parentId);
+    await runtimeFacade.sessionPatch(parentId, `unlink-deleted:${randomUUID()}`, {
+      childSessionIds: parent.childSessionIds.filter((id) => !sessionIds.includes(id)),
+    });
+    await agentRuntimeStore.hydrateSessionSummary(parentId, true);
+    invalidateSessionEnvironment(parentId);
+  }
+  // Remove descendants first, keeping the root addressable if cleanup fails.
+  for (const id of [...sessionIds].reverse()) {
+    await runtimeFacade.purgeSessionAuthoritative(id);
+    agentRuntimeStore.forgetDeletedSessions([id]);
+    invalidateSessionEnvironment(id);
+  }
+}
 agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
   try {
     {
@@ -1110,17 +1168,7 @@ agentRuntimeRoutes.delete("/session-archives/:batchId", async (c) => {
         );
       if (!archived.some((session) => session.id === batchId))
         throw new AgentNotFoundError(batchId);
-      const deletedAt = new Date().toISOString();
-      await Promise.all(
-        archived.map((session) =>
-          runtimeFacade.sessionPatch(
-            session.id,
-            `archive-delete:${batchId}:${session.id}`,
-            { sessionMetadata: { deletedAt } },
-          ),
-        ),
-      );
-      for (const session of archived) invalidateSessionEnvironment(session.id);
+      await permanentlyDeleteSessions([batchId, ...archived.filter((session) => session.id !== batchId).map((session) => session.id)]);
       return c.json({
         ok: true,
         deletedSessionIds: archived.map((session) => session.id),
@@ -1217,6 +1265,30 @@ async function archiveSessionRoute(c: Context) {
 agentRuntimeRoutes.post("/sessions/:sessionId/archive", archiveSessionRoute);
 // Compatibility: old clients must archive, never physically delete.
 agentRuntimeRoutes.delete("/sessions/:sessionId", archiveSessionRoute);
+agentRuntimeRoutes.post("/sessions/:sessionId/delete-permanently", async (c) => {
+  try {
+    const id = c.req.param("sessionId");
+    let summary: AgentSession;
+    try { summary = await runtimeFacade.sessionSummaryAuthoritative(id); }
+    catch (error) {
+      if (!(error instanceof RuntimeSidecarError) || error.code !== "NOT_FOUND") throw error;
+      await runtimeFacade.purgeSessionAuthoritative(id);
+      agentRuntimeStore.forgetDeletedSessions([id]);
+      return c.json({ ok: true, deletedSessionIds: [id] });
+    }
+    await agentRuntimeStore.hydrateSessions();
+    if (summary.sessionMetadata?.archivedAt) {
+      const ids = ((await runtimeFacade.listSessionProjection()) as AgentSession[])
+        .filter((session) => session.id === id || session.sessionMetadata?.archiveBatchId === id).map((session) => session.id);
+      await permanentlyDeleteSessions([id, ...ids.filter((value) => value !== id)]);
+      return c.json({ ok: true, deletedSessionIds: ids });
+    }
+    await agentRuntimeStore.hydrateSession(id);
+    const result = await archiveSessionAfterShutdown(id);
+    await permanentlyDeleteSessions(result.archivedSessionIds, result.parentId);
+    return c.json({ ok: true, deletedSessionIds: result.archivedSessionIds });
+  } catch (error) { return runtimeError(c, error); }
+});
 async function archiveInactiveSessionsRoute(c: Context) {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -1279,7 +1351,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/history-window", async (c) => {
   try {
     const id = c.req.param("sessionId");
     return c.json(
-      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor"), c.req.query("since"), c.req.query("view") === "timeline"),
+      await runtimeFacade.historyWindowAuthoritative(id, c.req.query("cursor"), c.req.query("since"), c.req.query("view") === "timeline", c.req.query("before")),
     );
   } catch (error) {
     return runtimeError(c, error);
@@ -1306,28 +1378,9 @@ agentRuntimeRoutes.get(
     try {
       const sessionId = c.req.param("sessionId");
       {
-        const message = (
-          await runtimeFacade.listMessageHistory(sessionId)
-        ).find(
-          (item) =>
-            (
-              item as {
-                id?: unknown;
-              }
-            ).id === c.req.param("messageId"),
-        ) as AgentRuntimeMessage | undefined;
-        if (!message) return c.json({ error: "Message not found." }, 404);
-        if (message.role !== "assistant" || message.metadata?.partial)
-          return c.json({ message: null });
-        hydrateCompletedVisualizations([message]);
-        if (
-          message.metadata.source !== "inline_visualization" &&
-          !(
-            message.metadata.purpose === "work_result" &&
-            Array.isArray(message.metadata.visualizations)
-          )
-        )
-          return c.json({ message: null });
+        const message = await loadHistoricalVisualization(sessionId, c.req.param("messageId"));
+        if (message === undefined) return c.json({ error: "Message not found." }, 404);
+        if (message === null) return c.json({ message: null });
         if (Buffer.byteLength(JSON.stringify(message)) > 8 * 1024 * 1024)
           return c.json(
             { error: "Preview exceeds the response size limit." },
@@ -1482,6 +1535,7 @@ function observeRunResponse(
   sessionId: string,
   runId: string,
   after = 0,
+  realtime = false,
 ) {
   return streamSSE(c, async (stream) => {
     const observer = new AbortController();
@@ -1496,19 +1550,29 @@ function observeRunResponse(
           .catch(detach);
     }, AGENT_RUNTIME_HEARTBEAT_MS);
     try {
-      for await (const record of runCoordinator.observeRun(
+      const channel = realtime ? getRunRealtimeChannel(sessionId, runId) : undefined;
+      if (realtime && !channel) {
+        await stream.writeSSE({ event: "realtime_reset", data: JSON.stringify({ runId, reason: "Realtime replay unavailable; recover from the session snapshot." }) });
+        return;
+      }
+      const source = channel ? channel.subscribe(after, observer.signal) : runCoordinator.observeRun(
         sessionId,
         runId,
         after,
         observer.signal,
-      )) {
+      );
+      for await (const record of source) {
         await stream.writeSSE({
           id: String(record.sequence),
-          data: JSON.stringify(record.chunk),
+          data: JSON.stringify(realtime ? record : record.chunk),
         });
       }
       if (!observer.signal.aborted) await stream.writeSSE({ data: "[DONE]" });
     } catch (error) {
+      if (realtime && !observer.signal.aborted) {
+        await stream.writeSSE({ event: "realtime_reset", data: JSON.stringify({ runId, reason: String(error) }) });
+        return;
+      }
       if (!observer.signal.aborted) throw error;
     } finally {
       detach();
@@ -1539,7 +1603,11 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
   try {
     const sessionId = c.req.param("sessionId");
     const runId = c.req.param("runId");
-    {
+    const realtime = c.req.query("realtime") === "1";
+    // A channel exists only for a run admitted for this session. Avoid history
+    // hydration on its hot path; middleware still enforces session access.
+    const liveChannel = realtime && getRunRealtimeChannel(sessionId, runId);
+    if (!liveChannel) {
       const [snapshot, runs] = await Promise.all([
         runtimeFacade.uiSnapshotAuthoritative(sessionId),
         runtimeFacade.listRunHistory(sessionId),
@@ -1566,7 +1634,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/runs/:runId/stream", async (c) => {
       .min(0)
       .safeParse(c.req.query("after") ?? c.req.header("Last-Event-ID") ?? "0");
     if (!after.success) return validationError(c, after.error);
-    return observeRunResponse(c, sessionId, runId, after.data);
+    return observeRunResponse(c, sessionId, runId, after.data, realtime);
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1637,6 +1705,14 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
           .writeSSE({ event: SseEventType.Ping, data: String(Date.now()) })
           .catch(detach);
     }, AGENT_RUNTIME_HEARTBEAT_MS);
+    // Auxiliary domains have their own durable snapshots. Bound outstanding
+    // writes so a sleeping renderer cannot retain an unlimited promise chain.
+    const auxiliaryWriter = new BoundedEventWriter(event => stream.writeSSE(event), () => {
+      detach();
+      // Cancel the underlying writer too: otherwise a slow client's in-flight
+      // write can outlive the observer even after its queue has been released.
+      stream.abort();
+    });
     // Manual compaction has no run/journal chunk, but uses the same UI stream.
     const unsubscribeCompaction = sessionLiveBus.subscribe(
       sessionId,
@@ -1650,12 +1726,14 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
             "context_compaction_state",
             "media_job",
             "conversation_git_messages",
+            "conversation_git_state",
           ].includes(event.type)
         )
           return;
-        void stream
-          .writeSSE({ event: event.type, data: JSON.stringify(event) })
-          .catch(detach);
+        auxiliaryWriter.push({ event: event.type, data: JSON.stringify(event) },
+          event.type === 'conversation_git_state' && !event.files && !event.changedFileIds?.length && !event.changedFiles?.length
+            ? `${event.type}:${event.taskId}` : undefined,
+          event.type === 'conversation_git_state' ? event.eventSeq : undefined);
       },
     );
     try {
@@ -1690,6 +1768,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
     } finally {
       detach();
       unsubscribeCompaction();
+      auxiliaryWriter.dispose();
       clearInterval(heartbeat);
       c.req.raw.signal.removeEventListener("abort", detach);
     }
@@ -1905,6 +1984,16 @@ agentRuntimeRoutes.get("/projects/:projectId/git-changes", async (c) => {
     return runtimeError(c, error);
   }
 });
+agentRuntimeRoutes.post('/sessions/:sessionId/workspace/binding', async (c) => {
+  const parsed = z.object({ rootId: z.string().min(1), path: z.string().min(1), expectedPath: z.string().min(1) }).strict()
+    .safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'Invalid workspace binding.' }, 400);
+  try { return c.json(await bindSessionWorktree(c.req.param('sessionId'), parsed.data)); }
+  catch (error) {
+    if (error instanceof GitWorkspaceError) return c.json({ error: error.message }, error.status as 400 | 404 | 409 | 500 | 503);
+    return runtimeError(c, error);
+  }
+});
 agentRuntimeRoutes.get(
   "/sessions/:sessionId/environment/roots",
   async (c) => {
@@ -2044,6 +2133,7 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
       path: z.string().min(1),
       content: z.string(),
       rootId: z.string().min(1).optional(),
+      expectedWorkspacePath: z.string().min(1).max(4096).optional(),
     })
     .safeParse(body);
   if (!parsed.success) return c.json({ error: "Invalid file payload" }, 400);
@@ -2054,6 +2144,7 @@ agentRuntimeRoutes.put("/sessions/:sessionId/environment/file", async (c) => {
         parsed.data.path,
         parsed.data.content,
         parsed.data.rootId,
+        parsed.data.expectedWorkspacePath,
       ),
     );
   } catch (error) {
@@ -2237,6 +2328,7 @@ agentRuntimeRoutes.post(
 );
 const commitMessageStreamSchema = z.object({
   rootId: z.string().min(1).optional(),
+  branch: z.string().min(1).max(1024).optional(),
   includeUntracked: z.boolean().optional(),
   model: z.string().trim().min(1).max(256),
   locale: z.enum(["zh", "en"]).optional(),
@@ -2811,6 +2903,26 @@ agentRuntimeRoutes.post(
     }
   },
 );
+agentRuntimeRoutes.patch("/sessions/:sessionId/title", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({ title: z.string().trim().min(1).max(200) }).strict().safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const id = c.req.param("sessionId");
+    await agentRuntimeStore.hydrateSessionSummary(id, true);
+    const current = agentRuntimeStore.getSession(id);
+    // Publish the manual-title fence before yielding to an in-flight title
+    // generator. The store persists both changes in the same ordered queue.
+    agentRuntimeStore.updateSession(id, {
+      title: parsed.data.title,
+      sessionMetadata: { ...current.sessionMetadata, titleSource: "user", titleSummarized: true },
+    });
+    await agentRuntimeStore.flushSession(id);
+    const session = await runtimeFacade.sessionSummaryAuthoritative(id);
+    return c.json({ session: projectSessionSummary(projectSessionState(session as never)) });
+  } catch (error) { return runtimeError(c, error); }
+});
 agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
@@ -2827,7 +2939,9 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/pin", async (c) => {
         `session-pin:${id}:${parsed.data.pinned}`,
         { sessionMetadata: { pinned: parsed.data.pinned } },
       )) as AgentSession;
-      await agentRuntimeStore.hydrateSession(id, true);
+      // Only the summary changed; reloading the transcript would cost the whole
+      // history for a flag toggle.
+      await agentRuntimeStore.hydrateSessionSummary(id, true);
       return c.json({
         session: projectSessionSummary(projectSessionState(patched as never)),
       });
@@ -2887,7 +3001,9 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
           },
         },
       )) as AgentSession;
-      await agentRuntimeStore.hydrateSession(id, true);
+      // Mode switching only reshapes the work ledger; the transcript is untouched.
+      await agentRuntimeStore.hydrateSessionSummary(id, true);
+      await agentRuntimeStore.hydrateSession(id, true, { include: ["work", "plan"] });
       workRuntime.onModeChanged(id, previousMode);
       return c.json({ session: patched });
     }
@@ -2937,12 +3053,25 @@ const historyActionSchema = z.object({
   includeFiles: z.boolean().default(true),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
 });
+const truncateHistorySchema = z.object({
+  checkpointId: z.string().min(1).max(160),
+  revision: z.number().int().nonnegative(),
+  requestId: z.string().min(1).max(128),
+  mode: z.enum(["session", "session_and_workspace"]).default("session"),
+});
 const forkActionSchema = historyActionSchema.extend({
   includeFiles: z.literal(false).default(false),
   workspaceMode: z.enum(["new_worktree", "reuse_worktree"]),
 });
-agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
-  const encoded = c.req.query("messageIds");
+const fullForkActionSchema = forkActionSchema.omit({ checkpointId: true, revision: true }).strict()
+  .transform((input) => ({ ...input, checkpointId: undefined, revision: 0 }));
+agentRuntimeRoutes.on(["GET", "POST"], "/sessions/:sessionId/checkpoints", async (c) => {
+  let encoded = c.req.query("messageIds");
+  if (c.req.method === "POST") {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    encoded = JSON.stringify((body.data as { messageIds?: unknown })?.messageIds);
+  }
   let messageIds: string[] | undefined;
   if (encoded !== undefined) {
     let value: unknown;
@@ -2959,15 +3088,20 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
   try {
     {
       const sessionId = c.req.param("sessionId");
-      const [head, checkpoints, bounds, control] = await Promise.all([
+      const [head, checkpoints, bounds, control, readOnlyMessageIds] = await Promise.all([
         runtimeFacade.historyHeadAuthoritative(sessionId),
-        runtimeFacade.listHistoryCheckpoints(sessionId),
+        runtimeFacade.listHistoryCheckpoints(sessionId, messageIds),
         runtimeFacade.messageHistoryBoundsAuthoritative(sessionId),
         runtimeFacade.controlState(sessionId) as Promise<{runtimeControl?:{historyRequestId?:string}}>,
+        runtimeFacade.readOnlyMessageIds(sessionId, messageIds ?? []),
       ]);
-      const messageSet = messageIds ? new Set(messageIds) : undefined;
+      // The client sends an empty list while the transcript is still loading.
+      // Do not turn that transient state into a successful zero-checkpoint
+      // response; an empty filter means "return the full summary".
+      const messageSet = messageIds && messageIds.length > 0 ? new Set(messageIds) : undefined;
       return c.json({
         sessionId,
+        readOnlyMessageIds,
         revision: head.revision,
         recoveryRequired: Boolean(control.runtimeControl?.historyRequestId),
         reason: null,
@@ -2991,10 +3125,20 @@ agentRuntimeRoutes.get("/sessions/:sessionId/checkpoints", async (c) => {
               typeof checkpoint.metadata.stepId === "string"
                 ? checkpoint.metadata.stepId
                 : null,
-            available: true,
-            reason: null,
-            transcriptOnly: false,
-            destructive: true,
+            available: checkpoint.metadata.readOnly !== true,
+            canRollback:
+              checkpoint.metadata.readOnly !== true &&
+              checkpoint.metadata.messageId !== bounds.lastMessageId,
+            reason:
+              checkpoint.metadata.readOnly === true
+                ? "READ_ONLY_HISTORY: this history was sealed by context compaction."
+                : checkpoint.metadata.messageId === bounds.lastMessageId
+                  ? "HISTORY_LATEST_NODE: the latest history node cannot be rolled back."
+                  : null,
+            transcriptOnly: checkpoint.metadata.transcriptOnly === true,
+            // Rollback is confirmed through the explicit scope dialog; it is
+            // not the legacy irreversible-trim action.
+            destructive: false,
             hasLaterHistory: checkpoint.metadata.messageId !== bounds.lastMessageId,
             initialInput:
               checkpoint.metadata.kind === "input" &&
@@ -3012,7 +3156,8 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
   const parsed = z
     .object({
       checkpointId: z.string().min(1),
-      action: z.enum(["rollback", "edit", "fork"]),
+      action: z.enum(["rollback", "truncate_history", "fork"]),
+      mode: z.enum(["session", "session_and_workspace"]).optional(),
       workspaceMode: z.enum(["new_worktree", "reuse_worktree"]).optional(),
       includeFiles: z.boolean().default(true),
     })
@@ -3027,16 +3172,22 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
             "Choose a new worktree or the existing worktree before forking.",
           );
         return c.json({
-          ...(await runtimeFacade.previewHistoryAuthoritative(
+          ...(await runtimeFacade.previewForkAuthoritative(
             sessionId,
             parsed.data.checkpointId,
-            false,
           )),
           workspaceMode: parsed.data.workspaceMode,
           warnings: [
             "The fork copies the immutable Rust history head. Workspace files are copied only when a new worktree is selected.",
           ],
         });
+      }
+      if (parsed.data.action === "truncate_history") {
+        return c.json(await runtimeFacade.previewHistoryAuthoritative(
+          sessionId,
+          parsed.data.checkpointId,
+          parsed.data.mode === "session_and_workspace",
+        ));
       }
       return c.json(
         await runtimeFacade.previewHistoryAuthoritative(
@@ -3050,21 +3201,55 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/preview", async (c) => {
     return runtimeError(c, error);
   }
 });
-for (const action of ["rollback", "edit", "fork"] as const) {
+agentRuntimeRoutes.post("/sessions/:sessionId/history/edit", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = z.object({
+    messageId: z.string().min(1).max(256),
+    message: z.string().trim().min(1).max(100000),
+    requestId: z.string().min(1).max(128),
+    includeFiles: z.literal(false).optional(),
+  }).safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const sessionId = c.req.param("sessionId");
+    const result = await runtimeFacade.editMessageAuthoritative({ sessionId, ...parsed.data });
+    await runCoordinator.submitAsync(sessionId, result.input,
+      authoritativeEditRequestId(sessionId, parsed.data.requestId), "turn");
+    return c.json({ sessionId, revision: result.revision });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+for (const action of ["rollback", "fork", "fork-full"] as const) {
   agentRuntimeRoutes.post(
-    `/sessions/:sessionId/history/${action}`,
+    action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
       const parsed = (
-        action === "fork" ? forkActionSchema : historyActionSchema
+        action === "fork-full" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
       ).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
         {
-          if (action === "fork") {
+          if (action !== "rollback") {
+            const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId])).digest("hex");
+            const targetId = `ars_fork_${forkIdentity.slice(0, 32)}`;
+            return (await singleForkRequest(targetId, JSON.stringify([sessionId, input.checkpointId, input.workspaceMode]), async () => {
+            let existing: AgentSession | undefined;
+            try { existing = await runtimeFacade.sessionSummaryAuthoritative(targetId); }
+            catch (error) { if (!(error instanceof RuntimeSidecarError) || !["PROJECTION_MISSING", "NOT_FOUND"].includes(error.code)) throw error; }
+            const forkFingerprint = createHash("sha256").update(JSON.stringify([sessionId, input.checkpointId, input.workspaceMode])).digest("hex");
+            if (existing?.sessionMetadata?.forkRequestFingerprint && existing.sessionMetadata.forkRequestFingerprint !== forkFingerprint)
+              throw new AgentRuntimeError("Fork request content changed.", "REQUEST_CONFLICT", 409);
+            if (existing?.sessionMetadata?.forkCopyComplete) {
+              return c.json({ sessionId: targetId, workspaceMode: input.workspaceMode, rollbackEnabled: true,
+                revision: (await runtimeFacade.historyHeadAuthoritative(targetId)).revision, session: existing }, 201);
+            }
+            if (input.checkpointId) await runtimeFacade.historyCheckpointById(sessionId, input.checkpointId);
             const source = agentRuntimeStore.getSession(sessionId);
             const sourceBackend = (source.sessionMetadata?.backend ?? {}) as {
               id?: string;
@@ -3072,13 +3257,13 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               workDir?: string;
               workspaceLocation?: unknown;
             };
-            let workDir = sourceBackend.workDir;
+            let workDir = ((existing?.sessionMetadata?.backend as { workDir?: string } | undefined)?.workDir) ?? sourceBackend.workDir;
             let sessionMetadata: Record<string, unknown> = {
               ...(source.sessionMetadata ?? {}),
               forkedFromSessionId: sessionId,
               forkedFromCheckpointId: input.checkpointId,
             };
-            if (input.workspaceMode === "new_worktree") {
+            if (input.workspaceMode === "new_worktree" && !existing) {
               const projectLocation = resolveProjectWorkspaceLocation(
                 source.projectId,
               );
@@ -3105,7 +3290,15 @@ for (const action of ["rollback", "edit", "fork"] as const) {
                 "The source session has no reusable workspace.",
               );
             }
-            const target = agentSessionRuntime.create({
+            if (existing) sessionMetadata = { ...existing.sessionMetadata };
+            for (const key of ["runtimeControl", "executionLease", "nativeBackend", "contextCompaction", "inputQueue", "inputForceInjectId",
+              "lastHistoryEdit", "lastHistoryRestore", "lastAcceptedRun", "deletedAt", "archivedAt", "archiveBatchId", "pinned",
+              "forkCopyComplete", "forkInterrupted", "titleSource", "titleSummarized"]) delete sessionMetadata[key];
+            sessionMetadata.forkPreparing = true;
+            sessionMetadata.forkRequestFingerprint = forkFingerprint;
+            sessionMetadata.forkRequestId = input.requestId;
+            sessionMetadata.forkHostId = process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
+            const target = existing ? { ...existing, sessionMetadata } : agentSessionRuntime.create({
               projectId: source.projectId,
               nodeId: source.nodeId,
               profileId: source.profileId,
@@ -3118,24 +3311,38 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               skillIds: source.skillIds,
               mcpServerIds: source.mcpServerIds,
               sessionMetadata,
+            }, { id: targetId, forkPreparing: true });
+            // The fork inherits the source prompt, so its initial title would
+            // duplicate the source. Number it before the copy is reported.
+            // Read the authoritative projection: the local cache can still
+            // show a sibling fork's pre-suffix title.
+            const siblingTitles = (
+              (await runtimeFacade.listSessionProjection()) as AgentSession[]
+            )
+              .filter(
+                (sibling) =>
+                  sibling.id !== target.id &&
+                  sibling.projectId === source.projectId &&
+                  !sibling.sessionMetadata?.deletedAt &&
+                  !sibling.sessionMetadata?.archivedAt,
+              )
+              .map((sibling) => sibling.title);
+            const forkTitle = forkSessionTitle({
+              sourceTitle: source.title ?? target.title,
+              existingTitles: siblingTitles,
             });
             await runtimeFacade.ensureUiProjection(target.id);
+            await agentRuntimeStore.flushSession(target.id);
             const forked = await runtimeFacade.cloneHistoryAuthoritative({
               sourceSessionId: sessionId,
               targetSessionId: target.id,
               checkpointId: input.checkpointId,
+              fullHistory: action === "fork-full",
               revision: input.revision,
               requestId: input.requestId,
-              // Forking only reads the source. Do not force a running source
-              // through the rollback fence or reject the copy because its
-              // append-only head advanced after the preview.
-              allowSourceChanges: [
-                "stopping",
-                "running",
-                "queued",
-                "waiting_permission",
-                "waiting_input",
-              ].includes(source.status),
+              sessionMetadata: target.sessionMetadata ?? {},
+              // Copy a consistent current head even while source appends.
+              allowSourceChanges: true,
             });
             const updated = await runtimeFacade.sessionPatch(
               target.id,
@@ -3146,7 +3353,14 @@ for (const action of ["rollback", "edit", "fork"] as const) {
                 completedAt: null,
                 resultSummary: null,
                 updatedAt: new Date().toISOString(),
+                ...(forkTitle ? { title: forkTitle } : {}),
                 sessionMetadata: {
+                  ...forked.sessionMetadata,
+                  forkPreparing: false,
+                  forkCopyComplete: true,
+                  forkInterrupted: null,
+                  deletedAt: null,
+                  forkRequestFingerprint: forkFingerprint,
                   forkedFromSessionId: sessionId,
                   forkedFromCheckpointId: input.checkpointId,
                 },
@@ -3162,24 +3376,17 @@ for (const action of ["rollback", "edit", "fork"] as const) {
               },
               201,
             );
+            })).clone();
           }
           const result = await runtimeFacade.applyHistoryAuthoritative({
             sessionId,
-            checkpointId: input.checkpointId,
+            checkpointId: input.checkpointId!,
             revision: input.revision,
             requestId: input.requestId,
             action,
             message: input.message,
             includeFiles: input.includeFiles,
           });
-          if (result.input && action === "edit") {
-            await runCoordinator.submitAsync(
-              sessionId,
-              result.input,
-              authoritativeEditRequestId(sessionId, input.requestId),
-              "turn",
-            );
-          }
           return c.json({
             sessionId: result.sessionId,
             revision: result.revision,
@@ -3192,6 +3399,21 @@ for (const action of ["rollback", "edit", "fork"] as const) {
     },
   );
 }
+agentRuntimeRoutes.post("/sessions/:sessionId/history/truncate_history", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = truncateHistorySchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const result = await runtimeFacade.truncateHistoryAuthoritative({
+      sessionId: c.req.param("sessionId"),
+      ...parsed.data,
+    });
+    return c.json(result);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
 agentRuntimeRoutes.post("/sessions/:sessionId/history/recover", async (c) => {
   try {
     await runtimeFacade.recoverHistoryAuthoritative(c.req.param('sessionId'));

@@ -53,6 +53,7 @@ export const TimelineEntryView = memo(function TimelineEntryView({
   if (entry.kind === "error") {
     return (
       <div
+        data-error-toast="off"
         role="alert"
         className="rounded-xl border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm"
       >

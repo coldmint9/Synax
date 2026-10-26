@@ -53,6 +53,7 @@ Thumbs.db
 *.swo
 
 # Python (prototype phase)
+/python-runtime/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -132,3 +133,6 @@ Thumbs.db
 
 # Rust build artifacts.
 runtime-sidecar/target/
+
+# Local design prototype workspace (contains node_modules and build output).
+/prototypes/shadow-worktrees/

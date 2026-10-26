@@ -31,7 +31,7 @@ import {
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
-import { contextUsageSnapshot } from "./analytics-projection.js";
+import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "./analytics-projection.js";
 import {
   normalizeInput,
   hasInput,
@@ -127,6 +127,7 @@ import { waitForChildSessions } from "./subagent-orchestrator.js";
 import { sessionHooks } from "./session-hooks.js";
 import { emitSessionLive } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import { resolveGatewaySelection } from "../../infrastructure/llm-runtime/gateway.js";
+import { resolveOutputReserve } from "../../infrastructure/llm-runtime/model-output-limits.js";
 import {
   mapThinkingModeToReasoningEffort,
   type ReasoningEffort,
@@ -735,8 +736,8 @@ export class AgentLoopRuntime {
           modelCapabilities = {
             reasoning: selection.modelDef.reasoning ?? false,
           };
-          runOutputReserve =
-            input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
+          runOutputReserve = resolveOutputReserve(selection.modelDef,
+            input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode), input.maxTokens ?? selection.config.maxOutputTokens);
           if (
             typeof selection.modelDef.contextLimit === "number" &&
             selection.modelDef.contextLimit > 0
@@ -1118,6 +1119,14 @@ export class AgentLoopRuntime {
               modelResult = { model: event.model, step: event.step };
             }
             if (event.type === "context_compacted") {
+              const priorUsage = readContextUsage(this.store.getSession(sessionId).sessionMetadata?.contextUsage);
+              const contextUsage = compactedContextUsageSnapshot(
+                priorUsage,
+                event.compressedTokens,
+                step?.id ?? run.id,
+                this.store.getSessionStats(sessionId).contextLimit,
+              );
+              if (contextUsage) this.store.updateSessionMetadata(sessionId, { contextUsage });
               const compactEvt = this.events.append({
                 sessionId,
                 type: "progress_updated",
@@ -1144,6 +1153,7 @@ export class AgentLoopRuntime {
                 originalTokens: event.originalTokens,
                 compressedTokens: event.compressedTokens,
                 messageCount: event.messageCount,
+                ...(contextUsage ? { contextUsage } : {}),
               });
             }
           }

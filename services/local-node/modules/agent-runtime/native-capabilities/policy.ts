@@ -5,7 +5,7 @@ export const NATIVE_PROTOCOL_IDS = new Set(["agent.discover", "agent.execute"]);
 /** Native execution is intrinsic; backend boundaries are not feature flags. */
 export function nativeCapabilitiesEnabled(session: AgentSession): boolean {
   const backend = session.sessionMetadata?.backend as { id?: string } | undefined;
-  return session.profileId !== "git-manager" &&
+  return !["git-manager", "git-merge-worker"].includes(session.profileId) &&
     (!backend?.id || backend.id === "native");
 }
 
@@ -16,9 +16,9 @@ export const CORE_TOOL_IDS = new Set([
   "agent.execute",
   "code.result",
   "file.read", "file.list", "rg", "context.read", "diff.read",
-  "file.write", "file.patch", "bash", "subagent.delegate",
+  "file.write", "file.patch", "file.generate", "bash", "subagent.delegate",
   "task.create", "task.update", "task.get", "task.list",
   "human.ask", "plan.propose", "plan.execute", "mode.switch",
   "goal.finish", "work.checkpoint", "skill.load", "presentation.select", "tools.invalid",
-  "git.pr.read", "git.merge.create", "git.merge.analyze", "git.merge.read", "git.merge.propose",
+  "git.pr.read", "git.merge.create", "git.merge.analyze", "git.merge.read", "git.merge.propose", "git.merge.configure",
 ]);

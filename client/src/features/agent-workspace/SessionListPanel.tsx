@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSessionList } from "./useSessionList";
+import { SessionToolbarContent } from "./SessionToolbarPortal";
+import { SessionSidebarActions } from "./SessionSidebarActions";
 import { SessionListHeader } from "./SessionListHeader";
 import { SessionTimeGroups } from "./SessionTimeGroups";
+import { SessionActionsDialog, type SessionActionRequest } from "./SessionActionsDialog";
 import { WorkspaceDirectoryTree } from "./WorkspaceDirectoryTree";
 import "./workspaceDirectoryTree.css";
 import { useNotificationStore } from "../../shared/state/notificationStore";
@@ -19,16 +22,24 @@ interface Props {
   listView?: SessionListView;
   projectId: string;
   onCollapsePanel?: () => void;
+  onTogglePanel?: () => void;
+  collapsed?: boolean;
+  toolbarVisible?: boolean;
   sidebarView?: "sessions" | "workspace";
   onSidebarViewChange?: (view: "sessions" | "workspace") => void;
+  hideHeaderActions?: boolean;
 }
 
 export function SessionListPanel({
   listView = "sessions",
   projectId,
   onCollapsePanel,
+  onTogglePanel,
+  collapsed = false,
+  toolbarVisible = true,
   sidebarView = "sessions",
   onSidebarViewChange,
+  hideHeaderActions = false,
 }: Props) {
   const { locale, t } = useLocale();
   const navigate = useNavigate();
@@ -37,6 +48,8 @@ export function SessionListPanel({
   const { ensureLoaded } = list;
   const pendingArchives = useRef(new Set<string>());
   const [archiving, setArchiving] = useState(false);
+  const [actionRequest, setActionRequest] = useState<SessionActionRequest | null>(null);
+  useEffect(() => { setActionRequest(null); }, [projectId]);
   useEffect(() => {
     if (!projectId || !list.isProjectReady) return;
     // Loading a workspace is lazy and cached: switching back to one paints its
@@ -83,50 +96,70 @@ export function SessionListPanel({
     }
   };
 
+  const toolbarNewSession = () => list.openNewDraft();
+
   return (
     <div className="session-list-panel flex h-full min-h-0 flex-col">
+      {toolbarVisible ? (
+        <SessionToolbarContent>
+          <SessionSidebarActions
+            collapsed={collapsed}
+            onTogglePanel={onTogglePanel ?? onCollapsePanel}
+            sidebarView={sidebarView}
+            onSidebarViewChange={onSidebarViewChange}
+            onNewSession={listView === "sessions" ? toolbarNewSession : undefined}
+            onClearInactive={() => void handleArchiveInactive()}
+            archiving={archiving}
+          />
+        </SessionToolbarContent>
+      ) : null}
       <div className="session-list-card session-list-card--sessions flex min-h-0 flex-1 flex-col overflow-hidden">
-        <SessionListHeader
-          listView={listView}
-          workflowCount={list.viewCounts.workflow}
-          hasMoreSessions={list.hasMore}
-          searchQuery={list.searchQuery}
-          onSearchChange={list.setSearchQuery}
-          onClearInactive={() => void handleArchiveInactive()}
-          onNewSession={handleNewSession}
-          onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
-          onBackToSessions={() => navigate(sessionsPath(projectId))}
-          onCollapsePanel={onCollapsePanel}
-          sidebarView={sidebarView}
-          onSidebarViewChange={onSidebarViewChange}
-        />
         {sidebarView === "workspace" ? (
+          // The tree owns the full height; a session-only header here is an empty band.
           <WorkspaceDirectoryTree projectId={projectId} />
         ) : (
-          <div className="session-list-session-area min-h-0">
-            <SessionTimeGroups
-              key={`${projectId}:${listView}:${list.searchQuery}`}
-              groups={list.groups}
-              isLoading={list.isLoading}
-              error={list.error}
-              onRetry={() => void list.refresh()}
-              selectedId={list.selectedId}
-              isLoadingMore={list.isLoadingMore}
-              hasMore={list.hasMore}
-              hideGroupHeaders={listView === "sessions" ? false : !list.hasPinned}
-              onTogglePin={list.togglePin}
-              emptyLabel={list.searchQuery.trim()
-                ? locale === "zh" ? "当前工作区没有匹配的会话" : "No matching sessions in this workspace"
-                : listView === "workflow" ? t("sessionWorkflowEmpty") : t("sessionListEmpty")}
-              onSelect={list.select}
-              onToggleGroup={list.toggleGroup}
-              onToggleExpand={list.toggleExpand}
-              onLoadMore={list.loadMore}
-              onDelete={(id) => void handleArchive(id)}
+          <>
+            <SessionListHeader
+              listView={listView}
+              workflowCount={list.viewCounts.workflow}
+              hasMoreSessions={list.hasMore}
+              searchQuery={list.searchQuery}
+              onSearchChange={list.setSearchQuery}
+              onClearInactive={() => void handleArchiveInactive()}
+              onNewSession={handleNewSession}
+              onOpenWorkflows={() => navigate(workflowSessionsPath(projectId))}
+              onBackToSessions={() => navigate(sessionsPath(projectId))}
+              onCollapsePanel={onCollapsePanel}
+              hideHeaderActions={hideHeaderActions}
             />
-          </div>
+            <div className="session-list-session-area min-h-0">
+              <SessionTimeGroups
+                key={`${projectId}:${listView}:${list.searchQuery}`}
+                groups={list.groups}
+                isLoading={list.isLoading}
+                error={list.error}
+                onRetry={() => void list.refresh()}
+                selectedId={list.selectedId}
+                isLoadingMore={list.isLoadingMore}
+                hasMore={list.hasMore}
+                hideGroupHeaders={listView === "sessions" ? false : !list.hasPinned}
+                onTogglePin={list.togglePin}
+                emptyLabel={list.searchQuery.trim()
+                  ? locale === "zh" ? "当前工作区没有匹配的会话" : "No matching sessions in this workspace"
+                  : listView === "workflow" ? t("sessionWorkflowEmpty") : t("sessionListEmpty")}
+                onSelect={list.select}
+                onToggleGroup={list.toggleGroup}
+                onToggleExpand={list.toggleExpand}
+                onLoadMore={list.loadMore}
+                onDelete={(id) => void handleArchive(id)}
+                onSessionAction={(kind, session) => setActionRequest({ kind, session })}
+              />
+            </div>
+          </>
         )}
       </div>
+      {actionRequest ? <SessionActionsDialog key={`${actionRequest.session.id}:${actionRequest.kind}`} request={actionRequest}
+        onClose={() => setActionRequest(null)} onComplete={() => { void list.refresh(); }} /> : null}
     </div>
   );
 }

@@ -597,6 +597,23 @@ export function LlmProviderModal({
                   <Advanced
                     title={zh ? "高级模型设置" : "Advanced model settings"}
                   >
+                    <Field invalid={errors.some(error => error.field === "maxOutputTokens")}>
+                      <Label>{zh ? "单次输出上限（tokens）" : "Output limit per request (tokens)"}</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={draft.maxOutputTokens ?? ""}
+                        placeholder={zh ? "可选，使用上游默认值" : "Optional — provider default"}
+                        onChange={event => setDraft(current => ({ ...current, maxOutputTokens: event.target.value }))}
+                      />
+                      <Description>{zh
+                        ? "适用于此供应商。留空时不主动限制输出；思考与正文共享额度，长回复会自动续写。"
+                        : "Applies to this provider. Leave empty for its default; reasoning and answer tokens share the limit, and long replies continue automatically."}</Description>
+                      {errors.some(error => error.field === "maxOutputTokens") && (
+                        <p role="alert" className="text-sm text-destructive">{zh
+                          ? "请输入 1–10,000,000 的整数，或留空。"
+                          : "Enter an integer from 1 to 10,000,000, or leave empty."}</p>
+                      )}
+                    </Field>
                     <ProviderModelCapabilities
                       draft={draft}
                       onChange={setDraft}

@@ -7,8 +7,8 @@ vi.mock("../SessionHistoryContext", () => ({
   useSessionHistory: () => ({
     reason: null,
     busy: false,
-    checkpoint: () => ({ id: "checkpoint", available: true }),
-    request,
+    editReason: () => null,
+    edit: request,
   }),
 }));
 beforeEach(() => {
@@ -42,7 +42,7 @@ describe("inline message editing", () => {
     expect(screen.getByText("Original")).toBeInTheDocument();
     expect(request).not.toHaveBeenCalled();
   });
-  it("keeps the draft when preview is cancelled and commits only after confirmation", async () => {
+  it("keeps the draft after a failed send and closes only after success", async () => {
     request.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     render(<UserMessageBlock messageId="user1" content="Original" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit message" }));
@@ -55,8 +55,7 @@ describe("inline message editing", () => {
     });
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
-        "edit",
-        expect.objectContaining({ id: "checkpoint" }),
+        "user1",
         "Edited",
       ),
     );
@@ -85,8 +84,7 @@ describe("inline message editing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(
-        "edit",
-        expect.objectContaining({ id: "checkpoint" }),
+        "user1",
         "Original",
       ),
     );

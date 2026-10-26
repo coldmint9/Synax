@@ -89,6 +89,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("retires the hidden-reasoning placeholder as soon as the same step has reply text", () => {
+  vi.useFakeTimers();
+  useShellStore.setState(s => ({ preferences: { ...s.preferences, sessionShowThinking: false } }));
+  store.setState({ ...store.getInitialState(), selectedSessionId: session.id, sessions: [session],
+    runs: [run], steps: [liveStep], streamingStepId: liveStep.id,
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, blocks: [{ type: "thinking", content: "Thinking through the request" }] } });
+  const { container } = render(<SessionStaticTimeline unifiedLive session={session} runs={[run]}
+    steps={[liveStep]} messages={[]} toolCalls={[]} excludeStepId={liveStep.id} isRunning />);
+  expect(container.querySelector('[data-testid="thinking-indicator"]')).not.toBeNull();
+  act(() => store.setState({ streamingLive: { ...EMPTY_STREAMING_BUFFERS, blocks: [
+    { type: "thinking", content: "Thinking through the request" },
+    { type: "text", content: "The response has arrived." },
+  ] } }));
+  advance(200);
+  expect(container).toHaveTextContent("The response has arrived.");
+  expect(container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
+  expect(container.querySelector('[data-live="true"]')).toBeNull();
+});
+
 it("renders live reasoning independently of the tool log and restores it after toggling", () => {
   vi.useFakeTimers();
   useShellStore.setState((s) => ({ preferences: { ...s.preferences, sessionShowThinking: true } }));
@@ -99,21 +118,23 @@ it("renders live reasoning independently of the tool log and restores it after t
   const apply = store.getState().applyLiveEvent;
   act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "实时思考正文" }));
   advance(80);
-  expect(container.querySelector(".bui-thinking-preview")).toHaveTextContent("实时思考正文");
+  expect(container.querySelector(".session-process-trigger")).toHaveTextContent("实时思考正文");
   expect(container.querySelector(".bui-thinking-prose")).toBeNull();
+  // The activity group owns the live preview; detail rows mount on expansion.
+  fireEvent.click(container.querySelector('.session-process-trigger')!);
   act(() => apply({ type: "tool_call", stepId: liveStep.id, toolCall: toolCall("running") }));
   advance(80);
   const toolToggle = container.querySelector('.bui-tool-trigger') as HTMLButtonElement;
   fireEvent.click(toolToggle);
   expect(toolToggle).toHaveAttribute("aria-expanded", "true");
-  expect(container.querySelector(".bui-thinking-preview")).toBeVisible();
+  expect(container.querySelector(".session-process-trigger")).toHaveTextContent("实时思考正文");
   act(() => useShellStore.getState().setSessionShowThinking(false));
   expect(container).not.toHaveTextContent("实时思考正文");
   act(() => apply({ type: "thought_delta", stepId: liveStep.id, delta: "，继续推理" }));
   advance(80);
   act(() => useShellStore.getState().setSessionShowThinking(true));
   expect(container).toHaveTextContent("继续推理");
-  expect(container.querySelector(".bui-thinking-preview")).toBeVisible();
+  expect(container.querySelector(".session-process-trigger")).toHaveTextContent("继续推理");
   expect(container.querySelector(".bui-thinking-prose")).toBeNull();
 });
 

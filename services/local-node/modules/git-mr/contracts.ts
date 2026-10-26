@@ -94,6 +94,27 @@ export interface MergeFile {
   targetLabel?: string;
   sourceLabel?: string;
   baseLabel?: string;
+  contentState?: 'complete' | 'partial';
+  editable?: boolean;
+  byteSizes?: Record<MergeFileSide, number>;
+  truncatedSides?: MergeFileSide[];
+  /** Hard I/O budget: sides larger than this require an external viewer. */
+  sliceLimitBytes?: number;
+}
+export type MergeFileSide = 'base' | 'target' | 'source' | 'result';
+export interface MergeFileSliceInput {
+  side: MergeFileSide;
+  byteOffset: number;
+  maxBytes: number;
+  expectedRevision: string;
+}
+export interface MergeFileSlice {
+  content: string;
+  byteOffset: number;
+  nextByteOffset: number;
+  totalBytes: number;
+  eof: boolean;
+  revision: string;
 }
 export interface MergeFileSummary {
   id: string;

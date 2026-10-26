@@ -227,6 +227,7 @@ impl Publisher {
 
 /// The store-owned cell a handle points at; keeps the handle cheap to clone.
 pub struct SessionHandleCell {
+    pub(crate) checkpoint_lock: Mutex<()>,
     pub id: String,
     pub actor: Arc<Mutex<SessionActor>>,
     pub lake: Arc<ArcSwap<Lake>>,

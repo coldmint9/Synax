@@ -23,7 +23,7 @@ export default function HistoricalVisualizationReply({ message }: { message: Age
     return () => { active = false; };
   }, [message.sessionId, message.id, attempt]);
 
-  if (failed) return <div role="alert">
+  if (failed) return <div data-error-toast="off" role="alert">
     预览加载失败。
     <Button size="sm" onClick={() => setAttempt((value) => value + 1)}>重试</Button>
   </div>;
@@ -34,7 +34,7 @@ export default function HistoricalVisualizationReply({ message }: { message: Age
   if (!result.message) return <>
     <StreamingTextBlock
       text={hideVisualizationSource(message.content)} isStreaming={false} markdown />
-    <div className="inline-visualization__error" role="alert">
+    <div className="inline-visualization__error" data-error-toast="off" role="alert">
       <strong>预览快照不可用</strong>
       <span>文件可能已移动、删除，或不在当前会话工作区内。请让助手重新生成这个预览。</span>
       <div>
@@ -44,7 +44,7 @@ export default function HistoricalVisualizationReply({ message }: { message: Age
       </div>
     </div>
   </>;
-  return <>{visualizationReplyParts({ ...result.message, historyProjection: undefined }).map((part, index) =>
+  return <>{visualizationReplyParts({ ...result.message, historyProjection: undefined }, { loadMissing: false }).map((part, index) =>
     part.type === "visualization"
       ? <InlineVisualization key={part.reference.id} visualization={part.reference} />
       : <StreamingTextBlock key={`text:${index}`} text={part.content} isStreaming={false} markdown />,

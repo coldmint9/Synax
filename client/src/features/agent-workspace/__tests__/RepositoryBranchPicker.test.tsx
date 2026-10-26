@@ -121,7 +121,7 @@ it("shows switch failures in a dismissible dialog and refreshes the actual branc
   expect(await screen.findByRole("alertdialog", { name: "Branch switch incomplete" })).toHaveTextContent(
     "uncommitted changes",
   );
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(document.querySelector('.ws-branch-error')).toBeNull();
   expect(changed).toHaveBeenCalledOnce();
   await userEvent.click(screen.getByRole("button", { name: "OK" }));
   await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());

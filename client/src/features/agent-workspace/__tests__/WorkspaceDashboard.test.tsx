@@ -15,6 +15,7 @@ const render: typeof testingRender = (ui, options) => testingRender(ui, {
   wrapper: ({ children }) => <MemoryRouter><ContextMenuProvider>{children}</ContextMenuProvider></MemoryRouter>,
   ...options,
 });
+import { projectApi } from "../../../adapters/transport/project";
 import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
 import type { WorkspaceEnvironmentView } from "../workspaceEnvironmentView";
 import { configApi } from "../../../adapters/transport/config";
@@ -122,6 +123,7 @@ function renderDashboard(overrides: Partial<WorkspaceEnvironmentView> = {}) {
 
 describe("WorkspaceDashboard", () => {
   beforeEach(() => {
+  vi.spyOn(projectApi, "listGitWorkspaces").mockImplementation(() => new Promise(() => {}));
     useSessionWorkspaceStore.setState({ sessions: {} });
     useAgentSessionStore.setState({
       selectedSessionId: "session-1",
@@ -444,9 +446,7 @@ describe("WorkspaceDashboard", () => {
     );
 
     expect(
-      screen
-        .getByRole("button", { name: /^Synax/ })
-        .closest(".ws-project-card"),
+      document.querySelector(".ws-project-card"),
     ).toHaveClass("ws-project-card--with-content");
   });
 
@@ -590,78 +590,33 @@ describe("WorkspaceDashboard", () => {
     expect(reload).toHaveBeenCalledTimes(2);
   });
 
-  it("gives each repository its own collapsible project and keeps file tabs isolated", () => {
-    renderDashboard({
-      repositories: [
-        {
-          ...environment,
-          rootId: "primary",
-          name: "API",
-          role: "primary",
-          status: "ready",
-        },
-        {
-          ...environment,
-          rootId: "secondary",
-          name: "Web",
-          role: "reference",
-          status: "ready",
-          branch: "web-branch",
-          workspacePath: "/repos/web",
-        },
-      ],
-    });
-    const apiHeader = screen.getByRole("button", { name: /^API/ });
-    const webHeader = screen.getByRole("button", { name: /^Web/ });
-    const apiCard = apiHeader.closest(".ws-project-card")!;
-    const webCard = webHeader.closest(".ws-project-card")!;
-    const pane = apiCard.closest(".workspace-dashboard--custom")!;
-    expect(webCard.closest(".workspace-dashboard--custom")).toBe(pane);
-    expect(
-      pane.querySelectorAll('[data-dashboard-panel^="repository:"]'),
-    ).toHaveLength(2);
-    expect(pane.closest(".ws-card")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^项目\s*3$/ })).toBeNull();
-
-    expect(apiHeader).toHaveAttribute("aria-expanded", "true");
-    expect(webHeader).toHaveAttribute("aria-expanded", "true");
-    fireEvent.click(webHeader);
-    expect(webHeader).toHaveAttribute("aria-expanded", "false");
-    expect(within(webCard).queryByText("BlockAsk.vue")).toBeNull();
-    expect(within(apiCard).getByText("BlockAsk.vue")).toBeInTheDocument();
-    fireEvent.click(webHeader);
-
+  it("selects each project independently and keeps file tabs scoped to the active repository", () => {
+    renderDashboard({ repositories: [
+      { ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" },
+      { ...environment, rootId: "secondary", name: "Web", role: "reference", status: "ready", workspacePath: "/repos/web" },
+    ] });
+    const projects = within(screen.getByRole("region", { name: "工作区项目" }));
+    expect(projects.getByRole("button", { name: /^API/ })).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelectorAll('[data-dashboard-panel="changes"]')).toHaveLength(1);
+    expect(document.querySelector(".ws-project-card")).toBeNull();
+    const apiCard = document.querySelector<HTMLElement>('[data-dashboard-panel="changes"]')!;
     fireEvent.click(within(apiCard).getByText("BlockAsk.vue"));
     fireEvent.click(screen.getAllByText("toolDisplay.js")[0]);
+    fireEvent.click(projects.getByRole("button", { name: /^Web/ }));
+    expect(projects.getByRole("button", { name: /^Web/ })).toHaveAttribute("aria-pressed", "true");
+    const webCard = document.querySelector<HTMLElement>('[data-dashboard-panel="changes"]')!;
     fireEvent.click(within(webCard).getByText("BlockAsk.vue"));
     fireEvent.click(screen.getAllByText("toolDisplay.js")[1]);
     const tabs = useSessionWorkspaceStore.getState().sessions["session-1"].tabs;
-    expect(tabs).toHaveLength(4);
-    expect(new Set(tabs.map((tab) => tab.id)).size).toBe(4);
-    expect(tabs.map((tab) => tab.rootId)).toEqual([
-      "primary",
-      "primary",
-      "secondary",
-      "secondary",
-    ]);
-    expect(tabs[0].title).toBe("BlockAsk.vue");
-    expect(tabs[2].title).toBe("BlockAsk.vue");
-    expect(
-      new Set(
-        [...pane.querySelectorAll<HTMLElement>(".ws-project-folder-icon")]
-          .map((element) => element.dataset.projectColor)
-          .filter(Boolean),
-      ).size,
-    ).toBeGreaterThan(1);
-    expect(
-      apiCard.querySelector(".ws-project-folder-icon")?.getAttribute("data-project-color"),
-    ).not.toBe("default");
+    expect(tabs.map(tab => tab.rootId)).toEqual(["primary", "primary", "secondary", "secondary"]);
+    expect(new Set(tabs.map(tab => tab.id)).size).toBe(4);
+    expect(new Set([...document.querySelectorAll<HTMLElement>(".shadow-project-row .ws-project-folder-icon")].map(el => el.dataset.projectColor)).size).toBe(2);
   });
 
   it("marks a missing repository and disables its write actions", () => {
     renderDashboard({ repositories: [{ ...environment, rootId: "missing", name: "Gone", role: "primary",
       status: "missing", changedFiles: [], inputSources: [] }] });
-    const goneCard = screen.getByRole("button", { name: /^Gone/ }).closest(".ws-project-card")!;
+    const goneCard = document.querySelector<HTMLElement>(".ws-project-card")!;
     expect(within(goneCard).getByText("目录缺失")).toBeInTheDocument();
     expect(within(goneCard).getByRole("button", { name: "提交并推送" })).toBeDisabled();
   });
@@ -675,8 +630,9 @@ describe("WorkspaceDashboard", () => {
       { ...environment, rootId: "api", name: "API", role: "primary", status: "ready", workspacePath: "/repos/api" },
       { ...environment, rootId: "web", name: "Web", role: "reference", status: "ready", workspacePath: "/repos/web" },
     ] });
-    fireEvent.click(screen.getAllByRole("button", { name: "目录视图" })[1]);
-    const webCard = screen.getByRole("button", { name: /^Web/ }).closest(".ws-project-card")!;
+    fireEvent.click(within(screen.getByRole("region", { name: "工作区项目" })).getByRole("button", { name: /^Web/ }));
+    fireEvent.click(screen.getByRole("button", { name: "目录视图" }));
+    const webCard = document.querySelector<HTMLElement>('[data-dashboard-panel="changes"]')!;
     fireEvent.contextMenu(within(webCard).getByText("notes.md"));
     fireEvent.click(screen.getByRole("menuitem", { name: "回滚该文件的变更" }));
     await waitFor(() => expect(restore).toHaveBeenCalledWith("session-1", { path: "notes.md", rootId: "web" }));
@@ -684,7 +640,7 @@ describe("WorkspaceDashboard", () => {
     restore.mockRestore();
   });
 
-  it("remembers project folds after the workspace is reopened", () => {
+  it("keeps the active project and standalone Git panel when the workspace is reopened", () => {
     const snapshot: WorkspaceEnvironmentView = {
       ...environment,
       repositories: [
@@ -707,13 +663,12 @@ describe("WorkspaceDashboard", () => {
     const view = render(
       <WorkspaceDashboard sessionId="session-1" environment={snapshot} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /^Web/ }));
+    fireEvent.click(within(screen.getByRole("region", { name: "工作区项目" })).getByRole("button", { name: /^Web/ }));
     view.unmount();
     render(<WorkspaceDashboard sessionId="session-1" environment={snapshot} />);
-    expect(screen.getByRole("button", { name: /^Web/ })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    expect(within(screen.getByRole("region", { name: "工作区项目" })).getByRole("button", { name: /^Web/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Git 变更" })).toBeInTheDocument();
+    expect(document.querySelector(".ws-project-card")).toBeNull();
   });
 
   it("opens a committed output in its owning repository without treating hand edits as outputs", () => {
@@ -845,39 +800,23 @@ describe("WorkspaceDashboard", () => {
     expect(screen.queryByText("Review outputs")).toBeNull();
   });
 
-  it("keeps branch switching and commit on each aggregated project row", async () => {
-    const listBranches = vi
-      .spyOn(agentRuntimeApi, "listSessionBranches")
-      .mockResolvedValue({
-        rootId: "primary",
-        dirtyFileCount: 0,
-        current: "main",
-        branches: [
-          { name: "main", current: true, occupied: false },
-          { name: "feature/awg2", current: false, occupied: false },
-        ],
-      });
-    renderDashboard({
-      repositories: [
-        { ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" },
-        { ...environment, rootId: "second", name: "Web", role: "reference", status: "ready", branch: "web-branch" },
-        { ...environment, rootId: "third", name: "Docs", role: "reference", status: "ready", branch: "docs-branch" },
-      ],
-    });
-
-    const rows = document.querySelectorAll(".ws-project-option");
-    expect(rows).toHaveLength(3);
-
-    // Each row owns a real branch trigger, not just a printed label.
-    const triggers = screen.getAllByRole("button", { name: /切换 Git 分支|Switch Git branch/ });
-    expect(triggers).toHaveLength(3);
-    fireEvent.click(triggers[0]);
-    await waitFor(() => expect(listBranches).toHaveBeenCalled());
-
-    // The commit action stays available on the dirty row.
-    const commits = screen.getAllByRole("button", { name: /提交并推送 ·/ });
-    expect(commits).toHaveLength(3);
-    expect(commits[0]).toBeEnabled();
+  it("renders a standalone Git changes card for multiple projects with only the view controls", () => {
+    renderDashboard({ repositories: [
+      { ...environment, rootId: "primary", name: "API", role: "primary", status: "ready" },
+      { ...environment, rootId: "second", name: "Web", role: "reference", status: "ready", branch: "web-branch", changedFiles: [] },
+      { ...environment, rootId: "third", name: "Docs", role: "reference", status: "ready", branch: "docs-branch" },
+    ] });
+    const panel = document.querySelector<HTMLElement>('[data-dashboard-panel="changes"]')!;
+    expect(document.querySelectorAll(".shadow-project-row")).toHaveLength(3);
+    expect(within(panel).getByRole("heading", { name: "Git 变更" })).toBeInTheDocument();
+    expect(panel.querySelector(".ws-card .ws-card")).toBeNull();
+    expect(panel.querySelector(".ws-project-repository")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "目录视图" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "平铺视图" })).toBeInTheDocument();
+    expect(panel.querySelector(".ws-changes-viewport")).not.toBeNull();
+    fireEvent.click(within(screen.getByRole("region", { name: "工作区项目" })).getByRole("button", { name: /^Web/ }));
+    expect(within(panel).queryByText("BlockAsk.vue")).toBeNull();
+    expect(panel.querySelector(".ws-empty")).not.toBeNull();
   });
 
   it("keeps long branch names ellipsized without losing their full value", async () => {
@@ -898,18 +837,10 @@ describe("WorkspaceDashboard", () => {
       ],
     });
 
-    const rows = document.querySelectorAll(".ws-project-option");
+    const rows = document.querySelectorAll(".shadow-project-row");
     expect(rows).toHaveLength(3);
 
-    // The row still exposes a real branch trigger whose label is clipped by CSS
-    // instead of stretching the row, and whose title keeps the untruncated name.
-    const trigger = within(rows[1] as HTMLElement).getByRole("button", {
-      name: new RegExp(`切换 Git 分支|Switch Git branch.*`, "s"),
-    });
-    expect(trigger).toHaveAttribute("title", longBranch);
-    expect(
-      within(rows[1] as HTMLElement).getByTitle(longBranch),
-    ).toBeTruthy();
+    expect(rows[1]).toHaveAttribute("title", expect.stringContaining(longBranch));
 
     // The selector button keeps the full project name available on hover.
     expect(screen.getByTitle(longName)).toBeTruthy();

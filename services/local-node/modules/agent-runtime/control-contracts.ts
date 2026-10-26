@@ -97,19 +97,12 @@ export const agentPlanSchema = z
       )
       .min(1)
       .max(40),
-    humanAcceptanceCriteria: z.array(text).max(30).default([]).describe("Criteria requiring human judgment; each must exactly match an entry in acceptanceCriteria."),
+    humanAcceptanceCriteria: z.array(text).max(30).default([]).describe("Criteria requiring human judgment; may be specified independently of acceptanceCriteria."),
     acceptanceCriteria: z.array(text).min(1).max(30),
     assumptions: z.array(text).max(30).default([]),
     risks: z.array(text).max(30).default([]),
   })
   .superRefine((p, ctx) => {
-    if (
-      p.humanAcceptanceCriteria.some((c) => !p.acceptanceCriteria.includes(c))
-    )
-      ctx.addIssue({
-        code: "custom",
-        message: "Human acceptance criteria must belong to the plan.",
-      });
     const seen = new Set<string>();
     for (const s of p.steps) {
       if (seen.has(s.id) || s.dependsOn.some((id) => !seen.has(id)))

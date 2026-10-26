@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { stageRuntimeSidecar } from "./scripts/stage-runtime-sidecar.js";
 import { stageCuaDriver } from "./scripts/stage-cua-driver.js";
+import { stagePythonRuntime } from "./scripts/stage-python-runtime.js";
 import { fileURLToPath } from "node:url";
 import { ensureDmgNative } from "./scripts/prepare-dmg-native.js";
 import { validateCuaArtifact } from "./scripts/validate-cua-artifact.js";
@@ -57,6 +58,7 @@ const config: ForgeConfig = {
       }
       await stageRuntimeSidecar(platform, arch);
       await stageCuaDriver(platform, arch);
+      await stagePythonRuntime(platform as NodeJS.Platform, arch);
       validateCuaArtifact({
         helperRoot: path.resolve("cua-helper-dist"),
         driverPath: path.resolve("dist/cua-driver", platform === "win32" ? "cua-driver.exe" : "cua-driver"),
@@ -93,6 +95,7 @@ const config: ForgeConfig = {
     extraResource: [
       updateConfig,
       "./server-dist",
+      "./python-runtime",
       "./dist/cua-driver",
       "./cua-helper-dist",
       "./client/dist",

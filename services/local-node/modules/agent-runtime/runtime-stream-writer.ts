@@ -5,10 +5,14 @@ import type { AgentRunStreamChunk } from './contracts.js';
 import { invalidateSessionEnvironment } from './session-environment.js';
 import { runtimeFacade } from './sidecar/runtime-facade.js';
 import { streamBatchGroups } from './runtime-stream-projection.js';
+import { StreamByteBudget, streamChunkBytes } from './stream-queue.js';
 
 /** Maximum number of model deltas in one authoritative append. */
 export const DELTA_FLUSH_MS = 40;
 const DELTA_BATCH_LIMIT = 8;
+const WRITER_BYTES = 4 * 1024 * 1024;
+const writerBudget = new StreamByteBudget(64 * 1024 * 1024);
+const capacityWaiters = new Set<() => void>();
 
 /** Shared by background runs and embedded hosts; it never moves a host or takes ownership of its tools. */
 export class RuntimeStreamWriter {
@@ -27,6 +31,8 @@ export class RuntimeStreamWriter {
   private sidecarTail: Promise<void> = Promise.resolve();
   private sidecarFence?: Promise<{ epoch: number; revision: number }>;
   private sidecarPending = 0;
+  private queuedBytes = 0;
+  private byteReleases = new Map<AgentRunStreamChunk, () => void>();
   constructor(private readonly sessionId: string, private runId?: string, private readonly current: () => boolean = () => true) {}
 
   /** Acknowledgement barrier, including failures from a timer-driven delta flush. */
@@ -35,10 +41,44 @@ export class RuntimeStreamWriter {
     if (this.writeFailure) throw this.writeFailure;
   }
 
+  /** The coordinator awaits this before advancing the execution consumer. */
+  async writeWithBackpressure(chunk: AgentRunStreamChunk, signal?: AbortSignal): Promise<void> {
+    const bytes = streamChunkBytes(chunk);
+    if (bytes > WRITER_BYTES) throw new Error('Runtime stream event exceeds its byte budget.');
+    while (this.queuedBytes + bytes > WRITER_BYTES || writerBudget.used + bytes > writerBudget.capacity || this.sidecarPending >= 120) {
+      signal?.throwIfAborted();
+      if (this.writeFailure) throw this.writeFailure;
+      this.flush();
+      await new Promise<void>((resolve, reject) => {
+        const wake = () => { capacityWaiters.delete(wake); signal?.removeEventListener('abort', abort); resolve(); };
+        const abort = () => { capacityWaiters.delete(wake); signal?.removeEventListener('abort', abort); reject(signal?.reason); };
+        capacityWaiters.add(wake); signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+    }
+    signal?.throwIfAborted();
+    this.write(chunk);
+  }
+
   private isCurrent(): boolean { return this.current(); }
 
   write(chunk: AgentRunStreamChunk): void {
     if (!this.isCurrent()) { this.abandon(); return; }
+    if (this.writeFailure) throw this.writeFailure;
+    const bytes = streamChunkBytes(chunk);
+    if (this.queuedBytes + bytes > WRITER_BYTES || this.byteReleases.has(chunk)) throw new Error('Runtime stream byte budget is full.');
+    const release = writerBudget.tryAcquire(bytes);
+    if (!release) throw new Error('Global Runtime stream byte budget is full.');
+    this.queuedBytes += bytes;
+    this.byteReleases.set(chunk, () => {
+      this.queuedBytes -= bytes; release();
+      for (const wake of [...capacityWaiters]) wake();
+    });
+    try { this.acceptChunk(chunk); }
+    catch (error) { this.releaseChunk(chunk); throw error; }
+  }
+
+  private acceptChunk(chunk: AgentRunStreamChunk): void {
     if ('run' in chunk && chunk.run) this.runStatus = chunk.run.status;
     const isDelta = chunk.type === 'message_delta' || chunk.type === 'thought_delta';
     if (chunk.type === 'step_started' || !isDelta) this.flush();
@@ -94,9 +134,12 @@ export class RuntimeStreamWriter {
   private commit(chunks: AgentRunStreamChunk[]): void {
     const runId = this.runId;
     if (!runId || chunks.length === 0) return;
-    if (this.writeFailure) throw this.writeFailure;
-    if (this.sidecarPending >= 128) throw new Error('Runtime sidecar stream queue is full.');
-    for (const group of streamBatchGroups(chunks)) this.enqueueSidecar(runId, group);
+    try {
+      if (this.writeFailure) throw this.writeFailure;
+      const groups = streamBatchGroups(chunks);
+      if (this.sidecarPending + groups.length > 128) throw new Error('Runtime sidecar stream queue is full.');
+      for (const group of groups) this.enqueueSidecar(runId, group);
+    } catch (error) { for (const chunk of chunks) this.releaseChunk(chunk); throw error; }
   }
 
   private enqueueSidecar(runId: string, chunks: AgentRunStreamChunk[]): void {
@@ -120,7 +163,11 @@ export class RuntimeStreamWriter {
     }).catch(error => {
       this.writeFailure = error instanceof Error ? error : new Error(String(error));
       logger.error({ sessionId: this.sessionId, runId, error: this.writeFailure.message }, '[runtime-sidecar] authoritative stream stopped');
-    }).finally(() => { this.sidecarPending--; this.writes.delete(write); });
+    }).finally(() => {
+      this.sidecarPending--; this.writes.delete(write);
+      for (const chunk of chunks) this.releaseChunk(chunk);
+      for (const wake of [...capacityWaiters]) wake();
+    });
     this.sidecarTail = write;
     // Finalization must wait for the Rust tail before finish.
     this.writes.add(write);
@@ -145,10 +192,16 @@ export class RuntimeStreamWriter {
   }
 
   abandon(): void {
+    for (const chunk of [...this.pending, ...this.deltaPending]) this.releaseChunk(chunk);
     this.pending = [];
     this.deltaPending = [];
     if (this.deltaTimer) clearTimeout(this.deltaTimer);
     this.deltaTimer = undefined;
+  }
+
+  private releaseChunk(chunk: AgentRunStreamChunk): void {
+    const release = this.byteReleases.get(chunk);
+    this.byteReleases.delete(chunk); release?.();
   }
 
   flush(): void {
@@ -167,6 +220,6 @@ export class RuntimeStreamWriter {
 
 export async function* recordRuntimeStream(sessionId: string, source: AsyncGenerator<AgentRunStreamChunk>): AsyncGenerator<AgentRunStreamChunk> {
   const writer = new RuntimeStreamWriter(sessionId);
-  try { for await (const chunk of source) { writer.write(chunk); yield chunk; } }
+  try { for await (const chunk of source) { await writer.writeWithBackpressure(chunk); yield chunk; } }
   finally { writer.flush(); await writer.settled(); await writer.prepareFinish(); writer.finish(); await writer.settled(); }
 }

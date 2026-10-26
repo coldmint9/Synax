@@ -51,6 +51,31 @@ async function models(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("provider setup", () => {
+  it("defaults the output limit to empty and saves an explicit supplier cap", async () => {
+    const { user, onSave } = setup({ model: "model-a", models: ["model-a"] });
+    await models(user);
+    const limit = screen.getByRole("textbox", { name: "单次输出上限（tokens）" });
+    expect(limit).toHaveValue("");
+    await user.type(limit, "65536");
+    await user.click(screen.getByRole("button", { name: "添加供应商" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].maxOutputTokens).toBe("65536");
+  });
+
+  it("rejects invalid output limits and lets a saved limit be cleared", async () => {
+    const { user, onSave } = setup({ model: "model-a", models: ["model-a"], maxOutputTokens: "8192" }, false);
+    await user.click(screen.getByRole("button", { name: "管理模型" }));
+    const limit = screen.getByRole("textbox", { name: "单次输出上限（tokens）" });
+    await user.clear(limit);
+    await user.type(limit, "-1");
+    expect(limit).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "完成", exact: true })).toBeDisabled();
+    await user.clear(limit);
+    await user.click(screen.getByRole("button", { name: "完成", exact: true }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0].maxOutputTokens).toBe("");
+  });
+
   it("reassigns the default when deselected and prevents saving an empty selection", async () => {
     const { user, onSave } = setup();
     await models(user);

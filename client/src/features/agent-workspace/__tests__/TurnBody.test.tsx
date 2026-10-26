@@ -7,7 +7,7 @@ import { useShellStore } from "../../../shared/state/shellStore";
 const emptyTurn: InterleavedTurn = { stepId: "step-1", index: 0, status: "running", duration: null, completedAt: null, blocks: [] };
 const call = (id: string): ToolCallView => ({
   id, toolId: "bash", inputSummary: "command-" + id, outputSummary: "result-" + id,
-  status: "completed", category: "exec", duration: "10ms", mutability: "read",
+  status: "completed", category: "exec", duration: null, mutability: "read",
 });
 const tool = (id: string): TurnContentBlock => ({ type: "tool_call", call: call(id) });
 
@@ -49,18 +49,43 @@ describe("TurnBody continuous process", () => {
     expect(container.querySelector(".bui-tool-details")).toBeNull();
   });
 
-  it("opens a live record by handing the window to the reader", () => {
+  it("opens a live record in place without unfolding the rest of the window", () => {
     const { container } = render(
       <TurnBody turn={{ ...emptyTurn, blocks: [tool("opened-live")] }} entryId="opened-live" isWorking />,
     );
     const viewport = container.querySelector(".session-process-window-viewport")!;
     expect(viewport).toHaveAttribute("data-windowed", "true");
     fireEvent.click(container.querySelector(".bui-tool-trigger")!);
-    // The fixed one-line window cannot hold an open body, so it stops following
-    // the newest record instead of swallowing the reader's disclosure.
-    expect(viewport).not.toHaveAttribute("data-windowed");
+    // Only the record the reader opened takes its natural height; the window
+    // keeps its row budget instead of unfolding every other record.
+    expect(viewport).toHaveAttribute("data-windowed", "true");
+    expect(container.querySelector(".session-process-window-row")).toHaveAttribute(
+      "data-row-expanded",
+      "true",
+    );
     expect(container.querySelector(".bui-tool-trigger")).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".bui-tool-details")).toHaveTextContent("result-opened-live");
+  });
+
+  it("opens one live record without unfolding the other records", () => {
+    const blocks: TurnContentBlock[] = [tool("first"), tool("second"), tool("third")];
+    const { container } = render(
+      <TurnBody turn={{ ...emptyTurn, blocks }} entryId="multi" isWorking />,
+    );
+    const triggers = [...container.querySelectorAll(".bui-tool-trigger")];
+    expect(triggers).toHaveLength(3);
+
+    fireEvent.click(triggers[0]);
+
+    expect(triggers[0]).toHaveAttribute("aria-expanded", "true");
+    expect(triggers[1]).toHaveAttribute("aria-expanded", "false");
+    expect(triggers[2]).toHaveAttribute("aria-expanded", "false");
+    // Only the clicked record mounts its details; the neighbours stay folded.
+    expect(container.querySelectorAll(".bui-tool-details")).toHaveLength(1);
+    expect(
+      [...container.querySelectorAll(".session-process-window-row")]
+        .filter((row) => row.hasAttribute("data-row-expanded")),
+    ).toHaveLength(1);
   });
 
   it("opens finished tool details on demand", () => {
@@ -70,6 +95,22 @@ describe("TurnBody continuous process", () => {
     fireEvent.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(container.querySelector(".bui-tool-details")).toHaveTextContent("result-settled");
+  });
+
+  it("virtualizes a long finished call record list", () => {
+    const blocks = Array.from({ length: 20 }, (_, index) => tool(`history-${index}`));
+    const { container } = render(
+      <TurnBody
+        turn={{ ...emptyTurn, status: "completed", blocks }}
+        entryId="history-many"
+      />,
+    );
+
+    fireEvent.click(container.querySelector(".session-process-trigger")!);
+
+    const viewport = container.querySelector(".session-process-window-viewport")!;
+    expect(viewport).toHaveAttribute("data-windowed", "true");
+    expect(container.querySelectorAll(".session-process-window-row").length).toBeLessThan(20);
   });
 
   it("settles the live group into a quiet summary when the answer arrives", () => {
@@ -84,14 +125,14 @@ describe("TurnBody continuous process", () => {
     expect(screen.getByText("Final answer")).toBeVisible();
   });
 
-  it("uses the current thought as the live toggle without duplicating it in the list", () => {
+  it("uses a human-readable live event instead of raw thought or command text", () => {
     const blocks: TurnContentBlock[] = [
       { type: "thinking", content: "**Setting up module symlinks**" }, tool("stream"),
     ];
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks }} entryId="stream" isWorking />);
     const header = container.querySelector(".session-process-trigger")!;
-    expect(header.querySelector(".session-process-line")?.textContent).toBe("Setting up module symlinks");
-    expect(header).toHaveAttribute("aria-label", "Setting up module symlinks");
+    expect(header.querySelector(".session-process-line")?.textContent).toBe("正在执行命令");
+    expect(header).toHaveAttribute("aria-label", "正在执行命令");
     expect(header.querySelector(".session-process-chevron")).not.toBeNull();
     expect(container.querySelectorAll(".bui-thinking")).toHaveLength(0);
     expect(container.querySelector(".session-activity-group")).toHaveAttribute("data-live", "true");
@@ -99,7 +140,7 @@ describe("TurnBody continuous process", () => {
 
   it("reports the latest command when no thought is available", () => {
     const { container } = render(<TurnBody turn={{ ...emptyTurn, blocks: [tool("call-line")] }} entryId="call-line" isWorking />);
-    expect(container.querySelector(".session-process-line")).toHaveTextContent("已在 10ms 内运行 command-call-line");
+    expect(container.querySelector(".session-process-line")).toHaveTextContent("正在执行命令");
   });
 
   it("restores manually expanded groups and tool details after history remounts", () => {
@@ -138,7 +179,7 @@ describe("TurnBody continuous process", () => {
 
   it("shows the waiting indicator for an empty live turn only", () => {
     const { container, rerender } = render(<TurnBody turn={emptyTurn} entryId="empty" isStreaming />);
-    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("thinking-indicator")).toContainElement(screen.getByRole("status"));
     rerender(<TurnBody turn={{ ...emptyTurn, status: "completed" }} entryId="empty" />);
     expect(container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
   });

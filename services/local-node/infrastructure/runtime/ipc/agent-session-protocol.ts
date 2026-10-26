@@ -18,10 +18,13 @@ export interface AgentSessionChildInit {
 }
 
 export type AgentSessionParentMessage =
+  | { type: "stream:credit"; deliveryId: string; error?: string }
+  | { type: "runtime:notify"; event: import("../../../modules/agent-runtime/runtime-bus.js").RuntimeBusEvent }
   | { type: "stream:yield-request"; requested: boolean }
   | { type: "session:initialize" }
   | {
       type: "stream:start";
+      flowControl?: "byte-credit-v1";
       streamId: string;
       mode: AgentSessionStreamMode;
       input: StreamTurnRequest;
@@ -34,9 +37,11 @@ export type AgentSessionParentMessage =
       reason: string;
     }
   | { type: "session:interrupt"; reason: string }
-  | { type: "context:compact"; requestId: string };
+  | { type: "context:compact"; requestId: string }
+  | { type: "context:cancel"; requestId: string };
 
 export type AgentSessionChildMessage =
+  | { type: "stream:reserve"; sessionId: string; streamId: string; deliveryId: string; bytes: number }
   | { type: "stream:parked"; sessionId: string; streamId: string }
   | {
       type: "session:subtree-stopped";
@@ -53,6 +58,7 @@ export type AgentSessionChildMessage =
     }
   | {
       type: "stream:chunk";
+      deliveryId?: string;
       sessionId: string;
       streamId: string;
       chunk: AgentRunStreamChunk;
@@ -84,6 +90,7 @@ export function isAgentSessionChildMessage(
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
+    type === "stream:reserve" ||
     type === "stream:parked" ||
     type === "session:subtree-stopped" ||
     type === "session:booted" ||
@@ -104,13 +111,15 @@ export function isAgentSessionParentMessage(
   if (!value || typeof value !== "object") return false;
   const type = (value as { type?: unknown }).type;
   return (
+    type === "stream:credit" ||
+    type === "runtime:notify" ||
     type === "stream:yield-request" ||
     type === "session:interrupt-subtree" ||
     type === "session:initialize" ||
     type === "stream:start" ||
     type === "stream:cancel" ||
     type === "session:interrupt" ||
-    type === "context:compact"
+    type === "context:compact" || type === "context:cancel"
   );
 }
 
@@ -135,7 +144,7 @@ export function emitSessionLive(
 ): void {
   if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
     // Stream chunks already carry completion events; forward only the start marker.
-    if (event.type === "context_compaction_started" || event.type === "conversation_git_messages")
+    if (event.type === "context_compaction_started" || event.type === "context_compaction_state" || event.type === "conversation_git_messages" || event.type === "conversation_git_state")
       sendToParent({ type: "session:live", sessionId, event });
     return;
   }

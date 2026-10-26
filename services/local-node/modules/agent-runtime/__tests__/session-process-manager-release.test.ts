@@ -26,6 +26,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 vi.mock("../session-store.js", () => ({
   agentRuntimeStore: {
     hydrateSession: hydrateSessionMock,
+    hydrateExecutionSession: hydrateSessionMock,
     flushSession: vi.fn(async () => {}),
     getSession: getSessionMock,
     tryGetSession: tryGetSessionMock,

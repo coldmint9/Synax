@@ -21,7 +21,6 @@ export function useInputOptimization(options: Options) {
   const { locale } = useLocale();
   const zh = locale === "zh";
   const [pending, setPending] = useState(false);
-  const [streamingText, setStreamingText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<UndoSnapshot | null>(null);
@@ -39,7 +38,6 @@ export function useInputOptimization(options: Options) {
       request.current?.abort();
       request.current = null;
       setPending(false);
-      setStreamingText("");
       setError(null);
       if (previous.scope !== options.scope) {
         setSnapshot(null);
@@ -77,7 +75,6 @@ export function useInputOptimization(options: Options) {
     ]);
     request.current = controller;
     setPending(true);
-    setStreamingText("");
     setError(null);
     setNotice(null);
     try {
@@ -89,10 +86,6 @@ export function useInputOptimization(options: Options) {
           backendId: initial.backendId,
         },
         signal,
-        (delta) => {
-          if (request.current === controller && !signal.aborted)
-            setStreamingText((text) => text + delta);
-        },
       );
       if (request.current !== controller || controller.signal.aborted) return;
       signal.throwIfAborted();
@@ -141,5 +134,5 @@ export function useInputOptimization(options: Options) {
     setError(null);
     setNotice(null);
   };
-  return { optimize, undo, canUndo, pending, error, notice, streamingText };
+  return { optimize, undo, canUndo, pending, error, notice };
 }

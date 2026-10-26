@@ -4,25 +4,37 @@ import {
   type SessionBadgeRow,
 } from "../../adapters/transport/agentRuntime";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import { loadReadMarkers, useAgentSessionStore } from "./state/agentSessionStore";
 
 const RUNNING_SESSION_STATUS = "running";
 
 const COMPLETED_SESSION_STATUSES = new Set<string>([
   "completed",
   "failed",
-  "cancelled",
-  "interrupted",
-  "paused",
 ]);
 
-const NEW_COMPLETION_WINDOW_MS = 120_000;
 const EVENT_REFRESH_DEBOUNCE_MS = 300;
 
 export interface ProjectSessionBadge {
+  waitingInput: number;
+  unreadFailed: number;
   running: number;
   unreadCompleted: number;
   total: number;
+}
+
+export interface ProjectSessionActivity {
+  status: "waiting" | "failed" | "running" | "unread";
+  count: number;
+}
+
+export function projectSessionActivity(badge?: ProjectSessionBadge): ProjectSessionActivity | undefined {
+  if (!badge) return undefined;
+  if (badge.waitingInput > 0) return { status: "waiting", count: badge.waitingInput };
+  if (badge.unreadFailed > 0) return { status: "failed", count: badge.unreadFailed };
+  if (badge.running > 0) return { status: "running", count: badge.running };
+  if (badge.unreadCompleted > 0) return { status: "unread", count: badge.unreadCompleted };
+  return undefined;
 }
 
 interface ProjectSessionBadgeInput {
@@ -38,35 +50,37 @@ export function projectSessionBadge({
 }: ProjectSessionBadgeInput): ProjectSessionBadge {
   let running = 0;
   let unreadCompleted = 0;
+  let waitingInput = 0;
+  let unreadFailed = 0;
 
   for (const session of sessions) {
     if (session.status === RUNNING_SESSION_STATUS) {
       running += 1;
       continue;
     }
+    if (session.status === "waiting_input" || session.status === "waiting_permission") {
+      waitingInput += 1;
+      continue;
+    }
     if (!COMPLETED_SESSION_STATUSES.has(session.status)) continue;
 
     const readMarker = readMarkers[session.id];
-    if (readMarker) {
-      if (readMarker !== session.updatedAt) unreadCompleted += 1;
-      continue;
-    }
-
     const updatedAt = Date.parse(session.updatedAt);
-    const age = now - updatedAt;
-    if (
-      Number.isFinite(updatedAt) &&
-      age >= 0 &&
-      age <= NEW_COMPLETION_WINDOW_MS
-    ) {
-      unreadCompleted += 1;
+    const unread = readMarker
+      ? updatedAt > Date.parse(readMarker)
+      : Number.isFinite(updatedAt) && updatedAt <= now;
+    if (unread) {
+      if (session.status === "failed") unreadFailed += 1;
+      else unreadCompleted += 1;
     }
   }
 
   return {
     running,
     unreadCompleted,
-    total: running + unreadCompleted,
+    waitingInput,
+    unreadFailed,
+    total: running + unreadCompleted + waitingInput + unreadFailed,
   };
 }
 
@@ -86,6 +100,13 @@ export function useProjectSessionBadges(
     [projectKey],
   );
   const readMarkers = useAgentSessionStore((state) => state.readSessionMarkers);
+  const activeProjectId = useAgentSessionStore((state) => state.projectId);
+  const readMarkersByProject = useMemo(() => Object.fromEntries(
+    stableProjectIds.map((projectId) => [
+      projectId,
+      projectId === activeProjectId ? readMarkers : loadReadMarkers(projectId),
+    ]),
+  ), [activeProjectId, readMarkers, stableProjectIds]);
   const [sessionsByProject, setSessionsByProject] = useState<
     Record<string, SessionBadgeRow[]>
   >({});
@@ -167,41 +188,17 @@ export function useProjectSessionBadges(
     stableProjectIds.length,
   ]);
 
-  useEffect(() => {
-    let nextExpiry = Number.POSITIVE_INFINITY;
-    for (const sessions of Object.values(sessionsByProject)) {
-      for (const session of sessions) {
-        if (
-          !COMPLETED_SESSION_STATUSES.has(session.status) ||
-          readMarkers[session.id]
-        )
-          continue;
-        const updatedAt = Date.parse(session.updatedAt);
-        if (!Number.isFinite(updatedAt) || updatedAt > now) continue;
-        const expiry = updatedAt + NEW_COMPLETION_WINDOW_MS + 1;
-        if (expiry >= now) nextExpiry = Math.min(nextExpiry, expiry);
-      }
-    }
-    if (!Number.isFinite(nextExpiry)) return;
-
-    const timeout = window.setTimeout(
-      () => setNow(Date.now()),
-      Math.max(0, nextExpiry - Date.now()),
-    );
-    return () => window.clearTimeout(timeout);
-  }, [now, readMarkers, sessionsByProject]);
-
   const badges = useMemo(() => {
     const nextBadges: Record<string, ProjectSessionBadge> = {};
     for (const projectId of stableProjectIds) {
       nextBadges[projectId] = projectSessionBadge({
         sessions: sessionsByProject[projectId] ?? [],
-        readMarkers,
+        readMarkers: readMarkersByProject[projectId] ?? {},
         now,
       });
     }
     return nextBadges;
-  }, [now, readMarkers, sessionsByProject, stableProjectIds]);
+  }, [now, readMarkersByProject, sessionsByProject, stableProjectIds]);
 
   return { badges, refresh };
 }

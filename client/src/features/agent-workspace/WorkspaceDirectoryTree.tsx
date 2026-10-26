@@ -1,20 +1,28 @@
 import { ChevronRight, Folder, FolderOpen, LoaderCircle } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { projectApi, type ProjectWorkspaceRoot, type WorkspaceTreeListing } from "../../adapters/transport/project";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { Button } from "../../shared/ui/ui/Button";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
 import { FileTypeIcon } from "./FileTypeIcon";
+import { useWorkspaceRefresh } from './workspaceRefresh';
+import { useWorkspaceGit } from './workspaceGitStore';
+import { indexWorkspaceGitCounts, WorkspaceGitCountBadges } from './workspaceGitCountBadges';
 
 const keyOf = (rootId: string, path: string) => JSON.stringify([rootId, path]);
 interface Level { page?: WorkspaceTreeListing; loading?: boolean; error?: string }
 
 export function WorkspaceDirectoryTree({ projectId }: { projectId: string }) {
-  const sessionId = useAgentSessionStore((s) =>
-    s.sessions.find((session) => session.id === s.selectedSessionId && session.projectId === projectId)?.id);
+  const session = useAgentSessionStore((s) =>
+    s.sessions.find((item) => item.id === s.selectedSessionId && item.projectId === projectId));
+  const sessionId = session?.id;
+  const bindingRevision = (session?.sessionMetadata?.backend as { workspaceBindingRevision?: number } | undefined)?.workspaceBindingRevision ?? 0;
   // Switching sessions can switch the physical worktree. Never retain old root requests.
-  return <DirectoryTree key={`${projectId}:${sessionId ?? ""}`} projectId={projectId} sessionId={sessionId} />;
+  const [bindingVersion, setBindingVersion] = useState(0);
+  const reset = useCallback(() => setBindingVersion(value => value + 1), []);
+  useWorkspaceRefresh(sessionId ?? null, reset);
+  return <DirectoryTree key={`${projectId}:${sessionId ?? ""}:${bindingVersion}:${bindingRevision}`} projectId={projectId} sessionId={sessionId} />;
 }
 
 function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?: string }) {
@@ -27,6 +35,13 @@ function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?
   const requests = useRef(new Map<string, AbortController>());
   const mounted = useRef(true);
   const revisions = useRef(new Map<string, number>());
+  const { snapshot: gitSnapshot } = useWorkspaceGit(projectId, sessionId);
+  const changeCountsByRoot = useMemo(
+    () => new Map((gitSnapshot?.repositories ?? []).filter(repository => repository.status === 'ready').map(repository => [repository.rootId, {
+      workspacePath: repository.workspacePath, directories: indexWorkspaceGitCounts(repository.changedFiles),
+    }])),
+    [gitSnapshot?.repositories],
+  );
 
   const update = useCallback((key: string, value: Level) => {
     if (!mounted.current) return;
@@ -133,13 +148,18 @@ function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?
     const key = keyOf(root.id, path);
     const open = expanded.has(key);
     const missing = !path && root.status !== "available";
+    const git = changeCountsByRoot.get(root.id);
+    const rootPath = root.location?.kind === 'wsl'
+      ? `\\\\wsl.localhost\\${root.location.distribution}${root.location.path.replace(/\//g, '\\')}` : root.path;
+    const counts = !missing && git?.workspacePath === rootPath ? git.directories.get(path) : undefined;
     return <li key={key} className="workspace-directory-tree-node">
       <button type="button" className={`workspace-directory-tree-row${!path ? " workspace-directory-tree-row--root" : ""}`}
-        data-ignored={ignored || undefined} aria-expanded={missing ? undefined : open} disabled={missing}
+        data-ignored={ignored || undefined} aria-label={name} aria-expanded={missing ? undefined : open} disabled={missing}
         style={{ paddingLeft: 8 + depth * 14 }} title={path || root.path} onClick={() => toggle(root, path)}>
         <ChevronRight size={12} aria-hidden="true" className={`workspace-directory-tree-chevron${open ? " workspace-directory-tree-chevron--expanded" : ""}`} />
         {path && (open ? <FolderOpen size={14} aria-hidden="true" /> : <Folder size={14} aria-hidden="true" />)}
         <span className="truncate">{name}</span>
+        <WorkspaceGitCountBadges counts={counts} />
         {missing && <span className="workspace-directory-tree-status">{t("workspaceRepositoryMissing")}</span>}
       </button>
       {open && level(root, path, depth + 1)}
@@ -156,7 +176,7 @@ function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?
             onClick={() => sessionId && openWorkspaceFile(sessionId, entry.path, null, root.id, root.name)}>
             <FileTypeIcon path={entry.path} size={14} /><span className="truncate">{entry.name}</span>
           </button></li>)}
-      {state?.error && <li className="workspace-directory-tree-error" role="alert">
+      {state?.error && <li className="workspace-directory-tree-error" data-error-toast="off" role="alert">
         <span title={state.error}>{t("workspaceDirectoryTreeFailed")}</span>
         <Button variant="ghost" size="sm" onClick={() => void load(root, path, false, true)}>{locale === "zh" ? "重试" : "Retry"}</Button>
       </li>}
@@ -170,7 +190,7 @@ function DirectoryTree({ projectId, sessionId }: { projectId: string; sessionId?
   };
 
   return <nav className="workspace-directory-tree-panel min-h-0 flex-1 overflow-y-auto" aria-label={t("workspaceDirectoryTree")}>
-    {rootError ? <div role="alert" className="workspace-directory-tree-error">{rootError}</div>
+    {rootError ? <div data-error-toast="off" role="alert" className="workspace-directory-tree-error">{rootError}</div>
       : !roots ? <div role="status" className="workspace-directory-tree-status">{t("workspaceDirectoryTreeLoading")}</div>
       : roots.length === 0 ? <div className="workspace-directory-tree-status">{t("workspaceDirectoryTreeEmpty")}</div>
       : <ul className="workspace-directory-tree-level">{roots.map(root => directory(root, "", root.name, 0))}</ul>}

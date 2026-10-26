@@ -185,3 +185,21 @@ it("keeps a step callback to the open transcript only", async () => {
   expect(refreshSessions).not.toHaveBeenCalled();
   expect(refreshDetail).not.toHaveBeenCalled();
 });
+
+it('keeps intermediate lifecycle with realtime but applies the terminal session patch', async () => {
+  const { setRunRealtimeObservation } = await import('../../../adapters/transport/runRealtime');
+  const refreshDetail = vi.fn(async () => {});
+  useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState(), selectedSessionId: 's1',
+    sessions: [row('s1')], refreshDetail });
+  setRunRealtimeObservation('s1', 'r1');
+  try {
+    renderHook(useRuntimeSSE);
+    act(() => bus.changed({ data: JSON.stringify({ sessionId: 's1', patch: {
+      title: 'Updated title', status: 'completed', activeRunId: null,
+    } }) } as MessageEvent));
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({ title: 'Updated title', status: 'completed', activeRunId: null });
+    act(() => bus.step({ data: JSON.stringify({ sessionId: 's1' }) } as MessageEvent));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
+    expect(refreshDetail).not.toHaveBeenCalled();
+  } finally { setRunRealtimeObservation('s1', null); }
+});

@@ -224,7 +224,7 @@ describe("WorkspaceTabStrip", () => {
       },
     } }));
     const save = vi.fn().mockResolvedValue(true);
-    const unregister = registerWorkspaceSaveHandler("diff:c.ts", save);
+    const unregister = registerWorkspaceSaveHandler("session-1", "diff:c.ts", save);
     render(<WorkspaceTabStrip sessionId="session-1" />);
     fireEvent.contextMenu(screen.getByRole("tab", { name: "a.ts" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "关闭其他标签" }));

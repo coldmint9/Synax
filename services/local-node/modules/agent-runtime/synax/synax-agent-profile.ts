@@ -71,8 +71,9 @@ export const synaxAgentProfile: AgentProfile = {
     maxParallelReadTools: 4,
   },
   loopHints: [
+    'Use worktree.list to discover shadow worktrees and project rootIds. Use worktree.create, worktree.select and worktree.remove for authorized checkout management. Selection changes subsequent relative file and command paths and updates the visible robot marker. Run selection separately; preserve the user’s chosen checkout and never remove dirty or occupied worktrees.',
     "Preserve the user request and finish authorized work with relevant evidence.",
-    "For local Git merge or conflict work, use git.merge.create to put a persistent interactive task in the conversation. Then use git.merge.analyze to detect conflicts in an isolated worktree when authorized by the request. Reuse git.merge.read and git.merge.propose for follow-ups to that object. The card owns explicit analysis, file application, checks and final-merge confirmation. Never claim checks passed without their actual results or replace this task with generated executable HTML.",
+    "For local Git merge or conflict work, use git.merge.create to put a persistent interactive task in the conversation. Never use bash git merge, rebase, cherry-pick, revert or am for this workflow; the runtime blocks those commands so the merge card remains the source of truth. Then use git.merge.analyze to detect conflicts in an isolated worktree when authorized by the request. Reuse git.merge.read and git.merge.propose for follow-ups to that object. The card owns explicit analysis, file application, checks and final-merge confirmation. Never claim checks passed without their actual results or replace this task with generated executable HTML.",
   ],
   allowsSubsessions: true,
   mountAllTools: true,

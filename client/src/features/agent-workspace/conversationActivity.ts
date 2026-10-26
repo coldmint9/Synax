@@ -82,6 +82,99 @@ export function conversationToolPresentation(call: ToolCallView, locale: Locale)
   };
 }
 
+type LiveLabelKind = "edit" | "read" | "run" | "search" | "load" | "tool";
+
+const liveLabels = {
+  zh: {
+    analyze: "正在分析任务",
+    waitingModel: "正在等待模型继续",
+    generating: "正在整理结果",
+    cancelling: "正在停止当前操作",
+    queued: {
+      search: "正在准备搜索",
+      command: "正在准备命令执行",
+      io: "正在准备文件访问",
+      worker: "正在分配执行环境",
+      provider: "正在等待模型资源",
+      fallback: "正在准备执行资源",
+    },
+    action: {
+      edit: "正在修改文件",
+      read: "正在读取文件",
+      run: "正在执行命令",
+      search: "正在搜索代码",
+      load: "正在加载工具",
+      tool: "正在处理工具调用",
+    },
+    parallel: (count: number) => `正在并行处理 ${count} 个任务`,
+    scanned: (files: number) => `正在搜索代码 · 已扫描 ${files} 个文件`,
+  },
+  en: {
+    analyze: "Analyzing the task",
+    waitingModel: "Waiting for the model to continue",
+    generating: "Preparing the result",
+    cancelling: "Stopping the current operation",
+    queued: {
+      search: "Preparing search",
+      command: "Preparing command execution",
+      io: "Preparing file access",
+      worker: "Allocating an execution environment",
+      provider: "Waiting for model capacity",
+      fallback: "Preparing execution resources",
+    },
+    action: {
+      edit: "Editing files",
+      read: "Reading files",
+      run: "Running a command",
+      search: "Searching the code",
+      load: "Loading a tool",
+      tool: "Processing a tool call",
+    },
+    parallel: (count: number) => `Processing ${count} tasks in parallel`,
+    scanned: (files: number) => `Searching the code · ${files} files scanned`,
+  },
+} as const;
+
+function liveLabelKind(call: ToolCallView): LiveLabelKind {
+  return actionFor(call);
+}
+
+function liveLabelForCall(call: ToolCallView, locale: Locale): string {
+  const labels = liveLabels[locale];
+  const progress = call.execution;
+  if (progress?.phase === "cancelling") return labels.cancelling;
+  if (progress?.phase === "waiting_model") return labels.waitingModel;
+  if (progress?.phase === "generating") return labels.generating;
+  if (progress?.phase === "queued_resources") {
+    const resource = progress.resource;
+    return labels.queued[resource as keyof typeof labels.queued] ?? labels.queued.fallback;
+  }
+  if (progress?.phase === "executing_tool" && liveLabelKind(call) === "search" && progress.files !== undefined) {
+    return labels.scanned(progress.files);
+  }
+  return labels.action[liveLabelKind(call)];
+}
+
+/**
+ * Human-readable label for the live activity toggle.
+ *
+ * Running toggles intentionally omit raw commands, paths, prompts, and model
+ * reasoning. The label describes the current event using this priority:
+ * execution phase, tool semantics, then a generic turn state.
+ */
+export function conversationActivityLiveLabel(calls: ToolCallView[], locale: Locale): string {
+  const active = calls.filter((call) => call.status === "running" || call.status === "pending");
+  if (active.length === 0) {
+    const latest = calls[calls.length - 1];
+    return latest ? liveLabelForCall(latest, locale) : liveLabels[locale].analyze;
+  }
+  if (active.length > 1) {
+    const labels = new Set(active.map((call) => liveLabelForCall(call, locale)));
+    if (labels.size > 1) return liveLabels[locale].parallel(active.length);
+  }
+  return liveLabelForCall(active[active.length - 1], locale);
+}
+
 /** Summarize each kind of work once, in the same order as the transcript. */
 export function conversationActivitySummary(calls: ToolCallView[], locale: Locale) {
   const counts = new Map<Action, number>();

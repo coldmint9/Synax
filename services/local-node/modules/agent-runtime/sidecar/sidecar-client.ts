@@ -52,6 +52,10 @@ type PendingRequest = {
  * pre-stream check plus a few during long turns.
  */
 const EXECUTION_LEASE_REVALIDATE_MS = 1_000;
+export const NORMAL_REQUEST_LIMIT = 512;
+const CRITICAL_REQUEST_LIMIT = 64;
+const NORMAL_REQUEST_BYTES = 32 * 1024 * 1024;
+const CRITICAL_REQUEST_BYTES = 8 * 1024 * 1024;
 
 /**
  * Control operations that can close, replace or unpin a lease. A cached
@@ -63,7 +67,16 @@ const LEASE_MUTATING_CONTROL_OPERATIONS = new Set([
   "stop_begin",
   "stop_cancel",
   "session_patch",
+  "compaction_lock",
+  "compaction_unlock",
 ]);
+
+const CRITICAL_CONTROL_OPERATIONS = new Set([
+  "execution_open", "execution_close", "stop_begin", "stop_cancel", "stop_unconfirmed", "resume",
+]);
+function criticalRequest(body: SidecarBody): boolean {
+  return body.type === 'health' || (body.type === 'control_command' && CRITICAL_CONTROL_OPERATIONS.has(body.operation));
+}
 
 
 type ExecutionLeaseIdentity = {
@@ -88,6 +101,7 @@ function executionLeaseKey(context: ExecutionLeaseIdentity): string {
 const executionLeaseChecks = new Map<string, { key: string; at: number }>();
 
 export class RuntimeSidecarClient {
+  private criticalClient?: RuntimeSidecarClient;
   private socket: net.Socket | undefined;
   private buffer = Buffer.alloc(0);
   private ready: Promise<Extract<SidecarBody, { type: 'ready' }>> | undefined;
@@ -101,7 +115,7 @@ export class RuntimeSidecarClient {
   private operationBytes = 0;
   private readonly lifetime = new AbortController();
 
-  constructor(private readonly options: RuntimeSidecarClientOptions) {
+  constructor(private readonly options: RuntimeSidecarClientOptions, private readonly lane: 'normal' | 'critical' = 'normal') {
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
   }
 
@@ -260,7 +274,7 @@ export class RuntimeSidecarClient {
   }): Promise<Uint8Array> {
     // History cursors carry their own generation/revision. A read must not
     // open the execution actor merely to attach an unrelated runtime fence.
-    if (["history_sync", "object_value_chunk", "list_checkpoints"].includes(input.operation)) {
+    if (["history_sync", "object_value_chunk", "list_checkpoints", "head_read", "message_content", "context_measure"].includes(input.operation)) {
       return this.historyCommandGlobal(input);
     }
     const snapshot = await this.snapshot(input.sessionId);
@@ -344,6 +358,7 @@ export class RuntimeSidecarClient {
 
   close(): void {
     this.lifetime.abort();
+    this.criticalClient?.close();
     this.fail(new Error('Runtime sidecar client closed.'));
   }
 
@@ -355,9 +370,13 @@ export class RuntimeSidecarClient {
     requestId: string = randomUUID(),
   ): Promise<SidecarEnvelope> {
     if (this.lifetime.signal.aborted) throw new Error('Runtime sidecar client closed.');
-    if (this.operationCount >= 128) throw new Error('Runtime sidecar request queue is full.');
+    if (this.lane === 'normal' && criticalRequest(body)) {
+      this.criticalClient ??= new RuntimeSidecarClient(this.options, 'critical');
+      return this.criticalClient.request(body, sessionId, epoch, revision, requestId);
+    }
+    if (this.operationCount >= (this.lane === 'critical' ? CRITICAL_REQUEST_LIMIT : NORMAL_REQUEST_LIMIT)) throw new Error('Runtime sidecar request queue is full.');
     const frame = this.encode({ requestId, sessionId, epoch, revision, body });
-    if (this.operationBytes + frame.length > 8 * 1024 * 1024) throw new Error('Runtime sidecar request byte budget is full.');
+    if (this.operationBytes + frame.length > (this.lane === 'critical' ? CRITICAL_REQUEST_BYTES : NORMAL_REQUEST_BYTES)) throw new Error('Runtime sidecar request byte budget is full.');
     // Correlation IDs cannot be in flight twice on one socket. Serialize
     // identical IDs without coalescing their bodies: Rust still checks the
     // durable receipt and rejects conflicting retries.
@@ -430,7 +449,7 @@ export class RuntimeSidecarClient {
   private send(envelope: SidecarEnvelope): void { this.write(this.encode(envelope)); }
   private write(frame: Buffer): void {
     if (!this.socket || this.socket.destroyed) throw new RuntimeSidecarTransportError('Runtime sidecar is not connected.');
-    if (this.socket.writableLength + frame.length > 8 * 1024 * 1024) throw new Error('Runtime sidecar socket byte budget is full.');
+    if (this.socket.writableLength + frame.length > (this.lane === 'critical' ? CRITICAL_REQUEST_BYTES : NORMAL_REQUEST_BYTES)) throw new Error('Runtime sidecar socket byte budget is full.');
     this.socket.write(frame);
   }
 

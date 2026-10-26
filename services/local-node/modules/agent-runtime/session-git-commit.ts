@@ -1,10 +1,14 @@
 import path from "node:path";
-import { attachDetachedGitBranch, GitWorkspaceError } from "../git-workspaces.js";
+import {
+  attachDetachedGitBranch,
+  GitWorkspaceError,
+} from "../git-workspaces.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import {
   invalidateSessionEnvironment,
   resolveSessionRepository,
 } from "./session-environment.js";
+import { switchSessionGitBranch } from "./session-git-branches.js";
 import { agentRuntimeStore } from "./session-store.js";
 import {
   canonicalWorkspaceDirectory,
@@ -22,10 +26,18 @@ const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_SUBJECT_LEN = 200;
 const MAX_COMMIT_MESSAGE_LEN = 2_000;
 const FENCE_RE = /^\s*(?:```|~~~)/;
+/**
+ * macOS Finder metadata must never be staged. The `glob` magic is required:
+ * a literal `:(exclude).DS_Store` pathspec makes `git add` report the ignored
+ * file and abort ("The following paths are ignored ... Use -f"), even though
+ * that pathspec excludes it, while a non-glob double-star exclusion misses the
+ * repository-root copy. `glob` makes one pattern cover root and nested files.
+ */
+const DS_STORE_EXCLUDE = ":(exclude,glob)**/.DS_Store";
 
 export interface SessionGitCommitInput {
   rootId?: string;
-  /** Name a branch at a detached session worktree's HEAD before committing. */
+  /** Name a detached branch, or select a different local branch before committing. */
   branchName?: string;
   /** Explicit, reviewed commit message; empty messages are rejected. */
   message?: string | null;
@@ -143,6 +155,136 @@ export async function runGit(
   return result;
 }
 
+interface GitIdentity {
+  name: string;
+  email: string;
+}
+
+function remoteHost(value: string): string | null {
+  const scp = /^(?:[^@/\s]+@)?([^:/$\s]+):/.exec(value);
+  if (scp) return scp[1].toLowerCase();
+  try {
+    const url = new URL(value);
+    return url.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function parseRemoteIdentity(raw: string, allowGitHubNoreply = false): GitIdentity | null {
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    const login =
+      typeof value.login === "string"
+        ? value.login.trim()
+        : typeof value.username === "string"
+          ? value.username.trim()
+          : "";
+    const name =
+      typeof value.name === "string" && value.name.trim()
+        ? value.name.trim()
+        : login;
+    const email = typeof value.email === "string" ? value.email.trim() : "";
+    const id = value.id;
+    if (email && name) return { name, email };
+    // GitHub hides private emails from /user. Its noreply address is stable
+    // when the numeric account id and login are available.
+    if (allowGitHubNoreply && login && (typeof id === "number" || typeof id === "string")) {
+      return { name, email: `${String(id)}+${login}@users.noreply.github.com` };
+    }
+  } catch {
+    // An unavailable or non-JSON CLI response is treated as no remote identity.
+  }
+  return null;
+}
+
+async function readRemoteIdentity(workspacePath: string): Promise<GitIdentity | null> {
+  const configured = (await runGit(
+    workspacePath,
+    ["config", "--get-regexp", "^remote\\..*\\.url$"],
+    true,
+  )).stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => {
+      const separator = line.indexOf(" ");
+      return separator === -1
+        ? null
+        : { name: line.slice(0, separator), url: line.slice(separator + 1).trim() };
+    })
+    .filter((item): item is { name: string; url: string } => Boolean(item));
+  if (!configured.length) return null;
+  const remote = configured.find((item) => item.name === "remote.origin.url") ?? configured[0];
+  const url = remote.url;
+  const host = remoteHost(url);
+  if (!host) return null;
+  const isGitHub = host === "github.com" || host.includes("github");
+  const isGitLab = host === "gitlab.com" || host.includes("gitlab");
+  const candidates: Array<[string, string[]]> = [];
+  if (isGitHub || !isGitLab)
+    candidates.push(["gh", ["api", "--hostname", host, "user"]]);
+  if (isGitLab || !isGitHub)
+    candidates.push(["glab", ["api", "--hostname", host, "user"]]);
+  for (const [executable, args] of candidates) {
+    const result = await runCommand(executable, args, {
+      cwd: workspacePath,
+      timeoutMs: 10_000,
+      maxBufferBytes: 512 * 1024,
+      inheritEnv: false,
+      env: {
+        ...process.env,
+        GH_PROMPT_DISABLED: "1",
+        GIT_TERMINAL_PROMPT: "0",
+        NO_COLOR: "1",
+      },
+    });
+    if (result.status !== 0 || result.error || result.timedOut) continue;
+    const identity = parseRemoteIdentity(result.stdout, executable === "gh");
+    if (identity) return identity;
+    if (executable === "gh") {
+      const emails = await runCommand(executable, ["api", "--hostname", host, "user/emails"], {
+        cwd: workspacePath,
+        timeoutMs: 10_000,
+        maxBufferBytes: 512 * 1024,
+        inheritEnv: false,
+        env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0", NO_COLOR: "1" },
+      });
+      if (emails.status === 0 && !emails.error && !emails.timedOut) {
+        try {
+          const rows = JSON.parse(emails.stdout) as Array<Record<string, unknown>>;
+          const primary = rows.find((row) => row.primary && row.verified) ?? rows.find((row) => row.verified);
+          const email = typeof primary?.email === "string" ? primary.email.trim() : "";
+          const user = parseRemoteIdentity(result.stdout, true);
+          if (email && user) return { name: user.name, email };
+        } catch {
+          // Fall through to the local Git identity.
+        }
+      }
+    }
+  }
+  return null;
+}
+
+async function readLocalIdentity(workspacePath: string): Promise<GitIdentity | null> {
+  const values = (await runGit(
+    workspacePath,
+    ["config", "--get-regexp", "^user\\.(name|email)$"],
+    true,
+  )).stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => {
+      const separator = line.indexOf(" ");
+      return separator === -1
+        ? null
+        : { key: line.slice(0, separator), value: line.slice(separator + 1).trim() };
+    })
+    .filter((item): item is { key: string; value: string } => Boolean(item));
+  const name = values.find((item) => item.key === "user.name")?.value ?? "";
+  const email = values.find((item) => item.key === "user.email")?.value ?? "";
+  return name && email ? { name, email } : null;
+}
+
 function getSession(sessionId: string) {
   try {
     return agentRuntimeStore.getSession(sessionId);
@@ -234,11 +376,6 @@ export async function commitSessionWorkspace(
       "Name a branch before committing from a detached worktree.",
     );
   }
-  if (branch && input.branchName && input.branchName !== branch) {
-    throw new AgentValidationError(
-      "The requested branch does not match this worktree's current branch.",
-    );
-  }
 
   const status = await runGit(workspacePath, [
     "status",
@@ -272,6 +409,24 @@ export async function commitSessionWorkspace(
     );
   }
 
+  if (branch && input.branchName && input.branchName !== branch) {
+    try {
+      branch = (
+        await switchSessionGitBranch(
+          sessionId,
+          input.branchName,
+          root.id,
+          true,
+        )
+      ).current;
+      invalidateSessionEnvironment(sessionId);
+    } catch (error) {
+      if (error instanceof GitWorkspaceError)
+        throw new AgentRuntimeError(error.message, "GIT_BRANCH_ERROR", error.status);
+      throw error;
+    }
+  }
+
   if (!branch) {
     try {
       branch = await attachDetachedGitBranch(rootLocation, input.branchName!);
@@ -283,12 +438,41 @@ export async function commitSessionWorkspace(
     }
   }
 
-  await runGit(workspacePath, ["add", includeUntracked ? "-A" : "-u", "--", ".", ":(exclude)**/.DS_Store", ":(exclude).DS_Store"]);
-  const staged = (await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])).stdout.split("\0");
+  await runGit(workspacePath, [
+    "add",
+    includeUntracked ? "-A" : "-u",
+    "--",
+    ".",
+    DS_STORE_EXCLUDE,
+  ]);
+  const stagedOutput = (
+    await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])
+  ).stdout;
+  const staged = stagedOutput
+    .split("\0")
+    .map((file) => file.trim())
+    .filter(Boolean);
   if (staged.some(file => file.split("/").at(-1) === ".DS_Store"))
     throw new AgentValidationError(".DS_Store must never be committed. Unstage it before committing.");
+  // Only excluded metadata (`status` still lists it) leaves an empty index.
+  if (staged.length === 0) {
+    throw new AgentRuntimeError(
+      "There is nothing to commit.",
+      "GIT_NOTHING_TO_COMMIT",
+      409,
+    );
+  }
 
-  const commit = await runGit(workspacePath, ["commit", "-m", message], true);
+  const identity =
+    (await readRemoteIdentity(workspacePath)) ??
+    (await readLocalIdentity(workspacePath));
+  const commitArgs = [
+    ...(identity ? ["-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`] : []),
+    "commit",
+    "-m",
+    message,
+  ];
+  const commit = await runGit(workspacePath, commitArgs, true);
   if (!commit.ok) {
     const detail = formatGitFailure(commit);
     throw new AgentRuntimeError(
@@ -342,7 +526,7 @@ export async function commitSessionWorkspace(
       branch,
       commitSha,
       messageGenerated: false,
-      files: eligibleFiles.length,
+      files: staged.length,
       pushed,
     },
     shouldPush
@@ -358,6 +542,7 @@ export async function commitSessionWorkspace(
     messageGenerated: false,
     pushed,
     upstream,
-    committedFiles: eligibleFiles.length,
+    // Count what the commit actually contains, not every dirty status entry.
+    committedFiles: staged.length,
   };
 }

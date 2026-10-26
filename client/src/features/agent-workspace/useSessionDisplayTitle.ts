@@ -48,7 +48,7 @@ export function getSessionDisplayTitle(
   locale: Locale = "en",
 ): string {
   const title = session.title?.trim();
-  if (title && isPlaceholderTitle(title))
+  if (title && session.sessionMetadata?.titleSource !== "user" && isPlaceholderTitle(title))
     return t(locale, "sessionPlaceholderTitle");
   if (title) return title;
 

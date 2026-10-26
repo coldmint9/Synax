@@ -56,3 +56,13 @@ it("names a missing saved snapshot and lets the reader retry", async () => {
   fireEvent.click(screen.getByRole("button", { name: "重试加载" }));
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
 });
+
+it("does not request a second hydration when the response still has no snapshot", async () => {
+  const load = vi.spyOn(agentRuntimeApi, "messageVisualization").mockResolvedValue({
+    message: { ...projected, historyProjection: undefined,
+      content: "```synax-visualize\n<button>Demo</button>\n```", metadata: { engine: "rust" } },
+  });
+  render(<HistoricalVisualizationReply message={projected} />);
+  expect(await screen.findByText("交互预览未生成，请让助手重新生成。")).toBeInTheDocument();
+  expect(load).toHaveBeenCalledTimes(1);
+});

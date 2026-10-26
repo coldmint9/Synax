@@ -1,4 +1,4 @@
-use super::{CommittedEvent, SessionActor, StoredReceipt};
+use super::{CommittedEvent, SessionActor, SessionHandle, StoredReceipt};
 use crate::{
     runtime::{input_queue::QueueState, projection::UiSnapshot, session_types::ControlState},
     storage::jsonl::{
@@ -20,7 +20,7 @@ use std::{
 pub const FILE: &str = "runtime-checkpoint.bin";
 
 #[derive(Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct Snapshot<E = Vec<Event>, R = Vec<((String, String), StoredReceipt)>> {
     pub id: String,
     pub segment: u64,
     pub positions: [Position; 3],
@@ -30,17 +30,28 @@ pub struct Snapshot {
     pub projection: UiSnapshot,
     pub control: ControlState,
     pub queue: QueueState,
-    events: Vec<Event>,
-    receipts: Vec<((String, String), StoredReceipt)>,
+    events: E,
+    receipts: R,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Event {
+pub(crate) struct Event {
     sequence: u64,
     run_id: String,
     kind: String,
     #[serde(with = "checkpoint::bytes")]
     payload: Vec<u8>,
+}
+
+// Borrow the large event/receipt bodies while serializing a consistent view;
+// the resulting JSON is the only full snapshot copy retained outside the lock.
+#[derive(Serialize)]
+struct EventRef<'a> {
+    sequence: u64,
+    run_id: &'a str,
+    kind: &'a str,
+    #[serde(serialize_with = "checkpoint::bytes::serialize")]
+    payload: &'a [u8],
 }
 
 impl Snapshot {
@@ -95,15 +106,58 @@ pub fn read(directory: &Path, id: &str) -> Option<Snapshot> {
     Some(saved)
 }
 
-pub fn save(root: &Path, actor: &mut SessionActor, force: bool) -> JsonlResult<()> {
+pub fn save(handle: &SessionHandle, force: bool) -> JsonlResult<()> {
+    save_with(handle, force, checkpoint::Pending::stage)
+}
+
+fn save_with(
+    handle: &SessionHandle,
+    force: bool,
+    stage: impl FnOnce(checkpoint::Pending) -> JsonlResult<checkpoint::Staged>,
+) -> JsonlResult<()> {
+    // A periodic flush skips an in-flight checkpoint instead of retaining
+    // another large snapshot. Forced shutdown/eviction waits outside actor lock.
+    let gate = &handle.cell().checkpoint_lock;
+    let _gate = if force {
+        gate.lock()
+    } else {
+        let Some(guard) = gate.try_lock() else {
+            return Ok(());
+        };
+        guard
+    };
+    let prepared = {
+        let mut actor = handle.actor.lock();
+        prepare(&handle.root, &mut actor, force)?
+    };
+    let Some((pending, commit)) = prepared else {
+        return Ok(());
+    };
+    let staged = stage(pending)?;
+    staged.publish()?;
+    let mut actor = handle.actor.lock();
+    actor.checkpoint_commit = commit;
+    actor.checkpoint_at = std::time::Instant::now();
+    Ok(())
+}
+
+fn prepare(
+    root: &Path,
+    actor: &mut SessionActor,
+    force: bool,
+) -> JsonlResult<Option<(checkpoint::Pending, u64)>> {
+    if layout::deletion_marker(root, &actor.id).try_exists()? { return Ok(None); }
     if !actor.header.is_object()
         || actor.commit == actor.checkpoint_commit
         || (!force
             && (actor.commit.saturating_sub(actor.checkpoint_commit) < 128
                 || actor.checkpoint_at.elapsed().as_secs() < 30))
     {
-        return Ok(());
+        return Ok(None);
     }
+    // New writes may have arrived since flush released the actor. Capture only
+    // a durable prefix, so publishing outside the lock never acknowledges it.
+    actor.sync()?;
     let directory = layout::session_dir(root, &actor.id)?;
     let positions = [
         Position::capture(actor.files.controls.path(), actor.files.extent.offsets[0])?,
@@ -129,21 +183,20 @@ pub fn save(root: &Path, actor: &mut SessionActor, force: bool) -> JsonlResult<(
         events: actor
             .events
             .iter()
-            .map(|event| Event {
+            .map(|event| EventRef {
                 sequence: event.sequence,
-                run_id: event.run_id.clone(),
-                kind: event.kind.clone(),
-                payload: event.payload.to_vec(),
+                run_id: &event.run_id,
+                kind: &event.kind,
+                payload: &event.payload,
             })
-            .collect(),
-        receipts: actor
-            .receipts
-            .iter()
-            .map(|(id, receipt)| (id.clone(), receipt.clone()))
-            .collect(),
+            .collect::<Vec<_>>(),
+        receipts: actor.receipts.iter().collect::<Vec<_>>(),
     };
-    checkpoint::write(&directory.join(FILE), &snapshot)?;
-    actor.checkpoint_commit = actor.commit;
-    actor.checkpoint_at = std::time::Instant::now();
-    Ok(())
+    Ok(Some((
+        checkpoint::Pending::new(directory.join(FILE), &snapshot)?,
+        actor.commit,
+    )))
 }
+
+#[cfg(test)]
+mod tests;

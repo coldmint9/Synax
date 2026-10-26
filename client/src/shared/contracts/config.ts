@@ -24,7 +24,9 @@ export interface ProviderModelDef {
   id: string;
   label: string;
   isDefault?: boolean;
+  /** Model output capability; ordinary requests use the provider's default. */
   maxTokens?: number;
+  inputLimit?: number;
   /** Input context window in tokens (1_000_000 when the 1M input-context checkbox is set). */
   contextLimit?: number;
 }

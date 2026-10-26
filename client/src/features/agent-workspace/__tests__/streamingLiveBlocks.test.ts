@@ -118,3 +118,10 @@ describe("streamingLiveBlocks", () => {
     expect(snapshotStreamingBuffers(state)).toEqual([]);
   });
 });
+
+it('retains complete Unicode text across long live packets', () => {
+  const text = '漢🙂'.repeat(40000);
+  const state = applyMessageDelta(EMPTY_STREAMING_BUFFERS, text);
+  expect(state.pendingText).toBe(text);
+  expect(materializeLiveBlocks(state)).toEqual([{ type: 'text', content: text }]);
+});

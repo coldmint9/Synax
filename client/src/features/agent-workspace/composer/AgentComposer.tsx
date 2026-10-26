@@ -561,7 +561,7 @@ export function AgentComposer({
   );
 
   const optimizeLabel =
-    locale === "zh" ? "澄清并优化输入" : "Clarify and optimize input";
+    locale === "zh" ? "优化输入" : "Optimize input";
   const undoLabel = locale === "zh" ? "撤销优化" : "Undo optimization";
   const optimizationButtons = (
     <>
@@ -879,14 +879,6 @@ export function AgentComposer({
         <p role="status" className="px-3 py-1 text-xs text-muted-foreground">
           {optimization.notice}
         </p>
-      )}
-      {optimization.pending && (
-        <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-sm text-muted-foreground">
-          <span role="status">
-            {locale === "zh" ? "正在优化输入…" : "Optimizing input…"}
-          </span>
-          {optimization.streamingText && <p>{optimization.streamingText}</p>}
-        </div>
       )}
     </div>
   );

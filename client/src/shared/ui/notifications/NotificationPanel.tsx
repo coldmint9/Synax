@@ -83,6 +83,11 @@ function NotificationItem({ notification }: { notification: Notification }) {
       <Icon size={13} className={`shrink-0 mt-0.5 ${ICON_STYLES[notification.type]}`} />
       <div className="flex-1 min-w-0">
         <p className="text-[11px] text-foreground/80 leading-relaxed line-clamp-2">{notification.message}</p>
+        {notification.detail && (
+          <p className="text-[10px] text-muted-foreground/70 leading-relaxed line-clamp-2 break-words">
+            {notification.detail}
+          </p>
+        )}
         <span className="text-[10px] text-muted-foreground/50 mt-0.5 block">{relativeTime(notification.timestamp)}</span>
         {notification.action && (
           <button

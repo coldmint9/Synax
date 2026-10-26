@@ -202,7 +202,8 @@ impl UiSnapshot {
             "metadata":{"source":"runtime_partial","partial":true,"runId":run_id,"stepId":step_id,"thought":thought}
         }))
     }
-    pub(crate) fn take_partial_message(&mut self, run_id: &str, created_at: &str) -> Option<Value> {
+    #[cfg(test)]
+    fn take_partial_message(&mut self, run_id: &str, created_at: &str) -> Option<Value> {
         self.pending_partial_message
             .take()
             .or_else(|| self.partial_message(run_id, created_at))

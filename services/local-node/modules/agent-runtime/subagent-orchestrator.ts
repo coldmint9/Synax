@@ -10,6 +10,7 @@ import { nowIso } from "./runtime-ids.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { outsideExecutionContext } from "../../infrastructure/runtime/execution-context.js";
+import { subagentCompletionBroker, subagentBlocksParent, listOwnedSubagentSessions } from "./subagent-control-broker.js";
 /** A child is governed by execution progress, not a total wall-clock budget. */
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
 export const SUBAGENT_LEASE_DURATION_MS = 30_000;
@@ -194,21 +195,41 @@ export async function waitForChildSessions(
   deps: Pick<OrchestratorDeps, "store"> = defaultDeps,
 ): Promise<boolean> {
   let waited = false;
-  while (!(await shouldYield())) {
-    if (abortSignal.aborted)
-      throw abortSignal.reason ?? new Error("Parent aborted while waiting for subagents.");
-    const children = deps.store.listSessionTree(parentSessionId).filter(child =>
-      child.id !== parentSessionId && ["queued", "running"].includes(child.status),
-    );
-    if (!children.length) return waited;
-    waited = true;
-    for (const child of children) {
-      const metadata = child.sessionMetadata?.subagentTask as SubagentTaskMetadata | undefined;
-      if (getSubagentLiveness(child.status, metadata) === "stale")
-        reapUnresolvableChild(child.id, false, 0, deps, "Subagent execution lease expired or progress stalled.");
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
-  }
+  const ids = new Set([parentSessionId]);
+  const result = await subagentCompletionBroker.waitForChange({
+    ids,
+    signal: abortSignal,
+    read: async () => {
+      if (await shouldYield()) return { ready: true, nextDeadline: undefined };
+      const children = listOwnedSubagentSessions(parentSessionId, deps.store).filter(child =>
+        subagentBlocksParent(child),
+      );
+      if (!children.length) return { ready: true, nextDeadline: undefined };
+      waited = true;
+      let nextDeadline = Number.POSITIVE_INFINITY;
+      let pending = 0;
+      for (const child of children) {
+        ids.add(child.id);
+        const metadata = child.sessionMetadata?.subagentTask as SubagentTaskMetadata | undefined;
+        const liveness = getSubagentLiveness(child.status, metadata);
+        if (liveness === "waiting") continue;
+        if (liveness === "stale") {
+          reapUnresolvableChild(child.id, false, 0, deps, "Subagent execution lease expired or progress stalled.");
+          continue;
+        }
+        pending++;
+        const lease = Date.parse(metadata?.leaseExpiresAt ?? "");
+        const progress = Date.parse(metadata?.lastProgressAt ?? "");
+        if (Number.isFinite(lease)) nextDeadline = Math.min(nextDeadline, lease);
+        if (Number.isFinite(progress)) nextDeadline = Math.min(nextDeadline, progress + SUBAGENT_PROGRESS_TIMEOUT_MS);
+      }
+      return { ready: pending === 0, nextDeadline: Number.isFinite(nextDeadline) ? nextDeadline : undefined };
+    },
+    ready: value => value.ready,
+    nextDeadline: value => value.nextDeadline,
+  });
+  if (result.reason === "aborted")
+    throw abortSignal.reason ?? new Error("Parent aborted while waiting for subagents.");
   return waited;
 }
 
@@ -254,27 +275,38 @@ async function executeChildToCompletion(
   let timedOut = false;
   let failureReason: string | undefined;
   const progressTimeoutMs = opts.progressTimeoutMs ?? SUBAGENT_PROGRESS_TIMEOUT_MS;
+  let lastPublishedProgress = 0;
   const touch = (phase: string) => {
     deps.store.updateSessionMetadata?.(childSessionId, {
       subagentTask: {
-        state: "running",
-        phase,
-        startedAt,
+        state: "running", phase, startedAt,
         lastHeartbeatAt: nowIso(),
         lastProgressAt: new Date(lastProgressAt).toISOString(),
-        leaseExpiresAt: new Date(Date.now() + SUBAGENT_LEASE_DURATION_MS).toISOString(),
+        // A lease is driven by observed work, never renewed by a heartbeat.
+        leaseExpiresAt: new Date(lastProgressAt + progressTimeoutMs).toISOString(),
       },
     });
   };
+  const recordProgress = () => {
+    lastProgressAt = Date.now();
+    if (lastProgressAt - lastPublishedProgress >= SUBAGENT_HEARTBEAT_INTERVAL_MS) {
+      lastPublishedProgress = lastProgressAt;
+      touch("running");
+    }
+  };
   touch("starting");
-  const heartbeat = setInterval(() => {
-    if (Date.now() - lastProgressAt >= progressTimeoutMs) {
+  lastPublishedProgress = lastProgressAt;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const armWatchdog = () => {
+    if (watchdog) clearTimeout(watchdog);
+    watchdog = setTimeout(() => {
+      const remaining = progressTimeoutMs - (Date.now() - lastProgressAt);
+      if (remaining > 0) { armWatchdog(); return; }
       timedOut = true;
       controller.abort(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
-      return;
-    }
-    touch("running");
-  }, Math.min(SUBAGENT_HEARTBEAT_INTERVAL_MS, progressTimeoutMs));
+    }, Math.max(1, progressTimeoutMs - (Date.now() - lastProgressAt)));
+  };
+  armWatchdog();
 
   const onParentAbort = () => {
     if (!controller.signal.aborted)
@@ -296,32 +328,23 @@ async function executeChildToCompletion(
 
   try {
     if (!runtimeFacade.enabled()) {
-      let watchdog: ReturnType<typeof setTimeout> | undefined;
-      let rejectTimeout!: (error: Error) => void;
-      const arm = () => {
-        if (watchdog) clearTimeout(watchdog);
-        watchdog = setTimeout(() => {
-          timedOut = true;
-          controller.abort(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
-          rejectTimeout(new Error(`Subagent made no progress for ${progressTimeoutMs}ms.`));
-        }, progressTimeoutMs);
-      };
       const consume = (async () => {
-        arm();
         for await (const _chunk of deps.loop.stream(
           childSessionId,
           opts.resume ? "resume" : "turn",
           opts.input ?? {},
           controller.signal,
-        )) { lastProgressAt = Date.now(); arm(); }
+        )) recordProgress();
       })();
-      const timeout = new Promise<never>((_, reject) => { rejectTimeout = reject; });
+      let removeAbort = () => {};
       const aborted = new Promise<never>((_, reject) => {
-        if (controller.signal.aborted) return reject(controller.signal.reason ?? new Error('Subagent aborted.'));
-        controller.signal.addEventListener('abort', () => reject(controller.signal.reason ?? new Error('Subagent aborted.')), { once: true });
+        const onAbort = () => reject(controller.signal.reason ?? new Error('Subagent aborted.'));
+        if (controller.signal.aborted) return onAbort();
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+        removeAbort = () => controller.signal.removeEventListener('abort', onAbort);
       });
-      try { await Promise.race([consume, timeout, aborted]); }
-      finally { if (watchdog) clearTimeout(watchdog); }
+      try { await Promise.race([consume, aborted]); }
+      finally { removeAbort(); }
     } else {
       const { runCoordinator } = await import("./run-coordinator.js");
       const requestId = `subagent:${childSessionId}:${startedAt}`;
@@ -331,7 +354,7 @@ async function executeChildToCompletion(
         // Renew progress only from real run events. A supervisor heartbeat
         // alone must neither time out a healthy child nor keep a hung one alive.
         for await (const _record of runCoordinator.observeRun(childSessionId, accepted.run.id, 0, controller.signal))
-          lastProgressAt = Date.now();
+          recordProgress();
         controller.signal.throwIfAborted();
       } catch (error) {
         controller.abort(error);
@@ -353,7 +376,7 @@ async function executeChildToCompletion(
       "[subagent-orchestrator] child stream errored",
     );
   } finally {
-    clearInterval(heartbeat);
+    if (watchdog) clearTimeout(watchdog);
     if (timer) clearTimeout(timer);
     opts.abortSignal?.removeEventListener("abort", onParentAbort);
     reapUnresolvableChild(

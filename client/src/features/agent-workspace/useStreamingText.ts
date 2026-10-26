@@ -60,6 +60,9 @@ export function useStreamingText(text: string, streaming: boolean, animateInitia
     }
     // Retry/replacement must never reveal characters from the previous answer.
     if (!text.startsWith(current.current)) reveal("");
+    // The first non-empty packet is visible in this commit; only later
+    // additions use the reveal window.
+    if (!current.current && text) { cancel(); reveal(text); return; }
     let start = current.current.length;
     let ends = Array.from(segmenter.segment(text.slice(start)), ({ index, segment }) => start + index + segment.length);
     if (ends.length > MAX_PENDING_GRAPHEMES) {

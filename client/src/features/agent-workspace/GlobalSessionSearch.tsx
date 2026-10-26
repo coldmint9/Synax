@@ -230,7 +230,7 @@ function SearchDialog({
             </p>
           ) : null}
           {search.error && (
-            <div role="alert" className="global-session-search-status">
+            <div data-error-toast="off" role="alert" className="global-session-search-status">
               <p>{search.error}</p>
               <button type="button" onClick={search.refresh}>
                 {zh ? "重试" : "Retry"}

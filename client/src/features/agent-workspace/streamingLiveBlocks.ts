@@ -55,7 +55,7 @@ function flushThinking(state: StreamingLiveBuffers): StreamingLiveBuffers {
   return {
     ...state,
     blocks: [
-      ...state.blocks.slice(-31),
+      ...state.blocks,
       { type: "thinking", content: state.pendingThinking },
     ],
     pendingThinking: "",
@@ -66,7 +66,7 @@ function flushText(state: StreamingLiveBuffers): StreamingLiveBuffers {
   if (!state.pendingText.trim()) return state;
   return {
     ...state,
-    blocks: [...state.blocks.slice(-31), { type: "text", content: state.pendingText }],
+    blocks: [...state.blocks, { type: "text", content: state.pendingText }],
     pendingText: "",
   };
 }
@@ -75,7 +75,7 @@ function flushToolCalls(state: StreamingLiveBuffers): StreamingLiveBuffers {
   if (state.pendingToolCalls.length === 0) return state;
   return {
     ...state,
-    blocks: [...state.blocks.slice(-31), ...toolCallsToBlocks(state.pendingToolCalls)],
+    blocks: [...state.blocks, ...toolCallsToBlocks(state.pendingToolCalls)],
     pendingToolCalls: [],
   };
 }
@@ -99,7 +99,7 @@ export function applyMessageDelta(
   if (!delta) return state;
   let next = flushToolCalls(state);
   next = flushThinking(next);
-  return { ...next, pendingText: boundedText(next.pendingText + delta) };
+  return { ...next, pendingText: next.pendingText + delta };
 }
 
 export function applyToolCall(

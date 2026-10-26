@@ -13,6 +13,7 @@ import { interruptAgentSessionsAndWait } from "./agent-stream-proxy.js";
 import { createConfiguredSubagent } from "./subagent-delegation.js";
 import { subagentStartFields } from "./subagent-config.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
+import { subagentCompletionBroker, readSubagentControl } from "./subagent-control-broker.js";
 
 const activeRuns = new Set<string>();
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "interrupted"]);
@@ -135,6 +136,7 @@ function childView(childSessionId: string, parentSessionId: string) {
     summary: child.resultSummary ?? null,
     error: child.blockedReason ?? null,
     metadata: metadata ?? null,
+    control: readSubagentControl(child),
     activeRunId: child.activeRunId,
   };
 }
@@ -147,13 +149,11 @@ async function waitForChild(
   parentSessionId: string,
   childSessionId: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ) {
-  const deadline = Date.now() + timeoutMs;
-  let child = assertOwnedChild(parentSessionId, childSessionId);
-  while (!terminalStatuses.has(child.status) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    child = assertOwnedChild(parentSessionId, childSessionId);
-  }
+  assertOwnedChild(parentSessionId, childSessionId);
+  await subagentCompletionBroker.wait({ parentSessionId, childSessionIds: [childSessionId], timeoutMs, signal });
+  signal?.throwIfAborted();
   return childView(childSessionId, parentSessionId);
 }
 
@@ -197,7 +197,7 @@ export const subagentLifecycleTool: RegisteredTool = {
       return result(childView(child.id, input.sessionId), "Inspected subagent.");
     if (args.action === "wait")
       return result(
-        await waitForChild(input.sessionId, child.id, args.timeoutMs ?? 5_000),
+        await waitForChild(input.sessionId, child.id, args.timeoutMs ?? 5_000, input.abortSignal),
         "Waited for subagent.",
       );
     if (args.action === "message") {

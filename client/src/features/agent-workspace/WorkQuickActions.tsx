@@ -1,32 +1,45 @@
-import { Button } from "@/shared/ui/ui/Button";
-import { PanelRight } from "lucide-react";
+import { Tooltip } from "@/shared/ui/ui/Tooltip";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { SessionToolbarActionsContent } from "./SessionToolbarPortal";
 
-/** Floating affordances leave the transcript's top edge behind the glass pill. */
+/** Keep the widget toggle in the global header while the page owns its state. */
 export function WorkQuickActions({
-  showDetailsButton,
-  onShowDetails,
+  expanded,
+  onToggle,
+  controlsId,
 }: {
-  showDetailsButton: boolean;
-  onShowDetails: () => void;
+  expanded: boolean;
+  onToggle: () => void;
+  controlsId: string;
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  if (!showDetailsButton) return null;
+  const label = expanded
+    ? zh
+      ? "收起工作组件"
+      : "Collapse work widgets"
+    : zh
+      ? "展开工作组件"
+      : "Expand work widgets";
   return (
-    <div className="work-quick-actions wh-pill">
-      {showDetailsButton && (
-        <Button
-          size="sm"
-          variant="ghost"
-          iconOnly
-          className="work-details-trigger"
-          onClick={onShowDetails}
-          aria-label={zh ? "任务详情" : "Task details"}
+    <SessionToolbarActionsContent>
+      <Tooltip content={label}>
+        <button
+          type="button"
+          className={`wh-btn ${expanded ? "active" : ""}`}
+          onClick={onToggle}
+          aria-label={label}
+          aria-expanded={expanded}
+          aria-controls={controlsId}
         >
-          <PanelRight size={13} />
-        </Button>
-      )}
-    </div>
+          {expanded ? (
+            <PanelRightClose size={16} aria-hidden="true" />
+          ) : (
+            <PanelRightOpen size={16} aria-hidden="true" />
+          )}
+        </button>
+      </Tooltip>
+    </SessionToolbarActionsContent>
   );
 }

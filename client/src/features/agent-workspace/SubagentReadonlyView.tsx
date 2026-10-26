@@ -26,9 +26,11 @@ interface Detail {
 export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId,
   showHeader = true,
+  showTaskDescription = true,
 }: {
   sessionId: string;
   showHeader?: boolean;
+  showTaskDescription?: boolean;
 }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const { t } = useLocale();
@@ -75,7 +77,7 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center p-4 text-[11px] text-destructive">
+      <div data-error-toast="off" role="alert" className="flex h-full items-center justify-center p-4 text-[11px] text-destructive">
         {error}
       </div>
     );
@@ -109,9 +111,9 @@ export const SubagentReadonlyView = memo(function SubagentReadonlyView({
       </div>}
       <TranscriptSessionProvider sessionId={sessionId}>
         <AgentConversationView
-          taskDescription={
+          taskDescription={showTaskDescription ? (
             detail.session.prompt?.trim() || getSubagentRole(detail.session).description
-          }
+          ) : undefined}
           session={detail.session}
           runs={detail.runs}
           steps={detail.steps}

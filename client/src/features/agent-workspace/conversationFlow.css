@@ -109,8 +109,12 @@
   scrollbar-color: color-mix(in srgb, var(--flow-muted) 25%, transparent) transparent;
 }
 .session-process-window-row { display: block; min-width: 0; min-height: var(--process-row-h, 25px); }
-.session-process-window-viewport[data-windowed] .session-process-window-row { height: var(--process-row-h, 25px); overflow: hidden; }
-.session-process-window-viewport[data-windowed] .session-activity-reveal { display: none; }
+/* Collapsed records share one fixed row height. The single record the reader
+   opened takes its natural height; every other row keeps the row budget, so
+   opening one record never unfolds the rest of the window. */
+.session-process-window-viewport[data-windowed] .session-process-window-row:not([data-row-expanded]) { height: var(--process-row-h, 25px); overflow: hidden; }
+.session-process-window-viewport[data-windowed] .session-process-window-row[data-row-expanded] { height: auto; overflow: visible; }
+.session-process-window-viewport[data-windowed] .session-process-window-row:not([data-row-expanded]) .session-activity-reveal { display: none; }
 /* Mask the offscreen edge only; the transcript canvas stays transparent. */
 .session-process-window-frame[data-fade-top] { mask-image: linear-gradient(to bottom, transparent, #000 24px); }
 .session-process-window-frame[data-fade-bottom] { mask-image: linear-gradient(to top, transparent, #000 24px); }
@@ -185,7 +189,7 @@ button.bui-tool-disclosure { cursor: pointer; }
 .bui-tool .bui-chevron { opacity: 0; transform: rotate(-90deg); transition: transform 180ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)), opacity 150ms ease; }
 .bui-tool[data-expanded="true"] > .bui-tool-trigger .bui-chevron { transform: rotate(0); }
 .bui-tool-trigger:is(:hover, :focus-visible) .bui-chevron { opacity: 1; }
-.bui-tool .bui-tool-result[data-error],
+.bui-tool .bui-tool-result[data-tool-failure],
 .bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
 .bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
 .bui-tool .bui-tool-details, .bui-tool .bui-tool-batch-body { margin: 6px 0 10px 24px; padding: 0; border: 0; animation: none; }

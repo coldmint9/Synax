@@ -48,11 +48,6 @@ pub struct HistoryOutboxMaintenance {
     pub removed: usize,
     pub has_more_acked: bool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredControlReceipt {
-    identity: String,
-    result: QueueMutationReceipt,
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueueMutationReceipt {
     pub queue: crate::runtime::input_queue::QueueState,

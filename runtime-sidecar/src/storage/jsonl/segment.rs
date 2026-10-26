@@ -662,7 +662,7 @@ mod tests {
         }
         let bytes = persistent.encode().unwrap();
         assert_eq!(
-            persistent.to_json(),
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
             serde_json::to_value(&canonical).unwrap()
         );
     }

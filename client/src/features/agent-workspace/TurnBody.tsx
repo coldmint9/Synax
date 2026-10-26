@@ -102,6 +102,7 @@ export function TurnContent({
   blocks,
   onExpandChild,
   rowKeyPrefix = "",
+  stepId,
   isStreaming = false,
   isWorking = isStreaming,
   defaultExpanded,
@@ -109,6 +110,7 @@ export function TurnContent({
   blocks: readonly TurnContentBlock[];
   onExpandChild?: (sessionId: string) => void;
   rowKeyPrefix?: string;
+  stepId?: string;
   isStreaming?: boolean;
   isWorking?: boolean;
   defaultExpanded?: boolean;
@@ -134,6 +136,7 @@ export function TurnContent({
       return (
         <StreamingTextBlock
           key={key}
+          stepId={stepId}
           text={segment.content}
           isStreaming={isStreaming && segment === segments[segments.length - 1]}
           markdown={segment.markdown}
@@ -281,11 +284,11 @@ export function TurnBody({
     ),
   );
   return (
-    <div className="session-turn-content message-action-group flex min-w-0 flex-1 flex-col gap-1">
+    <div data-stream-step-id={turn.stepId} className="session-turn-content message-action-group flex min-w-0 flex-1 flex-col gap-1">
       {isWorking && visibleBlocks.length === 0 ? (
         <ThinkingIndicator />
       ) : (
-        <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} isStreaming={isStreaming} isWorking={isWorking} />
+        <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} stepId={turn.stepId ?? undefined} isStreaming={isStreaming} isWorking={isWorking} />
       )}
       {hasAnswer && showActions && (
         <MessageActionToolbar

@@ -5,6 +5,11 @@ import { ComposerContextPicker } from "../ComposerContextPicker";
 import { ContextCompactionFeedback } from "../ContextCompactionFeedback";
 import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
+const live = vi.hoisted(() => ({ subscribe: vi.fn(), close: vi.fn(), handler: undefined as undefined | ((event: unknown) => void) }));
+vi.mock("../../../adapters/transport/sessionLiveClient", () => ({
+  addSessionLiveListener: live.subscribe,
+  ensureSessionLiveSubscription: vi.fn(), releaseSessionLiveSubscription: vi.fn(),
+}));
 
 const props = {
   projectId: "p",
@@ -27,6 +32,14 @@ const completed = {
     originalTokens: 10000,
     compressedTokens: 2000,
     messageCount: 4,
+    contextUsage: {
+      version: 1 as const,
+      stepId: "cmp-step",
+      total: 2000,
+      limit: 200000,
+      composition: { version: 2 as const, messages: 1500, tools: 200, mcp: 100, skills: 50, system: 150, total: 2000, measuredAt: "" },
+      measuredAt: "",
+    },
   },
   message: {
     id: "msg-1",
@@ -40,9 +53,12 @@ const completed = {
   },
 };
 beforeEach(() => {
+  live.subscribe.mockReset(); live.close.mockReset(); live.handler = undefined;
+  live.subscribe.mockImplementation((_id, handler) => { live.handler = handler; return live.close; });
   useAgentSessionStore.setState({
     ...useAgentSessionStore.getInitialState(),
     selectedSessionId: "s",
+    sessions: [{ id: "s", sessionMetadata: {} } as never],
     fetchSessionStats: vi.fn(async () => {}),
     refreshDetail: vi.fn(async () => {}),
   });
@@ -53,6 +69,20 @@ async function open() {
   return screen.getByRole("button", { name: /强制压缩上下文/ });
 }
 describe("manual compaction", () => {
+  it("subscribes while an idle session compacts and releases observation after completion", async () => {
+    vi.spyOn(agentRuntimeApi, "compactContext").mockResolvedValue({ accepted: true, status: "compacting" });
+    render(<ComposerContextPicker {...props} />);
+    expect(live.subscribe).not.toHaveBeenCalled();
+    await userEvent.click(await open());
+    await waitFor(() => expect(live.subscribe).toHaveBeenCalledWith("s", expect.any(Function)));
+    // A snapshot fetched between admission and context_begin has no durable
+    // compaction row yet. It must not end observation of the accepted run.
+    act(() => useAgentSessionStore.setState({ contextCompactionNotice: null }));
+    expect(live.close).not.toHaveBeenCalled();
+    act(() => live.handler?.(completed));
+    await waitFor(() => expect(live.close).toHaveBeenCalledTimes(1));
+    expect(useAgentSessionStore.getState().contextCompactionNotice?.status).toBe("completed");
+  });
   it("closes the popover immediately and stays disabled until the durable state arrives", async () => {
     vi.spyOn(agentRuntimeApi, "compactContext").mockResolvedValue({
       accepted: true,
@@ -72,6 +102,10 @@ describe("manual compaction", () => {
       compressedTokens: 2000,
       messageCount: 4,
     });
+  });
+  it("applies the post-compaction usage snapshot to the composer session", () => {
+    act(() => useAgentSessionStore.getState().applyLiveEvent(completed, "s"));
+    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata?.contextUsage).toMatchObject({ total: 2000, stepId: "cmp-step" });
   });
   it("keeps a running state after refresh data is applied", () => {
     render(
@@ -118,5 +152,14 @@ describe("manual compaction", () => {
       compressedTokens: 2000,
       messageCount: 4,
     });
+  });
+  it("reports admission failure even if an early snapshot has cleared the notice", async () => {
+    let reject!: (error: Error) => void;
+    vi.spyOn(agentRuntimeApi, "compactContext").mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    render(<ComposerContextPicker {...props} />);
+    await userEvent.click(await open());
+    act(() => useAgentSessionStore.setState({ contextCompactionNotice: null }));
+    await act(async () => reject(new Error("Worker unavailable")));
+    expect(useAgentSessionStore.getState().contextCompactionNotice).toEqual({ status: "failed", error: "Worker unavailable" });
   });
 });

@@ -28,11 +28,6 @@ fn to_value(value: &impl serde::Serialize) -> Result<Value, RuntimeError> {
     serde_json::to_value(value).map_err(|error| RuntimeError::InvalidCommand(error.to_string()))
 }
 
-fn from_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RuntimeError> {
-    serde_json::from_value(value)
-        .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
-}
-
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -273,6 +268,23 @@ impl SessionActor {
                 }
                 control.execution_lease = Some(lease);
                 event_name = "run_updated";
+            }
+            "compaction_lock" => {
+                if active_run_id.is_some() || control.runtime_control.is_some() { return Err(RuntimeError::SessionBusy); }
+                let owner = value["ownerId"].as_str().filter(|v| !v.is_empty() && v.len() <= 256)
+                    .ok_or_else(|| RuntimeError::InvalidCommand("compaction owner required".into()))?;
+                control.runtime_control = Some(json!({"state":"compacting","ownerId":owner,"hostId":value["hostId"],"startedAt":now}));
+                set_session_metadata(&mut projection, "runtimeControl", control.runtime_control.clone().unwrap());
+                set_session_metadata(&mut projection, "contextCompaction", json!({"id":owner,"status":"running","startedAt":now,"requestId":null}));
+                event_name = "session_updated";
+            }
+            "compaction_unlock" => {
+                let marker = control.runtime_control.as_ref().ok_or_else(|| RuntimeError::InvalidCommand("compaction lock is not active".into()))?;
+                if marker["state"] != "compacting" || marker["ownerId"] != value["ownerId"] { return Err(RuntimeError::RequestConflict); }
+                control.runtime_control = None;
+                set_session_metadata(&mut projection, "runtimeControl", Value::Null);
+                set_session_metadata(&mut projection, "contextCompaction", Value::Null);
+                event_name = "session_updated";
             }
             "history_begin" => {
                 if active_run_id.is_some() || control.runtime_control.is_some() {
@@ -693,7 +705,39 @@ impl SessionActor {
                 event_run_id = run_id.to_owned();
                 event_name = "run_updated";
             }
-            "session_patch" => {
+            "session_patch" | "workspace_bind" => {
+                if operation == "workspace_bind" {
+                    if let Some(execution) = value.get("execution") {
+                        ExecutionLease::decode(session_id, execution)?.assert_current(
+                            self.state.active_run_id.as_deref(), control.execution_lease.as_ref(),
+                        )?;
+                        if control.runtime_control.is_some() { return Err(RuntimeError::SessionBusy); }
+                    } else if self.state.active_run_id.is_some()
+                        || control.runtime_control.is_some()
+                        || control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
+                    {
+                        return Err(RuntimeError::SessionBusy);
+                    }
+                    let metadata = projection.session.get("sessionMetadata")
+                        .map(PValue::to_json).unwrap_or(Value::Null);
+                    let current = metadata["backend"]["workspaceBindingRevision"].as_u64().unwrap_or(0);
+                    if value["expectedBindingRevision"].as_u64() != Some(current) {
+                        return Err(RuntimeError::InvalidCommand("workspace binding changed; refresh before switching".into()));
+                    }
+                    if value["patch"]["sessionMetadata"]["backend"]["workspaceBindingRevision"].as_u64() != Some(current + 1) {
+                        return Err(RuntimeError::InvalidCommand("invalid workspace binding revision".into()));
+                    }
+                }
+                if let Some(expected) = value.get("expectedMetadata") {
+                    let key = expected["key"].as_str().filter(|key| !key.is_empty() && key.len() <= 128)
+                        .ok_or_else(|| RuntimeError::InvalidCommand("invalid expected metadata key".into()))?;
+                    let actual = projection.session.get("sessionMetadata")
+                        .and_then(|metadata| metadata.get(key))
+                        .map(PValue::to_json).unwrap_or(Value::Null);
+                    if actual != expected["value"] {
+                        return Err(RuntimeError::InvalidCommand("METADATA_CONFLICT: session metadata changed".into()));
+                    }
+                }
                 let patch = value["patch"].as_object().ok_or_else(|| {
                     RuntimeError::InvalidCommand("session patch must be an object".into())
                 })?;

@@ -157,6 +157,36 @@ function createProjectConfig(
 }
 
 describe("resolveLlmSelection", () => {
+  it("resolves supplier request limits separately from model output capabilities", () => {
+    const config = createGlobalConfig();
+    config.providerConnections.openai.extra!.maxOutputTokens = 65_536;
+    const resolve = () => resolveLlmSelection({ catalog, globalConfig: config, purpose: "agent", modelOverride: "openai/gpt-4o-mini" });
+    expect(resolve().config.maxOutputTokens).toBe(65_536);
+    delete config.providerConnections.openai.extra!.maxOutputTokens;
+    expect(resolve().config.maxOutputTokens).toBeUndefined();
+    config.providerConnections.openai.extra!.maxOutputTokens = -1;
+    expect(resolve().config.maxOutputTokens).toBeUndefined();
+  });
+  it("keeps catalog limits when saved model metadata omits them", () => {
+    const globalConfig = createGlobalConfig();
+    const enriched = structuredClone(catalog);
+    enriched.providers[0].models[0] = { ...enriched.providers[0].models[0], maxTokens: 65_536, inputLimit: 120_000, contextLimit: 200_000 };
+    const result = resolveLlmSelection({ catalog: enriched, globalConfig, purpose: "analyze", modelOverride: "openai/gpt-4o-mini" });
+    expect(result.modelDef).toMatchObject({ maxTokens: 65_536, inputLimit: 120_000, contextLimit: 200_000 });
+    globalConfig.providers.find(provider => provider.id === "openai")!.models[0].maxTokens = 32_768;
+    expect(resolveLlmSelection({ catalog: enriched, globalConfig, purpose: "analyze", modelOverride: "openai/gpt-4o-mini" }).modelDef.maxTokens).toBe(32_768);
+  });
+
+  it("fills current model limits for custom gateways with no matching provider catalog", () => {
+    const globalConfig = createGlobalConfig();
+    const id = "custom-api:gateway";
+    globalConfig.providers.push({ id, label: "Gateway", status: "live", kind: "api", caps: { canFollowUp: true, canCancel: true },
+      models: [{ id: "deepseek-v4-flash", label: "DeepSeek" }] });
+    globalConfig.providerConnections[id] = { providerId: id, baseUrl: "https://gateway.example/v1", extra: { apiFormat: "openai-responses" } };
+    const result = resolveLlmSelection({ catalog, globalConfig, purpose: "analyze", modelOverride: `${id}/deepseek-v4-flash` });
+    expect(result.modelDef).toMatchObject({ contextLimit: 1_000_000, maxTokens: 393_216, reasoning: true });
+  });
+
   it("preserves the Jev protocol for a configured connection", () => {
     expect(
       resolveProviderApiFormat({

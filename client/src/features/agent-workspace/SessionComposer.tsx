@@ -93,6 +93,7 @@ interface Props {
   projectId: string;
   session?: AgentSession;
   layout?: "footer" | "centered" | "focusRail";
+  onOpenSideChat?: () => void;
   /** Rendered directly above the input pill (e.g. the file-change island). */
   statusSlot?: React.ReactNode;
   readingHistory?: boolean;
@@ -102,6 +103,7 @@ export function SessionComposer({
   session,
   projectId,
   layout = "footer",
+  onOpenSideChat,
   statusSlot,
   readingHistory = false,
 }: Props) {
@@ -574,6 +576,7 @@ export function SessionComposer({
 
   const commands = useComposerCommands({
     onAttachFiles: media.add,
+    onOpenSideChat,
     projectId,
     sessionId,
     backendId,
@@ -842,26 +845,16 @@ export function SessionComposer({
 
   const goalMode = backendId === "native" && mode === "goal";
 
-  const gitActions = <ComposerGitActions
+  const gitActions = session ? <ComposerGitActions
     session={session}
     projectId={projectId}
     disabled={readingHistory || submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
-    ensureSession={async () => {
-      if (session) return session;
-      if (createdDraftRef.current) return createdDraftRef.current;
-      const created = await submitSessionDraft(projectId, {
-        message: "处理本地 Git 与远程 PR", prompt: "处理本地 Git 与远程 PR", backendId,
-        permissionTier: cliBackend ? undefined : permissionTier,
-        mode: "chat", gitWorkspace,
-      });
-      createdDraftRef.current = created;
-      return created;
-    }}
+    ensureSession={async () => session}
     onOpenConversation={(id) => {
       void refreshSessions();
       navigate(sessionPath(projectId, id));
     }}
-  />;
+  /> : null;
 
   const composerShell = (
     <div
@@ -869,12 +862,12 @@ export function SessionComposer({
       data-composer-mode={goalMode ? "goal" : "chat"}
     >
       {error && (
-        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
           {error}
         </p>
       )}
       {incompatibleModel && (
-        <p role="alert" className="mb-2 px-2 text-xs text-danger">
+        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
           {unsupportedBackend
             ? (zh ? "此会话使用的执行后端已移除。历史记录仍可查看，请新建 Synax 会话继续。" : "This session's execution backend has been removed. Its history remains available; start a new Synax session to continue.")
             : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}

@@ -568,7 +568,7 @@ export const streamTurnRequestSchema = z.object({
   model: z.string().min(1).max(256).optional(),
   purpose: z.string().min(1).max(64).optional(),
   temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().positive().max(200_000).optional(),
+  maxTokens: z.number().int().positive().max(10_000_000).optional(),
   maxSteps: z
     .number()
     .int()
@@ -768,7 +768,16 @@ export interface CompactionRecord {
   createdAt: string;
 }
 
-export type AgentRunStreamChunk =
+export type { FirstTokenTiming } from "../../../../packages/runtime-protocol/first-token-timing.js";
+import type { FirstTokenTiming } from "../../../../packages/runtime-protocol/first-token-timing.js";
+
+export type AgentRunStreamChunk = AgentRunStreamPayload & {
+  firstTokenTiming?: FirstTokenTiming;
+  /** Run-local cursor, independent of the durable session journal cursor. */
+  realtimeSequence?: number;
+};
+
+type AgentRunStreamPayload =
   | { type: "worker_yield"; runId: string }
   | { type: "execution_status"; runId: string; execution: ToolExecutionProgress }
   | { type: "input_queue_changed"; sessionId: string; queueSize: number; queueRevision: number; forceInjectItemId: string | null }

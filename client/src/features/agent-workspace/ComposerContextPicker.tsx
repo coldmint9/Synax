@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { addSessionLiveListener } from "../../adapters/transport/sessionLiveClient";
 import { Link } from "react-router-dom";
 import {
   Combobox,
@@ -23,6 +24,7 @@ import {
   Loader2,
   FileText,
   Plus,
+  PanelRightOpen,
   Plug,
   Sparkles,
 } from "lucide-react";
@@ -55,6 +57,7 @@ interface Props {
   onOpen: () => void;
   onOpenChange?: (open: boolean) => void;
   onAttachFiles?: (files: File[]) => void;
+  onOpenSideChat?: () => void;
   mode?: AgentSessionMode | "plan_node";
   modeDisabled?: boolean;
   onModeChange?: (mode: AgentSessionMode) => void;
@@ -83,13 +86,14 @@ function ContextPickerContent({
   onOpen,
   onOpenChange,
   onAttachFiles,
+  onOpenSideChat,
   mode,
   modeDisabled = false,
   onModeChange,
   open,
   close,
 }: Props & { open: boolean; close: () => void }) {
-  const { locale } = useLocale(),
+  const { locale, t } = useLocale(),
     zh = locale === "zh";
   const attachmentInput = useRef<HTMLInputElement>(null);
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
@@ -132,6 +136,19 @@ function ContextPickerContent({
       compactionNotice?.status !== "failed");
   const compactRequest = useRef(0);
   const compactPending = useRef(false);
+  useEffect(() => {
+    if (compactionNotice?.status === "completed" || compactionNotice?.status === "failed")
+      setCompactSubmitting(false);
+  }, [compactionNotice?.status]);
+  useEffect(() => {
+    if (!sessionId || !compacting) return;
+    // Settled sessions deliberately have no permanent stream subscription.
+    // Manual compaction is a new run and needs its own bounded observation.
+    return addSessionLiveListener(sessionId, event => {
+      if (["context_compaction_state", "context_compacted", "context_compaction_failed"].includes(event.type))
+        useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
+    });
+  }, [sessionId, compacting]);
   useEffect(() => {
     compactRequest.current += 1;
     compactPending.current = false;
@@ -179,18 +196,19 @@ function ContextPickerContent({
       if (
         request === compactRequest.current &&
         useAgentSessionStore.getState().selectedSessionId === sessionId &&
-        useAgentSessionStore.getState().contextCompactionNotice?.status ===
-          "running"
+        !["completed", "failed"].includes(
+          useAgentSessionStore.getState().contextCompactionNotice?.status ?? "",
+        )
       ) {
         const message = err instanceof Error ? err.message : String(err);
         useAgentSessionStore.setState({
           contextCompactionNotice: { status: "failed", error: message },
         });
       }
+      if (request === compactRequest.current) setCompactSubmitting(false);
     } finally {
       if (request === compactRequest.current) {
         compactPending.current = false;
-        setCompactSubmitting(false);
       }
     }
   };
@@ -270,6 +288,7 @@ function ContextPickerContent({
             ? `${zh ? "当前模式：" : "Current mode: "}${modeOptions.find((option) => option.id === selectedMode)?.label ?? (zh ? "计划节点" : "Plan node")}`
             : undefined
         }
+        data-side-chat-trigger={onOpenSideChat ? "true" : undefined}
         className="agent-dock-composer-chip inline-flex size-7 shrink-0 items-center justify-center rounded-full"
       >
         <Plus size={16} aria-hidden="true" />
@@ -392,6 +411,22 @@ function ContextPickerContent({
           </Combobox>
         ) : (
           <>
+            {onOpenSideChat && sessionId && (
+              <button
+                type="button"
+                className="session-context-picker-option session-context-picker-option--featured"
+                onClick={() => {
+                  close();
+                  onOpenSideChat();
+                }}
+              >
+                <PanelRightOpen size={15} aria-hidden="true" />
+                <span>
+                  {t("sideChatMenuLabel")}
+                  <small>{t("sideChatMenuDescription")}</small>
+                </span>
+              </button>
+            )}
             {onAttachFiles && (
               <button
                 type="button"

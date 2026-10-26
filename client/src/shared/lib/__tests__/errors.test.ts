@@ -43,4 +43,31 @@ describe('handleError notification routing', () => {
       visible: true,
     })
   })
+
+  it('falls back to a readable message when the server only sends a status code', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    handleError(new AppError('conflict: revision mismatch', {
+      level: 'business',
+      statusCode: 409,
+    }))
+
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      message: '当前状态与操作冲突，请刷新后重试',
+      detail: 'conflict: revision mismatch',
+    })
+  })
+
+  it('keeps technical payloads out of the headline', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    handleError(new AppError('Config API error 500: upstream exploded', {
+      level: 'business',
+    }))
+
+    expect(useNotificationStore.getState().notifications[0]).toMatchObject({
+      message: '操作失败，请稍后重试',
+      detail: 'Config API error 500: upstream exploded',
+    })
+  })
 })

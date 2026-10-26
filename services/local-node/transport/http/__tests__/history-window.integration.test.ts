@@ -7,6 +7,7 @@ import { agentRuntimeRoutes } from '../agent-runtime.js';
 import { RustRuntimeSupervisor } from '../../../infrastructure/runtime/rust-sidecar.js';
 import { RuntimeSidecarClient } from '../../../modules/agent-runtime/sidecar/sidecar-client.js';
 import type { RuntimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
+import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
 
 type Window = Awaited<ReturnType<RuntimeFacade['historyWindowAuthoritative']>>;
 let root: string;
@@ -119,4 +120,27 @@ it('returns all multi-page changes without rereading old history or regressing a
     id: 'm0', sessionId: id, sequence: 0, role: 'assistant', content: 'Updated answer', metadata: {},
   } }]);
   expect((await windowPage(id, { since: cursor })).messages).toMatchObject([{ id: 'm0', content: 'Updated answer' }]);
+}, 30_000);
+
+it('omits provider replay payloads from UI windows while keeping source history intact', async () => {
+  const id = 'history-ui-projection';
+  await client.seedUi(id, Buffer.from(JSON.stringify({ id, projectId: 'fixture', profileId: 'synax', status: 'completed', updatedAt: 'now' })));
+  const content = 'Saved reply';
+  const replay = { role: 'assistant', content: 'provider-only'.repeat(25_000) };
+  await append(id, [{ kind: 'runtime.message', value: { id: 'small', sessionId: id, sequence: 1, role: 'assistant', content,
+    metadata: { source: 'native', rustMessage: replay } } },
+    { kind: 'runtime.message', value: { id: 'large', sessionId: id, sequence: 2, role: 'assistant', content: '原文🙂'.repeat(15_000),
+      metadata: { source: 'native', rustMessage: replay } } }]);
+  const page = await windowPage(id);
+  expect(page.messages.find(message => message.id === 'small')).toMatchObject({ content, metadata: { source: 'native' } });
+  expect(page.messages.every(message => !message.metadata.rustMessage)).toBe(true);
+  expect(page.messages.find(message => message.id === 'large')?.content).toBe('原文🙂'.repeat(15_000));
+  const original = JSON.parse(Buffer.from(await client.historyCommand({sessionId:id,requestId:randomUUID(),operation:'context_prompt',
+    payload:{fromRevision:0,throughRevision:page.historyWindow.revision,generation:page.historyWindow.generation,tokenBudget:10_000_000}})).toString());
+  expect(original.items[0].$historyObject).toBeTruthy();
+  const first = await runtimeFacade.messageContentAuthoritative(id, 'large', 0, page.historyWindow.revision);
+  expect(first.text).toBe('原文🙂'.repeat(15_000).slice(0, first.text.length));
+  const second = await runtimeFacade.messageContentAuthoritative(id, 'large', first.next!, page.historyWindow.revision);
+  expect(first.text + second.text).toBe('原文🙂'.repeat(15_000).slice(0, first.text.length + second.text.length));
+  await expect(runtimeFacade.messageContentAuthoritative(id, 'large', first.next!, 0)).rejects.toMatchObject({code:'HISTORY_STALE'});
 }, 30_000);

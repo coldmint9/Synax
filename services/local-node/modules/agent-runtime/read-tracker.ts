@@ -448,6 +448,17 @@ export function rebuildSessionFileReads(
       continue;
     }
 
+    if (call.toolId === "file.generate") {
+      const files = (call.outputRef as { files?: Array<{ path: string; action: string }> } | null)?.files;
+      for (const file of files ?? []) {
+        try {
+          if (file.action === "delete") clearSessionFileRead(sessionId, file.path);
+          else { recordSessionFileMutation(sessionId, file.path); recordSessionFileDiscovery(sessionId, file.path); }
+        } catch { /* Files may have been removed since generation. */ }
+      }
+      continue;
+    }
+
     if (call.toolId === "file.delete") {
       const path = (call.inputRef as { path?: string } | null)?.path;
       if (path) clearSessionFileRead(sessionId, path);

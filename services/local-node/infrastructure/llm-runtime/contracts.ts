@@ -51,6 +51,7 @@ export interface ProviderRequest {
   purpose?: string;
   reasoningEffort?: string;
   reasoningCapable?: boolean;
+  supportedReasoningEfforts?: string[];
   responseOptions?: Record<string, unknown>;
   cachePolicy?: Record<string, unknown>;
   prompt: unknown[];
@@ -58,6 +59,8 @@ export interface ProviderRequest {
   toolChoice?: unknown;
   maxRetries?: number;
   maxOutputTokens?: number;
+  requiredMaxOutputTokens?: number;
+  outputTokenParameter?: "max_completion_tokens";
   temperature?: number;
   topP?: number;
   topK?: number;

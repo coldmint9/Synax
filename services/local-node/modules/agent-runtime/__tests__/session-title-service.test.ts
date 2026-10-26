@@ -3,10 +3,11 @@ import {
   resolveInitialSessionTitle,
   shortSessionTitle,
   generateSessionTitle,
-  scheduleSessionTitleAfterRunStart,
+  scheduleSessionTitleAfterFirstOutput,
   maybeScheduleSessionTitleFromStreamChunk,
   ensureSessionTitleGenerated,
   isValidGeneratedSessionTitle,
+  forkSessionTitle,
   needsGeneratedSessionTitle,
   registerSessionTitleHooks,
 } from "../session-title-service.js";
@@ -96,6 +97,59 @@ describe("resolveInitialSessionTitle", () => {
   });
 });
 
+describe("forkSessionTitle", () => {
+  it("numbers a fork after its source title", () => {
+    expect(
+      forkSessionTitle({ sourceTitle: "hello", existingTitles: ["hello"] }),
+    ).toBe("hello(2)");
+  });
+
+  it("continues past numbers already taken by sibling forks", () => {
+    expect(
+      forkSessionTitle({
+        sourceTitle: "hello",
+        existingTitles: ["hello", "hello(2)", "hello(3)"],
+      }),
+    ).toBe("hello(4)");
+  });
+
+  it("counts from the base name of an already numbered source", () => {
+    expect(
+      forkSessionTitle({
+        sourceTitle: "hello(2)",
+        existingTitles: ["hello", "hello(2)"],
+      }),
+    ).toBe("hello(3)");
+  });
+
+  it("reuses a number freed by a deleted fork", () => {
+    expect(
+      forkSessionTitle({
+        sourceTitle: "hello(2)",
+        existingTitles: ["hello(4)", "hello(5)"],
+      }),
+    ).toBe("hello(2)");
+  });
+
+  it("keeps the title inside the initial-title limit", () => {
+    const title = forkSessionTitle({
+      sourceTitle: "a".repeat(120),
+      existingTitles: [],
+    });
+    expect(title).toHaveLength(80);
+    expect(title?.endsWith("(2)")).toBe(true);
+  });
+
+  it.each([null, undefined, "", "  ", "new session", "新会话"])(
+    "leaves %s without a counter",
+    (sourceTitle) => {
+      expect(
+        forkSessionTitle({ sourceTitle, existingTitles: ["hello"] }),
+      ).toBeNull();
+    },
+  );
+});
+
 describe("session title after first run", () => {
   beforeEach(async () => {
     await resetAgentRuntimeFixtures();
@@ -153,7 +207,7 @@ describe("session title after first run", () => {
     for (const session of sessions) {
       const runId = `run_${session.id}`;
       agentRuntimeStore.updateSession(session.id, { activeRunId: runId });
-      scheduleSessionTitleAfterRunStart(session.id, runId);
+      scheduleSessionTitleAfterFirstOutput(session.id, runId);
     }
     expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
     await vi.waitFor(() => {
@@ -195,7 +249,22 @@ describe("session title after first run", () => {
     );
   });
 
-  it("generates the title on run_started while the first turn is still running", async () => {
+  it("keeps a manually chosen placeholder even when automatic title generation is in flight", async () => {
+    let finish!: (value: any) => void;
+    mockGenerateGatewayTextResult.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const session = agentSessionRuntime.create({ projectId: "project-alpha", profileId: "synax", prompt: LONG_INPUT,
+      sessionMetadata: { source: "session-page", goalContent: LONG_INPUT } });
+    ensureSessionTitleGenerated(session.id);
+    await vi.waitFor(() => expect(mockGenerateGatewayTextResult).toHaveBeenCalledOnce());
+    agentRuntimeStore.updateSession(session.id, { title: "new session",
+      sessionMetadata: { ...session.sessionMetadata, titleSource: "user", titleSummarized: true } });
+    finish({ text: "自动生成标题" });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    await agentRuntimeStore.flushSession(session.id);
+    expect(agentRuntimeStore.getSession(session.id).title).toBe("new session");
+  });
+
+  it("waits for model output before generating a title during the first turn", async () => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -225,6 +294,11 @@ describe("session title after first run", () => {
     maybeScheduleSessionTitleFromStreamChunk(session.id, {
       type: "run_started",
       run,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mockGenerateGatewayTextResult).not.toHaveBeenCalled();
+    maybeScheduleSessionTitleFromStreamChunk(session.id, {
+      type: "message_delta", runId: run.id, stepId: "step", delta: "你好",
     });
 
     await vi.waitFor(() => {
@@ -268,7 +342,7 @@ describe("session title after first run", () => {
     })).toBe(false);
   });
 
-  it("scheduleSessionTitleAfterRunStart generates title for placeholder sessions", async () => {
+  it("scheduleSessionTitleAfterFirstOutput generates title for placeholder sessions", async () => {
     const session = agentSessionRuntime.create({
       projectId: "project-alpha",
       profileId: "synax",
@@ -293,7 +367,7 @@ describe("session title after first run", () => {
       metadata: {},
     });
 
-    scheduleSessionTitleAfterRunStart(session.id, run.id);
+    scheduleSessionTitleAfterFirstOutput(session.id, run.id);
 
     await vi.waitFor(() => {
       expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");

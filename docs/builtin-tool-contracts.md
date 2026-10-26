@@ -20,6 +20,7 @@
 | `bash` | command 长度 1–4000，拒绝 NUL；workdir 必须可解析；每个管道/链段走权限判断；有限会话限制重定向；timeout 默认 30s、1–600s，background 时忽略 | 补路径基准和 command 的 NUL 限制，保留后台/超时/权限说明 | tools/bash.ts、tools/bash-command-policy.ts、tools/workspace.ts |
 | `file.read` | 普通文本文件，扩展名/内容识别二进制；maxBytes 默认和上限 64000；没有 offset 参数 | 修正可用搜索工具名、路径说明、默认上限、截断后的读取建议 | tools/file-read.ts |
 | `file.write` | 非空 path、string content；完整覆盖并创建父目录；自动补读；已读文件变化可能拒绝写入 | 补路径基准、绝对路径授权与文件变化处理 | tools/file-write.ts、read-tracker.ts |
+| `file.generate` | Python 3 script 1–65,536 字符；timeoutMs 默认 30s、钳制 1–120s；synax.write/delete/move 暂存后统一校验和提交；120 文件、64 MiB、单文件 8 MiB、诊断各 8 KiB；仅无 NUL 的 UTF-8 | write 审批；删除/移动要求 file.delete；提交前检查 sandbox、writeScope、文件新鲜度，持有写锁并在失败时回滚；完整恢复才返回 rolledBack，否则报告 residualPaths；缺 Python 不注册；不进入 code mode 允许列表 | tools/file-generate.ts、file-generation/、infrastructure/runtime/python-runtime.ts |
 | `file.delete` | 删除单文件，不递归删除目录；路径走 sandbox | 补路径授权说明，保留明确删除请求的使用要求 | tools/file-delete.ts |
 | `file.list` | 目录输入，默认当前工作目录；limit 默认 100、上限 300；仅返回当前层，过滤不可见项 | 补真实默认数量、目录和路径基准 | tools/file-list.ts、tools/workspace.ts |
 | `file.patch` | 单个 Begin/End envelope；Add/Update/Delete/Move 语法；加行用 +；hunk 必须匹配；写入前进行解析、路径和读写校验 | 补具体路径语义、Move 位置、最终 End 标记和文件变化重读提示 | tools/patch.ts、tools/patch-format.ts、read-tracker.ts |

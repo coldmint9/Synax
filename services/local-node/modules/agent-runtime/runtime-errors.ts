@@ -79,6 +79,7 @@ export function toRuntimeError(error: unknown): AgentRuntimeError {
       503,
     );
   if (error instanceof RuntimeSidecarError) {
+    if (error.code === 'NOT_FOUND') return new AgentRuntimeError(error.message, error.code, 404);
     if (error.message.includes('entity exceeds history page byte budget'))
       return new AgentRuntimeError(error.message, 'HISTORY_ENTITY_TOO_LARGE', 413);
     if (error.code === 'HISTORY_NOT_FOUND') return new AgentRuntimeError(error.message, error.code, 404);

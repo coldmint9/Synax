@@ -3,6 +3,7 @@ import { gitMergeReplyParts, type GitMergeReplyPart } from "./gitMergeTranscript
 import type { InlineVisualizationReference } from "./visualizationTranscript";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
+import { toolCallRecordToView } from "./toolCallUtils";
 import type {
   AgentRunStep,
   AgentRuntimeMessage,
@@ -64,12 +65,6 @@ function computeDuration(step: AgentRunStep): string | null {
   if (!step.completedAt) return null;
   const ms =
     new Date(step.completedAt).getTime() - new Date(step.startedAt).getTime();
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function computeToolDuration(startedAt: string, endedAt: string): string {
-  const ms = new Date(endedAt).getTime() - new Date(startedAt).getTime();
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
@@ -253,21 +248,7 @@ export function buildInterleavedTurns(
         timestamp: new Date(tc.startedAt).getTime(),
         block: {
           type: "tool_call",
-          call: {
-            id: tc.id,
-            contentParts: tc.contentParts,
-            ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
-            toolId: tc.toolId,
-            execution: tc.execution,
-            inputSummary: tc.inputSummary ?? "",
-            outputSummary: tc.outputSummary ?? tc.error ?? "",
-            status: tc.status,
-            category: tc.category,
-            duration: tc.endedAt
-              ? computeToolDuration(tc.execution?.startedAt ?? tc.startedAt, tc.endedAt)
-              : null,
-            mutability: tc.mutability,
-          },
+          call: toolCallRecordToView(tc),
         },
       });
 

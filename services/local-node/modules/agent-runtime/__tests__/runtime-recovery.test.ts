@@ -11,6 +11,18 @@ beforeEach(async () => {
 });
 
 describe("recoverRuntime", () => {
+  it("cleans up an uncommitted fork from a previous host without exposing an empty session", async () => {
+    const session = agentSessionRuntime.create({ ...plannerSessionInput, sessionMetadata: {
+      forkPreparing: true, forkRequestId: "interrupted-copy", forkHostId: "old-host",
+    } }, { forkPreparing: true });
+    await agentRuntimeStore.flushSession(session.id);
+    expect(needsRuntimeRecovery({ ...session, runtimeRecoveryRequired: false })).toBe(true);
+    await expect(recoverRuntimeSession("new-host", session.id)).resolves.toMatchObject({ reviewed: 1 });
+    const recovered = await runtimeFacade.sessionSummaryAuthoritative(session.id);
+    expect(recovered.sessionMetadata).toMatchObject({ forkPreparing: false, forkCopyComplete: false, forkInterrupted: true });
+    expect(recovered.sessionMetadata?.deletedAt).toBeTruthy();
+    expect(agentRuntimeStore.listSessions({ limit: Infinity })).not.toContainEqual(expect.objectContaining({ id: session.id }));
+  });
   it("leaves settled indexed sessions cold but still checks live leases and older indexes", () => {
     const summary = { status: "completed", activeRunId: null, runtimeRecoveryRequired: false } as Parameters<typeof needsRuntimeRecovery>[0];
     expect(needsRuntimeRecovery(summary)).toBe(false);

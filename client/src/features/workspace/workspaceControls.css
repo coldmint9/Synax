@@ -1,3 +1,85 @@
+.workspace-activity,
+.workspace-switcher {
+  --workspace-attention-color: #eab308;
+}
+.workspace-activity {
+  --workspace-activity-color: hsl(var(--run));
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--workspace-activity-color) 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--workspace-activity-color) 9%, transparent);
+  color: color-mix(in srgb, var(--workspace-activity-color) 60%, var(--theme-text));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+.workspace-activity[data-status="unread"] {
+  --workspace-activity-color: var(--theme-success);
+}
+.workspace-activity[data-status="failed"] {
+  --workspace-activity-color: var(--theme-danger);
+}
+.workspace-activity[data-status="waiting"] {
+  --workspace-activity-color: var(--workspace-attention-color);
+  color: color-mix(in srgb, var(--workspace-activity-color) 40%, var(--theme-text));
+}
+.workspace-switcher .project-session-badge__dot[data-status="waiting"] {
+  background: var(--workspace-attention-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--workspace-attention-color) 40%, transparent);
+}
+.workspace-switcher .project-session-badge__dot[data-status="failed"] {
+  background: var(--theme-danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--theme-danger) 40%, transparent);
+}
+.workspace-activity__count {
+  min-width: 1ch;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.workspace-activity__signal {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  align-items: center;
+  gap: 2px;
+  color: var(--workspace-activity-color);
+}
+.workspace-activity__signal > span {
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
+  background: currentColor;
+  animation: workspace-activity-wave 1.4s ease-in-out infinite;
+}
+.workspace-activity__signal > span:nth-child(2) {
+  height: 10px;
+  animation-delay: -0.9s;
+}
+.workspace-activity__signal > span:nth-child(3) {
+  height: 8px;
+  animation-delay: -0.4s;
+}
+.workspace-activity:not([data-status="running"]) .workspace-activity__signal > span {
+  animation: none;
+}
+.wh-project-trigger--icon:has(.workspace-activity) {
+  width: auto;
+  padding-inline: 7px;
+}
+@keyframes workspace-activity-wave {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-activity__signal > span { animation: none; }
+}
 .workspace-switcher.ui-popover {
   width: 304px;
   max-width: calc(100vw - 16px);

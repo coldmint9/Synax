@@ -5,6 +5,7 @@ import type {
 } from "../runtime/config/config-types.js";
 import { isProviderSupported } from "./catalog-capabilities.js";
 import { openAIModelContract } from "./openai-models.js";
+import { withPublishedOutputLimits } from "./model-output-limits.js";
 import {
   inferReasoningCapability,
   resolvePreferredProviderAdapter,
@@ -128,7 +129,7 @@ function tryResolveCandidate(
   const declared = input.globalConfig.providers
     .find((p) => p.id === parsed.providerId)
     ?.models.find((m) => m.id === parsed.modelId);
-  const modelDef = {
+  const modelDef = withPublishedOutputLimits({
     ...found,
     ...(["@ai-sdk/openai", "@ai-sdk/openai-compatible"].includes(
       provider.npm ?? "",
@@ -139,13 +140,15 @@ function tryResolveCandidate(
       ? { inputModalities: declared.inputModalities }
       : {}),
     ...(declared?.contextLimit ? { contextLimit: declared.contextLimit } : {}),
+    ...(declared?.inputLimit ? { inputLimit: declared.inputLimit } : {}),
+    ...(declared?.maxTokens ? { maxTokens: declared.maxTokens } : {}),
     ...(config.models?.[parsed.modelId]?.inputModalities
       ? { inputModalities: config.models[parsed.modelId].inputModalities }
       : {}),
     ...(found.outputModalities
       ? { outputModalities: found.outputModalities }
       : {}),
-  };
+  });
 
   const apiFormat = resolveProviderApiFormat({
     providerId: parsed.providerId,
@@ -533,7 +536,8 @@ function toRuntimeModels(
     inputModalities: model.inputModalities,
     outputModalities: model.outputModalities,
     isDefault: model.isDefault,
-    maxTokens: model.maxTokens,
+    ...(typeof model.maxTokens === "number" ? { maxTokens: model.maxTokens } : {}),
+    ...(typeof model.inputLimit === "number" ? { inputLimit: model.inputLimit } : {}),
     ...(typeof model.contextLimit === "number"
       ? { contextLimit: model.contextLimit }
       : {}),
@@ -626,6 +630,7 @@ function normalizeConnection(
   const models = toModelOverrideMap(extra?.models);
   // Only an explicitly stored protocol is carried here: the provider-id default is applied later.
   const storedApiFormat = extra?.apiFormat;
+  const maxOutputTokens = extra?.maxOutputTokens;
   const apiFormat: ApiFormat | undefined =
     storedApiFormat === "openai" ||
     storedApiFormat === "openai-responses" ||
@@ -635,6 +640,7 @@ function normalizeConnection(
 
   return {
     ...(apiFormat ? { apiFormat } : {}),
+    ...(typeof maxOutputTokens === "number" && Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 && maxOutputTokens <= 10_000_000 ? { maxOutputTokens } : {}),
     ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
     ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
     ...(connection.apiKeyMasked

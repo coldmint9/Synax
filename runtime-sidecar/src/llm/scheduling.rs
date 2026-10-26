@@ -18,17 +18,18 @@ pub(super) fn schedule(
         let mut credentials: Vec<_> = input.headers.iter().collect(); credentials.sort();
         let key_bytes = serde_json::to_vec(&(&input.provider_id, &input.base_url, &input.api_key, credentials))?;
         let key = format!("{:x}", Sha256::digest(key_bytes));
+        let background = input.purpose.as_deref() == Some("session-title");
         let timeout_ms = std::env::var("SYNAX_PROVIDER_REQUEST_TIMEOUT_MS").ok().and_then(|v| v.parse::<u64>().ok())
             .filter(|v| (1_000..=86_400_000).contains(v)).unwrap_or(1_800_000);
+        let timeout_ms = if background { timeout_ms.min(20_000) } else { timeout_ms };
         let request = ResourceRequest { id: id.clone(), resource: format!("provider:{key}"), session_id: session,
             root_session_id: root, owner_id: format!("rust:{id}"), run_id: id.clone(), epoch: "rust".into(),
-            expires_at: resources::now_ms() + 300_000, timeout_ms };
+            expires_at: resources::now_ms() + if background { 2_000 } else { 300_000 }, timeout_ms, background };
         let _guard = ResourceGuard { scheduler: scheduler.clone(), request: request.clone() };
         let mut status = scheduler.request(request.clone()).map_err(|e| -> Error { e.into() })?;
         if status.state == "queued" { yield json!({"type":"execution-status","phase":"queued_resources","resource":"provider","queuedAt":status.queued_at}); }
         while status.state == "queued" {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            status = scheduler.request(request.clone()).map_err(|e| -> Error { e.into() })?;
+            status = scheduler.wait(request.clone(), 300_000).await.map_err(|e| -> Error { e.into() })?;
         }
         if status.state != "running" { Err::<(), Error>(format!("provider resource admission: {}", status.state).into())?; }
         yield json!({"type":"execution-status","phase":"waiting_model","resource":"provider","queuedAt":status.queued_at,"startedAt":status.started_at,"deadline":status.deadline});

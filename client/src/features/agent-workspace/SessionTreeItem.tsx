@@ -19,6 +19,7 @@ import {
   useSessionDisplayTitle,
 } from "./useSessionDisplayTitle";
 import { getSubagentName } from "./SubagentIdentity";
+import type { SessionAction, SessionActionTarget } from "./SessionActionsDialog";
 
 const DOT: Record<string, string> = {
   running: "bg-run",
@@ -41,6 +42,7 @@ interface Props {
   onDelete?: (id: string) => void;
   onCancel?: (id: string) => void;
   onTogglePin?: (id: string) => Promise<void>;
+  onSessionAction?: (kind: SessionAction, session: SessionActionTarget) => void;
 }
 
 function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
@@ -84,6 +86,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   onToggleExpand,
   onDelete,
   onTogglePin,
+  onSessionAction,
 }: Props) {
   const { t, locale } = useLocale();
   const displayMode = useShellStore(
@@ -126,6 +129,12 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             });
         },
       },
+      ...(onSessionAction ? [
+        { type: "action", id: "fork-full", label: locale === "zh" ? "全量 Fork 新会话" : "Fork entire conversation", restoreFocus: false,
+          run: () => onSessionAction("fork", session) } as const,
+        { type: "action", id: "rename", label: locale === "zh" ? "重命名" : "Rename", restoreFocus: false,
+          run: () => onSessionAction("rename", session) } as const,
+      ] : []),
       ...(onTogglePin
         ? [
             {
@@ -154,6 +163,11 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             } as const,
           ]
         : []),
+      ...(onSessionAction ? [
+        ...(!onDelete ? [{ type: "separator" } as const] : []),
+        { type: "action", id: "delete-permanently", label: locale === "zh" ? "永久删除" : "Delete permanently", danger: true, restoreFocus: false,
+          run: () => onSessionAction("delete", session) } as const,
+      ] : []),
     ],
   }));
 

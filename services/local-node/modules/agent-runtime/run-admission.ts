@@ -24,6 +24,7 @@ import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { ensureSessionRecovered } from './session-recovery.js';
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
+import { withSessionWorkspaceLock } from './session-workspace-lock.js';
 
 export interface AcceptedRuntimeInput {
   version: 1;
@@ -35,6 +36,7 @@ export interface AcceptedRuntimeInput {
   input: StreamTurnRequest;
   backendId: string;
   workDir: string;
+  workspaceBindingRevision?: number;
   previousSessionStatus: string;
 }
 
@@ -50,7 +52,14 @@ function stable(value: unknown): unknown {
   return value;
 }
 
-export async function acceptRuntimeRunAuthoritative(
+export function acceptRuntimeRunAuthoritative(
+  sessionId: string, input: StreamTurnRequest, requestId: string,
+  mode: AgentSessionStreamMode = "turn", queueItem?: import("./input-queue-service.js").QueuedInput,
+): Promise<{ run: AgentRun; reused: boolean }> {
+  return withSessionWorkspaceLock(sessionId, () => prepareAuthoritativeRuntimeRun(sessionId, input, requestId, mode, queueItem));
+}
+
+async function prepareAuthoritativeRuntimeRun(
   sessionId: string,
   input: StreamTurnRequest,
   requestId: string,
@@ -74,8 +83,10 @@ export async function acceptRuntimeRunAuthoritative(
     .digest("hex");
   await runtimeFacade.ensureUiProjection(sessionId);
   await ensureSessionRecovered(sessionId);
-  await agentRuntimeStore.hydrateSession(sessionId);
+  await agentRuntimeStore.hydrateExecutionSession(sessionId);
   const authoritative = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
+  if (authoritative.session?.sessionMetadata?.forkPreparing)
+    throw new AgentRuntimeError("The conversation copy is not committed yet. Retry the original fork request.", "FORK_PREPARING", 409);
   const historyHead = await runtimeFacade.historyHeadAuthoritative(sessionId);
   const existingRun = authoritative.run as AgentRun | null | undefined;
   const previous = [existingRun, ...agentRuntimeStore.listRuns(sessionId)].find(
@@ -201,6 +212,7 @@ export async function acceptRuntimeRunAuthoritative(
     },
     backendId: binding.id,
     workDir,
+    workspaceBindingRevision: binding.workspaceBindingRevision ?? 0,
     previousSessionStatus: session.status,
     ...(queueItem ? { queueItem } : {}),
   };
@@ -222,7 +234,7 @@ export async function acceptRuntimeRunAuthoritative(
     false,
   );
   if (admission.reused) {
-    await agentRuntimeStore.hydrateSession(sessionId, true);
+    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
     const snapshot = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
     const reusedRun = snapshot.run?.id === admission.runId
       ? snapshot.run as AgentRun

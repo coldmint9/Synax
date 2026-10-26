@@ -204,7 +204,7 @@ describe("persisted transcript cache", () => {
     expect(await readPersistedDetail("session", "p1")).toBeNull();
   });
 
-  it("trims an oversized entry and clears a cursor it could no longer resume", () => {
+  it("keeps the complete minimum tail and resume cursor under a soft byte budget", () => {
     const huge = entry({
       messages: Array.from({ length: 40 }, (_, index) => ({
         id: `m${index}`,
@@ -216,16 +216,21 @@ describe("persisted transcript cache", () => {
     });
     const persisted = toPersistedEntry(huge, "terminal", 16 * 1024);
     expect(persisted).not.toBeNull();
-    expect(persisted!.messages.length).toBeLessThan(40);
+    expect(persisted!.messages.length).toBe(40);
     expect(persisted!.messages.at(-1)).toMatchObject({ id: "m39" });
-    expect(persisted!.historyWindow?.olderCursor).toBeUndefined();
-    expect(persisted!.historyWindow?.hasEarlier).toBe(false);
-    expect(persisted!.historyPagesLoaded).toBe(false);
+    expect(persisted!.historyWindow?.olderCursor).toBe("older-4");
+    expect(persisted!.historyWindow?.hasEarlier).toBe(true);
   });
 
   it("evicts the oldest sessions beyond the record limit", async () => {
-    for (let index = 0; index <= PERSISTED_DETAIL_MAX_SESSIONS; index++)
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    for (let index = 0; index <= PERSISTED_DETAIL_MAX_SESSIONS; index++) {
+      clock.mockReturnValue(now + index);
       schedulePersistDetail(`session-${index}`, "p1", entry());
+      await flushSessionCacheWrites();
+    }
+    clock.mockRestore();
     await flushSessionCacheWrites();
 
     const metas = [...records("meta").keys()];

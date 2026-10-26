@@ -37,6 +37,8 @@ export function useTaskNotificationListener(projectId: string | null) {
           type: severityToType[data.severity] ?? "info",
           message: `${data.title}: ${data.message}`,
           duration: data.severity === "error" ? 0 : 5000,
+          // 同一任务可能先失败后重试成功，状态变化需要再次提醒。
+          resurface: true,
         });
       } catch {
         /* ignore parse errors */

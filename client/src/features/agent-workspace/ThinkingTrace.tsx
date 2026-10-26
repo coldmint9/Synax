@@ -2,7 +2,11 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import { Button as HeadlessButton } from "@headlessui/react";
 import { ActivityDisclosure } from "./ActivityDisclosure";
-import { useActivityWindowTakeOver, useCompactActivityRow } from "./ActivityRowScope";
+import {
+  useActivityRowActive,
+  useActivityRowExpansion,
+  useCompactActivityRow,
+} from "./ActivityRowScope";
 import "./conversationFlow.css";
 
 // Transcript virtualization unmounts rows. Keep explicit reader choices across remounts.
@@ -47,13 +51,14 @@ export function ThinkingTrace({
     setManual(rememberKey ? (expandedTraces.get(rememberKey) ?? null) : null);
   }, [rememberKey]);
   // Inside the live window a thought is one row while the window follows the
-  // newest record. Opening it hands the window to the reader, so the body can
-  // take its natural height instead of staying unreachable.
+  // newest record. Opening it expands this row only, so the body can take its
+  // natural height without laying out every other record.
   const compact = useCompactActivityRow();
-  const takeOverWindow = useActivityWindowTakeOver();
+  const active = useActivityRowActive();
+  const expandRow = useActivityRowExpansion();
   const hasBody = Boolean(children);
   const expandable = hasBody;
-  const expanded = expandable && (manual ?? false);
+  const expanded = expandable && (manual ?? false) && (!compact || active);
   const bodyId = useId();
 
   const heading = (
@@ -89,7 +94,14 @@ export function ThinkingTrace({
           aria-controls={bodyId}
           title={expanded ? undefined : title}
           onClick={() => {
-            if (compact) takeOverWindow?.();
+            // Claiming the window's single open slot must open this thought,
+            // even when it was opened before and its neighbour took the slot.
+            if (compact && !active) {
+              expandRow?.();
+              setManual(true);
+              if (rememberKey) expandedTraces.set(rememberKey, true);
+              return;
+            }
             const next = !expanded;
             setManual(next);
             if (rememberKey) expandedTraces.set(rememberKey, next);

@@ -77,6 +77,10 @@ impl<T: Clone> SessionCache<T> {
         let previous = std::mem::take(&mut *self.slots.write());
         drop(previous);
     }
+    pub(crate) fn remove(&self, key: &str) {
+        let previous = self.slots.write().remove(key);
+        drop(previous);
+    }
 
     /// Keep recently used entries warm, evicting the least recently used idle
     /// entries when the capacity is exceeded. Busy entries are never removed.

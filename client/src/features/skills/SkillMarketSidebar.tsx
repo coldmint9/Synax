@@ -200,7 +200,7 @@ function RemoteSourceRow({
             {source.label}
           </p>
           {source.lastSyncError ? (
-            <p className="mt-0.5 line-clamp-2 text-[11px] text-destructive">{source.lastSyncError}</p>
+            <p data-error-toast="off" role="alert" className="mt-0.5 line-clamp-2 text-[11px] text-destructive">{source.lastSyncError}</p>
           ) : source.lastSyncAt ? (
             <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{source.lastSyncAt}</p>
           ) : (

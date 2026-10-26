@@ -85,11 +85,54 @@ async function readUntrackedDiff(cwd: string, files: string[]): Promise<string> 
   return patches.join("\n");
 }
 
+function statusPath(line: string): string {
+  if (line.startsWith("?? ")) return line.slice(3);
+  const value = line.slice(3);
+  const renamed = value.split(" -> ");
+  return renamed[renamed.length - 1] ?? value;
+}
+
+function isCommitEligiblePath(file: string): boolean {
+  return file.split(/[\\/]/).at(-1) !== ".DS_Store";
+}
+
+async function readDiffExcerpt(
+  cwd: string,
+  files: string[],
+  includeUntracked: boolean,
+  untrackedFiles: ReadonlySet<string>,
+): Promise<string> {
+  const eligibleFiles = files.filter(isCommitEligiblePath);
+  if (!eligibleFiles.length) return "(none)";
+  const trackedFiles = eligibleFiles.filter((file) => !untrackedFiles.has(file));
+  const untracked = eligibleFiles.filter((file) => untrackedFiles.has(file));
+  const [trackedPatch, untrackedPatch] = await Promise.all([
+    trackedFiles.length
+      ? readGit(cwd, ["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--", ...trackedFiles], true)
+      : Promise.resolve(""),
+    includeUntracked && untracked.length
+      ? readUntrackedDiff(cwd, untracked)
+      : Promise.resolve(""),
+  ]);
+  const fileList = eligibleFiles.map((file) => `File: ${file}`).join("\n");
+  const content = [
+    "Pending files:",
+    fileList,
+    "",
+    trackedPatch.trim(),
+    untrackedPatch.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  return content.slice(0, MAX_DIFF_CHARS);
+}
+
 /** The collector never mutates the index or worktree. */
 export async function collectCommitMessageContext(
   sessionId: string,
   rootId?: string,
   includeUntracked = true,
+  targetBranch?: string,
 ): Promise<CommitMessageContext> {
   let session: ReturnType<typeof agentRuntimeStore.getSession>;
   try {
@@ -116,13 +159,25 @@ export async function collectCommitMessageContext(
     throw new AgentValidationError(
       "The selected project must be a Git repository root.",
     );
-  const branch = (
+  const currentBranch = (
     await readGit(root.path, ["branch", "--show-current"])
   ).trim();
-  if (!branch)
+  if (!currentBranch)
     throw new AgentValidationError(
       "Cannot generate: the workspace is in a detached HEAD state.",
     );
+  const branch = targetBranch?.trim() || currentBranch;
+  if (targetBranch && targetBranch !== branch)
+    throw new AgentValidationError("The target branch name cannot contain surrounding spaces.");
+  if (targetBranch && targetBranch !== currentBranch) {
+    const target = await readGit(
+      root.path,
+      ["rev-parse", "--verify", `refs/heads/${targetBranch}`],
+      true,
+    );
+    if (!target.trim())
+      throw new AgentValidationError("The selected target branch does not exist locally.");
+  }
   const status = (
     await readGit(root.path, ["status", "--porcelain=v1", "-uall"])
   ).trim();
@@ -132,25 +187,37 @@ export async function collectCommitMessageContext(
       "GIT_NOTHING_TO_COMMIT",
       409,
     );
-  const untrackedFiles = status
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("?? "))
-    .map((line) => line.slice(3));
-  const selectedUntrackedFiles = includeUntracked ? untrackedFiles : [];
   const changedFileLines = status
     .split(/\r?\n/)
-    .filter((line) => line && (includeUntracked || !line.startsWith("?? ")));
-  const [stagedSummary, unstagedSummary, stagedPatch, unstagedPatch, untrackedPatch] =
+    .filter(
+      (line) =>
+        line &&
+        isCommitEligiblePath(statusPath(line)) &&
+        (includeUntracked || !line.startsWith("?? ")),
+    );
+  const changedPaths = changedFileLines.map(statusPath);
+  const untrackedFiles = new Set(
+    changedFileLines
+      .filter((line) => line.startsWith("?? "))
+      .map(statusPath),
+  );
+  const [stagedSummary, unstagedSummary, diffExcerpt] =
     await Promise.all([
       readGit(root.path, ["diff", "--cached", "--stat"]),
       readGit(root.path, ["diff", "--stat"]),
-      readGit(root.path, ["diff", "--cached", "--no-ext-diff"]),
-      readGit(root.path, ["diff", "--no-ext-diff"]),
-      readUntrackedDiff(root.path, selectedUntrackedFiles),
+      readDiffExcerpt(root.path, changedPaths, includeUntracked, untrackedFiles),
     ]);
   let history = "";
   try {
-    history = await readGit(root.path, ["log", "-20", "--format=%s"]);
+    history = await readGit(
+      root.path,
+      [
+        "log",
+        "-20",
+        "--format=%s",
+        ...(targetBranch ? [`refs/heads/${branch}`] : []),
+      ],
+    );
   } catch (error) {
     // An unborn branch has no HEAD; every other log error must remain visible.
     if (await readGit(root.path, ["rev-parse", "--verify", "HEAD"], true))
@@ -162,10 +229,7 @@ export async function collectCommitMessageContext(
     changedFiles: changedFileLines.join("\n").slice(0, MAX_STATUS_CHARS),
     stagedSummary: stagedSummary.slice(0, 2_000),
     unstagedSummary: unstagedSummary.slice(0, 2_000),
-    diffExcerpt: `${stagedPatch}\n${unstagedPatch}\n${untrackedPatch}`.slice(
-      0,
-      MAX_DIFF_CHARS,
-    ),
+    diffExcerpt,
     subjects: history
       .split(/\r?\n/)
       .map((line) => line.trim().slice(0, MAX_HISTORY_SUBJECT_CHARS))

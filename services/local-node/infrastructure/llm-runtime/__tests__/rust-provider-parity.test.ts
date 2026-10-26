@@ -195,6 +195,30 @@ it("supports Messages top-p without a conflicting temperature", async () => {
   expect(requests[0].body.max_tokens).toBeGreaterThan(0);
 });
 
+it("uses a model-aware mandatory Messages cap and preserves explicit overrides", async () => {
+  const { model, requests } = await fixture("anthropic");
+  await consume(model, { requiredMaxOutputTokens: 128_000 });
+  await consume(model, { requiredMaxOutputTokens: 128_000, maxOutputTokens: 1024 });
+  expect(requests.map(request => request.body.max_tokens)).toEqual([128_000, 1024]);
+});
+
+it("sends only an explicit modern total-output cap on compatible Chat endpoints", async () => {
+  const { model, requests } = await fixture("openai");
+  await consume(model, { outputTokenParameter: "max_completion_tokens" });
+  await consume(model, { outputTokenParameter: "max_completion_tokens", maxOutputTokens: 65_536 });
+  expect(requests[0].body).not.toHaveProperty("max_completion_tokens");
+  expect(requests[1].body.max_completion_tokens).toBe(65_536);
+  for (const request of requests) expect(request.body).not.toHaveProperty("max_tokens");
+});
+
+it("never leaks a required-protocol fallback into Responses requests", async () => {
+  const { model, requests } = await fixture("openai-responses");
+  await consume(model, { requiredMaxOutputTokens: 128_000, outputTokenParameter: "max_completion_tokens" });
+  expect(requests[0].body).not.toHaveProperty("max_output_tokens");
+  expect(requests[0].body).not.toHaveProperty("max_completion_tokens");
+  expect(requests[0].body).not.toHaveProperty("max_tokens");
+});
+
 it("parses structured output in Rust and validates the business shape in Node", async () => {
   const { baseUrl, requests } = await fixture("openai-responses");
   const result = await executePipeline({ purpose: "fixture", messages: [{ role: "user", content: "Return json" }] }, {

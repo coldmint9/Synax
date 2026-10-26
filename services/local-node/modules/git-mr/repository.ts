@@ -1,5 +1,13 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import { createWriteStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { spawnOwnedProcess } from '../agent-runtime/owned-process.js';
+import { spawn } from 'node:child_process';
+import { withDeadline } from '../agent-runtime/managed-process.js';
+import { stopWslOwnedProcess } from '../../infrastructure/wsl/wsl.js';
 import { runCommand } from "../agent-runtime/tools/exec-async.js";
 import {
   workspaceLocationHostPath,
@@ -9,6 +17,10 @@ import { GitMrError } from "./errors.js";
 import type { MergeRequest } from "./contracts.js";
 
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
+export const MAX_VIEW_FILE_BYTES = 16 * 1024 * 1024;
+export const MAX_FILE_PREVIEW_BYTES = 64 * 1024;
+export const MAX_BLOB_BYTES = 128 * 1024 * 1024;
+export const MAX_FILE_SLICE_BYTES = 256 * 1024;
 export type Repo = Pick<MergeRequest, "repository" | "location">;
 export function hostPath(repo: Repo, location: string): string {
   return repo.location?.kind === "wsl"
@@ -98,6 +110,57 @@ export async function git(
       400,
     );
   return result;
+}
+
+/** Spool one immutable blob with stream backpressure; never buffer its full body. */
+export async function spoolGitBlob(repo: Repo, oid: string, filename: string, expectedBytes: number, signal?: AbortSignal) {
+  if (!/^[a-f0-9]{40,64}$/.test(oid) || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > MAX_BLOB_BYTES)
+    throw new GitMrError('Blob exceeds the bounded content reader.', 'FILE_TOO_LARGE');
+  signal?.throwIfAborted();
+  const child = spawnOwnedProcess('git', ['cat-file', 'blob', oid], {
+    cwd: hostPath(repo, repo.repository), inheritEnv: false, stdin: 'ignore',
+    env: { ...cleanEnvironment(), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
+  });
+  let stderr = '', stopped = false, bytes = 0, binary = false;
+  const decoder = new TextDecoder('utf-8', { fatal: true }), hash = createHash('sha256');
+  const stop = () => {
+    if (stopped) return; stopped = true;
+    if (repo.location?.kind === 'wsl') void stopWslOwnedProcess(repo.location.distribution, child.ownedProcessId).finally(() => { try { child.kill('SIGKILL'); } catch {} });
+    else if (process.platform === 'win32' && child.pid) {
+      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      killer.once('error', () => { try { child.kill('SIGKILL'); } catch {} });
+    } else { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch {} }
+  };
+  const onStderr = (chunk: Buffer) => { if (stderr.length < 8_192) stderr += chunk.toString('utf8').slice(0, 8_192 - stderr.length); };
+  child.stderr?.on('data', onStderr);
+  const completed = new Promise<number | null>((resolve, reject) => { child.once('close', resolve); child.once('error', reject); });
+  void completed.catch(() => {});
+  const timer = setTimeout(stop, 120_000); timer.unref();
+  signal?.addEventListener('abort', stop, { once: true });
+  if (signal?.aborted) stop();
+  try {
+    const inspect = new Transform({ transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > expectedBytes || bytes > MAX_BLOB_BYTES) { callback(new GitMrError('Blob grew beyond its declared limit.', 'CONTENT_CHANGED')); return; }
+      hash.update(chunk);
+      if (chunk.includes(0)) binary = true;
+      if (!binary) { try { decoder.decode(chunk, { stream: true }); } catch { binary = true; } }
+      callback(null, chunk);
+    } });
+    await pipeline(child.stdout!, inspect, createWriteStream(filename, { flags: 'wx', mode: 0o600, highWaterMark: 64 * 1024 }));
+    const code = await completed;
+    await child.ownedProcessClosed;
+    signal?.throwIfAborted();
+    if (code !== 0 || bytes !== expectedBytes) throw new GitMrError(stderr || 'Git blob read did not complete.', 'COMMAND_FAILED');
+    if (!binary) { try { decoder.decode(); } catch { binary = true; } }
+    return { bytes, binary, digest: hash.digest('hex') };
+  } catch (error) {
+    stop();
+    await withDeadline(Promise.allSettled([completed, child.ownedProcessClosed]), 10_000, 'Blob reader process cleanup could not be confirmed.');
+    await fs.unlink(filename).catch(() => undefined); throw error;
+  } finally {
+    clearTimeout(timer); signal?.removeEventListener('abort', stop); child.stderr?.off('data', onStderr);
+  }
 }
 export async function oid(repo: Repo, ref: string) {
   return (

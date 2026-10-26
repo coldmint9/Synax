@@ -64,9 +64,10 @@ async function generateSessionTitleWithLlm(
         ].join("\n"),
       },
     ],
-    maxTokens: 128,
+    maxTokens: 2048,
+    maxRetries: 0,
     temperature: 0.3,
-  });
+  }, AbortSignal.timeout(22_000));
 
   const title = (result.text ?? "").trim().slice(0, 50);
   return title || null;

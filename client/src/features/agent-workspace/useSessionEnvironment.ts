@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useWorkbenchPageActive } from "../../app/layouts/CachedWorkbenchPage";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
+import { useAgentSessionStore } from "./state/agentSessionStore";
 import {
   agentRuntimeApi,
   type SessionEnvironmentInputs,
@@ -113,6 +114,7 @@ function loadCard<T>(
   const request = card
     .load(sessionId)
     .then((value) => {
+      if (card.pending.get(sessionId) !== request) return value;
       card.entries.delete(sessionId);
       card.entries.set(sessionId, { value, checkedAt: Date.now() });
       while (card.entries.size > CARD_LIMIT)
@@ -240,7 +242,12 @@ function useSessionCard<T>(
   options?: { enabled?: boolean },
 ) {
   const pageActive = useWorkbenchPageActive();
-  const enabled = (options?.enabled ?? true) && pageActive;
+  // These cards scan archived tools/messages. Let the initial transcript
+  // window finish first instead of competing for the same history transport.
+  const waitingForTranscript = useAgentSessionStore(state =>
+    (card.kind === "inputs" || card.kind === "outputs") &&
+    state.selectedSessionId === sessionId && state.detailLoading);
+  const enabled = (options?.enabled ?? true) && pageActive && !waitingForTranscript;
   const value = useSyncExternalStore(
     useCallback((listener: () => void) => subscribeCard(card, listener), [card]),
     useCallback(() => cardSnapshot(card, sessionId), [card, sessionId]),

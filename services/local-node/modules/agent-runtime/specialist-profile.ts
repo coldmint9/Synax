@@ -38,7 +38,7 @@ const READ_CAPABILITIES = [
   "webSearch",
   "diff.read",
 ];
-const WRITE_CAPABILITIES = ["file.write", "file.patch", "file.delete"];
+const WRITE_CAPABILITIES = ["file.write", "file.patch", "file.delete", "file.generate"];
 const SAFE_CAPABILITIES = [
   ...READ_CAPABILITIES,
   ...WRITE_CAPABILITIES,
@@ -94,7 +94,7 @@ export const specialistSpecSchema = z
       .max(32)
       .transform(unique)
       .optional()
-      .describe("Required for file.write, file.patch or file.delete. Concrete relative file/directory paths; a directory includes its descendants, so use client/src rather than client/src/**. No roots, absolute paths, .. segments, globs or symlink components. Child writes must remain in this scope; delegate specialist writers serially."),
+      .describe("Required for file.write, file.patch, file.delete or file.generate. Concrete relative file/directory paths; a directory includes its descendants, so use client/src rather than client/src/**. No roots, absolute paths, .. segments, globs or symlink components. Child writes must remain in this scope; delegate specialist writers serially."),
   })
   .strict();
 
@@ -514,6 +514,13 @@ export function assertSpecialistToolAllowed(
         ? requestedPath
         : toolId,
     );
+    return;
+  }
+
+  // Generated paths are available only after the script exits. Re-enter this
+  // same guard for each staged path before the transaction writes anything.
+  if (toolId === "file.generate" && !(typeof args === "object" && args && "path" in args)) {
+    assertInheritedPermission(snapshot, toolId, toolId);
     return;
   }
 

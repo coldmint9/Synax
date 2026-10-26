@@ -22,6 +22,13 @@ export const backendBindingSchema = z.object({
   model: z.string().nullable(),
   workDir: z.string().nullable(),
   workspaceLocation: workspaceLocationSchema.optional(),
+  /** Explicit checkout overrides keyed by stable workspace member id. */
+  rootWorktrees: z.record(z.string(), workspaceLocationSchema).optional(),
+  /** User choices stay visible when the agent selects a different checkout. */
+  userWorktrees: z.record(z.string(), workspaceLocationSchema).optional(),
+  /** Workspace member used as the default cwd by native tools. */
+  executionRootId: z.string().optional(),
+  workspaceBindingRevision: z.number().int().nonnegative().optional(),
   workspaceRoots: z
     .array(
       z.object({

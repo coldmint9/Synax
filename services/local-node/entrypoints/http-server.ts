@@ -180,7 +180,7 @@ function configureSessionRecovery(includeCurrentHost = false): SessionRecovery {
 async function loadSessionsInBackground(recovery: SessionRecovery): Promise<void> {
   await startupPhase('session_index', () => agentRuntimeStore.hydrateSessions(startupLifetime.signal));
   if (shuttingDown || sessionRecovery !== recovery) return;
-  await recovery.warm(agentRuntimeStore.listSessions({ limit: Infinity }).filter(needsRuntimeRecovery).map(session => session.id), (sessionId, error) => {
+  await recovery.warm(agentRuntimeStore.listSessions({ limit: Infinity, includePreparing: true }).filter(needsRuntimeRecovery).map(session => session.id), (sessionId, error) => {
     pinoLogger.error({ event: 'runtime.session_recovery_failed', sessionId, error }, 'Session recovery failed; other sessions remain available');
   });
   if (shuttingDown || sessionRecovery !== recovery) return;

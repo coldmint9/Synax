@@ -326,6 +326,29 @@ export function parseBashInvocations(command: string): BashInvocation[] {
     .filter((invocation): invocation is BashInvocation => invocation !== null);
 }
 
+/** Git operations that must be represented by the persistent merge task card.
+ * Read-only inspection such as status, diff and log remains available through bash. */
+export type GitMergeWorkflowSubcommand = "merge" | "rebase" | "cherry-pick" | "revert" | "am";
+
+export function gitMergeWorkflowSubcommands(command: string): Set<GitMergeWorkflowSubcommand> {
+  const found = new Set<GitMergeWorkflowSubcommand>();
+  for (const segment of splitBashCommands(command)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const gitIndex = tokens.findIndex((token) => normalizeCommandName(token) === "git");
+    if (gitIndex < 0) continue;
+    let index = gitIndex + 1;
+    while (index < tokens.length) {
+      const token = tokens[index];
+      if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(token)) { index += 2; continue; }
+      if (token.startsWith("-")) { index += 1; continue; }
+      if (["merge", "rebase", "cherry-pick", "revert", "am"].includes(token))
+        found.add(token as GitMergeWorkflowSubcommand);
+      break;
+    }
+  }
+  return found;
+}
+
 export function bashPermissionPatterns(command: string): string[] {
   const invocations = parseBashInvocations(command);
   if (invocations.length === 0) return ["*"];
@@ -342,6 +365,69 @@ export function bashPermissionSummary(command: string): string {
   const invocations = parseBashInvocations(command);
   if (invocations.length === 0) return "*";
   return invocations.map((invocation) => invocation.pattern).join(" | ");
+}
+
+/** Git global options whose value is the next token, so the subcommand follows it. */
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--config-env",
+]);
+
+/** Stash subcommands that only read the stash: safe for diagnosis. */
+const STASH_READ_SUBCOMMANDS = new Set(["list", "show"]);
+
+const HELP_FLAGS = new Set(["-h", "--help"]);
+
+/** Git subcommands that can move, overwrite or discard uncommitted work. */
+export type GitDiscardSubcommand = "stash" | "reset" | "clean" | "restore";
+
+/**
+ * Destructive git subcommands used by a command: stash push/pop/apply/drop/clear,
+ * reset --hard/--keep/--merge, a forced clean, or restore. Read-only forms such
+ * as `git stash list` and `git status` are absent, so diagnosing a workspace
+ * never needs a user instruction while destructive changes still do. Keeping
+ * the subcommand identity lets an instruction unlock exactly what it named.
+ */
+export function discardedGitSubcommands(command: string): Set<GitDiscardSubcommand> {
+  const found = new Set<GitDiscardSubcommand>();
+  for (const segment of splitBashCommands(command)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const gitIndex = tokens.findIndex((token) => normalizeCommandName(token) === "git");
+    if (gitIndex < 0) continue;
+
+    let index = gitIndex + 1;
+    while (index < tokens.length && tokens[index].startsWith("-"))
+      index += GIT_GLOBAL_OPTIONS_WITH_VALUE.has(tokens[index]) ? 2 : 1;
+    const subcommand = tokens[index];
+    if (!subcommand) continue;
+    const args = tokens.slice(index + 1);
+    // Help output reads nothing and writes nothing.
+    if (args.length > 0 && args.every((arg) => HELP_FLAGS.has(arg))) continue;
+
+    if (subcommand === "stash") {
+      // A bare `git stash` defaults to push, so only an explicit read action is safe.
+      const action = args.find((arg) => !arg.startsWith("-"));
+      if (!action || !STASH_READ_SUBCOMMANDS.has(action)) found.add("stash");
+    } else if (subcommand === "reset") {
+      // Index-only resets keep every working-tree byte; they remain allowed.
+      if (args.some((arg) => ["--hard", "--keep", "--merge"].includes(arg))) found.add("reset");
+    } else if (subcommand === "clean") {
+      if (args.some((arg) => arg === "--dry-run" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(arg))) continue;
+      if (args.some((arg) => arg === "--force" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(arg))) found.add("clean");
+    } else if (subcommand === "restore") {
+      found.add("restore");
+    }
+  }
+  return found;
+}
+
+export function gitCommandDiscardsLocalChanges(command: string): boolean {
+  return discardedGitSubcommands(command).size > 0;
 }
 
 /** Detect actual background operators, not quoted ampersands or fd redirects. */

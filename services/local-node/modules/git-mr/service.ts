@@ -1,5 +1,6 @@
 import { loadSourcePolicy } from "./branch-policy.js";
 import { reconcile } from "./recovery.js";
+import { assertMergeContentPolicy } from './content-policy.js';
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -17,16 +18,19 @@ import {
   hostPath,
   command,
 } from "./repository.js";
-import { listFiles, readFile, writeFile } from "./files.js";
+import { listFiles, readFile, readFileSlice, writeFile, invalidateMergeFileIndex, releaseMergeFileCaches } from "./files.js";
 import type {
   MergeRequest,
   MergeRequestInput,
   MergeFileSave,
   MergePreset,
   MergeProposal,
+  MergeCheckConfig,
+  MergeFileSliceInput,
 } from "./contracts.js";
 
 const terminal = new Set(["merged", "noop", "cancelled"]);
+export type MergeMutationGuard = () => Promise<void>;
 export class GitMrService {
   private controllers = new Map<string, AbortController>();
   constructor(
@@ -149,12 +153,14 @@ export class GitMrService {
     id: string,
     expectedVersion: number,
     action: (mr: MergeRequest) => Promise<void>,
+    guard?: MergeMutationGuard,
   ) {
     const original = await this.get(projectId, id);
     return this.store.exclusive(original.commonDir, async () => {
       const mr = await this.get(projectId, id);
       if (mr.version !== expectedVersion)
         throw new GitMrError("MR changed; refresh and retry.", "STALE_VERSION");
+      await guard?.();
       try {
         await action(mr);
       } catch (error) {
@@ -168,7 +174,7 @@ export class GitMrService {
       return this.store.save(mr);
     });
   }
-  async prepare(projectId: string, id: string, version: number) {
+  async prepare(projectId: string, id: string, version: number, guard?: MergeMutationGuard) {
     return this.mutate(projectId, id, version, async (mr) => {
       if (mr.status !== "draft")
         throw new GitMrError("Only a draft can be prepared.", "INVALID_STATE");
@@ -193,7 +199,7 @@ export class GitMrService {
         await this.runChecks(mr);
         if ((mr.status as string) === "ready") await this.publish(mr);
       }
-    });
+    }, guard);
   }
   private async noOsMetadata(mr: MergeRequest) {
     const tree = (
@@ -204,6 +210,7 @@ export class GitMrService {
         ".DS_Store must never be tracked. Remove it from the source branch first.",
         "BRANCH_POLICY",
       );
+    await assertMergeContentPolicy(mr);
   }
   private async anchor(mr: MergeRequest) {
     const current = (
@@ -285,6 +292,7 @@ export class GitMrService {
         ["-c", "merge.conflictStyle=diff3", ...args],
         { cwd, allowFailure: true },
       );
+      invalidateMergeFileIndex(mr.id);
       const unresolved = (await git(mr, ["ls-files", "-u", "-z"], { cwd }))
         .stdout;
       if (unresolved) {
@@ -319,7 +327,7 @@ export class GitMrService {
       "All source branches prepared; target has not been changed.",
     );
   }
-  async continue(projectId: string, id: string, version: number) {
+  async continue(projectId: string, id: string, version: number, guard?: MergeMutationGuard) {
     return this.mutate(projectId, id, version, async (mr) => {
       if (mr.status !== "conflicted")
         throw new GitMrError(
@@ -333,33 +341,34 @@ export class GitMrService {
         await this.runChecks(mr);
         if ((mr.status as string) === "ready") await this.publish(mr);
       }
-    });
+    }, guard);
   }
   async files(projectId: string, id: string) {
     return listFiles(await this.get(projectId, id));
   }
-  async file(projectId: string, id: string, fileId: string) {
+  private async visibleFileRevision(id: string, fileId: string, revision: string) {
+    const draft = await this.store.read<{ contentRevision: string; revision: string; state: unknown }>('drafts', `${id}-${fileId}`).catch(() => null);
+    const matching = draft?.contentRevision === revision;
+    return { revision: matching ? createHash('sha256').update(revision + draft!.revision).digest('hex') : revision,
+      resolutionState: matching ? draft!.state : undefined };
+  }
+  async file(projectId: string, id: string, fileId: string, signal?: AbortSignal) {
     const mr = await this.get(projectId, id);
-    const file = await readFile(mr, fileId);
-    const draft = await this.store
-      .read<{
-        contentRevision: string;
-        revision: string;
-        state: unknown;
-      }>("drafts", `${id}-${fileId}`)
-      .catch(() => null);
-    const matching = draft?.contentRevision === file.revision;
+    const file = await readFile(mr, fileId, false, signal);
+    const draft = await this.visibleFileRevision(id, fileId, file.revision);
     return {
       ...file,
-      revision: matching
-        ? createHash("sha256")
-            .update(file.revision + draft!.revision)
-            .digest("hex")
-        : file.revision,
+      revision: draft.revision,
       targetLabel: `${mr.target} · ${mr.steps[mr.currentStep]?.inputOid?.slice(0, 8) ?? mr.targetOid.slice(0, 8)}`,
       sourceLabel: `${mr.steps[mr.currentStep]?.branch ?? "累计结果"} · ${mr.steps[mr.currentStep]?.oid.slice(0, 8) ?? mr.candidateOid?.slice(0, 8) ?? ""}`,
-      resolutionState: matching ? draft!.state : undefined,
+      resolutionState: draft.resolutionState,
     };
+  }
+  async fileSlice(projectId: string, id: string, fileId: string, input: MergeFileSliceInput, signal?: AbortSignal) {
+    const slice = await readFileSlice(await this.get(projectId, id), fileId, input, signal);
+    const visible = await this.visibleFileRevision(id, fileId, slice.revision);
+    if (visible.revision !== input.expectedRevision) throw new GitMrError('The file changed. Reload before reading another page.', 'STALE_DRAFT');
+    return { ...slice, revision: visible.revision };
   }
   async saveFile(
     projectId: string,
@@ -367,6 +376,7 @@ export class GitMrService {
     fileId: string,
     input: MergeFileSave,
     expectedVersion?: number,
+    guard?: MergeMutationGuard,
   ) {
     const original = await this.get(projectId, id);
     if (
@@ -380,6 +390,7 @@ export class GitMrService {
       );
     return this.store.exclusive(original.commonDir, async () => {
       const mr = await this.get(projectId, id);
+      await guard?.();
       if (expectedVersion !== undefined && mr.version !== expectedVersion)
         throw new GitMrError("MR changed; refresh before saving.", "STALE_VERSION");
       const visible = await this.file(projectId, id, fileId);
@@ -392,7 +403,7 @@ export class GitMrService {
       const before = await writeFile(mr, fileId, {
         ...input,
         expectedRevision: raw.revision,
-      });
+      }, guard);
       mr.checkResults = [];
       await this.store.save(
         mr,
@@ -492,7 +503,7 @@ export class GitMrService {
       this.controllers.delete(mr.id);
     }
   }
-  async checks(projectId: string, id: string, version: number) {
+  async checks(projectId: string, id: string, version: number, guard?: MergeMutationGuard) {
     return this.mutate(projectId, id, version, async (mr) => {
       if (!["ready", "check_failed", "failed"].includes(mr.status))
         throw new GitMrError(
@@ -500,9 +511,17 @@ export class GitMrService {
           "INVALID_STATE",
         );
       await this.runChecks(mr);
+    }, guard);
+  }
+  async configureChecks(projectId: string, id: string, version: number, checks: MergeCheckConfig[]) {
+    return this.mutate(projectId, id, version, async mr => {
+      if (terminal.has(mr.status) || ['preparing', 'checking', 'applying'].includes(mr.status))
+        throw new GitMrError('Stop the current merge operation before changing verification.', 'INVALID_STATE');
+      if (!checks.length) throw new GitMrError('At least one grounded verification command is required.', 'CHECKS_REQUIRED');
+      mr.checks = checks; mr.checkResults = []; mr.skippedChecks = undefined;
     });
   }
-  private async publish(mr: MergeRequest, skipChecks = false) {
+  private async publish(mr: MergeRequest, skipChecks = false, guard?: MergeMutationGuard) {
     await this.current(mr);
     await this.verifyCandidate(mr);
     await this.noOsMetadata(mr);
@@ -586,6 +605,7 @@ export class GitMrService {
         mr,
         "Applying verified candidate in target worktree.",
       );
+      await guard?.();
       await git(mr, ["merge", "--ff-only", mr.candidateOid!], {
         cwd: directory,
       });
@@ -614,12 +634,14 @@ export class GitMrService {
         "commit",
         "",
       ];
+      await guard?.();
       await git(mr, ["update-ref", "--stdin"], { stdin: commands.join("\n") });
     }
     mr.status = "merged";
     await this.store.save(mr, `Merged into ${mr.target}: ${mr.candidateOid}`);
+    await releaseMergeFileCaches(mr.id).catch(() => undefined);
   }
-  async finalize(projectId: string, id: string, version: number, options: { skipChecks?: boolean } = {}) {
+  async finalize(projectId: string, id: string, version: number, options: { skipChecks?: boolean; guard?: MergeMutationGuard } = {}) {
     return this.mutate(projectId, id, version, async (mr) => {
       if (mr.status !== "ready" && !(options.skipChecks && mr.status === "check_failed"))
         throw new GitMrError("MR is not ready to merge.", "INVALID_STATE");
@@ -629,8 +651,8 @@ export class GitMrService {
         mr.skippedChecks = { tree: mr.candidateTree!, at: new Date().toISOString() };
         await this.store.save(mr, "User explicitly skipped verification for this candidate; checks are not marked passed.");
       }
-      await this.publish(mr, options.skipChecks === true);
-    });
+      await this.publish(mr, options.skipChecks === true, options.guard);
+    }, options.guard);
   }
   async cancel(projectId: string, id: string, version: number) {
     const mr = await this.get(projectId, id);
@@ -670,7 +692,7 @@ export class GitMrService {
       );
     });
   }
-  async resume(projectId: string, id: string, version: number) {
+  async resume(projectId: string, id: string, version: number, guard?: MergeMutationGuard) {
     return this.mutate(projectId, id, version, async (mr) => {
       if (
         ![
@@ -686,6 +708,8 @@ export class GitMrService {
           "INVALID_STATE",
         );
       await reconcile(mr);
+      invalidateMergeFileIndex(mr.id);
+      await releaseMergeFileCaches(mr.id).catch(() => undefined);
       if (mr.status === "interrupted") await this.advance(mr);
       // Recovered checks must be rerun; completion is inferred only from the actual target ref.
       if (mr.status !== "merged") mr.checkResults = [];
@@ -693,6 +717,31 @@ export class GitMrService {
         mr,
         "Reconciled the saved operation with actual Git state.",
       );
+    }, guard);
+  }
+  /** Delete only the isolated worktree owned by this cancelled MR. Never reset a user's checkout. */
+  async discard(projectId: string, id: string) {
+    const original = await this.get(projectId, id);
+    return this.store.exclusive(original.commonDir, async () => {
+      const mr = await this.get(projectId, id);
+      if (mr.status !== 'cancelled') throw new GitMrError('Only a cancelled merge can be discarded.', 'INVALID_STATE');
+      if (mr.worktree) {
+        const common = (await git(mr, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim();
+        const expected = repoPath(mr).join(common, 'synax-mr-worktrees', mr.id);
+        if (repoPath(mr).normalize(mr.worktree) !== repoPath(mr).normalize(expected))
+          throw new GitMrError('The candidate path is not owned by this merge.', 'UNSAFE_PATH');
+        if (await this.worktreeBusy(hostPath(mr, mr.worktree))) throw new GitMrError('The candidate still has an active owner.', 'TARGET_BUSY');
+        const present = (await worktrees(mr)).some(item => repoPath(mr).normalize(item.path) === repoPath(mr).normalize(mr.worktree!));
+        if (present) await git(mr, ['worktree', 'remove', '--force', mr.worktree]);
+        else if (await fs.stat(hostPath(mr, mr.worktree)).then(() => true, () => false))
+          throw new GitMrError('Unregistered candidate path requires inspection before deletion.', 'RECOVERY_REQUIRED');
+        mr.worktree = undefined;
+      }
+      await git(mr, ['update-ref', '-d', `refs/synax/mr/${mr.id}/candidate`]);
+      mr.candidateOid = undefined; mr.candidateTree = undefined;
+      invalidateMergeFileIndex(mr.id);
+      await releaseMergeFileCaches(mr.id).catch(() => undefined);
+      return this.store.save(mr, 'Cancelled merge candidate worktree removed.');
     });
   }
   async presets(projectId: string) {

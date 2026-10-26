@@ -4,6 +4,22 @@ import { useTranscriptReveal } from "../useTranscriptReveal";
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("does not hide a readable transcript behind continuously growing live output", () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++id, callback); return id; });
+  vi.stubGlobal("cancelAnimationFrame", (key: number) => frames.delete(key));
+  const root = { current: document.createElement("div") };
+  root.current.innerHTML = '<p>Saved answer</p><span data-transcript-pending="true"></span>';
+  const view = renderHook(() => useTranscriptReveal(root, 'running', true, true));
+  for (const now of [0, 50, 100, 150]) act(() => {
+    const callbacks = [...frames.values()]; frames.clear();
+    callbacks.forEach(callback => callback(now));
+  });
+  expect(view.result.current).toBe(true);
+  expect(frames.size).toBe(0);
+});
+
 it("waits for resources and stable layout, isolates switches and stays visible during refresh", () => {
   let next = 0;
   const frames = new Map<number, FrameRequestCallback>();

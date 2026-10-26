@@ -10,6 +10,7 @@ import {
   useSessionEnvironmentInputs,
   useSessionEnvironmentRoots,
 } from "../useSessionEnvironment";
+import { useAgentSessionStore } from "../state/agentSessionStore";
 
 const runtime = vi.hoisted(() => ({
   active: true,
@@ -67,7 +68,21 @@ beforeEach(() => {
   runtime.active = true;
   runtime.handlers.clear();
   invalidateSessionEnvironmentCards();
+  useAgentSessionStore.setState({ selectedSessionId: null, detailLoading: false });
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+});
+
+it("waits for the initial transcript before scanning archived input records", async () => {
+  const getInputs = vi.spyOn(api, "getSessionEnvironmentInputs").mockResolvedValue(inputs("s"));
+  const getRoots = vi.spyOn(api, "getSessionEnvironmentRoots").mockResolvedValue(roots("s"));
+  useAgentSessionStore.setState({ selectedSessionId: "s", detailLoading: true });
+  renderHook(() => { useSessionEnvironmentInputs("s"); useSessionEnvironmentRoots("s"); });
+  await advance();
+  expect(getRoots).toHaveBeenCalledTimes(1);
+  expect(getInputs).not.toHaveBeenCalled();
+  act(() => useAgentSessionStore.setState({ detailLoading: false }));
+  await advance();
+  expect(getInputs).toHaveBeenCalledTimes(1);
 });
 
 afterEach(() => {

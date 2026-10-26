@@ -9,7 +9,11 @@ import type { ToolFileLinks } from "./fileLink";
 import { activityPreview } from "./activityText";
 import { useActivityDisclosure } from "./useActivityDisclosure";
 import { ExecutionProgressLabel } from "./ExecutionProgressLabel";
-import { useActivityWindowTakeOver, useCompactActivityRow } from "./ActivityRowScope";
+import {
+  useActivityRowActive,
+  useActivityRowExpansion,
+  useCompactActivityRow,
+} from "./ActivityRowScope";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 
 interface Props {
@@ -25,24 +29,34 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({
   fileLinks,
 }: Props) {
   const { t, locale } = useLocale();
-  const [open, toggle] = useActivityDisclosure(rememberKey ? `${rememberKey}:tool:${call.id}` : undefined);
+  const [open, toggle, setOpen] = useActivityDisclosure(rememberKey ? `${rememberKey}:tool:${call.id}` : undefined);
   const detailsId = useId();
   const presentation = useMemo(() => conversationToolPresentation(call, locale), [call, locale]);
   const Icon = presentation.icon;
   const hasDetails = Boolean(call.inputSummary || call.outputSummary);
-  // A live window keeps one line per record. Opening a record therefore hands
-  // the window to the reader instead of silently dropping its disclosure.
+  // A live window keeps one line per record. Opening a record expands only
+  // this row, so the window stays virtualized for every other record.
   const compact = useCompactActivityRow();
-  const takeOverWindow = useActivityWindowTakeOver();
+  const active = useActivityRowActive();
+  const expandRow = useActivityRowExpansion();
   const expandable = hasDetails;
-  const expanded = expandable && open;
+  const expanded = expandable && open && (!compact || active);
   const reveal = () => {
-    if (compact) takeOverWindow?.();
+    // Inside the live window only one record is open at a time. Claiming that
+    // slot must show this record, not toggle a body that is already open.
+    if (compact && !active) {
+      expandRow?.();
+      if (!open) setOpen(true);
+      return;
+    }
     toggle();
   };
   const failed = call.status === "failed" || call.status === "denied";
   // Pending is in-flight work, not an outcome: the label already reads "正在…".
   const exceptional = !["completed", "running", "pending"].includes(call.status);
+  // A failed or denied call is transcript content the model must act on, never
+  // an application error: the row states it inline and deliberately avoids the
+  // error markers the toast bridge promotes.
   const failure = failed ? activityPreview(call.outputSummary, 180) : "";
   // The viewer can only open one file, so a multi-file patch or a glob keeps
   // reading as plain text instead of promising a link it cannot honour.
@@ -79,7 +93,11 @@ export const ToolCallSummaryLine = memo(function ToolCallSummaryLine({
       {(presentation.additions > 0 || presentation.deletions > 0) && (
         <span className="bui-tool-diff">+{presentation.additions} -{presentation.deletions}</span>
       )}
-      {failure && <span className="bui-tool-result" data-error title={failure}>{failure}</span>}
+      {failure && (
+        <span className="bui-tool-result" data-tool-failure title={failure}>
+          {failure}
+        </span>
+      )}
     </span>
   );
   const meta =

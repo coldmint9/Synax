@@ -71,6 +71,7 @@ it("loads at the top and keeps the visible position after prepending messages", 
   rerender(<Harness />);
   act(() => {
     viewport.scrollTop = 20;
+    fireEvent.wheel(viewport, { deltaY: -100 });
     fireEvent.scroll(viewport);
   });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
@@ -78,7 +79,7 @@ it("loads at the top and keeps the visible position after prepending messages", 
   expect(viewport.scrollTop).toBe(120);
 });
 
-it("automatically fills an initially unscrollable window", async () => {
+it("does not fetch history merely because the initial window is unscrollable", async () => {
   seed();
   const load = vi.fn(async () => {});
   store.setState({ loadOlderHistory: load });
@@ -86,7 +87,8 @@ it("automatically fills an initially unscrollable window", async () => {
   Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 100 });
   try {
     render(<Harness />);
-    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise(requestAnimationFrame); });
+    expect(load).not.toHaveBeenCalled();
   } finally {
     if (originalHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalHeight);
     else delete (HTMLElement.prototype as unknown as { clientHeight?: number }).clientHeight;
@@ -106,6 +108,7 @@ it("offers an explicit retry after an older page fails", async () => {
     clientHeight: { configurable: true, value: 100 },
   });
   rerender(<Harness />);
+  fireEvent.wheel(viewport, { deltaY: -100 });
   fireEvent.scroll(viewport);
   const retry = await screen.findByRole("button", { name: "Retry" });
   for (let i = 0; i < 5; i++) fireEvent.scroll(viewport);
@@ -129,12 +132,15 @@ it("prefetches within one viewport of the start and preserves scrolling during t
   rerender(<Harness />);
   act(() => {
     viewport.scrollTop = 500;
+    fireEvent.wheel(viewport, { deltaY: -100 });
     fireEvent.scroll(viewport);
   });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
   act(() => {
     viewport.scrollTop = 300;
+    fireEvent.wheel(viewport, { deltaY: -100 });
     fireEvent.scroll(viewport);
+    fireEvent.wheel(viewport, { deltaY: -100 });
     fireEvent.scroll(viewport);
   });
   expect(load).toHaveBeenCalledTimes(1);
@@ -153,7 +159,7 @@ it("prefetches within one viewport of the start and preserves scrolling during t
   expect(viewport.scrollTop).toBe(1300);
 });
 
-it("continues filling short pages after each in-flight request finishes", async () => {
+it("requires another upward gesture after a short page completes", async () => {
   seed();
   const complete: Array<() => void> = [];
   const load = vi.fn(() => new Promise<void>((resolve) => { complete.push(resolve); }));
@@ -165,6 +171,7 @@ it("continues filling short pages after each in-flight request finishes", async 
     clientHeight: { configurable: true, value: 600 },
   });
   rerender(<Harness />);
+  fireEvent.wheel(viewport, { deltaY: -100 });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
   act(() => store.setState((state) => ({
     messages: [{ ...state.messages[0], id: "m2", content: "m2" }, ...state.messages],
@@ -176,7 +183,9 @@ it("continues filling short pages after each in-flight request finishes", async 
     },
   })));
   // The store can publish its new cursor before the original promise settles.
-  await act(async () => { complete[0](); });
+  await act(async () => { complete[0](); await new Promise(requestAnimationFrame); });
+  expect(load).toHaveBeenCalledTimes(1);
+  fireEvent.wheel(viewport, { deltaY: -100 });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   await act(async () => {
     store.setState((state) => ({
@@ -235,35 +244,27 @@ it("loads when scrolling to the top of a barely scrollable page", async () => {
   await act(async () => { await new Promise(requestAnimationFrame); });
   expect(load).not.toHaveBeenCalled();
   viewport.scrollTop = 0;
+  fireEvent.wheel(viewport, { deltaY: -100 });
   fireEvent.scroll(viewport);
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
 });
 
-it("rechecks the edge after layout changes without waiting for another scroll", async () => {
+it("does not fetch history after a resize or programmatic scroll", async () => {
   seed();
-  let resize!: ResizeObserverCallback;
-  const disconnect = vi.fn();
-  vi.stubGlobal("ResizeObserver", class {
-    constructor(callback: ResizeObserverCallback) { resize = callback; }
-    observe() {}
-    disconnect = disconnect;
-  });
   const load = vi.fn(async () => {});
   store.setState({ loadOlderHistory: load });
-  const { rerender, unmount } = render(<Harness active={false} />);
+  const { rerender } = render(<Harness active={false} />);
   const viewport = screen.getByLabelText("Transcript");
-  let height = 400;
   Object.defineProperties(viewport, {
     scrollHeight: { configurable: true, value: 2000 },
-    clientHeight: { configurable: true, get: () => height },
+    clientHeight: { configurable: true, value: 600 },
   });
-  viewport.scrollTop = 500;
+  viewport.scrollTop = 0;
   rerender(<Harness />);
+  fireEvent.scroll(viewport);
+  fireEvent(window, new Event("resize"));
   await act(async () => { await new Promise(requestAnimationFrame); });
   expect(load).not.toHaveBeenCalled();
-  height = 600;
-  act(() => resize([], {} as ResizeObserver));
+  fireEvent.keyDown(viewport, { key: "PageUp" });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
-  unmount();
-  expect(disconnect).toHaveBeenCalled();
 });

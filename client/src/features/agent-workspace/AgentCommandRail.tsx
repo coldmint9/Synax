@@ -15,6 +15,7 @@ export function AgentCommandRail({
   focus,
   insetLeft,
   insetRight,
+  onOpenSideChat,
   hidden = false,
 }: {
   sessionId: string;
@@ -23,6 +24,7 @@ export function AgentCommandRail({
   focus: boolean;
   insetLeft: number;
   insetRight: number;
+  onOpenSideChat?: () => void;
   hidden?: boolean;
 }) {
   const session = useAgentSessionStore((state) =>
@@ -102,6 +104,7 @@ export function AgentCommandRail({
             readingHistory={readingHistory}
             projectId={projectId}
             layout="focusRail"
+            onOpenSideChat={onOpenSideChat}
             statusSlot={
               <SessionFileChangeIsland
                 sessionId={session.id}

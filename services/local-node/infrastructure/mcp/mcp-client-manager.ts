@@ -183,7 +183,7 @@ export class McpClientManager {
         transport = createMcpTransport(config, config.id === CUA_SERVER_ID ? undefined : location ? workspaceLocationHostPath(location) : undefined);
         starting.transport = transport;
         client = new Client(
-          { name: "synax-host", version: "2.9.0" },
+          { name: "synax-host", version: "2.19.1" },
           { capabilities: {} },
         );
         timer = setTimeout(() => {
@@ -256,6 +256,11 @@ export class McpClientManager {
   getCachedTools(serverId: string, projectId?: string, sessionId?: string): McpRuntimeToolDef[] {
     const state = this.servers.get(this.key(serverId, projectId, sessionId));
     return state?.status === "ready" ? state.tools : [];
+  }
+
+  /** Whether discovery completed successfully for this project/session. */
+  isReady(serverId: string, projectId?: string, sessionId?: string): boolean {
+    return this.servers.get(this.key(serverId, projectId, sessionId))?.status === "ready";
   }
 
   async callTool(
@@ -392,7 +397,7 @@ export class McpClientManager {
     let transport: Transport | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const client = new Client(
-      { name: "synax-host-probe", version: "2.9.0" },
+      { name: "synax-host-probe", version: "2.19.1" },
       { capabilities: {} },
     );
     try {

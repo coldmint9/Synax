@@ -12,6 +12,8 @@ export interface Notification {
   id: string
   type: NotificationType
   message: string
+  /** 技术原文，浮层里以次要色小字展示，避免污染主文案 */
+  detail?: string
   action?: NotificationAction
   actions?: NotificationAction[]
   layout?: 'archive'
@@ -28,6 +30,7 @@ export interface PushOptions {
   id?: string
   type: NotificationType
   message: string
+  detail?: string
   action?: NotificationAction
   actions?: NotificationAction[]
   layout?: 'archive'
@@ -35,6 +38,11 @@ export interface PushOptions {
   duration?: number
   /** 是否静默（不弹 toast，仅记录到通知中心） */
   silent?: boolean
+  /**
+   * 同 id 已存在时是否重新展示。默认 false：一次性提示不重复打扰；
+   * 审批/任务这类"再次发生需要再次提醒"的通知传 true。
+   */
+  resurface?: boolean
 }
 
 export interface PushAggregatedOptions extends PushOptions {
@@ -48,15 +56,20 @@ const MAX_NOTIFICATIONS = 100
 const aggregateDismissTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function formatAggregatedMessage(base: string, count: number): string {
-  const stripped = base.replace(/\s*\(\d+\s*次.*?\)\s*$/, '')
+  const stripped = base
+    .replace(/\s*\(\d+\s*次.*?\)\s*$/, '')
+    .replace(/\s*\(×\d+\)\s*$/, '')
   if (count <= 1) return stripped
-  return `${stripped} (${count} 次请求失败)`
+  return `${stripped} (×${count})`
 }
 
 function scheduleDismiss(id: string, duration: number): void {
   const prev = aggregateDismissTimers.get(id)
   if (prev) clearTimeout(prev)
-  if (duration <= 0) return
+  if (duration <= 0) {
+    aggregateDismissTimers.delete(id)
+    return
+  }
   aggregateDismissTimers.set(id, setTimeout(() => {
     aggregateDismissTimers.delete(id)
     useNotificationStore.getState().dismiss(id)
@@ -87,12 +100,39 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   push: (opts) => {
     const id = opts.id ?? crypto.randomUUID().slice(0, 8)
     const existing = useNotificationStore.getState().notifications.find(n => n.id === id)
-    if (existing) return id
+    const duration = opts.duration ?? 5000
+
+    if (existing) {
+      if (!opts.resurface) return id
+      set(s => {
+        const notifications = s.notifications.map(n =>
+          n.id === id
+            ? {
+                ...n,
+                type: opts.type,
+                message: opts.message,
+                detail: opts.detail,
+                action: opts.action,
+                actions: opts.actions,
+                layout: opts.layout,
+                duration,
+                timestamp: Date.now(),
+                read: false,
+                visible: !opts.silent,
+              }
+            : n,
+        )
+        return { notifications, unreadCount: computeUnread(notifications) }
+      })
+      if (!opts.silent) scheduleDismiss(id, duration)
+      return id
+    }
 
     const entry: Notification = {
       id,
       type: opts.type,
       message: opts.message,
+      detail: opts.detail,
       action: opts.action,
       actions: opts.actions,
       layout: opts.layout,
@@ -107,16 +147,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       return { notifications: next, unreadCount: computeUnread(next) }
     })
 
-    const duration = opts.duration ?? 5000
-    if (duration > 0 && !opts.silent) {
-      setTimeout(() => {
-        set(s => ({
-          notifications: s.notifications.map(n =>
-            n.id === id ? { ...n, visible: false } : n,
-          ),
-        }))
-      }, duration)
-    }
+    if (!opts.silent) scheduleDismiss(id, duration)
 
     return id
   },
@@ -135,11 +166,14 @@ export const useNotificationStore = create<NotificationState>((set) => ({
                 ...n,
                 type: rest.type,
                 message: formatAggregatedMessage(rest.message, count),
+                detail: rest.detail,
                 aggregateCount: count,
                 timestamp: Date.now(),
                 read: false,
                 visible: !rest.silent,
                 duration,
+                action: rest.action,
+                actions: rest.actions,
               }
             : n,
         ),
@@ -155,6 +189,7 @@ export const useNotificationStore = create<NotificationState>((set) => ({
       id: opts.id,
       type: rest.type,
       message: formatAggregatedMessage(rest.message, 1),
+      detail: rest.detail,
       action: rest.action,
       actions: rest.actions,
       duration,

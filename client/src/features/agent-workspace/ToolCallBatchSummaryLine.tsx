@@ -45,7 +45,7 @@ export function ToolCallBatchSummaryLine({ batch, rememberKey }: Props) {
       <span className="bui-tool-copy">
         <span className="bui-tool-label" title={presentation.name}>{presentation.name}</span>
         {!expanded && failurePreview ? (
-          <span className="bui-tool-result" data-error="true" title={failurePreview}>{failurePreview}</span>
+          <span className="bui-tool-result" data-tool-failure title={failurePreview}>{failurePreview}</span>
         ) : targets ? (
           <span className="bui-tool-target" title={targets}>{targets}</span>
         ) : null}

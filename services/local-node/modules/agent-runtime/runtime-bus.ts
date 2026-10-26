@@ -9,7 +9,8 @@ export type RuntimeBusEventType =
   | "session_archived"
   | "session_checkpoint_changed"
   | "session_step_completed"
-  | "session_input_queue_changed";
+  | "session_input_queue_changed"
+  | "subagent_state_changed";
 
 export interface RuntimeBusEvent {
   type: RuntimeBusEventType;
@@ -17,6 +18,8 @@ export interface RuntimeBusEvent {
   patch?: Record<string, unknown>;
   runId?: string;
   stepIndex?: number;
+  childSessionId?: string;
+  eventSeq?: number;
 }
 
 class RuntimeBus {

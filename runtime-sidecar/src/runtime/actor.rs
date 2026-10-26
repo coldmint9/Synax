@@ -6,9 +6,6 @@ use tokio::sync::mpsc;
 
 use crate::storage::jsonl::hot::HotOps;
 
-const DEFAULT_EVENT_RETENTION: usize = 1024;
-const DEFAULT_SUBSCRIBER_CAPACITY: usize = 128;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamEvent {
     pub sequence: u64,
@@ -61,6 +58,8 @@ pub struct ControlCommandReceipt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
+    #[error("session has been permanently deleted")]
+    SessionDeleted,
     #[error("session UI projection has not been initialized")]
     ProjectionMissing,
     #[error("UI projection exceeds transport budget; content externalization required")]

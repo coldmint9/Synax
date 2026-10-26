@@ -9,6 +9,8 @@ import type {
   MergeProposal,
   MergeBranchOptions,
   MergeBranchOptionsInput,
+  MergeFileSlice,
+  MergeFileSliceInput,
 } from "../../../../services/local-node/modules/git-mr/contracts";
 export type {
   MergeRequest,
@@ -75,6 +77,10 @@ export const gitMrApi = {
       `${item(projectId, id)}/files/${encodeURIComponent(fileId)}`,
       { silent: true },
     ),
+  fileSlice: (projectId: string, id: string, fileId: string, input: MergeFileSliceInput, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ side: input.side, byteOffset: String(input.byteOffset), maxBytes: String(input.maxBytes), expectedRevision: input.expectedRevision });
+    return apiRequest<MergeFileSlice>(`${item(projectId, id)}/files/${encodeURIComponent(fileId)}/content?${query}`, { silent: true, signal });
+  },
   saveFile: (
     projectId: string,
     id: string,

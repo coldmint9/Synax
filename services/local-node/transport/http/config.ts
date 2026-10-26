@@ -66,7 +66,11 @@ const providerConnectionSchema = z
     baseUrl: z.string().optional(),
     apiKey: z.string().optional(),
     apiKeyMasked: z.string().optional(),
-    extra: z.record(z.string(), z.unknown()).optional(),
+    extra: z.record(z.string(), z.unknown()).superRefine((extra, context) => {
+      const limit = extra.maxOutputTokens;
+      if (limit !== undefined && (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000_000))
+        context.addIssue({ code: "custom", path: ["maxOutputTokens"], message: "Output limit must be a positive integer up to 10,000,000." });
+    }).optional(),
   })
   .passthrough();
 
@@ -87,7 +91,8 @@ const providerDefSchema = z.object({
       isDefault: z.boolean().optional(),
       media: mediaCapabilitiesSchema.optional(),
       capabilities: z.array(z.enum(["chat", "image_generation", "video_generation"])).min(1).optional(),
-      maxTokens: z.number().optional(),
+      maxTokens: z.number().int().positive().max(10_000_000).optional(),
+      inputLimit: z.number().int().positive().max(10_000_000).optional(),
       contextLimit: z.number().int().positive().max(10_000_000).optional(),
       inputModalities: z
         .array(z.enum(["text", "image", "audio", "video", "file"]))
@@ -1012,6 +1017,7 @@ async function withCatalogMetadata(
     if (!model) continue;
     modelMetadata[modelId] = {
       contextLimit: model.contextLimit,
+      inputLimit: model.inputLimit,
       outputLimit: model.maxTokens,
       inputModalities: model.inputModalities,
       outputModalities: model.outputModalities,

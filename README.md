@@ -12,6 +12,10 @@ Synax brings agent conversations, source files, diffs, and a terminal into one a
 
 The project is in alpha.
 
+`file.generate` lets agents use Python templates, loops and text transformations for multi-file scaffolds, batch rewrites, and long or escape-sensitive content. Use `file.patch` for small edits and `file.write` for short complete files. Scripts stage changes through `synax.write/delete/move`; the runtime validates permissions, paths, read freshness and write scopes before committing under a workspace lock. Failed commits roll back, with any incomplete restoration reported explicitly. Deleting or moving still requires the `file.delete` capability.
+
+Desktop installers bundle a pinned Python runtime; users do not need to install Python separately. The estimated installer increase is 30–45 MB, subject to platform build measurements. Development can use `python3` on `PATH`, or an interpreter selected with `SYNAX_PYTHON_RUNTIME`. The tool is hidden when no runtime is available. Limits are 120 files, 64 MiB total and 8 MiB per UTF-8 text file. Ordinary `open()`/`pathlib` access is read-only within the workspace; networking and subprocesses are blocked. Approval shows the script, while the final file list arrives after execution. Python audit hooks are guardrails against mistakes, not a hardened sandbox for hostile code.
+
 ## Quick Start
 
 ### 1. Requirements
@@ -116,13 +120,15 @@ The standalone defaults apply to `start:local`. The development profile defaults
 
 Open **Git** from an imported project's header to create a local MR. Select a target and one or more ordered sources, using merge commits, per-source squash, or fast-forward-only. Synax prepares the entire batch in an isolated worktree before updating the local target.
 
-- Conflicts use the same file viewer as sessions: three-way comparison, per-line choices, direct edits, undo/redo, and persisted drafts/decisions.
+- Conversation merges run in a dedicated subagent. The parent keeps the task card and bounded summaries, waits by default, and can be released by an explicit background handoff.
+- Click a conflict file to open the Monaco three-pane workbench directly. Running merges are read-only; stopping permits draft edits. Stop/continue and cancel control the task while the subagent performs checks and applies the verified candidate.
+- Workspace text viewing and editing share Monaco. Markdown, HTML, SVG, image, PDF, audio and video previews remain available. Merge files beyond the edit budget are read-only; larger files use bounded byte pages.
 - Configure checks as an executable, JSON argument array and timeout. One-click presets can apply the candidate after every check passes. Checks execute project code; configure only trusted commands.
 - Updating a checked-out target requires explicit opt-in when creating the MR and a clean, idle target worktree. Stale branches and file revisions are rejected.
 - The optional Git Manager uses the configured model to inspect the bound MR and propose patches for review. It cannot directly publish branches or push. Manual MR works without a model.
-- Failed/interrupted operations can be reconciled and resumed. Cancellation preserves the candidate worktree and drafts. Local records live under the Synax data directory's `git-mr` folder.
+- Stopping an intelligent merge retains its checkpoint. Cancellation abandons it and removes its owned candidate worktree; failed cleanup is retryable, and an already applied target is never reset. Independent manual MRs retain drafts on cancellation. Local records live under the Synax data directory's `git-mr` folder.
 
-Automation currently means manually triggered one-click presets, not scheduled runs. Unsupported structural conflicts, such as submodules, stop explicitly for external resolution. The feature does not push or delete source branches. Tracked `.DS_Store` files and merges from test/beta into feature branches are rejected.
+Presets are user-triggered rather than scheduled. Unsupported structural conflicts, such as submodules, stop explicitly for external resolution. The feature does not push or delete source branches. Tracked `.DS_Store` files, merges from test/beta into feature branches, and dependency-version changes in test-branch `pom.xml` files are rejected.
 
 ## License
 

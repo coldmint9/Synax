@@ -31,6 +31,7 @@ import { controlTools } from "./control-tools.js";
 import { delegateArgsSchema, delegateSubagent } from "./subagent-delegation.js";
 import { assertSubagentToolAllowed } from "./subagent-profile.js";
 import { subagentLifecycleTools } from "./subagent-tools.js";
+import { readSubagentControl } from "./subagent-control-broker.js";
 import { controlToolError } from "./control-policy.js";
 import { presentationTool } from "./presentation-runtime.js";
 import { interactionService } from "./interaction-service.js";
@@ -77,6 +78,8 @@ import { bashTool } from "./tools/bash.js";
 import { fileReadTool } from "./tools/file-read.js";
 import { fileDeleteTool } from "./tools/file-delete.js";
 import { fileWriteTool } from "./tools/file-write.js";
+import { fileGenerateTool } from "./tools/file-generate.js";
+import { resolvePythonRuntime } from "../../infrastructure/runtime/python-runtime.js";
 import { rgTool } from "./tools/rg.js";
 import { webSearchTool } from "./tools/web-search.js";
 import {
@@ -93,6 +96,7 @@ import { browserTools } from "./tools/browser/browser-tools.js";
 import { designTools } from "./design-tools.js";
 import { conversationGitTools } from "./conversation-git/tools.js";
 import { remotePrTools } from "../remote-pr/tools.js";
+import { worktreeTools } from './tools/worktree.js';
 
 const SUMMARY_LIMIT = 1_000;
 
@@ -143,6 +147,7 @@ export class ToolRegistry {
       ...designTools,
       ...conversationGitTools,
       ...remotePrTools,
+      ...worktreeTools,
       ...workTools,
       verificationTool,
       bashTool,
@@ -165,6 +170,8 @@ export class ToolRegistry {
       ...browserTools,
       INVALID_TOOL,
     ].forEach((tool) => this.register(tool));
+    if (resolvePythonRuntime()) this.register(fileGenerateTool);
+    else logger.warn("[agent-runtime] file.generate is unavailable: no bundled Python runtime or development python3 found.");
     for (const tool of createCodeTools(this, this.store, this.profiles)) this.register(tool);
     this.capabilities = new NativeCapabilities(this, this.store, this.profiles);
     for (const tool of this.capabilities.tools()) this.register(tool);
@@ -281,7 +288,7 @@ export class ToolRegistry {
         (options.includeGated
           ? isToolMountedForSession(session, t)
           : !controlToolError(session, t)) &&
-        (!["specialist", "subagent"].includes(session.profileId) ||
+        (!["specialist", "subagent", "git-merge-worker"].includes(session.profileId) ||
           profileCanUseTool(effective, t) ||
           t.id === INVALID_TOOL_ID),
     );
@@ -364,12 +371,14 @@ export class ToolRegistry {
     }
 
     this.capabilities.noteUse(sessionId, toolId);
+    const strictSubagentProfile = session.profileId === "git-merge-worker";
     const controlError = options.codeModeParentId && (!canComposeTool(session, tool) || !profileCanUseTool(profile, tool))
       ? "Tool is no longer approved for Code Mode."
       : controlToolError(session, tool, args);
     if (
       controlError ||
-      (!profileCanUseTool(profile, tool) &&
+      (strictSubagentProfile && !profileCanUseTool(profile, tool) && tool.id !== INVALID_TOOL_ID) ||
+      (!strictSubagentProfile && !profileCanUseTool(profile, tool) &&
         tool.category !== "skill" &&
         tool.category !== "mcp" &&
         tool.id !== INVALID_TOOL_ID &&
@@ -693,7 +702,11 @@ export class ToolRegistry {
           throw new AgentValidationError(
             "Parent no longer grants this write operation.",
           );
-        if (freshSession.parentSessionId && root.status !== "running")
+        const childControl = readSubagentControl(freshSession);
+        const releasedChild = childControl?.joinMode === "async" && !childControl.terminal &&
+          childControl.parentSessionId === root.id && childControl.childSessionId === freshSession.id &&
+          root.status === "completed" && !root.sessionMetadata?.manualStop && !root.sessionMetadata?.runtimeControl;
+        if (freshSession.parentSessionId && root.status !== "running" && !releasedChild)
           throw new AgentValidationError(
             "Parent is not running; child writes are suspended.",
           );

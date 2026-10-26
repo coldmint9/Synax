@@ -1,9 +1,11 @@
+import { onRunObservation, observeRunRealtime, setRunRealtimeObservation } from "./runRealtime";
 import { RustRuntimeConnection, type RuntimeBootstrap } from './rustRuntimeConnection';
 import { useRuntimeConnectionStore } from '../../shared/state/runtimeConnectionStore';
 import type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
 export type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
 import { AuthenticatedEventSource } from "./authenticatedEventSource";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
+import type { ConversationGitStateEvent } from '../../../../services/local-node/modules/agent-runtime/conversation-git/contracts';
 import {
   RuntimeStreamProjector,
   type RuntimeSnapshotEvent,
@@ -17,11 +19,14 @@ import type {
   RuntimeEvent,
   AgentRuntimeMessage,
   ContextCompactionState,
+  ContextUsageSnapshot,
   ToolCallRecord,
   PermissionDecision,
 } from "./agentRuntime";
 
 export type SessionLiveEvent =
+  | ConversationGitStateEvent
+  | { type: 'domain_reconnected'; sessionId: string }
   | { type: "conversation_git_messages"; messages: AgentRuntimeMessage[] }
   | { type: "execution_status"; sessionId: string; runId: string; execution: import("./agentRuntime").ToolExecutionProgress }
   | { type: "message"; message: AgentRuntimeMessage }
@@ -71,11 +76,93 @@ export type SessionLiveEvent =
       originalTokens: number;
       compressedTokens: number;
       messageCount: number;
+      contextUsage?: ContextUsageSnapshot;
       event?: RuntimeEvent;
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
 
+const ACTIVE_SESSION_STATUSES = new Set<AgentSession["status"]>([
+  "running",
+  "queued",
+  "waiting_permission",
+  "waiting_input",
+]);
+
+function isTerminalLifecycleEvent(event: SessionLiveEvent): boolean {
+  if (event.type === "runtime_state") {
+    return typeof event.patch.status === "string" &&
+      !ACTIVE_SESSION_STATUSES.has(event.patch.status);
+  }
+  if (event.type === "runtime_snapshot") {
+    return !ACTIVE_SESSION_STATUSES.has(event.session.status);
+  }
+  return false;
+}
+
+/** Give the run stream sole ownership of live projections. Session events
+ * still carry auxiliary domains and discover runs created by another client.
+ * On replay expiry, rebuild from one durable snapshot before accepting deltas. */
 export function sessionLiveStream(
+  sessionId: string, onEvent: (event: SessionLiveEvent) => void, onError?: (err: Event) => void,
+): () => void {
+  let activeRun: string | null = null;
+  let closed = false;
+  let stopRun: (() => void) | undefined;
+  let stopDurable: (() => void) | undefined;
+  const unavailable = new Set<string>();
+  const recover = () => {
+    if (closed) return;
+    if (activeRun) unavailable.add(activeRun);
+    activeRun = null;
+    setRunRealtimeObservation(sessionId, null);
+    stopRun?.(); stopRun = undefined;
+    stopDurable?.();
+    stopDurable = durableSessionLiveStream(sessionId, receive, onError);
+  };
+  const start = (runId: string | null) => {
+    if (!runId) { recover(); return; }
+    if (activeRun === runId || unavailable.has(runId)) return;
+    if (activeRun) unavailable.add(activeRun);
+    if (unavailable.size > 64) unavailable.delete(unavailable.values().next().value!);
+    stopRun?.(); activeRun = runId;
+    setRunRealtimeObservation(sessionId, runId);
+    stopRun = observeRunRealtime(
+      sessionId,
+      runId,
+      event => {
+        if (isTerminalLifecycleEvent(event)) finishActiveRun();
+        onEvent(event);
+      },
+      recover,
+    );
+  };
+  const finishActiveRun = () => {
+    activeRun = null;
+    setRunRealtimeObservation(sessionId, null);
+    stopRun?.();
+    stopRun = undefined;
+  };
+  const core = new Set(['runtime_snapshot', 'runtime_state', 'message', 'event', 'permission_updated',
+    'execution_status', 'step_started', 'retry_status', 'message_delta', 'thought_delta', 'tool_call', 'tool_result']);
+  const receive = (event: SessionLiveEvent) => {
+    const run = event.type === 'runtime_snapshot' || event.type === 'runtime_state' ? event.run : undefined;
+    if (run && ['queued', 'running'].includes(run.status)) start(run.id);
+    if (activeRun && core.has(event.type)) {
+      // Terminal records are written to the durable stream after the final
+      // reply is persisted. The run realtime channel intentionally does not
+      // carry those records, so do not filter the durable terminal state out
+      // while the realtime observation is still attached.
+      if (!isTerminalLifecycleEvent(event)) return;
+      finishActiveRun();
+    }
+    onEvent(event);
+  };
+  const unsubscribe = onRunObservation(sessionId, start);
+  stopDurable = durableSessionLiveStream(sessionId, receive, onError);
+  return () => { closed = true; setRunRealtimeObservation(sessionId, null); unsubscribe(); stopRun?.(); stopDurable?.(); };
+}
+
+function durableSessionLiveStream(
   sessionId: string,
   onEvent: (event: SessionLiveEvent) => void,
   onError?: (err: Event) => void,
@@ -101,7 +188,8 @@ export function sessionLiveStream(
       // These events belong to non-agent domains until their own storage migration.
       if (!auxiliary) {
         auxiliary = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream?auxiliary=1`);
-        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job', 'conversation_git_messages']) {
+        auxiliary.onopen = () => onEvent({ type: 'domain_reconnected', sessionId });
+        for (const type of ['context_compaction_started', 'context_compacted', 'context_compaction_failed', 'context_compaction_state', 'media_job', 'conversation_git_messages', 'conversation_git_state']) {
           auxiliary.addEventListener(type, event => {
             try { onEvent(JSON.parse(event.data) as SessionLiveEvent); }
             catch (error) { console.error(`Invalid ${type} event`, error); }
@@ -138,6 +226,7 @@ function nodeSessionLiveStream(
   const es = new AuthenticatedEventSource(
     `/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/stream`,
   );
+  es.onopen = () => onEvent({ type: 'domain_reconnected', sessionId });
   es.addEventListener("snapshot", (event: MessageEvent) => {
     try {
       useApiConnectivityStore.getState().markSuccess();
@@ -166,6 +255,7 @@ function nodeSessionLiveStream(
     "context_compaction_state",
     "media_job",
     "conversation_git_messages",
+    "conversation_git_state",
   ] as const) {
     es.addEventListener(type, (event: MessageEvent) => {
       try {

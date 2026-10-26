@@ -1,3 +1,4 @@
+import { WorkerStreamCredits } from "../../local-node/infrastructure/runtime/ipc/stream-credit.js";
 import { createWorkerShutdown, startExitWatchdog } from "./worker-shutdown.js";
 import { withinExecutionContext } from "../../local-node/infrastructure/runtime/execution-context.js";
 import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
@@ -16,13 +17,17 @@ import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-ru
 import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
 import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
 import { businessStore } from "../../local-node/infrastructure/persistence/business-store.js";
-import { hydrateRuntimeAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
+import { hydrateSessionAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
 import { AgentNotFoundError } from "../../local-node/modules/agent-runtime/runtime-errors.js";
 import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/sidecar/sidecar-client.js";
 
+import { runtimeBus } from "../../local-node/modules/agent-runtime/runtime-bus.js";
+
 const activeStreams = new Map<string, AbortController>();
+const activeCompactions = new Map<string, AbortController>();
 const runningTasks = new Set<Promise<void>>();
 let yieldWorkerRequested = false;
+const streamCredits = new WorkerStreamCredits();
 
 function pickGenerator(
   mode: AgentSessionStreamMode,
@@ -34,8 +39,11 @@ function pickGenerator(
 }
 
 async function runContextCompaction(sessionId: string, requestId: string): Promise<void> {
+  const controller = new AbortController();
+  activeCompactions.set(requestId, controller);
   try {
-    const result = await compactSessionContextWithLlm(sessionId);
+    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
+    const result = await compactSessionContextWithLlm(sessionId, controller.signal, requestId);
     sendAgentSessionToParent({
       type: "context:compact:done",
       sessionId,
@@ -49,6 +57,8 @@ async function runContextCompaction(sessionId: string, requestId: string): Promi
       requestId,
       error: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    activeCompactions.delete(requestId);
   }
 }
 
@@ -57,31 +67,42 @@ async function runStream(
   streamId: string,
   mode: AgentSessionStreamMode,
   input: StreamTurnRequest,
+  flowControl?: "byte-credit-v1",
 ): Promise<void> {
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
-    await agentRuntimeStore.hydrateSession(sessionId, true);
-    await businessStore.refresh();
-    await hydrateRuntimeAssets([sessionId]);
+    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
+    // The native backend refreshes policy metadata before execution. Only
+    // this conversation's asset bindings are needed, not the global catalog.
+    await hydrateSessionAssets(sessionId);
     for await (const chunk of withinExecutionContext(
       input.executionContext,
       pickGenerator(mode, sessionId, input, abortController.signal),
+      { native: true, signal: abortController.signal },
     )) {
-      await agentRuntimeStore.flush();
-      await businessStore.flush();
+      // Display output must leave the worker before any persistence barrier.
+      const display = chunk.type === "message_delta" || chunk.type === "thought_delta" || chunk.type === "execution_status";
+      if (!display || process.env.SYNAX_DURABLE_DELTA_BUFFER === "0") {
+        await agentRuntimeStore.flush();
+        await businessStore.flush();
+      }
       if (chunk.type === "worker_yield") {
         sendAgentSessionToParent({ type: "stream:parked", sessionId, streamId });
         return;
       }
+      const deliveryId = flowControl ? await streamCredits.reserve(streamId, chunk, abortController.signal,
+        message => sendAgentSessionToParent({ ...message, sessionId })) : undefined;
       sendAgentSessionToParent({
         type: "stream:chunk",
+        deliveryId,
         sessionId,
         streamId,
         chunk,
       });
     }
     await agentRuntimeStore.flush();
+    await businessStore.flush();
     sendAgentSessionToParent({ type: "stream:done", sessionId, streamId });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
@@ -123,7 +144,7 @@ function main(): void {
     if (initialized || !process.connected) return;
     initialized = true;
     try {
-      await agentRuntimeStore.hydrateSessions();
+      await agentRuntimeStore.hydrateSessionFamily(init.sessionId);
     } catch (error) {
       // A newly started sidecar may not have a projection yet. The worker can
       // still boot and return a structured error for requests against a
@@ -132,7 +153,7 @@ function main(): void {
       logger.info("[agent-session-runner] runtime projection is not hydrated during bootstrap");
     }
     try {
-      await agentRuntimeStore.hydrateSession(init.sessionId);
+      await agentRuntimeStore.hydrateExecutionSession(init.sessionId);
     } catch (error) {
       // A worker can be started for a session that was archived or removed
       // after the parent admitted the process. Keep the IPC worker alive so
@@ -144,7 +165,7 @@ function main(): void {
       logger.info({ sessionId: init.sessionId }, "[agent-session-runner] session missing during bootstrap");
     }
     await businessStore.refresh();
-    await hydrateRuntimeAssets([init.sessionId]);
+    await hydrateSessionAssets(init.sessionId);
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);
@@ -164,6 +185,8 @@ function main(): void {
     abort(reason) {
       stopping = true;
       for (const controller of activeStreams.values())
+        if (!controller.signal.aborted) controller.abort(new Error(reason));
+      for (const controller of activeCompactions.values())
         if (!controller.signal.aborted) controller.abort(new Error(reason));
     },
     cleanup: (reason) => [
@@ -192,7 +215,13 @@ function main(): void {
       return;
     }
     if (!initialized) return;
+    if (message.type === "stream:credit") { streamCredits.grant(message.deliveryId, message.error); return; }
+    if (message.type === "runtime:notify") { runtimeBus.emit(message.event); return; }
     if (message.type === "stream:yield-request") { yieldWorkerRequested = message.requested; return; }
+    if (message.type === "context:cancel") {
+      activeCompactions.get(message.requestId)?.abort(new Error("Context compaction cancelled by parent."));
+      return;
+    }
     if (message.type === "context:compact") {
       const task = runContextCompaction(init.sessionId, message.requestId);
       runningTasks.add(task);
@@ -205,6 +234,7 @@ function main(): void {
         message.streamId,
         message.mode,
         message.input,
+        message.flowControl,
       );
       runningTasks.add(task);
       void task.finally(() => runningTasks.delete(task));

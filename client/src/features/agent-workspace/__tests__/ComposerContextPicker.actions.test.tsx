@@ -66,6 +66,15 @@ describe("unified composer plus menu", () => {
     expect(input.value).toBe("");
   });
 
+  it("opens a side chat from the current session plus menu", async () => {
+    const openSideChat = vi.fn();
+    render(<ComposerContextPicker {...props} onOpenSideChat={openSideChat} />);
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: /在侧边聊天/ }));
+    expect(openSideChat).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /在侧边聊天/ })).not.toBeInTheDocument();
+  });
+
   it("keeps file references functional in the combined menu", async () => {
     vi.spyOn(agentRuntimeApi, "listReferenceOptions").mockResolvedValue({
       items: [{ kind: "file", id: "README.md", label: "README.md" }],

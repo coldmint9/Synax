@@ -8,6 +8,7 @@ if (process.isMainFrame)
     toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
     closeWindow: () => ipcRenderer.invoke("window:close"),
     getWindowState: () => ipcRenderer.invoke("window:state"),
+    alignWindowButtons: (centerY: number) => ipcRenderer.invoke("window:align-buttons", centerY),
     onWindowStateChanged: (callback: (state: { maximized: boolean }) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,

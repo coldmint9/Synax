@@ -66,6 +66,19 @@ async function createSession(profileId = 'explorer'): Promise<string> {
 }
 
 describe('actual HTTP observation lifecycle with an isolated controlled backend', () => {
+  it('submits through the execution projection without reloading the archived transcript', async () => {
+    const id = await createSession('synax');
+    const original = agentRuntimeStore.hydrateSession.bind(agentRuntimeStore);
+    const hydrate = vi.spyOn(agentRuntimeStore, 'hydrateSession').mockImplementation((sessionId, refresh, options) => {
+      if (!options?.execution) throw new Error('full transcript loaded before run admission');
+      return original(sessionId, refresh, options);
+    });
+    try {
+      const response = await request('POST', `/sessions/${id}/runs`, { message: 'Continue', requestId: 'bounded-admission' });
+      expect(response.status, response.body).toBe(202);
+      expect(hydrate).toHaveBeenCalled();
+    } finally { hydrate.mockRestore(); }
+  });
   it('opens a cold target session without enumerating every session or hydrating its history', async () => {
     const id = await createSession('synax');
     agentRuntimeStore.reset();
@@ -143,6 +156,27 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
       req.destroy();
       sessionLiveBus.cleanup(id);
     }
+  });
+
+  it('delivers merge projections on both the unified and desktop auxiliary stream and releases subscriptions', async () => {
+    const id = await createSession();
+    for (const suffix of ['', '?auxiliary=1']) {
+      let text = '';
+      const baseline = sessionLiveBus.diagnostics().listeners;
+      const req = http.get({ hostname: '127.0.0.1', port, path: `/sessions/${id}/stream${suffix}` }, res => {
+        res.setEncoding('utf8'); res.on('data', data => { text += data; });
+      });
+      try {
+        await vi.waitFor(() => expect(sessionLiveBus.diagnostics().listeners).toBe(baseline + 1));
+        sessionLiveBus.emit(id, { type: 'conversation_git_state', taskId: 'merge', taskRevision: 2, mrVersion: 3,
+          status: 'conflicted', eventSeq: 1, changedFileIds: ['f1'], changedFiles: [{ id: 'f1', path: 'app.ts', status: 'M', conflicted: false }] });
+        await vi.waitFor(() => expect(text).toContain('event: conversation_git_state'));
+        expect(text).toContain('"changedFileIds":["f1"]');
+        expect(text).not.toContain('"content"');
+      } finally { req.destroy(); }
+      await vi.waitFor(() => expect(sessionLiveBus.diagnostics().listeners).toBe(baseline));
+    }
+    sessionLiveBus.cleanup(id);
   });
 
   it('keeps the public session running while shutdown is pending and refuses policy changes', async () => {

@@ -10,6 +10,7 @@ pub(crate) struct InvalidToolArguments {
     tool_name: String,
     call_id: String,
     detail: String,
+    truncated: bool,
 }
 
 impl InvalidToolArguments {
@@ -29,8 +30,11 @@ impl InvalidToolArguments {
             tool_name: tool_name.into(),
             call_id: call_id.into(),
             detail,
+            truncated,
         }
     }
+
+    pub(crate) fn is_truncated(&self) -> bool { self.truncated }
 }
 
 /// DeepSeek-compatible gateways occasionally emit literal newlines, tabs or

@@ -42,11 +42,13 @@ export interface ModelsDevProvider {
 }
 
 export interface RuntimeModel {
+  supportedReasoningEfforts?: string[];
   inputModalities?: InputModality[];
   outputModalities?: string[];
   id: string;
   label: string;
   isDefault?: boolean;
+  /** Model output capability; not an implicit per-request generation cap. */
   maxTokens?: number;
   contextLimit?: number;
   inputLimit?: number;
@@ -154,6 +156,8 @@ export interface ModelOverrideConfig {
 
 export interface ResolvedProviderConfig {
   providerId: string;
+  /** Explicit supplier request setting, independent of catalog capabilities. */
+  maxOutputTokens?: number;
   /** Wire protocol selected for this provider connection. */
   apiFormat?: ApiFormat;
   baseUrl?: string;

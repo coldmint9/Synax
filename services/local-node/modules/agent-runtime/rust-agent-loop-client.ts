@@ -20,19 +20,23 @@ export type RustAgentLoopProviderRequest = {
   purpose?: string;
   reasoningEffort?: string;
   reasoningCapable?: boolean;
+  supportedReasoningEfforts?: string[];
   cachePolicy?: Record<string, unknown>;
   prompt: unknown[];
   tools?: unknown[];
   toolChoice?: unknown;
   maxOutputTokens?: number;
+  requiredMaxOutputTokens?: number;
+  outputTokenParameter?: "max_completion_tokens";
   /** Legacy wire compatibility only; Rust does not enforce step budgets. */
   maxSteps?: number;
   runtimeBinding?: { sessionId: string; runId: string };
-  contextPolicy?: { contextLimit: number; outputReserve: number; keepRecentMessages?: number };
+  contextPolicy?: { contextLimit: number; inputLimit?: number; outputReserve: number; keepRecentMessages?: number };
   executionContext?: RuntimeExecutionContext;
 };
 
 export type RustAgentLoopEvent = {
+  firstTokenTiming?: import("./contracts.js").FirstTokenTiming;
   phase?: "queued_resources" | "waiting_model";
   resource?: string;
   queuedAt?: number;
@@ -45,6 +49,8 @@ export type RustAgentLoopEvent = {
   maxRetries?: number;
   retry?: import("../../infrastructure/llm-runtime/retry-state.js").LlmRetryState;
   contextId?: string;
+  inputBudget?: number;
+  contextCorrection?: string;
   requestId?: string;
   startedAt?: string;
   composition?: import("./context-composition.js").ContextComposition;
@@ -188,6 +194,7 @@ export async function* streamRustAgentLoop(
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as RustAgentLoopEvent;
+          if (event.firstTokenTiming) event.firstTokenTiming.nodeFirstTokenAt = Date.now();
           if (!Number.isSafeInteger(event.sequence) || event.sequence! < 1) throw new Error("Rust event has no valid cursor.");
           if (event.sequence! <= cursor) continue;
           if (event.sequence !== cursor + 1) throw new Error("Rust event replay has a cursor gap.");
@@ -256,10 +263,11 @@ export function rustLoopMessageId(): string {
 
 export async function sendRustStepContext(input: {
   loopId: string; contextId: string; systemPrompt: string; tools: unknown[];
+  prompt?: unknown[];
   executionContext?: RuntimeExecutionContext;
 }, signal?: AbortSignal): Promise<void> {
   const response = await bridgeRequest("/agent-loop/context", {
-    method: "POST", headers: authHeaders(), body: JSON.stringify(input),
+    method: "POST", headers: authHeaders(), body: stringifyRustRequest(input),
   }, signal);
   if (!response.ok) throw await bridgeError(response, "Rust step context rejected");
 }

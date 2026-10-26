@@ -1,8 +1,9 @@
+import { setSessionHistoryReading } from "./state/sessionTailWindow";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
 import { useTranscriptReveal } from "./useTranscriptReveal";
 import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   projectPendingSubmission,
   usePendingSubmissionStore,
@@ -238,12 +239,20 @@ export function SessionTranscript({
   // Live events can populate messages before the initial history request ends.
   // Keep that partial snapshot behind the loader unless this is a local send.
   const waitingForHistory = loading && !pending;
-  const revealed = useTranscriptReveal(scrollRef, sessionId, detailReady || Boolean(pending), active);
+  // A cached page is already readable. Background reconciliation must not
+  // cover it with a skeleton until every change-feed page has arrived.
+  const revealed = useTranscriptReveal(scrollRef, sessionId, !loading || Boolean(pending), active);
   const preparing = !revealed && !error;
+  const readingChanged = useCallback((reading: boolean) => {
+    if (sessionId) setSessionHistoryReading(sessionId, reading);
+    onReadingHistoryChange?.(reading);
+    if (!reading && useAgentSessionStore.getState().selectedSessionId === sessionId)
+      useAgentSessionStore.getState().compactHistoryTail();
+  }, [sessionId, onReadingHistoryChange]);
   const { scrollToBottom } = useTranscriptScroll(
     scrollRef,
     sessionId ?? undefined,
-    onReadingHistoryChange,
+    readingChanged,
     active && !waitingForHistory,
   );
   useLayoutEffect(() => {
@@ -310,12 +319,19 @@ export function SessionTranscript({
         >
           <div className="session-transcript-body">
             {error && projected.messages.length > 0 && (
-              <div role="alert" className="px-4 py-2 text-[13px] text-muted-foreground">
+              <div data-error-toast="off" role="alert" className="px-4 py-2 text-[13px] text-muted-foreground">
                 {locale === "zh" ? "历史更新失败，已保留加载的内容。" : "History could not be updated. Loaded content is preserved."}{" "}
                 <button type="button" className="underline" onClick={() => void useAgentSessionStore.getState().refreshDetail({ forceFresh: true })}>
                   {locale === "zh" ? "重试" : "Retry"}
                 </button>
               </div>
+            )}
+            {olderHistory.hasEarlier && !waitingForHistory && (
+              <button type="button" disabled={olderHistory.loading}
+                className="mx-auto block py-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => void olderHistory.retry()}>
+                {locale === "zh" ? "加载更早消息" : "Load earlier messages"}
+              </button>
             )}
             {olderHistory.loading && (
               <div
@@ -329,6 +345,7 @@ export function SessionTranscript({
             )}
             {olderHistory.error && (
               <div
+                data-error-toast="off"
                 role="alert"
                 className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-[11px] text-danger shadow-sm"
               >
@@ -346,6 +363,7 @@ export function SessionTranscript({
             )}
             {waitingForHistory ? null : error && projected.messages.length === 0 && !showLiveBlock ? (
               <div
+                data-error-toast="off"
                 role="alert"
                 className="p-6 text-center text-[13px] text-muted-foreground"
               >
@@ -392,7 +410,7 @@ export function SessionTranscript({
                         }
                       />
                     ) : compactionNotice?.status === "failed" ? (
-                      <p role="alert" className="text-[11px] text-danger">
+                      <p data-error-toast="off" role="alert" className="text-[11px] text-danger">
                         {compactionNotice.error}
                       </p>
                     ) : showThinking ? (

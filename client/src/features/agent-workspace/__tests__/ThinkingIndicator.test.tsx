@@ -16,15 +16,14 @@ afterEach(() => {
 });
 
 describe("ThinkingIndicator", () => {
-  it("starts with a glowing ASCII frame and no visible placeholder label", () => {
+  it("shows the operation immediately without a decorative character animation", () => {
     const { container } = render(<ThinkingIndicator />);
     const status = screen.getByRole("status");
 
-    expect(status).toHaveAttribute("data-phase", "initial");
-    expect(status.querySelector(".ascii-thinking-art")).toHaveTextContent(/<~\*~>/);
-    expect(status.querySelector(".ascii-thinking-message")).toBeNull();
-    expect(container.querySelectorAll(".loading-state-cell")).toHaveLength(0);
-    expect(status).toHaveTextContent("正在思考");
+    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("data-phase", "initial");
+    expect(status).toHaveAccessibleName("正在思考");
+    expect(screen.getByText("正在思考")).toBeVisible();
+    expect(container.querySelector(".ascii-thinking-art")).toBeNull();
   });
 
   it("adds a reassurance message after three seconds", async () => {
@@ -34,11 +33,9 @@ describe("ThinkingIndicator", () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
 
-    const status = screen.getByRole("status");
-    expect(status).toHaveAttribute("data-phase", "reassure");
-    expect(status.querySelector(".ascii-thinking-message")).toHaveTextContent(
-      "还在和字节们开会，请再等等 ~",
-    );
+    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("data-phase", "reassure");
+    expect(screen.getByRole("status")).toHaveAccessibleName("仍在思考，请稍候");
+    expect(screen.queryByText("正在思考")).not.toBeInTheDocument();
   });
 
   it("switches to a network or provider hint after twenty seconds", async () => {
@@ -49,10 +46,29 @@ describe("ThinkingIndicator", () => {
     });
 
     const status = screen.getByRole("status");
-    expect(status).toHaveAttribute("data-phase", "network");
-    expect(status.querySelector(".ascii-thinking-message")).toHaveTextContent(
-      "响应有点久，可以检查一下网络或供应商状态。",
-    );
+    expect(screen.getByTestId("thinking-indicator")).toHaveAttribute("data-phase", "network");
+    expect(status).toHaveAccessibleName(/响应有点久/);
+    expect(screen.getByText("响应有点久，可以检查一下网络或供应商状态。")).toBeVisible();
+  });
+
+  it("keeps a custom operation label after a long wait without model-specific hints", () => {
+    render(<ThinkingIndicator label="正在压缩上下文" />);
+    act(() => vi.advanceTimersByTime(30_000));
+    expect(screen.getByRole("status")).toHaveAccessibleName("正在压缩上下文");
+    expect(screen.getByText("正在压缩上下文")).toBeVisible();
+    expect(screen.queryByText(/网络|字节|仍在思考/)).not.toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("resets the waiting phase after changing operations and clears timers on unmount", () => {
+    const { rerender, unmount } = render(<ThinkingIndicator />);
+    act(() => vi.advanceTimersByTime(20_000));
+    rerender(<ThinkingIndicator label="正在压缩上下文" />);
+    expect(vi.getTimerCount()).toBe(0);
+    rerender(<ThinkingIndicator />);
+    expect(screen.getByRole("status")).toHaveAccessibleName("正在思考");
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("keeps the accessible status localized in English", () => {

@@ -40,6 +40,8 @@ const originalFetch = globalThis.fetch;
 type Sample = { at: number; pid: number; footprint: number; resident: number; peakFootprint: number; cpuNs: number; readBytes: number; writeBytes: number; pageins: number; threads: number; phase: string };
 type Case = { name: string; persist: boolean; ack: boolean; providerLimit: number; waves: number; slow?: boolean; reconnect?: boolean; batch?: boolean; writer?: boolean; header?: boolean };
 const cases: Case[] = [
+  { name: "loop-configurable", persist: false, ack: true, providerLimit: Number(process.env.SYNAX_STRESS_PROVIDER_LIMIT ?? 100), waves: 1 },
+  { name: "persist-configurable-production-writer", persist: true, ack: true, providerLimit: Number(process.env.SYNAX_STRESS_PROVIDER_LIMIT ?? 100), waves: 1, writer: true },
   { name: "loop-10-ack", persist: false, ack: true, providerLimit: 10, waves: 1 },
   { name: "loop-10-noack-control", persist: false, ack: false, providerLimit: 10, waves: 1 },
   { name: "persist-10-ack", persist: true, ack: true, providerLimit: 10, waves: 1 },
@@ -265,7 +267,7 @@ for (const scenario of cases.filter(item => !selected || selected.includes(item.
         const append = async (chunks: Record<string, unknown>[]) => {
           if (!scenario.persist) return;
           if (writer) {
-            for (const chunk of chunks) writer.write(chunk as never);
+            for (const chunk of chunks) await writer.writeWithBackpressure(chunk as never, abort.signal);
             return;
           }
           const at = performance.now();

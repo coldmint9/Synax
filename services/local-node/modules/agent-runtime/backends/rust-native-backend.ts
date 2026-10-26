@@ -3,9 +3,9 @@ import { hasBackgroundProcesses } from "../process-ownership.js";
 import { getBrowserSession } from "../tools/browser/browser-manager.js";
 import { resolvePermissionDecision } from "../permission-policy.js";
 import type { RustAgentLoopEvent } from "../rust-agent-loop-client.js";
-import * as z from "zod/v4";
 import { normalizeUsage } from "../../../infrastructure/llm-runtime/usage.js";
 import { resolveGatewaySelection } from "../../../infrastructure/llm-runtime/gateway.js";
+import { outputProtocolOptions, resolveOutputReserve } from "../../../infrastructure/llm-runtime/model-output-limits.js";
 import { businessStore } from "../../../infrastructure/persistence/business-store.js";
 import type { StreamTurnRequest, AgentRunStreamChunk, AgentRun, AgentRunStep, AgentRuntimeMessage } from "../contracts.js";
 import type { BackendAdapter } from "./backend-contracts.js";
@@ -15,48 +15,34 @@ import { makeRuntimeId, nowIso } from "../runtime-ids.js";
 import { assertRustAgentLoopAvailable, streamRustAgentLoop, sendRustAgentToolResult, cancelRustAgentLoop, sendRustStepContext } from "../rust-agent-loop-client.js";
 import { interactionService } from "../interaction-service.js";
 import { loopResumeService } from "../loop-resume.js";
-import { profileService } from "../profile-service.js";
-import { buildLoopSystemPrompt } from "../loop-prompt.js";
-import { readSessionPermissionConfig } from "../session-permissions.js";
 import { emitSessionLive } from "../../../infrastructure/runtime/ipc/agent-session-protocol.js";
 import { sessionHooks } from "../session-hooks.js";
-import { goalEvidenceSection } from "../control-runtime.js";
 import { workRuntime } from "../work-runtime.js";
-import { synaxAgent } from "../synax/index.js";
-import { buildRuntimeEnvironment } from "../prompt-environment.js";
-import { loadProjectRulesSection } from "../synax/synax-instructions.js";
-import { resolveSessionWorkDir } from "../tools/workspace.js";
-import { memoryManager } from "../../context/memory-manager.js";
-import { skillAgentBridge } from "../../skills/agent-bridge.js";
-import { modelCanUseTool } from "../tool-mount-policy.js";
 import { warmupMcpForSession } from "../../../infrastructure/mcp/mcp-session-tool-provider.js";
 import { mapThinkingModeToReasoningEffort } from "../../../infrastructure/llm-runtime/thinking-mode-strategy.js";
 import type { LlmGatewayRequest } from "../../../infrastructure/llm-runtime/types.js";
 import { modelContentParts } from "../media-assets.js";
 import { resolveMediaMessages } from "../media-capabilities.js";
-import { buildLoopToolSet } from "../loop-ai-tools.js";
-import { getGlobalConfigForRuntime } from "../../../infrastructure/runtime/config/config-store.js";
 import { countTokens } from "../context-tokenizer.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
 import { toRuntimeError } from "../runtime-errors.js";
-import { conversationGitContextMessage } from "../conversation-git/context.js";
-import { contextUsageSnapshot } from "../analytics-projection.js";
-
-function toolSchema(value: unknown): Record<string, unknown> {
-  return z.toJSONSchema(value as z.ZodTypeAny, { unrepresentable: "any" }) as Record<string, unknown>;
-}
+import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "../analytics-projection.js";
+import { contextInputBudget } from "../context-checkpoint.js";
+import { prepareCheckpointContext } from "../checkpoint-projection.js";
+import { buildNativeStepContext } from "../native-step-context.js";
+import { persistInlineVisualization } from "../visualization-integration.js";
 
 /** Translates Rust decisions into host tool execution and public projections.
  * Step progression and model/tool context live in the current Rust process. */
 export class RustNativeBackend implements BackendAdapter {
   private readonly activeLoops = new Map<string, string>();
   private readonly loopSequences = new Map<string, number>();
-  private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[] }>();
+  private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[]; prompt?: unknown[] }>();
 
   async *stream(sessionId: string, mode: string, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
     const observation = new AbortController();
     const workSignal = signal ? AbortSignal.any([signal, observation.signal]) : observation.signal;
-    await store.hydrateSession(sessionId);
+    await store.hydrateExecutionSession(sessionId);
     await businessStore.refresh();
     const resumed = mode === "resume" || input.resumeExecution === true;
     let completedWorkerStep = false;
@@ -107,55 +93,31 @@ export class RustNativeBackend implements BackendAdapter {
     try {
       if (resumed && typeof run.metadata.rustLoopId !== "string") throw new Error("RUN_INTERRUPTED: the previous execution is no longer available.");
       const selection = await resolveGatewaySelection({ projectId: session.projectId, purpose: input.purpose ?? "analyze", model: input.model });
-      const contextLimit = Math.min(selection.modelDef.contextLimit ?? 200_000, selection.modelDef.inputLimit ?? Infinity);
-      const outputReserve = input.maxTokens ?? selection.modelDef.maxTokens ?? 8192;
+      const contextLimit = selection.modelDef.contextLimit ?? 200_000;
+      const inputLimit = selection.modelDef.inputLimit;
+      let effectiveInputLimit = inputLimit;
+      // Reserve context space without overriding the provider's output default.
+      const reasoningEffort = input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode);
+      const maxOutputTokens = input.maxTokens ?? selection.config.maxOutputTokens;
+      const outputReserve = resolveOutputReserve(selection.modelDef, reasoningEffort, maxOutputTokens);
+      const inputBudget = contextInputBudget({ contextLimit, inputLimit, outputReserve });
       const generationRequest: LlmGatewayRequest = { projectId: session.projectId, purpose: input.purpose ?? "agent", messages: [],
-        temperature: input.temperature, reasoningEffort: input.reasoningEffort ?? mapThinkingModeToReasoningEffort(session.thinkingMode) };
-      run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, contextLimit, outputReserve } });
+        temperature: input.temperature, reasoningEffort };
+      run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, contextLimit, inputLimit, inputBudget, outputReserve } });
       await warmupMcpForSession(sessionId);
-      const prepareContext = (stepIndex: number) => {
-      const currentSession = store.getSession(sessionId);
-      const profile = profileService.getForSession(currentSession);
-      const allowed = toolRegistry.listForSession(sessionId).filter(tool => modelCanUseTool(profile, tool) &&
-        !(tool.id === "webSearch" && getGlobalConfigForRuntime().webSearch.routing === "disabled"));
-      const capabilities = toolRegistry.capabilities.project(sessionId, allowed);
-      const definitions = capabilities.tools.filter(tool => !["code.run", "code.tools"].includes(tool.id));
-      const names = buildLoopToolSet(definitions, undefined, { stableNames: true });
-      const tools = definitions.map(tool => ({ name: names.resolveModelToolName(tool.id)!, runtimeName: tool.id,
-        description: [tool.description, tool.progressiveDetails].filter(Boolean).join(" "), inputSchema: toolSchema(tool.inputSchema) }));
-      const memories = memoryManager.getRelevantMemories(session.projectId, prompt, 5);
-      const skills = skillAgentBridge.listForPrompt({ profileId: profile.id, projectId: session.projectId,
-        activeSkillIds: [...new Set([...session.skillIds, ...input.referenceContext?.skillIds ?? []])] });
-      const rules = session.profileId === "git-manager" ? null : loadProjectRulesSection(resolveSessionWorkDir(sessionId, session.projectId));
-      const systemPrompt = [buildLoopSystemPrompt({
-        profile, context: session.contextSnapshotId ? store.getContextBundle(session.contextSnapshotId) : null,
-        availableToolIds: tools.map(tool => tool.runtimeName),
-        effectivePermissionRules: currentSession.permissionRules, permissionTier: readSessionPermissionConfig(currentSession.sessionMetadata).permissionTier,
-        isSubSession: Boolean(session.parentSessionId), locale: input.locale,
-        modePromptSection: synaxAgent.buildModePromptSection(currentSession),
-        variantPromptSection: synaxAgent.buildVariantPromptSection(currentSession),
-        intentPromptSection: synaxAgent.isSynaxSession(currentSession) ? synaxAgent.buildIntentPromptSection(currentSession, prompt, stepIndex) : null,
-        loopHintsOverride: synaxAgent.isSynaxSession(currentSession) ? synaxAgent.buildEffectiveLoopHints(currentSession) : null,
-        projectRulesSection: rules,
-        projectMemoriesSection: memories.length ? memories.map(memory => `${memory.title}: ${memory.content.slice(0, 400)}`).join("\n") : null,
-        skillsSection: skills.length ? "Available skills; load selected skills before using their instructions:\n" + skills.map(skill => JSON.stringify({ id: skill.id, name: skill.label, description: skill.description })).join("\n") : null,
-        selectedReferencesSection: input.referenceContext?.content,
-      }), capabilities.prompt, buildRuntimeEnvironment(sessionId, session.projectId), workRuntime.prompt(sessionId), synaxAgent.buildRuntimeStateSection(currentSession), goalEvidenceSection(currentSession, store.listToolCalls(sessionId)), conversationGitContextMessage(store.listMessages(sessionId), sessionId)].filter(Boolean).join("\n\n");
-      if (currentSession.sessionMetadata?.latestSystemPrompt !== systemPrompt) store.updateSessionMetadata(sessionId, { latestSystemPrompt: systemPrompt });
-      return { systemPrompt, tools };
-      };
-      const { systemPrompt, tools } = prepareContext(1);
-      const promptMessages: unknown[] = [{ role: "system", content: [{ type: "text", text: systemPrompt }] }];
-      for (const message of store.listMessages(sessionId)) {
-        if (!["user", "assistant", "tool"].includes(message.role)) continue;
+      const prepareContext = (stepIndex: number) => buildNativeStepContext(sessionId, input, prompt, stepIndex);
+      const resolvePromptMessage = async (message: AgentRuntimeMessage): Promise<unknown[]> => {
         const canonical = message.metadata?.rustMessage;
-        if (canonical) promptMessages.push(canonical);
+        if (canonical) {
+          const continuation = (canonical as { continuationMessages?: unknown[] }).continuationMessages;
+          return Array.isArray(continuation) && continuation.length ? continuation : [canonical];
+        }
         else if (message.contentParts?.length && (message.role === "user" || message.role === "assistant")) {
-          const media = await resolveMediaMessages([{ role: message.role,
+          return resolveMediaMessages([{ role: message.role,
             content: modelContentParts(message.contentParts) }], selection, session.projectId);
-          promptMessages.push(...media);
-        } else promptMessages.push({ role: message.role, content: [{ type: "text", text: message.content }] });
-      }
+        }
+        return [{ role: message.role, content: [{ type: "text", text: message.content }] }];
+      };
       const resultFor = async (exec: ExecuteToolResult, toolCallId: string, loopId: string) => {
         let result = exec.toolResult?.result ?? exec.record.outputRef ?? { error: exec.record.error };
         if (exec.record.contentParts?.length) {
@@ -176,15 +138,19 @@ export class RustNativeBackend implements BackendAdapter {
         loopId: resumed ? run.metadata.rustLoopId as string : undefined,
         resumeLoop: resumed, after: resumed ? this.loopSequences.get(run.id) ?? Number(run.metadata.rustLoopSequence ?? 0) : 0,
         runtimeBinding: { sessionId, runId: run.id },
-        contextPolicy: { contextLimit, outputReserve },
+        contextPolicy: { contextLimit, inputLimit, outputReserve },
         executionContext: input.executionContext,
         apiFormat: selection.apiFormat, adapter: selection.provider.npm, baseUrl: selection.config.baseUrl ?? selection.provider.api,
         providerId: selection.providerId, providerOptions: selection.config.options?.providerOptions as LlmGatewayRequest["providerOptions"],
         purpose: generationRequest.purpose, reasoningEffort: generationRequest.reasoningEffort, reasoningCapable: selection.modelDef.reasoning, temperature: input.temperature,
+        supportedReasoningEfforts: selection.modelDef.supportedReasoningEfforts,
         apiKey: selection.config.apiKey ?? selection.config.options?.apiKey as string | undefined
           ?? selection.provider.env.map(name => process.env[name]?.trim()).find(Boolean),
         headers: selection.config.options?.headers as Record<string, string> | undefined,
-        model: selection.modelId, prompt: promptMessages, tools, maxOutputTokens: outputReserve,
+        // The first context barrier reconstructs the bounded durable tail.
+        // Never copy all stored messages into the loop start envelope.
+        model: selection.modelId, prompt: [], tools: [], maxOutputTokens,
+        ...outputProtocolOptions(selection, reasoningEffort),
         cachePolicy: { adapter: selection.provider.npm, mode: selection.config.options?.promptCaching, chatBreakpoints: selection.config.options?.chatCacheBreakpoints, sessionId, projectId: session.projectId },
       }, workSignal, async loopId => {
         this.activeLoops.set(sessionId, loopId);
@@ -281,6 +247,8 @@ export class RustNativeBackend implements BackendAdapter {
           yield { type: "execution_status", runId: run.id, execution: run.execution! };
         } else if (event.type === "context-request") {
           if (!event.loopId || !event.contextId || !event.step) throw new Error("Invalid Rust context request.");
+          if (event.reason === "provider-context-overflow" && Number.isSafeInteger(event.inputBudget) && event.inputBudget! > 0)
+            effectiveInputLimit = Math.min(effectiveInputLimit ?? contextLimit, event.inputBudget!);
           // Rust is parked at its context barrier: the previous tool receipts
           // are durable and no new provider request has started. Leave this
           // context event unacknowledged for the replacement worker to handle.
@@ -309,13 +277,29 @@ export class RustNativeBackend implements BackendAdapter {
           // before every context barrier so a newly persisted Git task anchor
           // or receipt is visible to the next model turn. The current run and
           // its durable tool receipts are merged by the Rust-backed store.
-          this.preparedContexts.delete(run.id);
-          await store.hydrateSession(sessionId, true);
           const savedContext = this.preparedContexts.get(run.id);
-          const context = savedContext?.contextId === event.contextId ? savedContext : prepareContext(event.step);
-          if (context !== savedContext) this.preparedContexts.set(run.id, { contextId: event.contextId, ...context });
-          await store.flushSession(sessionId);
-          await sendRustStepContext({ loopId: event.loopId, contextId: event.contextId, ...context, executionContext: input.executionContext }, signal);
+          let context = savedContext?.contextId === event.contextId ? savedContext : undefined;
+          if (!context) {
+            await store.hydrateExecutionSession(sessionId, true);
+            for (let repair = 0; ; repair++) {
+              const prepared = prepareContext(event.step);
+              if (event.contextCorrection)
+                prepared.systemPrompt += `\n\nRuntime continuation requirement:\n${event.contextCorrection}`;
+              await store.flushSession(sessionId);
+              try {
+                const projection = await prepareCheckpointContext({ sessionId, projectId: session.projectId, model: selection.modelId,
+                  budget: { contextLimit, inputLimit: effectiveInputLimit, outputReserve }, force: event.reason === "provider-context-overflow",
+                  ...prepared, signal: workSignal, resolve: resolvePromptMessage });
+                context = { contextId: event.contextId, ...prepared, prompt: projection.prompt };
+                break;
+              } catch (error) {
+                if (repair || !(error instanceof Error) || !error.message.includes("COMPACTION_CONFIGURATION_CHANGED")) throw error;
+                await store.hydrateSessionSummary(sessionId, true);
+              }
+            }
+            this.preparedContexts.set(run.id, context);
+          }
+          await sendRustStepContext({ loopId: event.loopId, ...context, executionContext: input.executionContext }, signal);
         } else if (event.type === "context-compaction-started") {
           compacting = true;
           emitSessionLive(sessionId, { type: "context_compaction_started" });
@@ -336,12 +320,21 @@ export class RustNativeBackend implements BackendAdapter {
               [String(event.chunk)]: event.usage } } });
         } else if (event.type === "context-compacted") {
           compacting = false;
+          const priorUsage = readContextUsage(store.getSession(sessionId).sessionMetadata?.contextUsage);
+          const contextUsage = compactedContextUsageSnapshot(
+            priorUsage,
+            event.compressedTokens ?? 0,
+            step?.id ?? run.id,
+            selection.modelDef.contextLimit ?? null,
+          );
+          if (contextUsage) store.updateSessionMetadata(sessionId, { contextUsage });
           const recordId = `cmp_${event.loopId}_${event.step}`;
           store.saveCompactionRecord({ id: recordId, sessionId, runId: run.id,
             summaryText: event.summary ?? "", compressedMessageCount: event.messageCount ?? 0,
             originalTokenCount: event.originalTokens ?? 0, compressedTokenCount: event.compressedTokens ?? 0, createdAt: nowIso() });
           emitSessionLive(sessionId, { type: "context_compacted", stepId: step?.id ?? "",
-            originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0 });
+            originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0,
+            ...(contextUsage ? { contextUsage } : {}) });
         } else if (event.type === "context-composition") {
           if (step && event.composition) {
             store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,
@@ -388,7 +381,8 @@ export class RustNativeBackend implements BackendAdapter {
             ? reportedTokens
             : countTokens(event.type === "text-delta" ? text : thought, selection.modelId);
           yield event.type === "text-delta"
-            ? { type: "message_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", outputTokens: telemetry }
+            ? { type: "message_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", outputTokens: telemetry,
+                ...(event.firstTokenTiming ? { firstTokenTiming: event.firstTokenTiming } : {}) }
             : { type: "thought_delta", runId: run.id, stepId: step.id, delta: event.delta ?? "", thinkingTokens: telemetry };
         } else if (event.type === "usage") {
           if (!step) throw new Error("Rust usage has no step.");
@@ -450,6 +444,9 @@ export class RustNativeBackend implements BackendAdapter {
           role: "assistant", content: summary, metadata: { engine: "rust", disposition: disposition?.reason }, createdAt: nowIso() });
         yield { type: "message", message: assistant };
       }
+      // Capture the file while the worker still owns the completed reply. The
+      // completion event and later history reads must carry the same snapshot.
+      if (finalStatus === "completed" && assistant) persistInlineVisualization(assistant);
       const completed = store.updateRun(run.id, { status: finalStatus, completedAt: nowIso(), stopReason: disposition?.reason ?? "completed", model: selection.modelId });
       store.updateSession(sessionId, { status: finalStatus === "blocked" ? "completed" : finalStatus,
         activeRunId: null, pendingResumeToken: null, completedAt: nowIso(),
@@ -464,6 +461,11 @@ export class RustNativeBackend implements BackendAdapter {
       const message = error instanceof Error ? error.message : String(error);
       if (compacting) emitSessionLive(sessionId, { type: "context_compaction_failed", error: message });
       const interrupted = signal?.aborted || message === "Rust loop cancelled." || message.includes("RUN_INTERRUPTED");
+      if (step && text && !assistant) {
+        assistant = store.appendMessage({ id: makeRuntimeId("msg"), sessionId, runId: run.id, stepId: step.id,
+          role: "assistant", content: text, metadata: { engine: "rust", thought, partial: true }, createdAt: nowIso() });
+        yield { type: "message", message: assistant };
+      }
       if (!interrupted) logger.error({ sessionId, runId: run.id, stepId: step?.id,
         code: toRuntimeError(error).code, err: error,
       }, "[agent-runtime] native run failed");

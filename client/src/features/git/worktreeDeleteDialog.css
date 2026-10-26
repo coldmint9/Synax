@@ -1,0 +1,15 @@
+.worktree-delete-target { display:grid; gap:6px; padding:12px; border-radius:10px; background:var(--ui-canvas, var(--muted)); }
+.worktree-delete-target strong { font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.worktree-delete-target code { font:11px/1.6 var(--font-mono,monospace); color:var(--muted-foreground); overflow-wrap:anywhere; }
+.worktree-delete-status { display:flex; align-items:center; gap:8px; margin-top:16px; color:var(--muted-foreground); font-size:12px; }
+.worktree-delete-explanation { margin-top:16px; line-height:1.65; font-size:12px; }
+.worktree-delete-reasons { padding-left:18px; margin-top:16px; font-size:12px; line-height:1.8; }
+.worktree-delete-error { margin-top:12px; color:var(--destructive); font-size:12px; overflow-wrap:anywhere; }
+.worktree-delete-discard { display:grid; gap:8px; margin-top:16px; padding:12px; border:1px solid color-mix(in srgb,var(--destructive) 38%,transparent); border-radius:10px; background:color-mix(in srgb,var(--destructive) 6%,transparent); font-size:12px; line-height:1.6; }
+.worktree-delete-discard p { display:flex; align-items:flex-start; gap:6px; margin:0; }
+.worktree-delete-discard p svg { flex:0 0 auto; margin-top:2px; color:var(--destructive); }
+.worktree-delete-changes { list-style:none; display:grid; gap:3px; max-height:180px; margin:0; padding:8px; overflow:auto; border-radius:8px; background:var(--ui-canvas,var(--muted)); font:11px/1.5 var(--font-mono,monospace); }
+.worktree-delete-changes li { display:flex; gap:8px; }
+.worktree-delete-changes span { flex:0 0 18px; color:var(--destructive); font-weight:600; }
+.worktree-delete-changes code { color:var(--muted-foreground); overflow-wrap:anywhere; }
+.worktree-delete-truncated { color:var(--muted-foreground); font-size:11px; }

@@ -6,6 +6,7 @@ import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import { subagentTaskTitle } from "./subagentTaskTitle";
 import { SubagentControls } from "./SubagentControls";
 import { SubagentIdentity } from "./SubagentIdentity";
+import { SubagentInteractionSummary } from "./SubagentInteractionSummary";
 
 interface Props {
   session: AgentSession;
@@ -72,13 +73,7 @@ export function SubSessionCard({ session, onExpand }: Props) {
       </div>
       {expanded && (
         <div id={resultId} className="bui-task-body subagent-task-result">
-          {session.resultSummary ? (
-            <p className="subagent-task-summary whitespace-pre-wrap">{session.resultSummary}</p>
-          ) : session.status === "running" ? (
-            <p className="subagent-task-badge">{t("subSessionRunning")}</p>
-          ) : (
-            <p className="subagent-task-summary">{t("subSessionNoResult")}</p>
-          )}
+          <SubagentInteractionSummary key={session.id} session={session} />
         </div>
       )}
     </div>

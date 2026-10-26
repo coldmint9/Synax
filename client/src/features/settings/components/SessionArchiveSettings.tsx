@@ -82,10 +82,9 @@ export function SessionArchiveSettings({
       await onUpdate({ sessionArchiveRetentionDays: value });
       await load();
     } catch (err) {
-      useNotificationStore.getState().push({
-        type: "error",
-        message: err instanceof Error ? err.message : String(err),
-      });
+      // 保存请求本身已经通过 apiRequest 上报了一条（带兜底文案的）通知，
+      // 这里只保留日志，避免同一失败弹两次。
+      console.error("[SessionArchive] retention save failed", err);
     } finally {
       setSaving(false);
     }
@@ -107,9 +106,12 @@ export function SessionArchiveSettings({
       });
       await load();
     } catch (err) {
+      console.error("[SessionArchive] restore failed", err);
       useNotificationStore.getState().push({
         type: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: zh
+          ? "恢复归档会话失败，可在归档列表重试"
+          : "Could not restore the archived session. Retry from Session Archive.",
       });
     } finally {
       setBusyBatchId(null);
@@ -130,9 +132,12 @@ export function SessionArchiveSettings({
       });
       await load();
     } catch (err) {
+      console.error("[SessionArchive] permanent delete failed", err);
       useNotificationStore.getState().push({
         type: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: zh
+          ? "彻底删除归档会话失败，请稍后重试"
+          : "Could not delete the archived session. Please try again.",
       });
     } finally {
       setBusyBatchId(null);

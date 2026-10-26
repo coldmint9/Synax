@@ -2,11 +2,10 @@ use crate::runtime::actor::{Durability, PendingEvent, RuntimeError, SessionShard
 use crate::transport::flow::CreditWindow;
 use crate::transport::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse,
-    WireHistoryState, WireImportProjectionResponse, WireImportStreamResponse, WirePong,
-    WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse, WireSnapshotResponse,
-    WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message, decode_wire,
-    encode_server_message, encode_wire, wire_envelope,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState,
+    WirePong, WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse,
+    WireSnapshotResponse, WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message,
+    decode_wire, encode_server_message, encode_wire, wire_envelope,
 };
 use crate::transport::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
@@ -46,6 +45,8 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "append_stream",
     "append_receipts",
     "control_multiplex",
+    "critical_control_connection",
+    "resource_wait",
     "snapshot",
     "replay",
     "subscribe",
@@ -1437,6 +1438,8 @@ fn history_error_to_wire(
 ) -> wire_envelope::Body {
     use crate::storage::jsonl::history::HistoryError;
     match error {
+        HistoryError::SessionDeleted => error_to_wire(RuntimeError::SessionDeleted),
+        HistoryError::ReadOnlyHistory => wire_error("READ_ONLY_HISTORY", &error.to_string()),
         HistoryError::StaleCursor => {
             wire_error("HISTORY_STALE", "Conversation changed. Refresh history.")
         }
@@ -1448,7 +1451,6 @@ fn history_error_to_wire(
         HistoryError::FileIo(error) => wire_error("FILE_IO_ERROR", &error.to_string()),
         HistoryError::InvalidCommand(message) => wire_error("INVALID_COMMAND", &message),
         HistoryError::ObjectMissing(message) => wire_error("HISTORY_NOT_FOUND", &message),
-        other => wire_error("HISTORY_ERROR", &other.to_string()),
     }
 }
 
@@ -1464,6 +1466,7 @@ fn storage_error_to_wire(error: crate::storage::jsonl::hot::StorageError) -> wir
 
 fn error_to_wire(error: RuntimeError) -> wire_envelope::Body {
     let (code, message, expected, actual) = match error {
+        RuntimeError::SessionDeleted => ("NOT_FOUND", "session has been permanently deleted".into(), None, None),
         RuntimeError::ProjectionMissing => (
             "PROJECTION_MISSING",
             "session UI projection requires initialization".into(),

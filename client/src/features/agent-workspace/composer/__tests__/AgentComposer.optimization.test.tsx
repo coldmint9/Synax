@@ -63,7 +63,7 @@ it.each([false, true])(
     const user = userEvent.setup();
     await user.click(
       screen.getByRole("button", {
-        name: /澄清并优化输入|Clarify and optimize input/,
+        name: /优化输入|Optimize input/,
       }),
     );
     expect(screen.getByRole("textbox")).toHaveValue("整理后的需求");
@@ -82,7 +82,7 @@ it("disables optimization for empty and locked drafts and shows pending state", 
   const view = render(<AgentComposer {...props} content="   " />);
   const button = () =>
     screen.getByRole("button", {
-      name: /澄清并优化输入|Clarify and optimize input/,
+      name: /优化输入|Optimize input/,
     });
   expect(button()).toBeDisabled();
   view.rerender(<AgentComposer {...props} disabled />);
@@ -101,12 +101,58 @@ it("disables optimization for empty and locked drafts and shows pending state", 
   expect(mocks.optimize).toHaveBeenCalledTimes(1);
   await act(async () => resolve({ text: "优化" }));
 });
+it.each([false, true])(
+  "only shows a button spinner while waiting and applies the final rewrite once (expanded=%s)",
+  async (expanded) => {
+    const draft = "帮我检查下";
+    const rewritten = "请帮我检查一下，指出存在的问题并给出改进建议。";
+    const change = vi.fn();
+    const submit = vi.fn();
+    let complete!: (value: { text: string; status: string }) => void;
+    let stream!: (text: string) => void;
+    mocks.optimize.mockImplementation((_input, _signal, onDelta) => {
+      stream = (text) => onDelta?.(text);
+      return new Promise((resolve) => { complete = resolve; });
+    });
+    function Composer() {
+      const [content, setContent] = useState(draft);
+      return (
+        <AgentComposer
+          {...props}
+          sessionId={expanded ? undefined : "a"}
+          modeControl={expanded ? undefined : <span>Chat</span>}
+          defaultExpanded={expanded}
+          content={content}
+          onContentChange={(text) => { change(text); setContent(text); }}
+          onSubmit={submit}
+        />
+      );
+    }
+    render(<Composer />);
+    const button = screen.getByRole("button", { name: /优化输入|Optimize input/ });
+    fireEvent.click(button);
+    act(() => stream("正在生成但还未验证的改写"));
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button.querySelector(".animate-spin")).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toHaveValue(draft);
+    expect(screen.queryByText(/正在优化输入|Optimizing input|正在生成但还未验证的改写/)).not.toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+    await act(async () => complete({ text: rewritten, status: "optimized" }));
+    expect(screen.getByRole("textbox")).toHaveValue(rewritten);
+    expect(change).toHaveBeenCalledExactlyOnceWith(rewritten);
+    expect(submit).not.toHaveBeenCalled();
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "false");
+    expect(button.querySelector(".animate-spin")).not.toBeInTheDocument();
+  },
+);
 it("shows local errors while keeping the original textarea value", async () => {
   mocks.optimize.mockRejectedValue(new Error("请配置模型"));
   render(<AgentComposer {...props} />);
   await userEvent.click(
     screen.getByRole("button", {
-      name: /澄清并优化输入|Clarify and optimize input/,
+      name: /优化输入|Optimize input/,
     }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent("请配置模型");

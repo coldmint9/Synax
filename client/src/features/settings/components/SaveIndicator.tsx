@@ -10,7 +10,7 @@ interface SaveIndicatorProps {
 export function SaveIndicator({ saving, saved, error }: SaveIndicatorProps) {
   const { t } = useLocale()
   if (error) {
-    return <span className="text-[11px] text-destructive">{error}</span>
+    return <span role="alert" className="text-[11px] text-destructive">{error}</span>
   }
   if (saving) {
     return <Loader2 size={12} className="animate-spin text-muted-foreground" />

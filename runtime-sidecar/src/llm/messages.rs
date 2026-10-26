@@ -8,6 +8,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
+/// A single displayed answer can retain several original signed provider turns.
+pub(crate) fn expanded_messages(prompt: &[Value]) -> Vec<&Value> {
+    prompt.iter().flat_map(|message| match message.get("continuationMessages").and_then(Value::as_array) {
+        Some(messages) if !messages.is_empty() => messages.iter().collect(),
+        _ => vec![message],
+    }).collect()
+}
+
 pub(super) fn convert_message(
     value: &Value,
     input: &ProviderRequest,

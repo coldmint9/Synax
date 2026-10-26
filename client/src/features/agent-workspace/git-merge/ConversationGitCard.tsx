@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   CheckCircle2,
@@ -17,392 +11,573 @@ import {
   GitMerge,
   LoaderCircle,
   Maximize2,
-  RefreshCw,
-  RotateCcw,
+  Pause,
+  Play,
   X,
 } from "lucide-react";
-import type { MergeFile } from "../../../adapters/transport/gitMr";
+import type {
+  MergeFile,
+  MergeFileSave,
+} from "../../../adapters/transport/gitMr";
 import {
   conversationGitApi,
   type ConversationGitReference,
   type ConversationGitSnapshot,
 } from "../../../adapters/transport/conversationGit";
+import type { ConversationGitStateEvent } from "../../../../../services/local-node/modules/agent-runtime/conversation-git/contracts";
+import { addSessionLiveListener } from "../../../adapters/transport/sessionLiveClient";
 import { useTranscriptSession } from "../SessionTranscriptContext";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { refreshWorkspace } from "../workspaceRefresh";
 import { Button } from "../../../shared/ui/ui/Button";
-import { Checkbox } from "../../../shared/ui/ui/Toggle";
 import { Dialog, DialogPanel, DialogTitle } from "../../../shared/ui/ui/Dialog";
 import { FileViewerDialog } from "../../../shared/ui/file-viewer/FileViewerDialog";
 import { taskPresentation } from "./model";
+import { applyMergeState, chooseMergeSnapshot } from "./mergeTaskProjection";
+import { MergeFileIndex } from "./mergeFileIndex";
 import { CommitGraph } from "./CommitGraph";
-import { ConflictPreview } from "./ConflictPreview";
+import { VirtualList } from "./VirtualList";
+import { VirtualCheckResults } from "./VirtualCheckResults";
 import "./conversationGit.css";
 
-function newRequestId() {
-  return crypto.randomUUID();
-}
-function statusTone(
-  status: ConversationGitSnapshot["mr"]["status"],
-  stale: boolean,
-) {
-  if (
-    stale ||
-    status === "conflicted" ||
-    status === "check_failed" ||
-    status === "failed"
-  )
-    return "warning";
-  if (status === "merged" || status === "ready" || status === "noop")
-    return "success";
-  return "neutral";
-}
-
-export function ConversationGitCard({
-  reference,
-  readOnly = false,
-}: {
+interface ConversationGitCardProps {
   reference: ConversationGitReference;
   readOnly?: boolean;
-}) {
+}
+const stopped = new Set([
+  "paused",
+  "waiting_user",
+  "failed",
+  "recovery_required",
+]);
+const terminal = new Set(["merged", "noop", "cancelled"]);
+const executionLabels: Record<string, string> = {
+  queued: "等待合并助手",
+  running: "智能合并中",
+  pausing: "正在停止",
+  paused: "已停止",
+  waiting_user: "等待你的说明",
+  cancelling: "正在取消",
+  cancelled: "已取消",
+  cancelled_cleanup_pending: "已取消 · 待清理",
+  completed: "已完成",
+  failed: "合并未完成",
+  recovery_required: "等待恢复",
+};
+const phaseLabels: Record<string, string> = {
+  preparing: "分析分支",
+  resolving: "解决冲突",
+  checking: "验证候选",
+  applying: "更新目标",
+  settled: "合并结束",
+};
+
+export function ConversationGitCard(props: ConversationGitCardProps) {
+  const scope = useTranscriptSession();
+  return (
+    <ConversationGitCardInstance
+      key={`${scope.sessionId}:${props.reference.sessionId}:${props.reference.objectId}`}
+      {...props}
+    />
+  );
+}
+
+function ConversationGitCardInstance({
+  reference,
+  readOnly = false,
+}: ConversationGitCardProps) {
   const scope = useTranscriptSession();
   const owner = scope.sessionId === reference.sessionId;
-  const ingestMessages = useAgentSessionStore(
+  const ingest = useAgentSessionStore(
     (state) => state.ingestConversationMessages,
-  );
-  const submitInput = useAgentSessionStore(
-    (state) => state.submitOrEnqueueSessionInput,
   );
   const [snapshot, setSnapshot] = useState<ConversationGitSnapshot | null>(
     null,
   );
-  const [loading, setLoading] = useState(true);
+  const snapshotRef = useRef(snapshot);
   const [error, setError] = useState("");
+  const [readError, setReadError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState("");
   const [file, setFile] = useState<MergeFile | null>(null);
-  const [previewFile, setPreviewFile] = useState<MergeFile | null>(null);
-  const [appliedProposalId, setAppliedProposalId] = useState<string>();
+  const fileRef = useRef(file);
   const [focused, setFocused] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [busy, setBusy] = useState("");
-  const [confirmFinalize, setConfirmFinalize] = useState(false);
-  const [skipChecks, setSkipChecks] = useState(false);
-  const generation = useRef(0);
-  const loadingRequest = useRef(false);
-  const activeMutation = useRef("");
+  const [cancelOpen, setCancelOpen] = useState(false);
   const mounted = useRef(true);
-  const currentSnapshot = useRef(snapshot);
-  currentSnapshot.current = snapshot;
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
+  const readController = useRef<AbortController | null>(null);
+  const readPromise = useRef<Promise<void> | null>(null);
+  const needsSnapshot = useRef(false);
+  const latestEvent = useRef<ConversationGitStateEvent | null>(null);
+  const fileController = useRef<AbortController | null>(null);
+  const mutation = useRef(false);
+  const draftFlush = useRef<(() => Promise<boolean>) | null>(null);
+  const eventFrame = useRef(0);
+  const stateEventPending = useRef<ConversationGitStateEvent | null>(null);
+  const fileIndex = useRef(new MergeFileIndex());
+  const hasFileManifest = useRef(false);
+  const fullManifestRevision = useRef(-1);
+  const pendingFileChanges = useRef(
+    new Map<
+      string,
+      { file: ConversationGitSnapshot["files"][number]; revision: number }
+    >(),
+  );
+  const fileRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileRefreshBusy = useRef(false);
+  const fileRefreshPending = useRef(false);
+
+  const restoreManifest = useCallback((response: ConversationGitSnapshot) => {
+    if (
+      !hasFileManifest.current ||
+      response.task.revision >= fullManifestRevision.current
+    ) {
+      fileIndex.current = new MergeFileIndex();
+      fileIndex.current.replace(response.files, response.task.revision);
+      fullManifestRevision.current = response.task.revision;
+      hasFileManifest.current = true;
+    }
+    const newer: ConversationGitSnapshot["files"] = [];
+    let revision = fullManifestRevision.current;
+    for (const [id, change] of pendingFileChanges.current) {
+      if (change.revision <= fullManifestRevision.current)
+        pendingFileChanges.current.delete(id);
+      else {
+        newer.push(change.file);
+        revision = Math.max(revision, change.revision);
+      }
+    }
+    if (newer.length) fileIndex.current.update(newer, revision);
   }, []);
 
-  const load = useCallback(
-    async (silent = false) => {
-      if (!owner) {
-        setLoading(false);
-        return;
-      }
-      if (silent && loadingRequest.current) return;
-      loadingRequest.current = true;
-      const current = ++generation.current;
-      if (!silent) setLoading(true);
-      try {
-        const next = await conversationGitApi.get(
-          reference.sessionId,
-          reference.objectId,
-        );
-        if (current !== generation.current || !mounted.current) return;
-        if (
-          next.task.id !== reference.objectId ||
-          next.task.sessionId !== reference.sessionId ||
-          next.task.projectId !== reference.projectId
-        )
-          throw new Error("任务响应与当前会话不匹配。");
-        setSnapshot((previous) =>
-          !previous ||
-          next.task.revision > previous.task.revision ||
-          (next.task.revision === previous.task.revision &&
-            next.mr.version >= previous.mr.version)
-            ? next
-            : previous,
-        );
-        if (!silent) setError("");
-      } catch (cause) {
-        if (current === generation.current)
-          setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        loadingRequest.current = false;
-        if (mounted.current && current === generation.current && !silent)
-          setLoading(false);
-      }
-    },
-    [owner, reference.objectId, reference.projectId, reference.sessionId],
-  );
+  const publish = useCallback((next: ConversationGitSnapshot) => {
+    if (!mounted.current) return;
+    snapshotRef.current = next;
+    setSnapshot(next);
+  }, []);
+  const setSelectedFile = useCallback((next: MergeFile | null) => {
+    fileRef.current = next;
+    if (mounted.current) setFile(next);
+  }, []);
 
-  useEffect(() => {
-    void load();
-    return () => {
-      generation.current++;
-    };
-  }, [load]);
-  useEffect(() => {
-    if (
-      !snapshot ||
-      readOnly ||
-      !owner ||
-      snapshot.mr.status === "merged" ||
-      snapshot.mr.status === "noop" ||
-      snapshot.mr.status === "cancelled"
-    )
+  const load = useCallback(async () => {
+    if (!owner || !mounted.current) {
+      setLoading(false);
       return;
-    const running =
-      !!busy ||
-      ["preparing", "checking", "applying"].includes(snapshot.mr.status);
-    const timer = window.setInterval(
-      () => {
-        if (document.visibilityState !== "hidden") void load(true);
-      },
-      running ? 1100 : 5000,
-    );
-    return () => window.clearInterval(timer);
-  }, [load, snapshot?.mr.status, busy, owner, readOnly]);
-
-  const presentation = snapshot ? taskPresentation(snapshot) : null;
-  const mutate = useCallback(
-    async (label: string, action: () => Promise<ConversationGitSnapshot>) => {
-      if (
-        !snapshot ||
-        readOnly ||
-        !owner ||
-        (activeMutation.current &&
-          !(label === "cancel" && snapshot.mr.status === "checking"))
-      )
-        return;
-      activeMutation.current = label;
-      generation.current++;
-      setBusy(label);
-      setError("");
-      setConfirmFinalize(false);
-      try {
-        const next = await action();
-        if (!mounted.current) return;
-        generation.current++;
-        const previous = currentSnapshot.current;
-        if (
-          !previous ||
-          next.task.revision > previous.task.revision ||
-          (next.task.revision === previous.task.revision &&
-            next.mr.version >= previous.mr.version)
-        )
-          setSnapshot(next);
-        if (
-          next.task.revision !== snapshot.task.revision ||
-          next.task.mrId !== snapshot.task.mrId
-        ) {
-          setPreviewFile(null);
-          setFile(null);
+    }
+    needsSnapshot.current = true;
+    if (readPromise.current) return readPromise.current;
+    const operation = (async () => {
+      do {
+        needsSnapshot.current = false;
+        const controller = new AbortController();
+        readController.current = controller;
+        try {
+          const response = await conversationGitApi.get(
+            reference.sessionId,
+            reference.objectId,
+            controller.signal,
+          );
+          if (!mounted.current || controller.signal.aborted) return;
+          if (
+            response.task.id !== reference.objectId ||
+            response.task.sessionId !== reference.sessionId ||
+            response.task.projectId !== reference.projectId
+          )
+            throw new Error("任务响应与当前会话不匹配。");
+          const next = latestEvent.current
+            ? applyMergeState(response, latestEvent.current)
+            : response;
+          restoreManifest(response);
+          publish(chooseMergeSnapshot(snapshotRef.current, next));
+          setReadError("");
+        } catch (cause) {
+          if (mounted.current && !controller.signal.aborted)
+            setReadError(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+        } finally {
+          if (readController.current === controller)
+            readController.current = null;
+          if (mounted.current) setLoading(false);
         }
-        refreshWorkspace(reference.sessionId, reference.rootId);
-        ingestMessages(reference.sessionId, next.messages);
-        return next;
-      } catch (cause) {
-        if (!mounted.current) return;
-        setError(cause instanceof Error ? cause.message : String(cause));
-        await load(true);
-      } finally {
-        if (activeMutation.current === label) activeMutation.current = "";
-        if (mounted.current)
-          setBusy((current) => (current === label ? "" : current));
-      }
-    },
-    [
-      ingestMessages,
-      busy,
-      load,
-      owner,
-      readOnly,
-      reference.rootId,
-      reference.sessionId,
-      snapshot,
-    ],
-  );
-
-  if (!owner)
-    return (
-      <section
-        className="conversation-git-card conversation-git-card--scope"
-        aria-label="Git合并任务"
-      >
-        <CircleAlert size={15} />
-        <span>此任务属于另一个会话。切换到任务所属会话后才能操作。</span>
-      </section>
-    );
-  if (loading && !snapshot)
-    return (
-      <section className="conversation-git-card" role="status">
-        <LoaderCircle className="conversation-git-spin" size={15} />
-        正在加载合并任务…
-      </section>
-    );
-  if (!snapshot || !presentation)
-    return (
-      <section className="conversation-git-card" role="alert">
-        <CircleAlert size={15} />
-        {error || "合并任务不可用。"}
-        <Button size="xs" onClick={() => void load()}>
-          重试
-        </Button>
-      </section>
-    );
-
-  const { mr } = snapshot;
-  const tone = statusTone(mr.status, snapshot.stale);
-  const canWrite = !readOnly && !busy && !snapshot.stale;
-  const hasChecks = mr.checks.length > 0;
-  const runLabel =
-    mr.status === "draft"
-      ? "开始分析"
-      : mr.status === "conflicted"
-        ? `继续合并${presentation.conflicts ? ` · 还有 ${presentation.conflicts} 个冲突` : ""}`
-        : mr.status === "check_failed"
-          ? "重新运行检查"
-          : "";
-  const doAction = (
-    action:
-      | "prepare"
-      | "continue"
-      | "checks"
-      | "cancel"
-      | "resume"
-      | "finalize"
-      | "replan",
-    skip = false,
-  ) =>
-    mutate(action, () =>
-      conversationGitApi.action(reference.sessionId, reference.objectId, {
-        action,
-        requestId: newRequestId(),
-        expectedVersion: mr.version,
-        expectedTaskRevision: snapshot.task.revision,
-        ...(action === "finalize" && skip ? { skipChecks: true } : {}),
-      }),
-    );
-  const openFile = async (id: string) => {
-    if (activeMutation.current) return;
-    activeMutation.current = `file:${id}`;
-    setBusy(`file:${id}`);
-    setError("");
+      } while (mounted.current && needsSnapshot.current);
+    })();
+    readPromise.current = operation;
     try {
-      setPreviewFile(
-        await conversationGitApi.file(
+      await operation;
+    } finally {
+      if (readPromise.current === operation) readPromise.current = null;
+    }
+  }, [
+    owner,
+    publish,
+    restoreManifest,
+    reference.objectId,
+    reference.projectId,
+    reference.sessionId,
+  ]);
+
+  const readFile = useCallback(
+    async (id: string, background = false) => {
+      if (!mounted.current || !owner) return;
+      fileController.current?.abort();
+      const controller = new AbortController();
+      fileController.current = controller;
+      if (!background) setBusy(`file:${id}`);
+      try {
+        const next = await conversationGitApi.file(
           reference.sessionId,
           reference.objectId,
           id,
-        ),
+          controller.signal,
+        );
+        if (
+          mounted.current &&
+          !controller.signal.aborted &&
+          (!background || fileRef.current?.id === id)
+        )
+          setSelectedFile(next);
+        return next;
+      } catch (cause) {
+        if (mounted.current && !controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (fileController.current === controller)
+          fileController.current = null;
+        if (mounted.current && !background)
+          setBusy((current) => (current === `file:${id}` ? "" : current));
+      }
+    },
+    [owner, reference.objectId, reference.sessionId, setSelectedFile],
+  );
+
+  const invalidateOpenFile = useCallback(() => {
+    fileRefreshPending.current = true;
+    const refresh = async () => {
+      fileRefreshTimer.current = null;
+      if (!mounted.current || !fileRef.current) {
+        fileRefreshPending.current = false;
+        return;
+      }
+      if (fileRefreshBusy.current) return;
+      fileRefreshBusy.current = true;
+      fileRefreshPending.current = false;
+      try {
+        await readFile(fileRef.current.id, true);
+      } finally {
+        fileRefreshBusy.current = false;
+        if (fileRefreshPending.current && mounted.current)
+          fileRefreshTimer.current = setTimeout(() => void refresh(), 250);
+      }
+    };
+    if (!fileRefreshTimer.current && !fileRefreshBusy.current)
+      fileRefreshTimer.current = setTimeout(() => void refresh(), 250);
+  }, [readFile]);
+
+  useEffect(() => {
+    mounted.current = true;
+    const release = owner
+      ? addSessionLiveListener(reference.sessionId, (event) => {
+          if (event.type === "domain_reconnected") {
+            void load();
+            return;
+          }
+          if (
+            event.type !== "conversation_git_state" ||
+            event.taskId !== reference.objectId
+          )
+            return;
+          const previous = latestEvent.current;
+          const authoritative = snapshotRef.current;
+          if (
+            authoritative &&
+            (event.taskRevision < authoritative.task.revision ||
+              (event.taskRevision === authoritative.task.revision &&
+                event.mrVersion < authoritative.mr.version))
+          )
+            return;
+          if (
+            authoritative &&
+            event.taskRevision > authoritative.task.revision &&
+            event.mrVersion < authoritative.mr.version
+          ) {
+            // A replan creates a new MR whose local version starts again.
+            // A small event cannot identify that binding; obtain its snapshot.
+            void load();
+            return;
+          }
+          if (
+            previous &&
+            (event.taskRevision < previous.taskRevision ||
+              (event.taskRevision === previous.taskRevision &&
+                event.eventSeq <= previous.eventSeq))
+          )
+            return;
+          const mergedEvent = event;
+          latestEvent.current = mergedEvent;
+          if (event.files) {
+            fileIndex.current.replace(event.files, event.taskRevision);
+            hasFileManifest.current = true;
+            fullManifestRevision.current = event.taskRevision;
+            for (const [id, change] of pendingFileChanges.current)
+              if (change.revision <= event.taskRevision)
+                pendingFileChanges.current.delete(id);
+          }
+          if (event.changedFiles)
+            fileIndex.current.update(event.changedFiles, event.taskRevision);
+          if (event.changedFiles)
+            for (const changed of event.changedFiles)
+              pendingFileChanges.current.set(changed.id, {
+                file: changed,
+                revision: event.taskRevision,
+              });
+          stateEventPending.current = mergedEvent;
+          const flushEvent = () => {
+            const pending = stateEventPending.current;
+            stateEventPending.current = null;
+            if (pending && snapshotRef.current)
+              publish(applyMergeState(snapshotRef.current, pending));
+          };
+          if (
+            terminal.has(event.status) ||
+            [
+              "paused",
+              "waiting_user",
+              "failed",
+              "recovery_required",
+              "cancelling",
+            ].includes(event.execution?.status ?? "")
+          ) {
+            cancelAnimationFrame(eventFrame.current);
+            eventFrame.current = 0;
+            flushEvent();
+          } else if (!eventFrame.current) {
+            eventFrame.current = requestAnimationFrame(() => {
+              eventFrame.current = 0;
+              if (mounted.current) flushEvent();
+            });
+          }
+          // One authoritative receipt load at a terminal transition, never per progress event.
+          if (terminal.has(event.status) && previous?.status !== event.status)
+            void load();
+          // File bodies are loaded only for an open file and only after an actual file-list invalidation.
+          if (
+            fileRef.current &&
+            (event.files || event.changedFileIds?.includes(fileRef.current.id))
+          )
+            invalidateOpenFile();
+        })
+      : () => {};
+    void load();
+    return () => {
+      mounted.current = false;
+      release();
+      readController.current?.abort();
+      fileController.current?.abort();
+      cancelAnimationFrame(eventFrame.current);
+      stateEventPending.current = null;
+      if (fileRefreshTimer.current) clearTimeout(fileRefreshTimer.current);
+      fileRefreshTimer.current = null;
+      fileRefreshPending.current = false;
+    };
+  }, [
+    invalidateOpenFile,
+    load,
+    owner,
+    publish,
+    restoreManifest,
+    reference.objectId,
+    reference.sessionId,
+  ]);
+
+  const action = async (name: "pause" | "resume" | "cancel") => {
+    if (readOnly || !owner || mutation.current || !snapshotRef.current) return;
+    mutation.current = true;
+    setBusy(name === "resume" && draftFlush.current ? "saving" : name);
+    setCancelOpen(false);
+    setError("");
+    try {
+      if (
+        name === "resume" &&
+        draftFlush.current &&
+        !(await draftFlush.current())
+      )
+        return;
+      setBusy(name);
+      const current = snapshotRef.current;
+      if (!current) return;
+      const next = await conversationGitApi.action(
+        reference.sessionId,
+        reference.objectId,
+        {
+          action: name,
+          requestId: crypto.randomUUID(),
+          expectedVersion: current.mr.version,
+          expectedTaskRevision: current.task.revision,
+        },
       );
+      ingest(reference.sessionId, next.messages);
+      refreshWorkspace(reference.sessionId, reference.rootId);
+      if (!mounted.current) return;
+      restoreManifest(next);
+      publish(chooseMergeSnapshot(snapshotRef.current, next));
+      if (next.task.mrId !== current.task.mrId || terminal.has(next.mr.status))
+        setSelectedFile(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (mounted.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        void load();
+      }
     } finally {
-      activeMutation.current = "";
+      mutation.current = false;
       if (mounted.current) setBusy("");
     }
   };
-  const saveFile = async (
-    input: Parameters<
-      NonNullable<ComponentProps<typeof FileViewerDialog>["onSave"]>
-    >[0],
-    selected = file ?? previewFile,
-  ) => {
-    if (!selected || !snapshot || readOnly || !owner || snapshot.stale)
-      throw new Error("当前任务不可修改。");
-    generation.current++;
+  const saveFile = async (input: MergeFileSave) => {
+    const current = snapshotRef.current,
+      selected = fileRef.current;
+    if (
+      !current ||
+      !selected ||
+      readOnly ||
+      !owner ||
+      current.stale ||
+      (current.execution && !stopped.has(current.execution.status))
+    )
+      throw new Error("请先停止智能合并后再编辑结果。");
     const next = await conversationGitApi.saveFile(
       reference.sessionId,
       reference.objectId,
       selected.id,
       {
         ...input,
-        expectedVersion: snapshot.mr.version,
-        expectedTaskRevision: snapshot.task.revision,
-        requestId: newRequestId(),
+        resolve: false,
+        expectedVersion: current.mr.version,
+        expectedTaskRevision: current.task.revision,
+        requestId: crypto.randomUUID(),
       },
     );
-    generation.current++;
-    setSnapshot(next);
+    ingest(reference.sessionId, next.messages);
     refreshWorkspace(reference.sessionId, reference.rootId);
-    ingestMessages(reference.sessionId, next.messages);
-    try {
-      const updated = await conversationGitApi.file(
-        reference.sessionId,
-        reference.objectId,
-        selected.id,
+    if (mounted.current) {
+      restoreManifest(next);
+      publish(chooseMergeSnapshot(snapshotRef.current, next));
+    }
+    const updated = await readFile(selected.id, true);
+    if (!updated)
+      throw new Error(
+        "草稿已写入，但最新文件版本暂不可读。请保留当前编辑并重试。",
       );
-      setPreviewFile(updated);
-      if (!input.resolve && file?.id === selected.id) setFile(updated);
-    } catch {
-      setPreviewFile(null);
-      setFile(null);
-      setError("文件已保存，最新预览暂时无法读取，请重新打开文件后继续。");
-    }
-  };
-  const saveInline = async (input: Parameters<typeof saveFile>[0]) => {
-    if (!previewFile || activeMutation.current) return;
-    activeMutation.current = "save";
-    setBusy("save");
-    setError("");
-    try {
-      await saveFile(input, previewFile);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      await load(true);
-    } finally {
-      activeMutation.current = "";
-      if (mounted.current) setBusy("");
-    }
-  };
-  const applyProposal = async (proposalId: string) => {
-    const next = await mutate("proposal", () =>
-      conversationGitApi.applyProposal(
-        reference.sessionId,
-        reference.objectId,
-        {
-          proposalId,
-          expectedVersion: mr.version,
-          expectedTaskRevision: snapshot.task.revision,
-          requestId: newRequestId(),
-        },
-      ),
-    );
-    if (next && previewFile) {
-      setAppliedProposalId(proposalId);
-      await openFile(previewFile.id);
-    }
-  };
-  const assistantPrompt = (text: string) => {
-    if (!owner || readOnly) return;
-    void submitInput(reference.sessionId, {
-      message: `${text}\n任务对象：${reference.objectId}`,
-      prompt: `${text}\n请只修改当前 Git 合并任务对象 ${reference.objectId}，不要创建新的合并任务。`,
-      messageSource: "system_injection",
-    }).catch((cause) =>
-      setError(cause instanceof Error ? cause.message : String(cause)),
-    );
+    return { revision: updated.revision };
   };
 
+  const presentation = useMemo(
+    () => (snapshot ? taskPresentation({ ...snapshot, files: [] }) : null),
+    [snapshot?.mr, snapshot?.stale],
+  );
+  if (!owner)
+    return (
+      <section className="conversation-git-card" aria-label="Git合并任务">
+        <CircleAlert size={15} />
+        <span>此任务属于另一个会话，请返回任务所属会话。</span>
+      </section>
+    );
+  if (!snapshot)
+    return (
+      <section
+        className="conversation-git-card"
+        role={error || readError ? "alert" : "status"}
+      >
+        {loading ? (
+          <>
+            <LoaderCircle className="conversation-git-spin" size={15} />
+            正在加载合并任务…
+          </>
+        ) : (
+          <>
+            {error || readError || "合并任务不可用。"}
+            <Button onClick={() => void load()}>继续</Button>
+          </>
+        )}
+      </section>
+    );
+  const { mr, execution } = snapshot;
+  if (!presentation) return null;
+  const cleanupPending = execution?.status === "cancelled_cleanup_pending";
+  const finished =
+    !cleanupPending &&
+    (terminal.has(mr.status) ||
+      execution?.status === "cancelled" ||
+      execution?.status === "completed");
+  const canResume =
+    !execution || stopped.has(execution.status) || cleanupPending;
+  const moving =
+    !!execution &&
+    ["queued", "running", "pausing", "cancelling"].includes(execution.status);
+  const status = execution
+    ? executionLabels[execution.status]
+    : presentation.status;
+  const applying = execution?.phase === "applying" || mr.status === "applying";
+  const readonlyFile =
+    readOnly ||
+    snapshot.stale ||
+    (!!execution && !stopped.has(execution.status)) ||
+    !file?.conflicted ||
+    ["resume", "pause", "cancel"].includes(busy);
+  const controls =
+    !readOnly && !finished ? (
+      <div
+        className="conversation-git-control"
+        role="group"
+        aria-label="智能合并控制"
+      >
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={
+            (!!busy && !busy.startsWith("file:")) ||
+            ["pausing", "cancelling"].includes(execution?.status ?? "") ||
+            applying
+          }
+          onClick={() => void action(canResume ? "resume" : "pause")}
+        >
+          {canResume ? <Play size={13} /> : <Pause size={13} />}
+          {cleanupPending
+            ? "重试清理"
+            : execution?.status === "pausing"
+              ? "正在停止"
+              : execution?.status === "cancelling"
+                ? "正在取消"
+                : canResume
+                  ? "继续"
+                  : "停止"}
+        </Button>
+        {!cleanupPending && (
+          <Button
+            size="sm"
+            variant="danger-soft"
+            disabled={
+              applying || execution?.status === "cancelling" || mutation.current
+            }
+            onClick={() => setCancelOpen(true)}
+          >
+            <X size={13} />
+            取消
+          </Button>
+        )}
+      </div>
+    ) : null;
   const content = (
     <section
-      className={`conversation-git-card conversation-git-card--${tone} ${focused ? "is-focused" : ""}`}
+      className="conversation-git-card conversation-git-card--window"
       aria-label={`Git合并任务：${reference.title}`}
-      aria-busy={presentation.running || !!busy}
       data-object-id={reference.objectId}
     >
       <header className="conversation-git-card__header">
         <div className="conversation-git-card__title">
           <span className="conversation-git-card__icon">
-            <GitPullRequestIcon />
+            <GitBranch size={18} />
           </span>
           <div>
             <h3>{reference.title}</h3>
@@ -415,24 +590,26 @@ export function ConversationGitCard({
         </div>
         <div className="conversation-git-card__header-actions">
           <span
-            className={`conversation-git-status conversation-git-status--${tone}`}
+            className="conversation-git-status"
             role="status"
             aria-live="polite"
           >
-            <i />
-            {snapshot.stale ? "需要重新分析" : presentation.status}
+            {moving && (
+              <LoaderCircle className="conversation-git-spin" size={13} />
+            )}
+            {status}
           </span>
           <button
             className="conversation-git-icon-button"
             aria-label={focused ? "退出专注视图" : "展开专注视图"}
-            onClick={() => setFocused(!focused)}
+            onClick={() => setFocused((value) => !value)}
           >
             <Maximize2 size={14} />
           </button>
           <button
             className="conversation-git-icon-button"
             aria-label={collapsed ? "展开合并任务" : "折叠合并任务"}
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={() => setCollapsed((value) => !value)}
           >
             {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
           </button>
@@ -440,346 +617,135 @@ export function ConversationGitCard({
       </header>
       {!collapsed && (
         <>
-          <CommitGraph
-            commits={snapshot.commits}
-            pendingMerge={
-              !presentation.terminal && !snapshot.stale
-                ? {
-                    key: mr.id,
-                    target: mr.target,
-                    sources: mr.steps.map((step) => step.branch),
-                    parents: [
-                      mr.targetOid,
-                      ...mr.steps.map((step) => step.oid),
-                    ],
-                    candidateOid: mr.candidateOid,
-                  }
-                : undefined
-            }
-            animate={!readOnly}
-          />
-          {(snapshot.stale ||
-            mr.status === "conflicted" ||
-            (mr.status !== "draft" && snapshot.files.length > 0)) && (
-            <section className="conversation-git-files">
-              <div className="conversation-git-section-heading">
-                <div>
-                  <FileDiff size={14} />
-                  <strong>
-                    {snapshot.stale
-                      ? "基线发生变化"
-                      : mr.status === "conflicted"
-                        ? "需要确认的冲突"
-                        : "已锁定的解决方案"}
-                  </strong>
-                  <span>{presentation.conflicts} 个冲突</span>
-                </div>
-                <span className="conversation-git-readonly-label">
-                  {snapshot.stale || mr.status !== "conflicted"
-                    ? "只读·点击回看"
-                    : "可编辑"}
-                </span>
-              </div>
-              {snapshot.stale ? (
-                <div className="conversation-git-stale">
-                  <p>
-                    {snapshot.staleReason ||
-                      "目标或来源分支已移动，旧候选不能继续发布。"}
-                  </p>
-                  <Button
-                    size="sm"
-                    disabled={readOnly || !!busy || presentation.running}
-                    onClick={() => doAction("replan")}
-                  >
-                    <RefreshCw size={13} />
-                    重新分析
-                  </Button>
-                </div>
-              ) : (
-                snapshot.files.map((item) => (
-                  <div key={item.id}>
-                    <button
-                      className="conversation-git-file-row"
-                      onClick={() =>
-                        previewFile?.id === item.id
-                          ? setPreviewFile(null)
-                          : void openFile(item.id)
-                      }
-                      disabled={!!busy}
-                    >
-                      <Code2 size={14} />
-                      <span>{item.path}</span>
-                      <span
-                        className={
-                          item.conflicted ? "is-conflicted" : "is-resolved"
-                        }
-                      >
-                        {item.conflicted ? "冲突" : "已解决"}
-                      </span>
-                      <ChevronRight size={13} />
-                    </button>
-                    {previewFile?.id === item.id && (
-                      <ConflictPreview
-                        file={previewFile}
-                        mr={mr}
-                        proposals={snapshot.proposals}
-                        appliedProposalId={appliedProposalId}
-                        blocked={!canWrite || presentation.running}
-                        onSave={(input) => void saveInline(input)}
-                        onEdit={() => setFile(previewFile)}
-                        onApplyProposal={(proposal) =>
-                          void applyProposal(proposal.id)
-                        }
-                        onAsk={() =>
-                          assistantPrompt(
-                            `请读取当前任务文件 ${item.path}（fileId=${item.id}），为冲突生成或修改有理由的解决建议，保存提案供我审阅，不要应用或合并。`,
-                          )
-                        }
-                      />
-                    )}
-                  </div>
-                ))
-              )}
-            </section>
-          )}
-          {mr.error && mr.status !== "check_failed" && (
-            <p className="conversation-git-inline-error" role="alert">
-              {mr.error}
-            </p>
-          )}
-          {mr.status === "check_failed" && (
-            <div className="conversation-git-error" role="alert">
-              <CircleAlert size={14} />
-              <div>
-                <strong>检查未通过</strong>
-                <span>
-                  {mr.checkResults
-                    .filter((item) => item.status === "failed")
-                    .map((item) => item.output)
-                    .join("\n") ||
-                    mr.error ||
-                    "候选内容需要修复后重试。"}
-                </span>
-              </div>
+          <div
+            className="conversation-git-body"
+            role="region"
+            aria-label="合并任务内容"
+            tabIndex={0}
+          >
+            <div className="conversation-git-progress">
+              <strong>
+                {execution ? phaseLabels[execution.phase] : status}
+              </strong>
+              <span>
+                {fileIndex.current.ids.length - fileIndex.current.conflicts}/
+                {fileIndex.current.ids.length} 个文件已处理
+              </span>
+              <p>
+                {execution?.summary ||
+                  (moving
+                    ? "合并助手正在检查并处理候选变更。"
+                    : "点击文件查看合并结果。")}
+              </p>
             </div>
-          )}
-          {mr.checks.length > 0 && (
-            <section className="conversation-git-checks">
-              <div className="conversation-git-section-heading">
-                <div>
+            {fileIndex.current.ids.length > 0 && (
+              <section className="conversation-git-files">
+                <div className="conversation-git-section-heading">
+                  <div>
+                    <FileDiff size={14} />
+                    <strong>合并文件</strong>
+                    <span>{fileIndex.current.conflicts} 个冲突</span>
+                  </div>
+                  <span>点击打开编辑器</span>
+                </div>
+                <VirtualList
+                  items={fileIndex.current.ids}
+                  getKey={(id) => id}
+                  label="合并文件列表"
+                  rowHeight={38}
+                  maxHeight={266}
+                  renderRow={(id) => {
+                    const item = fileIndex.current.byId.get(id)!;
+                    return (
+                      <button
+                        className="conversation-git-file-row"
+                        onClick={() => void readFile(item.id)}
+                        aria-haspopup="dialog"
+                        title={item.path}
+                      >
+                        <Code2 size={14} />
+                        <span>{item.path}</span>
+                        <span
+                          className={
+                            item.conflicted ? "is-conflicted" : "is-resolved"
+                          }
+                        >
+                          {item.conflicted ? "冲突" : "已解决"}
+                        </span>
+                        {busy === `file:${item.id}` ? (
+                          <LoaderCircle
+                            className="conversation-git-spin"
+                            size={13}
+                          />
+                        ) : (
+                          <ChevronRight size={13} />
+                        )}
+                      </button>
+                    );
+                  }}
+                />
+              </section>
+            )}
+            {snapshot.stale && (
+              <p className="conversation-git-inline-error" role="alert">
+                {snapshot.staleReason || "分支基线已更新，继续时将重新核验。"}
+              </p>
+            )}
+            {(execution?.error || mr.error || error || readError) && (
+              <p className="conversation-git-inline-error" role="alert">
+                {error || execution?.error || mr.error || readError}
+              </p>
+            )}
+            {mr.checks.length > 0 && (
+              <details className="conversation-git-checks">
+                <summary>
                   <CheckCircle2 size={14} />
-                  <strong>验证检查</strong>
+                  验证检查 · {presentation.passed}/{mr.checks.length}
+                </summary>
+                <VirtualCheckResults results={presentation.results} />
+              </details>
+            )}
+            {presentation.complete && (
+              <div className="conversation-git-receipt">
+                <GitMerge size={18} />
+                <div>
+                  <strong>
+                    {mr.status === "noop"
+                      ? "分支已包含这些变更"
+                      : `已合并到 ${mr.target}`}
+                  </strong>
                   <span>
-                    {presentation.passed}/{mr.checks.length} 通过
+                    候选提交{" "}
+                    <code>
+                      {mr.candidateOid?.slice(0, 12) ??
+                        mr.targetOid.slice(0, 12)}
+                    </code>{" "}
+                    · 结果已保存
                   </span>
                 </div>
-                <span>{mr.status === "checking" ? "运行中…" : "真实命令"}</span>
               </div>
-              {presentation.results.map(({ check, result, current }) => (
-                <details key={check.id}>
-                  <summary>
-                    <strong>{check.id}</strong>
-                    <span>
-                      {!result
-                        ? "待运行"
-                        : !current
-                          ? "已过期"
-                          : result.status === "passed"
-                            ? "通过"
-                            : "失败"}
-                    </span>
-                  </summary>
-                  <p className="conversation-git-check-command">
-                    <code>
-                      {check.executable} {check.args.join(" ")}
-                    </code>
-                    <span>{check.timeoutMs.toLocaleString()} ms timeout</span>
-                  </p>
-                  {result && <pre>{result.output || "（无输出）"}</pre>}
-                </details>
-              ))}
-            </section>
-          )}
-          {!hasChecks && ["ready", "check_failed"].includes(mr.status) && (
-            <p className="conversation-git-no-checks">
-              <CircleAlert size={14} />
-              未配置验证检查。请审阅候选变更，再明确确认跳过检查后更新目标。
-            </p>
-          )}
-          {mr.skippedChecks && (
-            <p className="conversation-git-no-checks">已由用户明确跳过验证。</p>
-          )}
-          {presentation.complete && (
-            <div className="conversation-git-receipt">
-              <GitMerge size={18} />
-              <div>
-                <strong>
-                  {mr.status === "noop"
-                    ? "分支已经包含这些变更"
-                    : `已合并到 ${mr.target}`}
-                </strong>
-                <span>
-                  候选提交{" "}
-                  <code>
-                    {mr.candidateOid?.slice(0, 12) ?? mr.targetOid.slice(0, 12)}
-                  </code>{" "}
-                  · 操作已保存到对话
-                </span>
-              </div>
-            </div>
-          )}
-          {mr.events.length > 0 && (
-            <details className="conversation-git-events">
-              <summary>操作记录 · {mr.events.length} 条</summary>
-              <ol>
-                {mr.events.map((event, index) => (
-                  <li key={`${event.at}:${index}`}>
-                    <time>{new Date(event.at).toLocaleString()}</time>
-                    <span>{event.message}</span>
-                  </li>
-                ))}
-              </ol>
-            </details>
-          )}
+            )}
+            {snapshot.commits.length > 0 && (
+              <details className="conversation-git-history">
+                <summary>提交关系</summary>
+                <CommitGraph commits={snapshot.commits} animate={false} />
+              </details>
+            )}
+          </div>
           <footer className="conversation-git-footer">
-            <div className="conversation-git-footer-status">
-              {presentation.running && (
-                <LoaderCircle className="conversation-git-spin" size={14} />
-              )}
-              {mr.status === "draft"
-                ? "尚未创建候选工作树"
-                : mr.status === "conflicted"
-                  ? `${presentation.conflicts} 个文件待解决`
-                  : mr.status === "merged"
-                    ? "已更新目标分支 · 不推送远端"
-                    : mr.status === "ready"
-                      ? hasChecks
-                        ? presentation.passed === mr.checks.length
-                          ? "检查通过，等待确认合并"
-                          : "候选已准备，可验证或跳过验证后合并"
-                        : "候选已准备，等待跳过检查的确认"
-                      : presentation.status}
-            </div>
-            <div className="conversation-git-actions">
-              {runLabel && (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={
-                    !canWrite ||
-                    (mr.status === "conflicted" && presentation.conflicts > 0)
-                  }
-                  onClick={() =>
-                    doAction(
-                      mr.status === "draft"
-                        ? "prepare"
-                        : mr.status === "conflicted"
-                          ? "continue"
-                          : "checks",
-                    )
-                  }
-                >
-                  {presentation.running && (
-                    <LoaderCircle className="conversation-git-spin" size={13} />
-                  )}
-                  {runLabel}
-                </Button>
-              )}
-              {mr.status === "ready" && hasChecks && (
-                <Button
-                  size="sm"
-                  disabled={!canWrite}
-                  onClick={() => doAction("checks")}
-                >
-                  {mr.checkResults.length ? "重新运行检查" : "运行检查"}
-                </Button>
-              )}
-              {["failed", "interrupted"].includes(mr.status) &&
-                !snapshot.stale && (
-                  <Button
-                    size="sm"
-                    disabled={readOnly || !!busy}
-                    onClick={() => doAction("resume")}
-                  >
-                    <RotateCcw size={13} />
-                    核验并恢复
-                  </Button>
-                )}
-              {["ready", "check_failed"].includes(mr.status) && hasChecks && (
-                <Button
-                  size="sm"
-                  variant="primary"
-                  disabled={!canWrite}
-                  onClick={() => {
-                    setSkipChecks(false);
-                    setConfirmFinalize(true);
-                  }}
-                >
-                  <GitMerge size={13} />
-                  确认更新 {mr.target}
-                </Button>
-              )}
-              {mr.status === "ready" && !hasChecks && (
-                <Button
-                  size="sm"
-                  disabled={!canWrite}
-                  onClick={() => {
-                    setSkipChecks(false);
-                    setConfirmFinalize(true);
-                  }}
-                >
-                  确认跳过检查
-                </Button>
-              )}
-              {!["merged", "noop", "cancelled"].includes(mr.status) && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={
-                    readOnly ||
-                    busy === "cancel" ||
-                    (!!busy && mr.status !== "checking") ||
-                    ["preparing", "applying"].includes(mr.status)
-                  }
-                  onClick={() => doAction("cancel")}
-                >
-                  <X size={13} />
-                  取消
-                </Button>
-              )}
-            </div>
+            <span>
+              {applying
+                ? "正在更新目标，完成后将显示真实结果"
+                : finished
+                  ? status
+                  : execution?.joinMode === "async"
+                    ? "合并助手在后台运行"
+                    : "主会话正在等待合并助手"}
+            </span>
+            {!file && controls}
           </footer>
-          {error && (
-            <div className="conversation-git-inline-error" role="alert">
-              <span>{error}</span>
-              <Button size="xs" variant="ghost" onClick={() => void load()}>
-                刷新状态
-              </Button>
-            </div>
-          )}
         </>
       )}
-      {collapsed && (
-        <button
-          className="conversation-git-collapsed"
-          onClick={() => setCollapsed(false)}
-        >
-          <GitMerge size={14} />
-          {presentation.status} · {snapshot.files.length} 个文件
-          <span>
-            展开 <ChevronDown size={13} />
-          </span>
-        </button>
-      )}
-      <div className="conversation-git-caption">
-        <span>
-          <i />
-          {readOnly ? "历史回看 · 只读" : "当前合并任务"}
-          {snapshot.task.previousMrIds.length > 0 &&
-            ` · 已重新分析 ${snapshot.task.previousMrIds.length} 次`}
-        </span>
-        <span>目标：{mr.target}</span>
-      </div>
     </section>
   );
   return (
@@ -791,7 +757,6 @@ export function ConversationGitCard({
         >
           <GitMerge size={14} />
           合并任务正在专注视图中显示
-          <ArrowRight size={13} />
         </button>
       ) : (
         content
@@ -803,72 +768,60 @@ export function ConversationGitCard({
               <DialogTitle>{reference.title}</DialogTitle>
               <Button
                 iconOnly
-                size="sm"
-                variant="ghost"
                 aria-label="关闭专注视图"
                 onClick={() => setFocused(false)}
               >
                 <X size={15} />
               </Button>
             </div>
-            <div className="conversation-git-focus-body">{content}</div>
-          </DialogPanel>
-        </Dialog>
-      )}
-      {confirmFinalize && (
-        <Dialog open onClose={() => setConfirmFinalize(false)}>
-          <DialogPanel className="conversation-git-confirm">
-            <DialogTitle>确认更新 {mr.target}</DialogTitle>
-            <p>
-              {!hasChecks && (
-                <strong>本任务没有配置检查，本次确认将跳过验证。 </strong>
-              )}
-              将候选提交 <code>{mr.candidateOid?.slice(0, 12)}</code> 更新到本地{" "}
-              <strong>{mr.target}</strong>。服务端会再次检查分支版本与候选树。
-            </p>
-            {hasChecks && !presentation.canFinalize && (
-              <label className="conversation-git-skip-confirm">
-                <Checkbox checked={skipChecks} onChange={setSkipChecks} />
-                跳过验证检查，我已审阅候选改动
-              </label>
-            )}
-            <div>
-              <Button onClick={() => setConfirmFinalize(false)}>
-                返回检查
-              </Button>
-              <Button
-                variant="primary"
-                disabled={
-                  !canWrite ||
-                  (hasChecks && !presentation.canFinalize && !skipChecks)
-                }
-                onClick={() => doAction("finalize", skipChecks)}
-              >
-                确认更新本地 {mr.target}
-              </Button>
-            </div>
+            {content}
           </DialogPanel>
         </Dialog>
       )}
       {file && (
         <FileViewerDialog
           file={file}
-          readOnly={
-            readOnly ||
-            snapshot.stale ||
-            mr.status !== "conflicted" ||
-            !file.conflicted ||
-            !!busy
-          }
-          onClose={() => setFile(null)}
+          managed
+          readOnly={readonlyFile}
+          onClose={() => {
+            fileController.current?.abort();
+            setSelectedFile(null);
+          }}
           onSave={saveFile}
+          readSlice={(side, byteOffset, maxBytes, expectedRevision, signal) =>
+            conversationGitApi.fileSlice(
+              reference.sessionId,
+              reference.objectId,
+              file.id,
+              { side, byteOffset, maxBytes, expectedRevision },
+              signal,
+            )
+          }
+          controls={controls}
+          registerDraftFlush={(flush) => {
+            draftFlush.current = flush;
+          }}
         />
+      )}
+      {cancelOpen && (
+        <Dialog open onClose={() => setCancelOpen(false)}>
+          <DialogPanel className="conversation-git-confirm">
+            <DialogTitle>取消此次合并？</DialogTitle>
+            <p>取消会停止合并助手并放弃候选合并，目标分支不会被回退。</p>
+            <div>
+              <Button onClick={() => setCancelOpen(false)}>继续合并</Button>
+              <Button
+                variant="danger"
+                disabled={mutation.current}
+                onClick={() => void action("cancel")}
+              >
+                确认取消
+              </Button>
+            </div>
+          </DialogPanel>
+        </Dialog>
       )}
     </>
   );
 }
-function GitPullRequestIcon() {
-  return <GitBranch size={18} />;
-}
-
 export default ConversationGitCard;

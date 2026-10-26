@@ -1,13 +1,14 @@
 import "../../features/agent-workspace/sessionPerformance.css";
 import "../../features/agent-workspace/workPage.css";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useState } from "react";
 import { Plus } from "lucide-react";
-import { Dialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogTitle, DialogBody } from "@/shared/ui/ui/Dialog";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import type { AgentSession } from "../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
 import { useSessionDetailPolling } from "../../features/agent-workspace/useSessionDetailPolling";
 import { useSessionLiveStream } from "../../features/agent-workspace/useSessionLiveStream";
+import { hasRunRealtimeObservation } from "../../adapters/transport/runRealtime";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { WorkQuickActions } from "../../features/agent-workspace/WorkQuickActions";
 import { SessionTranscript } from "../../features/agent-workspace/SessionTranscript";
@@ -16,16 +17,27 @@ import { AgentCommandRail } from "../../features/agent-workspace/AgentCommandRai
 import { SessionWorkspacePanel } from "../../features/agent-workspace/SessionWorkspacePanel";
 import { WorkspaceWidgetDock } from "../../features/agent-workspace/WorkspaceWidgetDock";
 import { SubagentConversationPanel } from "../../features/agent-workspace/SubagentConversationPanel";
+import { SideChatPanel } from "../../features/agent-workspace/SideChatPanel";
 import { SessionListPanel } from "../../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../../features/agent-workspace/SessionComposer";
-import { SessionPanelCollapseButton } from "../../features/agent-workspace/SessionPanelCollapseButton";
 import { useSessionRouteSync } from "../../features/agent-workspace/useSessionRouteSync";
 import {
   isNewSessionPath,
   newSessionPath,
 } from "../../features/agent-workspace/sessionRoutes";
 import type { SessionListView } from "../../features/agent-workspace/sessionBuckets";
-import { useSessionWorkspace } from "../../features/agent-workspace/state/sessionWorkspaceStore";
+import {
+  useSessionWorkspace,
+  useSessionWorkspaceStore,
+} from "../../features/agent-workspace/state/sessionWorkspaceStore";
+import {
+  SessionSidePanel,
+  type SessionSidePanelView,
+} from "../../features/agent-workspace/SessionSidePanel";
+import {
+  MAIN_CONTENT_MIN,
+  useResizablePanel,
+} from "../../features/agent-workspace/useResizablePanel";
 import { useMediaQuery } from "../../shared/hooks/useMediaQuery";
 
 const LEFT_PANEL_DEFAULT = 260;
@@ -34,12 +46,10 @@ const LEFT_PANEL_MAX = 420;
 const RIGHT_PANEL_DEFAULT = 300;
 const RIGHT_PANEL_MIN = 240;
 const RIGHT_PANEL_MAX = 960;
-const MAIN_CONTENT_MIN = 320;
 const LEFT_PANEL_STORAGE_KEY = "synax-sessions-left-panel";
 const RIGHT_PANEL_STORAGE_KEY = "synax-sessions-right-panel";
 const SIDEBAR_VIEW_STORAGE_KEY = "synax-sessions-sidebar-view";
 
-type PanelSide = "left" | "right";
 type SidebarView = "sessions" | "workspace";
 
 function readSidebarView(): SidebarView {
@@ -49,115 +59,10 @@ function readSidebarView(): SidebarView {
     : "sessions";
 }
 
-function readPanelWidth(
-  key: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  if (typeof window === "undefined") return fallback;
-  const raw = window.localStorage.getItem(key);
-  // `Number(null)` is 0, which used to pin first-load panels to their minimum
-  // width instead of the default. Only a real, non-empty value wins.
-  if (raw === null || raw.trim() === "") return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value)
-    ? Math.min(max, Math.max(min, value))
-    : fallback;
-}
-
-function useResizablePanel(
-  side: PanelSide,
-  defaultWidth: number,
-  min: number,
-  max: number,
-) {
-  const storageKey =
-    side === "left" ? LEFT_PANEL_STORAGE_KEY : RIGHT_PANEL_STORAGE_KEY;
-  const [width, setWidth] = useState(() =>
-    readPanelWidth(storageKey, defaultWidth, min, max),
-  );
-  const [collapsed, setCollapsed] = useState(false);
-  const [resizing, setResizing] = useState(false);
-  const dragRef = useRef<{
-    startX: number;
-    startWidth: number;
-    scale: number;
-  } | null>(null);
-
-  const cleanupRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => cleanupRef.current?.(), []);
-
-  const startResize = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (collapsed && side === "left") return;
-      event.preventDefault();
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-      cleanupRef.current?.();
-      setResizing(true);
-      const panel = event.currentTarget.parentElement!;
-      const scale =
-        panel.getBoundingClientRect().width / panel.offsetWidth || 1;
-      const startWidth = panel.offsetWidth || width;
-      dragRef.current = { startX: event.clientX, startWidth, scale };
-      const resizeMax = side === "right"
-        ? Math.min(max, Math.max(min, (panel.parentElement?.clientWidth ?? max + MAIN_CONTENT_MIN) - MAIN_CONTENT_MIN))
-        : max;
-      let nextWidth = startWidth;
-      let frame = 0;
-
-      const handleMove = (move: PointerEvent) => {
-        const drag = dragRef.current;
-        if (!drag) return;
-        const delta =
-          side === "left"
-            ? move.clientX - drag.startX
-            : drag.startX - move.clientX;
-        nextWidth = Math.min(
-          resizeMax,
-          Math.max(min, drag.startWidth + delta / drag.scale),
-        );
-        if (!frame)
-          frame = requestAnimationFrame(() => {
-            frame = 0;
-            setWidth(nextWidth);
-          });
-      };
-      const handleUp = () => {
-        if (frame) cancelAnimationFrame(frame);
-        setWidth(nextWidth);
-        try {
-          window.localStorage.setItem(storageKey, String(nextWidth));
-        } catch {
-          /* storage may be unavailable */
-        }
-        dragRef.current = null;
-        setResizing(false);
-        cleanupRef.current = null;
-        window.removeEventListener("pointercancel", handleUp);
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleUp);
-      };
-      cleanupRef.current = handleUp;
-      window.addEventListener("pointercancel", handleUp);
-      window.addEventListener("pointermove", handleMove);
-      window.addEventListener("pointerup", handleUp);
-    },
-    [collapsed, max, min, side, width, storageKey],
-  );
-
-  return { width, collapsed, resizing, setCollapsed, startResize };
-}
-
 export default memo(function SessionsPage() {
   useSessionDetailPolling();
   const { t, locale } = useLocale();
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  useEffect(() => {
-    const close = () => setDetailsOpen(false);
-    document.addEventListener("terminal:open", close);
-    return () => document.removeEventListener("terminal:open", close);
-  }, []);
+  const sidePanelId = useId();
   const navigate = useNavigate();
   const { projectId = "" } = useParams();
   const leftPanel = useResizablePanel(
@@ -165,12 +70,28 @@ export default memo(function SessionsPage() {
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
     LEFT_PANEL_MAX,
+    LEFT_PANEL_STORAGE_KEY,
   );
-  const rightPanel = useResizablePanel(
+  const widgetPanel = useResizablePanel(
     "right",
     RIGHT_PANEL_DEFAULT,
     RIGHT_PANEL_MIN,
     RIGHT_PANEL_MAX,
+    RIGHT_PANEL_STORAGE_KEY,
+  );
+  const subagentPanel = useResizablePanel(
+    "right",
+    RIGHT_PANEL_DEFAULT,
+    RIGHT_PANEL_MIN,
+    RIGHT_PANEL_MAX,
+    "synax-sessions-subagent-panel",
+  );
+  const sideChatPanel = useResizablePanel(
+    "right",
+    RIGHT_PANEL_DEFAULT,
+    RIGHT_PANEL_MIN,
+    RIGHT_PANEL_MAX,
+    "synax-sessions-side-chat-panel",
   );
   const [sidebarView, setSidebarView] = useState<SidebarView>(readSidebarView);
   useEffect(() => {
@@ -206,43 +127,66 @@ export default memo(function SessionsPage() {
       ? s.sessions.find((session) => session.id === id)?.status
       : undefined;
   });
+  const agentSession = useAgentSessionStore((s) => {
+    const id = s.selectedSessionId;
+    return id ? s.sessions.find((session) => session.id === id) : undefined;
+  });
   const workspaceState = useSessionWorkspace(agentSessionId);
   const selectedSubagent = workspaceState.subagent;
   const subagentFullscreen = Boolean(selectedSubagent?.fullscreen);
-  const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(null);
+  const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(
+    null,
+  );
   const [layoutWidth, setLayoutWidth] = useState(0);
+  const [sideChatOpen, setSideChatOpen] = useState(false);
+  const [sideChatSession, setSideChatSession] = useState<
+    AgentSession | undefined
+  >();
   useEffect(() => {
     if (!layoutElement) return;
     const measure = () => setLayoutWidth(layoutElement.clientWidth);
     measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
     observer?.observe(layoutElement);
     window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
   }, [layoutElement]);
-  const rightPanelWidth = layoutWidth > 0
-    ? Math.min(rightPanel.width, Math.max(RIGHT_PANEL_MIN, layoutWidth - MAIN_CONTENT_MIN))
-    : rightPanel.width;
+  const rightPanelMax =
+    layoutWidth > 0
+      ? Math.min(
+          RIGHT_PANEL_MAX,
+          Math.max(RIGHT_PANEL_MIN, layoutWidth - MAIN_CONTENT_MIN),
+        )
+      : RIGHT_PANEL_MAX;
   const hasWorkspaceContent = Boolean(workspaceState.activeTabId);
   const wideWorkspace = useMediaQuery("(min-width: 1280px)");
   const narrowWorkspace = useMediaQuery("(max-width: 767px)");
   useEffect(() => {
+    widgetPanel.setCollapsed(!wideWorkspace);
+  }, [wideWorkspace, widgetPanel.setCollapsed]);
+  useEffect(() => {
     if (narrowWorkspace) leftPanel.setCollapsed(true);
   }, [narrowWorkspace, leftPanel.setCollapsed]);
 
-  useEffect(
-    () => setDetailsOpen(false),
-    [
-      agentSessionId,
-      workspaceState.activeTabId,
-      workspaceState.tabs,
-      wideWorkspace,
-    ],
-  );
+  useEffect(() => {
+    setSideChatOpen(false);
+    setSideChatSession(undefined);
+  }, [agentSessionId]);
 
+  // A terminal session patch can arrive before the durable stream's final
+  // message record. Keep that stream attached until it clears its realtime
+  // ownership, then let the status-driven cleanup release it.
   const liveSession =
     agentPanelOpen &&
-    (agentSessionStatus === "running" ||
+    agentSessionId &&
+    (hasRunRealtimeObservation(agentSessionId) ||
+      agentSessionStatus === "running" ||
       agentSessionStatus === "waiting_permission" ||
       agentSessionStatus === "waiting_input")
       ? agentSessionId
@@ -258,31 +202,110 @@ export default memo(function SessionsPage() {
     workspaceState.presentation === "focus";
   const canCreateSession = listView === "sessions" && Boolean(projectId);
 
+  useEffect(() => {
+    if (selectedSubagent) setSideChatOpen(false);
+  }, [selectedSubagent?.sessionId]);
+
+  const sideChatVisible = Boolean(
+    showTranscript &&
+    sideChatOpen &&
+    agentSession &&
+    !workspaceFullscreen &&
+    !selectedSubagent,
+  );
+  const openSideChat = useCallback(() => {
+    if (!agentSessionId || !agentSession) return;
+    useSessionWorkspaceStore.getState().closeSubagent(agentSessionId);
+    setSideChatOpen(true);
+  }, [agentSession, agentSessionId]);
+
+  const sidePanelViews: SessionSidePanelView[] = [
+    {
+      id: "widgets",
+      label: locale === "zh" ? "工作组件" : "Work widgets",
+      presentation: "inset",
+      width: Math.min(widgetPanel.width, rightPanelMax),
+      collapsed: widgetPanel.collapsed,
+      resizing: widgetPanel.resizing,
+      onResize: widgetPanel.startResize,
+      onResizeKeyDown: widgetPanel.resizeWithKeyboard,
+      content: (
+        <WorkspaceWidgetDock sessionId={agentSessionId} scope={projectId} />
+      ),
+    },
+  ];
+  if (selectedSubagent && agentSessionId)
+    sidePanelViews.push({
+      id: "subagent",
+      label: locale === "zh" ? "子代理会话" : "Subagent conversation",
+      width: Math.min(subagentPanel.width, rightPanelMax),
+      fullscreen: subagentFullscreen,
+      resizing: subagentPanel.resizing,
+      onResize: subagentPanel.startResize,
+      onResizeKeyDown: subagentPanel.resizeWithKeyboard,
+      content: (
+        <SubagentConversationPanel
+          ownerSessionId={agentSessionId}
+          sessionId={selectedSubagent.sessionId}
+          title={selectedSubagent.title}
+        />
+      ),
+    });
+  if (sideChatOpen && agentSession)
+    sidePanelViews.push({
+      id: "side-chat",
+      label: t("sideChatTitle"),
+      width: Math.min(sideChatPanel.width, rightPanelMax),
+      resizing: sideChatPanel.resizing,
+      onResize: sideChatPanel.startResize,
+      onResizeKeyDown: sideChatPanel.resizeWithKeyboard,
+      content: (
+        <SideChatPanel
+          key={agentSession.id}
+          projectId={projectId}
+          parentSession={agentSession}
+          session={sideChatSession}
+          onClose={() => setSideChatOpen(false)}
+          onSessionReady={setSideChatSession}
+        />
+      ),
+    });
+  const activeSidePanelId = selectedSubagent
+    ? "subagent"
+    : sideChatVisible
+      ? "side-chat"
+      : !workspaceFullscreen
+        ? "widgets"
+        : null;
+  const activeSidePanel = sidePanelViews.find(
+    (view) => view.id === activeSidePanelId,
+  );
+  const sidePanelFullscreen = Boolean(activeSidePanel?.fullscreen);
   const commandRailLeft = leftPanel.collapsed ? 0 : leftPanel.width;
   const commandRailRight =
-    showTranscript && !narrowWorkspace && (selectedSubagent || (wideWorkspace && !workspaceFullscreen))
-      ? (selectedSubagent ? rightPanelWidth : rightPanel.collapsed ? 40 : rightPanelWidth)
+    showTranscript && !narrowWorkspace && activeSidePanel
+      ? activeSidePanel.collapsed
+        ? 0
+        : activeSidePanel.width
       : 0;
 
   return (
-    <div className="agent-page-shell work-page relative flex h-full min-h-0" data-subagent={showTranscript && selectedSubagent ? "true" : undefined} data-new-session-entry={location.state?.fromNewSession ? "true" : undefined}>
+    <div
+      className="agent-page-shell work-page relative flex h-full min-h-0"
+      data-subagent={showTranscript && selectedSubagent ? "true" : undefined}
+      data-side-panel={activeSidePanel ? "true" : undefined}
+      data-new-session-entry={
+        location.state?.fromNewSession ? "true" : undefined
+      }
+    >
       <>
         <aside
           className={`session-panel-host session-panel-host--left relative shrink-0 ${leftPanel.collapsed ? "overflow-visible" : "overflow-hidden"}`}
-          hidden={workspaceFullscreen || subagentFullscreen}
+          hidden={workspaceFullscreen || sidePanelFullscreen}
           data-collapsed={leftPanel.collapsed ? "true" : undefined}
           data-resizing={leftPanel.resizing ? "true" : undefined}
           style={{ width: leftPanel.collapsed ? 0 : leftPanel.width }}
         >
-          {/* While the panel is open the control lives next to the SynaxCode
-                title; the edge tab only exists to bring a collapsed panel back,
-                so it carries the Synax brand mark instead of a bare chevron. */}
-          {leftPanel.collapsed ? (
-            <SessionPanelCollapseButton
-              collapsed
-              onToggle={() => leftPanel.setCollapsed((value) => !value)}
-            />
-          ) : null}
           <div
             className="h-full"
             inert={leftPanel.collapsed}
@@ -292,9 +315,15 @@ export default memo(function SessionsPage() {
             <SessionListPanel
               listView={listView}
               projectId={projectId}
-              onCollapsePanel={() => leftPanel.setCollapsed(true)}
+              onTogglePanel={() => leftPanel.setCollapsed((value) => !value)}
+              collapsed={leftPanel.collapsed}
+              toolbarVisible={!workspaceFullscreen && !sidePanelFullscreen}
               sidebarView={sidebarView}
-              onSidebarViewChange={setSidebarView}
+              onSidebarViewChange={(view) => {
+                setSidebarView(view);
+                leftPanel.setCollapsed(false);
+              }}
+              hideHeaderActions
             />
             <div
               className="session-panel-resizer session-panel-resizer--left"
@@ -306,14 +335,16 @@ export default memo(function SessionsPage() {
         </aside>
 
         {showTranscript ? (
-          <div ref={setLayoutElement} className="work-session-layout" data-subagent-fullscreen={subagentFullscreen ? "true" : undefined}>
-            <div className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${subagentFullscreen ? "hidden" : "flex"}`}>
-              {agentSessionId && (
-                <WorkQuickActions
-                  showDetailsButton={!wideWorkspace || workspaceFullscreen}
-                  onShowDetails={() => setDetailsOpen(true)}
-                />
-              )}
+          <div
+            ref={setLayoutElement}
+            className="work-session-layout"
+            data-side-panel-fullscreen={
+              sidePanelFullscreen ? "true" : undefined
+            }
+          >
+            <div
+              className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${sidePanelFullscreen ? "hidden" : "flex"}`}
+            >
               <div
                 hidden={hasWorkspaceContent}
                 className={
@@ -334,22 +365,13 @@ export default memo(function SessionsPage() {
                 />
               )}
             </div>
-            {selectedSubagent && agentSessionId ? (
-              <aside className="subagent-conversation-panel" data-fullscreen={subagentFullscreen ? "true" : undefined} style={!narrowWorkspace && !subagentFullscreen ? { width: rightPanelWidth } : undefined}>
-                {!subagentFullscreen && <div className="session-panel-resizer session-panel-resizer--right" onPointerDown={rightPanel.startResize} role="separator" aria-orientation="vertical" />}
-                <SubagentConversationPanel ownerSessionId={agentSessionId} sessionId={selectedSubagent.sessionId} title={selectedSubagent.title} />
-              </aside>
-            ) : wideWorkspace && !workspaceFullscreen ? (
-              <WorkspaceWidgetDock
-                sessionId={agentSessionId}
-                scope={projectId}
-                width={rightPanelWidth}
-                onResize={rightPanel.startResize}
-                collapsed={rightPanel.collapsed}
-                resizing={rightPanel.resizing}
-                onToggle={() => rightPanel.setCollapsed((value) => !value)}
-              />
-            ) : null}
+            <SessionSidePanel
+              id={sidePanelId}
+              views={sidePanelViews}
+              activeViewId={activeSidePanelId}
+              minWidth={RIGHT_PANEL_MIN}
+              maxWidth={rightPanelMax}
+            />
           </div>
         ) : isNewDraft ? (
           <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -376,33 +398,30 @@ export default memo(function SessionsPage() {
           </div>
         )}
       </>
-      <Dialog open={detailsOpen} onClose={() => (setDetailsOpen)(false)}>
-        <DialogContainer size="sm">
-          <DialogPanel className="work-details-dialog">
-            <DialogCloseButton />
-            <DialogHeader>
-              <DialogTitle>
-                {locale === "zh" ? "任务详情" : "Task details"}
-              </DialogTitle>
-            </DialogHeader>
-            <DialogBody>
-              <SessionWorkspacePanel
-                sessionId={agentSessionId}
-                mode="dashboard"
-              />
-            </DialogBody>
-          </DialogPanel>
-        </DialogContainer>
-      </Dialog>
+      {showTranscript && !selectedSubagent && !sideChatVisible ? (
+        <WorkQuickActions
+          expanded={activeSidePanelId === "widgets" && !widgetPanel.collapsed}
+          controlsId={sidePanelId}
+          onToggle={() => {
+            if (workspaceFullscreen && agentSessionId) {
+              useSessionWorkspaceStore.getState().exitFocus(agentSessionId);
+              widgetPanel.setCollapsed(false);
+            } else {
+              widgetPanel.setCollapsed((value) => !value);
+            }
+          }}
+        />
+      ) : null}
       {showTranscript && agentSessionId ? (
         <AgentCommandRail
-          hidden={hasWorkspaceContent || subagentFullscreen}
+          hidden={hasWorkspaceContent || sidePanelFullscreen}
           sessionId={agentSessionId}
           readingHistory={historyReading}
           projectId={projectId}
           focus={false}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
+          onOpenSideChat={openSideChat}
         />
       ) : null}
     </div>

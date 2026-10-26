@@ -7,7 +7,7 @@ describe('log-store retention', () => {
     clearApiLogStoreForTests();
   });
 
-  it('drops sqlite log rows older than the retention window', async () => {
+  it('drops log rows older than the retention window', async () => {
     const { clearApiLogStoreForTests, listApiLogs, persistApiLog, pruneOldApiLogs } = await import('../log-store.js');
 
     const cutoff = retentionCutoffDay(LOG_RETENTION_DAYS);

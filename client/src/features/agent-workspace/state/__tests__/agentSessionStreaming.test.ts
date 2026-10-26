@@ -132,7 +132,7 @@ it("preserves text/thought/tool ordering when events arrive before the next pain
   ]);
 });
 
-it("commits buffered text and the following tool boundary in one visible frame", () => {
+it("shows first text immediately and then commits the following tool boundary", () => {
   const frames: ReturnType<typeof materializeLiveBlocks>[] = [];
   const unsubscribe = store.subscribe((state, previous) => {
     if (state.streamingLive !== previous.streamingLive)
@@ -144,8 +144,9 @@ it("commits buffered text and the following tool boundary in one visible frame",
     .getState()
     .applyLiveEvent({ type: "tool_call", stepId: "first", toolCall });
 
-  expect(frames).toHaveLength(1);
-  expect(frames[0]).toEqual([
+  expect(frames).toHaveLength(2);
+  expect(frames[0]).toEqual([{ type: "text", content: "Before the tool" }]);
+  expect(frames[1]).toEqual([
     { type: "text", content: "Before the tool" },
     expect.objectContaining({ type: "tool_call" }),
   ]);
@@ -183,14 +184,14 @@ it("ignores late deltas from a previous step", () => {
   ]);
 });
 
-it("publishes a token burst once and leaves no idle drain timer", () => {
+it("publishes first text immediately and batches the remaining burst without an idle timer", () => {
   const listener = vi.fn();
   const unsubscribe = store.subscribe((state, previous) => {
     if (state.streamingLive !== previous.streamingLive) listener();
   });
   for (let i = 0; i < 100; i++) delta("x");
   vi.advanceTimersByTime(100);
-  expect(listener).toHaveBeenCalledTimes(1);
+  expect(listener).toHaveBeenCalledTimes(2);
   expect(store.getState().streamingLive.pendingText).toBe("x".repeat(100));
   expect(vi.getTimerCount()).toBe(0);
   unsubscribe();

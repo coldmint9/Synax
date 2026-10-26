@@ -6,19 +6,30 @@ import {
   type SessionEnvironmentInputSource,
 } from "../../adapters/transport/agentRuntime";
 import { runtimeMedia } from "../../adapters/transport/runtimeMedia";
-import { highlightCode, languageForPath } from "./codeHighlight";
+import { languageForPath } from "./codeHighlight";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { FileViewer } from "../../shared/ui/file-viewer/FileViewer";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 import { useWorkspaceMarkdownImages } from "./WorkspaceMarkdownImage";
 import {
   getWorkspaceDraft,
+  clearWorkspaceDraft,
+  acquireWorkspaceDraftLease,
+  isWorkspaceDraftLeaseActive,
   registerWorkspaceSaveHandler,
   setWorkspaceDraft,
   useSessionWorkspaceStore,
 } from "./state/sessionWorkspaceStore";
 
-type FilePreviewKind = "text" | "markdown" | "html" | "svg" | "image" | "pdf";
+type FilePreviewKind =
+  | "text"
+  | "markdown"
+  | "html"
+  | "svg"
+  | "image"
+  | "pdf"
+  | "audio"
+  | "video";
 
 const RASTER_IMAGE_EXTENSIONS = new Set([
   "png",
@@ -54,6 +65,10 @@ function previewKindForPath(path: string): FilePreviewKind {
   if (RASTER_IMAGE_EXTENSIONS.has(extension)) return "image";
   if (extension === "svg") return "svg";
   if (extension === "pdf") return "pdf";
+  if (["mp3", "wav", "ogg", "m4a", "aac", "flac"].includes(extension))
+    return "audio";
+  if (["mp4", "webm", "mov", "mkv", "avi", "m4v"].includes(extension))
+    return "video";
   if (extension === "html" || extension === "htm") return "html";
   if (MARKDOWN_EXTENSIONS.has(extension)) return "markdown";
   return "text";
@@ -72,6 +87,8 @@ function previewKindForAttachment(
   const normalized = mediaType?.split(";")[0].trim().toLowerCase() ?? "";
   if (normalized === "image/svg+xml") return "svg";
   if (normalized === "application/pdf") return "pdf";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
   if (normalized.startsWith("image/")) return "image";
   if (!normalized) return previewKindForPath(label);
   if (!isTextAttachmentMediaType(normalized)) return "text";
@@ -98,43 +115,64 @@ export const CodeViewer = memo(function CodeViewer({
   const [content, setContent] = useState("");
   const [mediaBlob, setMediaBlob] = useState<Blob | null>(null);
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
-  const [highlighted, setHighlighted] = useState<{
-    content: string;
-    path: string;
-    html: string;
-  } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedIdentity, setLoadedIdentity] = useState("");
   const [saving, setSaving] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [attachmentMediaType, setAttachmentMediaType] = useState<
-    string | null
-  >(null);
+  const [attachmentMediaType, setAttachmentMediaType] = useState<string | null>(
+    null,
+  );
   // Guards against a slow read for a previous file overwriting the current one.
   const requestRef = useRef(0);
   const contentRef = useRef(content);
+  const loadedWorkspacePath = useRef<string | undefined>(undefined);
   const dirtyRef = useRef(false);
+  const editorFlush = useRef<(() => void) | null>(null);
+  const saveFlight = useRef<{
+    identity: string;
+    promise: Promise<boolean>;
+  } | null>(null);
+  const mounted = useRef(true);
+  const identity = `${sessionId}:${rootId ?? ""}:${path}:${tabId ?? ""}:${inputSource?.assetId ?? inputSource?.toolCallId ?? ""}`;
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const dataCurrent = loadedIdentity === identity;
   const setTabDirty = useSessionWorkspaceStore((state) => state.setTabDirty);
+  const draftLease = useMemo(
+    () => (tabId ? acquireWorkspaceDraftLease(sessionId, tabId) : undefined),
+    [sessionId, tabId],
+  );
   // The declared media type of the attachment currently being read; avoids
   // rendering (or rejecting) an asset while another one's type is still set.
   const pendingMediaTypeRef = useRef<string | null>(null);
   const previewKind = inputSource
     ? inputSource.assetId
-      ? previewKindForAttachment(inputSource.label, attachmentMediaType ?? undefined)
+      ? previewKindForAttachment(
+          inputSource.label,
+          attachmentMediaType ?? undefined,
+        )
       : inputSource.toolCallId
         ? previewKindForPath(inputSource.label)
         : "text"
     : previewKindForPath(path);
-  const markdownImages = useWorkspaceMarkdownImages({ sessionId, path, rootId });
+  const markdownImages = useWorkspaceMarkdownImages({
+    sessionId,
+    path,
+    rootId,
+  });
 
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
 
   const editable = Boolean(
-    tabId && !inputSource && !truncated && !["image", "pdf"].includes(previewKind),
+    tabId &&
+    !inputSource &&
+    !truncated &&
+    !["image", "pdf", "audio", "video"].includes(previewKind),
   );
 
   const load = useCallback(async () => {
@@ -149,14 +187,13 @@ export const CodeViewer = memo(function CodeViewer({
         const blob = await runtimeMedia.blob(inputSource.assetId);
         if (requestRef.current !== requestId) return;
         if (blob.type) pendingMediaTypeRef.current = blob.type;
-        // Trust the attachment's own media type over its filename: a `.svg`
-        // upload must stay inert as an image, and Markdown uploaded as
-        // `text/plain` must render instead of falling back to a rejection note.
+        // Trust MIME before the filename. SVG source is still displayed only
+        // through an inert image; Markdown and HTML retain their preview modes.
         const attachmentKind = previewKindForAttachment(
           inputSource.label,
           blob.type,
         );
-        if (attachmentKind === "text") {
+        if (["text", "markdown", "html", "svg"].includes(attachmentKind)) {
           const text = await blob.text();
           if (requestRef.current !== requestId) return;
           setAttachmentMediaType(pendingMediaTypeRef.current);
@@ -173,9 +210,13 @@ export const CodeViewer = memo(function CodeViewer({
         setDirty(false);
         dirtyRef.current = false;
         if (tabId) setTabDirty(sessionId, tabId, false);
+        setLoadedIdentity(identity);
         return;
       }
-      if (!inputSource && (previewKind === "image" || previewKind === "pdf")) {
+      if (
+        !inputSource &&
+        ["image", "pdf", "audio", "video"].includes(previewKind)
+      ) {
         const blob = await agentRuntimeApi.getSessionEnvironmentFileMedia(
           sessionId,
           path,
@@ -189,6 +230,7 @@ export const CodeViewer = memo(function CodeViewer({
         setDirty(false);
         dirtyRef.current = false;
         if (tabId) setTabDirty(sessionId, tabId, false);
+        setLoadedIdentity(identity);
         return;
       }
       const result = inputSource
@@ -215,7 +257,10 @@ export const CodeViewer = memo(function CodeViewer({
               ));
       const text = result.content ?? "";
       if (requestRef.current !== requestId) return;
-      const draft = tabId ? getWorkspaceDraft(tabId) : undefined;
+      loadedWorkspacePath.current = 'workspacePath' in result ? result.workspacePath as string | undefined : undefined;
+      const draft = tabId
+        ? getWorkspaceDraft(sessionId, tabId, draftLease)
+        : undefined;
       const nextContent = draft ?? text;
       const nextDirty = draft !== undefined && draft !== text;
       setContent(nextContent);
@@ -224,50 +269,105 @@ export const CodeViewer = memo(function CodeViewer({
       setDirty(nextDirty);
       dirtyRef.current = nextDirty;
       if (tabId) setTabDirty(sessionId, tabId, nextDirty);
+      setLoadedIdentity(identity);
     } catch (err) {
       if (requestRef.current !== requestId) return;
       setError(err instanceof Error ? err.message : "读取文件失败");
     } finally {
       if (requestRef.current === requestId) setLoading(false);
     }
-  }, [path, sessionId, rootId, inputSource, tabId, setTabDirty]);
+  }, [identity, path, sessionId, rootId, inputSource, tabId, setTabDirty]);
 
   const save = useCallback(async (): Promise<boolean> => {
-    if (!editable || !tabId) return false;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await agentRuntimeApi.saveSessionEnvironmentFile(
-        sessionId,
-        path,
-        contentRef.current,
-        rootId,
-      );
-      setWorkspaceDraft(tabId, contentRef.current);
-      // A saved draft is retained so switching tabs does not re-read stale data.
-      setDirty(false);
-      dirtyRef.current = false;
-      setTabDirty(sessionId, tabId, false);
-      return true;
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "保存文件失败");
+    // A reused CodeViewer instance can receive a new path while its read is
+    // pending. Never allow the previous model buffer to be written to the new
+    // path, even when a stale dirty flag or the global save handler fires.
+    if (
+      !editable ||
+      !tabId ||
+      loading ||
+      !dataCurrent ||
+      !draftLease ||
+      !isWorkspaceDraftLeaseActive(sessionId, tabId, draftLease)
+    )
       return false;
-    } finally {
-      setSaving(false);
+    const currentView = mounted.current && identityRef.current === identity;
+    if (currentView) editorFlush.current?.();
+    if (saveFlight.current?.identity === identity)
+      return saveFlight.current.promise;
+    const submitted = currentView
+      ? contentRef.current
+      : getWorkspaceDraft(sessionId, tabId, draftLease);
+    if (submitted === undefined) return false;
+    if (currentView) {
+      setSaving(true);
+      setSaveError(null);
     }
-  }, [editable, path, rootId, sessionId, setTabDirty, tabId]);
+    const operation = (async () => {
+      try {
+        await agentRuntimeApi.saveSessionEnvironmentFile(
+          sessionId,
+          path,
+          submitted,
+          rootId,
+          loadedWorkspacePath.current,
+        );
+        if (!isWorkspaceDraftLeaseActive(sessionId, tabId, draftLease))
+          return true;
+        const stillCurrent =
+          mounted.current && identityRef.current === identity;
+        if (stillCurrent) editorFlush.current?.();
+        const latestDraft = stillCurrent
+          ? contentRef.current
+          : (getWorkspaceDraft(sessionId, tabId, draftLease) ?? submitted);
+        const stillDirty = latestDraft !== submitted;
+        if (stillDirty)
+          setWorkspaceDraft(sessionId, tabId, latestDraft, draftLease);
+        else clearWorkspaceDraft(sessionId, tabId);
+        if (stillCurrent) {
+          setDirty(stillDirty);
+          dirtyRef.current = stillDirty;
+        }
+        setTabDirty(sessionId, tabId, stillDirty);
+        return !stillDirty;
+      } catch (err) {
+        if (mounted.current && identityRef.current === identity)
+          setSaveError(err instanceof Error ? err.message : "保存文件失败");
+        return false;
+      } finally {
+        if (mounted.current && identityRef.current === identity)
+          setSaving(false);
+      }
+    })();
+    saveFlight.current = { identity, promise: operation };
+    try {
+      return await operation;
+    } finally {
+      if (saveFlight.current?.promise === operation) saveFlight.current = null;
+    }
+  }, [
+    dataCurrent,
+    draftLease,
+    editable,
+    identity,
+    loading,
+    path,
+    rootId,
+    sessionId,
+    setTabDirty,
+    tabId,
+  ]);
 
   useEffect(() => {
-    if (loading || error) {
+    if (loading || error || !dataCurrent) {
       setMediaUrl(null);
       return;
     }
-    const blob =
-      previewKind === "image" || previewKind === "pdf"
-        ? mediaBlob
-        : previewKind === "svg"
-          ? new Blob([content], { type: "image/svg+xml" })
-          : null;
+    const blob = ["image", "pdf", "audio", "video"].includes(previewKind)
+      ? mediaBlob
+      : previewKind === "svg"
+        ? new Blob([content], { type: "image/svg+xml" })
+        : null;
     if (!blob) {
       setMediaUrl(null);
       return;
@@ -275,7 +375,7 @@ export const CodeViewer = memo(function CodeViewer({
     const url = URL.createObjectURL(blob);
     setMediaUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [content, error, loading, mediaBlob, previewKind]);
+  }, [content, dataCurrent, error, loading, mediaBlob, previewKind]);
 
   useWorkspaceRefresh(
     sessionId,
@@ -286,8 +386,10 @@ export const CodeViewer = memo(function CodeViewer({
   );
 
   useEffect(() => {
+    mounted.current = true;
     void load();
     return () => {
+      mounted.current = false;
       requestRef.current += 1;
     };
   }, [load]);
@@ -300,8 +402,8 @@ export const CodeViewer = memo(function CodeViewer({
     if (!tabId || !editable) return;
     // Keep the handler alive while the tab is inactive. Only the tab store
     // removes it when the user actually closes the tab.
-    registerWorkspaceSaveHandler(tabId, save);
-  }, [editable, save, tabId]);
+    registerWorkspaceSaveHandler(sessionId, tabId, save, draftLease);
+  }, [draftLease, editable, save, sessionId, tabId]);
 
   useEffect(() => {
     if (!tabId || !editable) return;
@@ -313,34 +415,8 @@ export const CodeViewer = memo(function CodeViewer({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editable, save, tabId]);
+  }, [draftLease, editable, save, sessionId, tabId]);
 
-  // Highlight the current draft, not just the original file read. An older
-  // asynchronous result must never cover newer text (or another file).
-  useEffect(() => {
-    if (loading || error || previewKind === "image") return;
-    let cancelled = false;
-    void highlightCode(content, path).then(
-      (html) => {
-        if (!cancelled) setHighlighted({ content, path, html });
-      },
-      () => {
-        if (!cancelled) setHighlighted(null);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [content, path, loading, error, previewKind]);
-  const html =
-    highlighted?.content === content && highlighted.path === path
-      ? highlighted.html
-      : undefined;
-
-  const lineCount = useMemo(
-    () => (content ? content.split("\n").length : 0),
-    [content],
-  );
   const language = languageForPath(path);
   const canPreview = previewKind !== "text";
   const canShowSource =
@@ -349,22 +425,30 @@ export const CodeViewer = memo(function CodeViewer({
     previewKind === "svg";
   const showPreview = canPreview && view === "preview";
   // Markdown scrolls in the body; embedded previews and the editor own their scrolling.
-  const hasNestedViewport = showPreview ? previewKind !== "markdown" : editable;
+  const hasNestedViewport = showPreview ? previewKind !== "markdown" : true;
   const formatLabel =
-    previewKind === "image"
+    previewKind === "image" ||
+    previewKind === "audio" ||
+    previewKind === "video"
       ? (mediaBlob?.type.split("/")[1] ?? "image")
       : previewKind === "svg"
         ? "svg"
         : language;
 
   const updateContent = (next: string) => {
+    if (
+      tabId &&
+      draftLease &&
+      !isWorkspaceDraftLeaseActive(sessionId, tabId, draftLease)
+    )
+      return;
     setContent(next);
     contentRef.current = next;
     const nextDirty = true;
     setDirty(nextDirty);
     dirtyRef.current = nextDirty;
     if (tabId) {
-      setWorkspaceDraft(tabId, next);
+      setWorkspaceDraft(sessionId, tabId, next, draftLease);
       setTabDirty(sessionId, tabId, true);
     }
   };
@@ -407,7 +491,7 @@ export const CodeViewer = memo(function CodeViewer({
             type="button"
             className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground disabled:opacity-40"
             onClick={() => void save()}
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || loading || !dataCurrent}
             aria-label="保存文件"
             title="保存 (⌘S)"
           >
@@ -440,7 +524,7 @@ export const CodeViewer = memo(function CodeViewer({
       <div
         className={`code-viewer-body session-workspace-scroll min-h-0 flex-1 ${hasNestedViewport ? "flex flex-col overflow-hidden" : "overflow-auto"}`}
       >
-        {loading ? (
+        {loading || (!dataCurrent && !error) ? (
           <div className="file-viewer-status">读取中…</div>
         ) : error ? (
           <div className="file-viewer-status file-viewer-status--error">
@@ -455,17 +539,44 @@ export const CodeViewer = memo(function CodeViewer({
               referrerPolicy="no-referrer"
               srcDoc={content}
             />
-          ) : previewKind === "image" || previewKind === "svg" || previewKind === "pdf" ? (
+          ) : previewKind === "image" ||
+            previewKind === "svg" ||
+            previewKind === "pdf" ||
+            previewKind === "audio" ||
+            previewKind === "video" ? (
             <div
               className="file-viewer-media flex min-h-0 flex-1 items-center justify-center overflow-auto p-4"
               role="region"
-              aria-label={`${previewKind === "svg" ? "SVG" : "图片"}预览：${path}`}
+              aria-label={`${previewKind === "svg" ? "SVG" : previewKind === "audio" ? "音频" : previewKind === "video" ? "视频" : "图片"}预览：${path}`}
             >
               {mediaUrl ? (
                 previewKind === "pdf" ? (
-                  <iframe title={`PDF 预览：${path}`} src={mediaUrl} className="h-full min-h-[70vh] w-full border-0" />
+                  <iframe
+                    title={`PDF 预览：${path}`}
+                    src={mediaUrl}
+                    className="h-full min-h-[70vh] w-full border-0"
+                  />
+                ) : previewKind === "audio" ? (
+                  <audio
+                    title={`音频预览：${path}`}
+                    src={mediaUrl}
+                    controls
+                    preload="metadata"
+                  />
+                ) : previewKind === "video" ? (
+                  <video
+                    title={`视频预览：${path}`}
+                    src={mediaUrl}
+                    controls
+                    preload="metadata"
+                    className="max-h-full max-w-full"
+                  />
                 ) : (
-                  <img src={mediaUrl} alt={path.split(/[\\/]/).pop() ?? path} className="file-viewer-media-image block max-h-full max-w-full object-contain" />
+                  <img
+                    src={mediaUrl}
+                    alt={path.split(/[\\/]/).pop() ?? path}
+                    className="file-viewer-media-image block max-h-full max-w-full object-contain"
+                  />
                 )
               ) : (
                 <div className="file-viewer-status">生成预览中…</div>
@@ -488,8 +599,20 @@ export const CodeViewer = memo(function CodeViewer({
             key={`${sessionId}:${rootId ?? ""}:${path}`}
             path={path}
             content={content}
-            html={html}
             onChange={editable ? updateContent : undefined}
+            onDirty={
+              editable
+                ? () => {
+                    dirtyRef.current = true;
+                    setDirty(true);
+                    if (tabId) setTabDirty(sessionId, tabId, true);
+                  }
+                : undefined
+            }
+            onSave={() => void save()}
+            registerFlush={(flush) => {
+              editorFlush.current = flush;
+            }}
           />
         )}
       </div>

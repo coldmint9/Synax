@@ -1,3 +1,5 @@
+import { announceRunObservation } from "./runRealtime";
+import { historyWindowQuery } from "../../shared/lib/historyWindowCursor";
 export interface ToolExecutionProgress {
   phase: "queued_resources" | "executing_tool" | "cancelling" | "waiting_model" | "generating";
   resource?: string;
@@ -747,9 +749,8 @@ export interface SessionBackgroundProcess {
 /**
  * Workspace-level Git facts for one project member.
  *
- * Two conversations opened on the same checkout share this object: it is keyed
- * by the canonical workspace path on the server and by `projectId` in the
- * client cache, never by session id.
+ * Conversations opened on the same checkout share these facts; session-bound
+ * worktrees are scoped separately so actions never target the wrong checkout.
  */
 export interface WorkspaceRepositoryGit {
   rootId: string;
@@ -759,6 +760,8 @@ export interface WorkspaceRepositoryGit {
   workspacePath: string;
   branch: string;
   headCommitSha: string;
+  /** Absent when connected to an older server. */
+  unpushedCommitCount?: number;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -821,11 +824,14 @@ export interface SessionEnvironmentOutputs {
 }
 
 export interface SessionEnvironmentFileView {
+  workspacePath?: string;
   sessionId: string;
   path: string;
   kind: "diff" | "input";
   content: string;
   truncated: boolean;
+  originalContent?: string;
+  modifiedContent?: string;
 }
 
 export interface SessionGitCommitResult {
@@ -955,6 +961,8 @@ export interface SessionSearchResponse {
 }
 
 export interface HistoryWindowState {
+  /** Capacity of the latest message page, including sessions with fewer messages. */
+  messageLimit?: number;
   storage?: "rust";
   revision: number;
   epoch: number;
@@ -980,6 +988,10 @@ export interface HistoryWindowResponse {
 }
 
 export const agentRuntimeApi = {
+  bindSessionWorktree: (sessionId: string, body: { rootId: string; path: string; expectedPath: string }) =>
+    request<{ roots: import('./project').ProjectWorkspaceRoot[]; revision?: number }>(
+      `/sessions/${encodeURIComponent(sessionId)}/workspace/binding`, { method: 'POST', body: JSON.stringify(body) },
+    ),
   compactContext: (sessionId: string) =>
     request<{ accepted: true; status: "compacting" }>(
       `/sessions/${encodeURIComponent(sessionId)}/context/compact`,
@@ -1036,19 +1048,23 @@ export const agentRuntimeApi = {
         body: JSON.stringify({}),
       },
     ),
-  submitRun: (
+  submitRun: async (
     sessionId: string,
     body: StreamTurnRequest,
     requestId: string,
     mode: "turn" | "continue" = "turn",
-  ) =>
-    request<{ run: AgentRun; reused: boolean }>(
+  ) => {
+    const result = await request<{ run: AgentRun; reused: boolean }>(
       `/sessions/${encodeURIComponent(sessionId)}/runs`,
       {
         method: "POST",
         body: JSON.stringify({ ...body, requestId, mode }),
       },
-    ),
+    );
+    announceRunObservation(sessionId, result.run.id);
+    window.dispatchEvent(new CustomEvent("synax:run-accepted", { detail: { sessionId, runId: result.run.id, requestId } }));
+    return result;
+  },
   listProfiles: () => request<{ items: AgentProfile[] }>("/profiles"),
   buildContext: (
     projectId: string,
@@ -1119,6 +1135,18 @@ export const agentRuntimeApi = {
       `/sessions/${encodeURIComponent(sessionId)}/pin`,
       { method: "PATCH", body: JSON.stringify({ pinned }) },
     ),
+  renameSession: (sessionId: string, title: string) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/title`, {
+      method: "PATCH", body: JSON.stringify({ title }), silent: true,
+    }),
+  forkSession: (sessionId: string, body: { requestId: string; workspaceMode: "new_worktree" | "reuse_worktree" }) =>
+    request<{ sessionId: string; session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/fork`, {
+      method: "POST", body: JSON.stringify(body), silent: true,
+    }),
+  permanentlyDeleteSession: (sessionId: string) =>
+    request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
+      method: "POST", body: JSON.stringify({}), silent: true,
+    }),
   updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
     request<{ session: AgentSession }>(
       `/sessions/${encodeURIComponent(sessionId)}/mode`,
@@ -1138,6 +1166,8 @@ export const agentRuntimeApi = {
       {
         method: "POST",
         body: JSON.stringify({}),
+        // 归档失败由调用方给出面向用户的一句话（含撤销入口），避免重复弹窗。
+        silent: true,
       },
     ),
   clearInactiveSessions: (projectId: string) =>
@@ -1170,12 +1200,12 @@ export const agentRuntimeApi = {
   restoreSessionArchive: (batchId: string) =>
     request<{ ok: true; restoredSessionIds: string[] }>(
       `/session-archives/${encodeURIComponent(batchId)}/restore`,
-      { method: "POST", body: JSON.stringify({}) },
+      { method: "POST", body: JSON.stringify({}), silent: true },
     ),
   permanentlyDeleteSessionArchive: (batchId: string) =>
     request<{ ok: true; deletedSessionIds: string[] }>(
       `/session-archives/${encodeURIComponent(batchId)}`,
-      { method: "DELETE" },
+      { method: "DELETE", silent: true },
     ),
   messageVisualization: (sessionId: string, messageId: string) =>
     request<{ message: AgentRuntimeMessage | null }>(
@@ -1196,12 +1226,12 @@ export const agentRuntimeApi = {
     ),
   historyWindow: (sessionId: string, cursor?: string, since?: string) =>
     request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window${cursor ? `?cursor=${encodeURIComponent(cursor)}` : since ? `?since=${encodeURIComponent(since)}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, since)}`,
       { silent: true },
     ),
   historyIndexPage: (sessionId: string, cursor?: string) =>
     request<HistoryWindowResponse>(
-      `/sessions/${encodeURIComponent(sessionId)}/history-window?view=timeline${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `/sessions/${encodeURIComponent(sessionId)}/history-window${historyWindowQuery(cursor, undefined, true)}`,
       { silent: true },
     ),
   listMessages: (sessionId: string) =>
@@ -1376,12 +1406,13 @@ export const agentRuntimeApi = {
     path: string,
     content: string,
     rootId?: string,
+    expectedWorkspacePath?: string,
   ) =>
     request<{ sessionId: string; path: string; bytes: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file`,
       {
         method: "PUT",
-        body: JSON.stringify({ path, content, rootId }),
+        body: JSON.stringify({ path, content, rootId, expectedWorkspacePath }),
       },
     ),
   streamCommitMessage: (
@@ -1556,7 +1587,7 @@ async function submitAndObserveRun(
   );
   await new Promise<void>((resolve, reject) => {
     const source = new AuthenticatedEventSource(
-      `${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream`,
+      `${BASE}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(run.id)}/stream?realtime=1`,
     );
     let cursor = 0;
     source.onmessage = (event) => {
@@ -1571,7 +1602,8 @@ async function submitAndObserveRun(
         cursor = next;
       }
       try {
-        onChunk(JSON.parse(event.data));
+        const payload = JSON.parse(event.data) as { chunk?: unknown };
+        onChunk(payload && typeof payload === "object" && "chunk" in payload ? payload.chunk : payload);
       } catch (error) {
         source.close();
         reject(error);

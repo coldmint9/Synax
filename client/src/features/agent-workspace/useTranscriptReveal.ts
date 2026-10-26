@@ -17,7 +17,9 @@ export function useTranscriptReveal(
     let frame = 0;
     let stable = 0;
     let previous = "";
-    const check = () => {
+    let started: number | undefined;
+    const check = (now: number) => {
+      started ??= now;
       const pending = element.querySelector('[data-transcript-pending="true"]');
       const images = Array.from(element.querySelectorAll("img"));
       const videos = Array.from(element.querySelectorAll("video"));
@@ -27,7 +29,10 @@ export function useTranscriptReveal(
       stable = resourcesReady && geometry === previous ? stable + 1 : 0;
       previous = geometry;
       // Allow lazy rows, disclosure effects and scroll restoration to commit first.
-      if (stable >= 3) {
+      // A running answer, lazy image or animated card may never settle for
+      // three frames. Bound the initial layout gate; those rows own their
+      // individual loading placeholders after the transcript is visible.
+      if (stable >= 3 || now - started >= 150) {
         setRevealed(sessionId);
         return;
       }

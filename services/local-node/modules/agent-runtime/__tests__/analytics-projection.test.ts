@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentRun, AgentRunStep, AgentSession } from "../contracts.js";
 import {
   analyticsFromStats,
+  compactedContextUsageSnapshot,
   buildProjectAnalytics,
   contextUsageSnapshot,
   readContextUsage,
@@ -153,6 +154,19 @@ describe("incremental analytics projection", () => {
     expect(readContextUsage(snapshot)).toEqual(snapshot);
     expect(readContextUsage({ ...snapshot, version: 2 })).toBeNull();
     expect(contextUsageSnapshot({ total: 0 }, "step-1")).toBeNull();
+  });
+
+  it("scales the last composition for an immediate post-compaction snapshot", () => {
+    const previous = contextUsageSnapshot(
+      { messages: 600, tools: 300, mcp: 50, skills: 50, system: 200, total: 1200, measuredAt: now },
+      "step-1",
+      200_000,
+    )!;
+    const compacted = compactedContextUsageSnapshot(previous, 600, "cmp-step", 200_000, now)!;
+    expect(compacted.total).toBe(600);
+    expect(compacted.composition.total).toBe(600);
+    expect(compacted.composition.messages + compacted.composition.tools + compacted.composition.mcp + compacted.composition.skills + (compacted.composition.system ?? 0)).toBe(600);
+    expect(compacted.stepId).toBe("cmp-step");
   });
 
   it("mirrors authoritative stats into the same incremental shape", () => {

@@ -49,7 +49,7 @@ function VisualizationInstance({
       aria-busy={!ready && !failed}
     >
       {failed ? (
-        <div className="inline-visualization__error" role="alert">
+        <div className="inline-visualization__error" data-error-toast="off" role="alert">
           <strong>预览不可用</strong>
           <span>{error || "预览内容缺失，请让助手重新生成。"}</span>
         </div>

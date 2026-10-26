@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use super::error::JsonlResult;
 use super::layout;
 use super::record::{Coverage, Record, SealRecord, SnapshotCond};
-use super::seglog::{MAX_FRAME, SegLog};
+use super::seglog::SegLog;
 
 /// Segment file families inside a session directory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +202,7 @@ pub fn directory_of(segment: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::jsonl::seglog::MAX_FRAME;
 
     fn dir(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!("synax-write-{tag}-{}", uuid::Uuid::new_v4()));

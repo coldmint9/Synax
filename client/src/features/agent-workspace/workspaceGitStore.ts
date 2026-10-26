@@ -10,8 +10,8 @@ import { useWorkbenchPageActive } from "../../app/layouts/CachedWorkbenchPage";
  * Workspace-scoped Git cache (client L1).
  *
  * Git facts belong to a checkout, not to a conversation, so this store is keyed
- * by `projectId`: opening another session of the same workspace hits the cache
- * instead of polling again. Requests are conditional on the revision, so a
+ * by project and optional session binding, so an isolated worktree cannot reuse
+ * the default checkout's facts. Requests are conditional on the revision, so a
  * quiet checkout costs one tiny `unchanged` response instead of a file list.
  */
 
@@ -35,6 +35,10 @@ const checkedAt = new Map<string, number>();
 const inFlight = new Map<string, Promise<WorkspaceGitSnapshot | null>>();
 const listeners = new Set<() => void>();
 
+function workspaceKey(projectId: string, sessionId?: string): string {
+  return sessionId ? JSON.stringify([projectId, sessionId]) : projectId;
+}
+
 function emit() {
   for (const listener of listeners) listener();
 }
@@ -48,8 +52,9 @@ export function subscribeWorkspaceGit(listener: () => void): () => void {
 
 export function getWorkspaceGitSnapshot(
   projectId: string | null | undefined,
+  sessionId?: string,
 ): WorkspaceGitSnapshot | null {
-  return projectId ? (snapshots.get(projectId) ?? null) : null;
+  return projectId ? (snapshots.get(workspaceKey(projectId, sessionId)) ?? null) : null;
 }
 
 /**
@@ -65,27 +70,27 @@ function mergeRepositories(
   let changed = previous.length !== next.length;
   const merged = next.map((item) => {
     const old = byRoot.get(item.rootId);
-    if (old && old.revision === item.revision) return old;
+    if (old && old.revision === item.revision && old.workspacePath === item.workspacePath) return old;
     changed = true;
     return item;
   });
   return changed ? merged : previous;
 }
 
-function storeSnapshot(snapshot: WorkspaceGitSnapshot): WorkspaceGitSnapshot {
-  const previous = snapshots.get(snapshot.projectId);
-  checkedAt.set(snapshot.projectId, Date.now());
+function storeSnapshot(key: string, snapshot: WorkspaceGitSnapshot): WorkspaceGitSnapshot {
+  const previous = snapshots.get(key);
+  checkedAt.set(key, Date.now());
   if (
     previous &&
     previous.revision === snapshot.revision &&
     previous.repositories === snapshot.repositories
   )
     return previous;
-  snapshots.delete(snapshot.projectId);
-  snapshots.set(snapshot.projectId, snapshot);
+  snapshots.delete(key);
+  snapshots.set(key, snapshot);
   while (snapshots.size > MAX_WORKSPACES) {
     const oldest = snapshots.keys().next().value!;
-    if (oldest === snapshot.projectId) break;
+    if (oldest === key) break;
     snapshots.delete(oldest);
     checkedAt.delete(oldest);
   }
@@ -102,24 +107,26 @@ export function loadWorkspaceGit(
   options?: { maxAgeMs?: number; force?: boolean; sessionId?: string },
 ): Promise<WorkspaceGitSnapshot | null> {
   if (!projectId) return Promise.resolve(null);
+  const key = workspaceKey(projectId, options?.sessionId);
   const maxAge = options?.maxAgeMs ?? 0;
-  const checked = checkedAt.get(projectId);
+  const checked = checkedAt.get(key);
   if (!options?.force && checked !== undefined && Date.now() - checked < maxAge)
-    return Promise.resolve(snapshots.get(projectId) ?? null);
-  const pending = inFlight.get(projectId);
+    return Promise.resolve(snapshots.get(key) ?? null);
+  const pending = inFlight.get(key);
   if (pending) return pending;
 
   const request = agentRuntimeApi
     .getWorkspaceGitChanges(projectId, {
       sessionId: options?.sessionId,
-      revision: snapshots.get(projectId)?.revision,
+      revision: snapshots.get(key)?.revision,
     })
     .then((next) => {
-      const previous = snapshots.get(projectId);
+      if (inFlight.get(key) !== request) return snapshots.get(key) ?? null;
+      const previous = snapshots.get(key);
       const repositories = next.unchanged
         ? (previous?.repositories ?? [])
         : mergeRepositories(previous?.repositories, next.repositories);
-      return storeSnapshot({
+      return storeSnapshot(key, {
         projectId,
         revision: next.revision,
         repositories,
@@ -127,9 +134,9 @@ export function loadWorkspaceGit(
       });
     })
     .finally(() => {
-      if (inFlight.get(projectId) === request) inFlight.delete(projectId);
+      if (inFlight.get(key) === request) inFlight.delete(key);
     });
-  inFlight.set(projectId, request);
+  inFlight.set(key, request);
   return request;
 }
 
@@ -140,13 +147,24 @@ export function invalidateWorkspaceGit(projectId?: string | null): void {
     return;
   }
   checkedAt.delete(projectId);
+  for (const [key, snapshot] of snapshots) {
+    if (snapshot.projectId === projectId) checkedAt.delete(key);
+  }
 }
 
-export function useWorkspaceGit(projectId: string | null) {
+export function resetSessionWorkspaceGit(projectId: string, sessionId: string): void {
+  const key = workspaceKey(projectId, sessionId);
+  snapshots.delete(key);
+  checkedAt.delete(key);
+  inFlight.delete(key);
+  emit();
+}
+
+export function useWorkspaceGit(projectId: string | null, sessionId?: string) {
   const active = useWorkbenchPageActive();
   const snapshot = useSyncExternalStore(
     subscribeWorkspaceGit,
-    () => getWorkspaceGitSnapshot(projectId),
+    () => getWorkspaceGitSnapshot(projectId, sessionId),
     () => null,
   );
   const [loading, setLoading] = useState(false);
@@ -154,14 +172,15 @@ export function useWorkspaceGit(projectId: string | null) {
   const reload = useCallback(async () => {
     if (!projectId) return;
     try {
-      await loadWorkspaceGit(projectId, { force: true });
+      await loadWorkspaceGit(projectId, { force: true, sessionId });
     } catch {
       // Keep the last usable snapshot; the next event or tick retries.
     }
-  }, [projectId]);
+  }, [projectId, sessionId]);
 
   useEffect(() => {
     if (!projectId || !active) return;
+    const key = workspaceKey(projectId, sessionId);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlightLocal: Promise<unknown> | undefined;
@@ -171,7 +190,7 @@ export function useWorkspaceGit(projectId: string | null) {
       if (inFlightLocal) return inFlightLocal.then(() => undefined);
       clearTimeout(timer);
       setLoading(true);
-      inFlightLocal = loadWorkspaceGit(projectId, { force: true })
+      inFlightLocal = loadWorkspaceGit(projectId, { force: true, sessionId })
         .catch(() => null)
         .finally(() => {
           inFlightLocal = undefined;
@@ -219,7 +238,7 @@ export function useWorkspaceGit(projectId: string | null) {
         session_archived: onRuntimeEvent,
       },
       onConnect: () => {
-        if (checkedAt.has(projectId)) markDirty();
+        if (checkedAt.has(key)) markDirty();
       },
     });
 
@@ -227,7 +246,7 @@ export function useWorkspaceGit(projectId: string | null) {
       clearTimeout(timer);
       timer = undefined;
       if (document.hidden) return;
-      const checked = checkedAt.get(projectId);
+      const checked = checkedAt.get(key);
       if (checked === undefined || Date.now() - checked >= RESUME_STALE_MS)
         void run();
       else scheduleSlow();
@@ -241,7 +260,7 @@ export function useWorkspaceGit(projectId: string | null) {
 
     // Paint the cached workspace immediately, then only revalidate when it is
     // older than the slow window: switching sessions is a pure cache hit.
-    const checked = checkedAt.get(projectId);
+    const checked = checkedAt.get(key);
     if (checked === undefined || Date.now() - checked >= SLOW_REFRESH_MS)
       void run();
     else scheduleSlow();
@@ -253,7 +272,7 @@ export function useWorkspaceGit(projectId: string | null) {
       document.removeEventListener("workspace:refresh", onWorkspaceRefresh);
       unsubscribe();
     };
-  }, [projectId, active]);
+  }, [projectId, sessionId, active]);
 
   return { snapshot, repositories: snapshot?.repositories ?? [], loading, reload };
 }

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
-import { RuntimeSidecarClient, RuntimeSidecarError } from './sidecar-client.js';
+import { RuntimeSidecarClient, RuntimeSidecarError, NORMAL_REQUEST_LIMIT } from './sidecar-client.js';
 import { decodeEnvelope, encodeEnvelope, type SidecarEnvelope } from './sidecar-protocol.js';
 
 const sockets: Array<{ server: net.Server; root: string }> = [];
@@ -47,7 +47,29 @@ function send(socket: net.Socket, envelope: SidecarEnvelope): void {
 }
 
 describe('RuntimeSidecarClient', () => {
-  it('reads a bounded history window without first fetching an execution snapshot', async () => {
+  it('uses a separate connection and request budget for critical controls under ordinary saturation', async () => {
+    const ordinary = new Set<net.Socket>();
+    const critical = new Set<net.Socket>();
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === 'hello') {
+        send(socket, { requestId: '', sessionId: '', epoch: 0, revision: 0,
+          body: { type: 'ready', protocol: 'synax.runtime.v2', transport: 'unix', capabilities: ['health', 'control_multiplex'] } });
+      } else if (envelope.body.type === 'health') {
+        critical.add(socket);
+        send(socket, { ...envelope, body: { type: 'health_response', ok: true, protocol: 'synax.runtime.v2' } });
+      } else { ordinary.add(socket); }
+    });
+    const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
+    const requests = Promise.allSettled(Array.from({ length: NORMAL_REQUEST_LIMIT }, (_, index) =>
+      client.historyCommandGlobal({ sessionId: 's', requestId: `busy-${index}`, operation: 'history_sync' })));
+    try {
+      await expect(client.health()).resolves.toMatchObject({ ok: true });
+      expect(critical.size).toBe(1);
+      expect([...critical].some(socket => ordinary.has(socket))).toBe(false);
+      await expect(client.snapshot('s')).rejects.toThrow('request queue is full');
+    } finally { client.close(); await requests; }
+  });
+  it.each(['history_sync', 'object_value_chunk', 'head_read', 'message_content', 'context_measure'])('reads %s without first fetching an execution snapshot', async operation => {
     const operations: string[] = [];
     const bound = await startServer((socket, envelope) => {
       if (envelope.body.type === 'hello') {
@@ -62,7 +84,7 @@ describe('RuntimeSidecarClient', () => {
     });
     const client = new RuntimeSidecarClient({ socketPath: bound.path, token: 'token' });
     try {
-      await expect(client.historyCommand({ sessionId: 's', requestId: 'page', operation: 'history_sync', payload: {} })).resolves.toBeInstanceOf(Uint8Array);
+      await expect(client.historyCommand({ sessionId: 's', requestId: 'page', operation, payload: {} })).resolves.toBeInstanceOf(Uint8Array);
       expect(operations).toEqual(['history_command']);
     } finally { client.close(); }
   });

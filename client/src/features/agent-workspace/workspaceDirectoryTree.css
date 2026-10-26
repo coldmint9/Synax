@@ -9,6 +9,7 @@
 }
 .workspace-directory-tree-row > svg { flex: 0 0 auto; color: hsl(var(--muted-foreground)); }
 .workspace-directory-tree-row > span { min-width: 0; }
+.workspace-directory-tree-row > .workspace-git-count-badges { margin-left: auto; }
 .workspace-directory-tree-row:hover:not(:disabled) { background: hsl(var(--secondary) / 0.58); }
 .workspace-directory-tree-row:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
 .workspace-directory-tree-row--root { min-height: 32px; font-size: 13px; font-weight: 650; }

@@ -11,7 +11,7 @@ import { decodeEnvelope, encodeEnvelope } from '../packages/runtime-protocol/wir
 // This fixture exercises real HTTP, provider execution, worker IPC, RocksDB,
 // WebSocket and host restart. It never seeds a session through a test-only API.
 const root = await mkdtemp(path.join(tmpdir(), 'synax-v2-e2e-'));
-const reportDir = path.resolve('out/runtime-v2-e2e');
+const reportDir = path.resolve(process.env.SYNAX_E2E_REPORT_DIR ?? 'out/runtime-v2-e2e');
 await mkdir(reportDir, { recursive: true });
 const checks: string[] = [];
 let host: ChildProcess | undefined;
@@ -52,7 +52,7 @@ const provider = http.createServer(async (request, response) => {
   response.end('data: [DONE]\n\n');
 });
 async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, label: string): Promise<T> {
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + Number(process.env.SYNAX_E2E_WAIT_MS ?? 30_000);
   while (true) {
     const value = await read();
     if (done(value)) return value;
@@ -70,7 +70,7 @@ async function stopHost() {
   try { await exited; } finally { clearTimeout(timer); }
 }
 async function startHost() {
-  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: 'warn',
+  const env = { ...process.env, DATA_ROOT: root, PORT: '0', NODE_ENV: 'test', LOG_LEVEL: process.env.SYNAX_E2E_LOG_LEVEL ?? 'warn',
     SYNAX_DESKTOP_SIDECAR: '1', SYNAX_AGENT_SESSION_IN_PROCESS: '0',
  };
   // Retired mode flags must have no role in selecting the runtime under test.
@@ -98,6 +98,16 @@ async function api(endpoint: string, body?: unknown): Promise<any> {
   const value = await response.json();
   assert(response.ok, `${endpoint}: ${response.status} ${JSON.stringify(value)}`);
   return value;
+}
+async function awaitFinalized(sessionId: string, runId: string): Promise<void> {
+  // A projected completed status can precede the coordinator's final durable barrier.
+  const response = await fetch(`${base}/api/agent-runtime/sessions/${sessionId}/runs/${runId}/stream?realtime=1`, {
+    headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000),
+  });
+  assert(response.ok, 'run observation must be available');
+  const body = await response.text();
+  assert(!body.includes('event: realtime_reset'), body);
+  assert(body.includes('"type":"done"'), 'coordinator must finish before the host is restarted');
 }
 let failure: unknown;
 try {
@@ -143,8 +153,10 @@ try {
   assert(toolRequested && toolObserved, 'provider must receive the real file tool result');
   checks.push('provider → file.read → persisted tool result'); checks.push('HTTP submit → forked provider worker → Rust completion');
   await until(async () => observed, events => events.includes('message_delta'), 'native WebSocket delta');
-  await until(async () => observed, events => events.includes('run_finished'), 'durable terminal completion');
+  // A session patch can already settle the run; finish then persists the fence/receipt without a second terminal event.
+  await until(async () => { if (socketError) throw socketError; return observed; }, events => events.includes('run_finished') || (events.includes('run_completed') && events.includes('done')), `durable terminal completion (observed: ${observed.join(',')})`);
   checks.push('native WebSocket streaming');
+  await awaitFinalized(sessionId, runId);
   const messages = await api(`/sessions/${sessionId}/messages`);
   assert(messages.items.some((m: { content: string }) => m.content.includes(answer)));
   socket.close(); socket = undefined;
@@ -157,6 +169,7 @@ try {
   const second = await api(`/sessions/${sessionId}/runs`, {requestId:'v2-e2e-second-turn',message:'Continue from the persisted tool evidence.',mode:'turn'});
   const secondRun = await until(()=>api(`/sessions/${sessionId}/runs/${second.run.id}`),run=>['completed','failed','interrupted'].includes(run.status),'second turn after restart');
   assert.equal(secondRun.status,'completed',secondRun.stopReason);
+  await awaitFinalized(sessionId, second.run.id);
   const finalHistory = await api(`/sessions/${sessionId}/messages`);
   assert.equal(finalHistory.items.filter((message:{role:string;content:string})=>message.role==='assistant'&&message.content.includes(answer)).length,2);
   checks.push('persisted tool evidence → second turn after restart');

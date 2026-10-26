@@ -1,6 +1,6 @@
 [package]
 name = "synax-runtime-sidecar"
-version = "2.9.0"
+version = "2.19.1"
 edition = "2024"
 publish = false
 
@@ -31,6 +31,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4"] }
+zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

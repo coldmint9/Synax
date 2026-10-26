@@ -1,3 +1,4 @@
+import { TimelineVirtualWindow } from "./TimelineVirtualWindow";
 import {
   memo,
   useMemo,
@@ -184,29 +185,26 @@ function renderTimelineRows({
   cacheVersion,
   liveEntryIds,
   appendedIds,
-}: RowsProps & { appendedIds: ReadonlySet<string> }) {
-  // The initial scroll lands at the bottom before paint. Mount its surrounding
-  // rows in the same commit instead of revealing them one observer tick later.
-  const initialViewportHeight = scrollRootRef?.current?.clientHeight || 800;
-  let eagerStart = entries.length;
-  let eagerHeight = 0;
-  while (eagerStart > 0 && eagerHeight < initialViewportHeight + 1200) {
-    eagerStart -= 1;
-    eagerHeight += estimateEntryHeight(entries[eagerStart]);
-  }
+  visibleEntries = entries,
+  start = 0,
+}: RowsProps & { appendedIds: ReadonlySet<string>; visibleEntries?: ConversationTimelineEntry[]; start?: number }) {
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
     if (entry.kind === "user") break;
-    if (
-      entry.kind === "agent" &&
-      entry.turn.blocks.some(
-        (block) =>
-          block.type === "thinking" ||
-          block.type === "tool_call" ||
-          block.type === "tool_call_group",
-      )
-    ) {
+    if (entry.kind !== "agent") continue;
+    // A reply row closes the activity lane. Without this guard an older
+    // thinking row remains `working` after its answer has already rendered,
+    // leaving the ASCII placeholder above the real response.
+    const hasReply = entry.turn.blocks.some((block) =>
+      (block.type === "text" && Boolean(block.content.trim())) || block.type === "media" ||
+      block.type === "visualization" || block.type === "git_merge" ||
+      block.type === "sub_session",
+    );
+    if (hasReply) break;
+    if (entry.turn.blocks.some((block) =>
+      block.type === "thinking" || block.type === "tool_call" || block.type === "tool_call_group",
+    )) {
       latestActivityIndex = index;
       break;
     }
@@ -216,21 +214,24 @@ function renderTimelineRows({
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index];
       if (entry.kind === "agent" && entry.turn.stepId === liveId) {
-        liveIndex = index;
-        if (
-          entry.turn.blocks.some(
-            (block) =>
-              block.type === "thinking" ||
-              block.type === "tool_call" ||
-              block.type === "tool_call_group",
-          )
-        )
+        const hasReply = entry.turn.blocks.some((block) =>
+          (block.type === "text" && Boolean(block.content.trim())) || block.type === "media" ||
+          block.type === "visualization" || block.type === "git_merge" ||
+          block.type === "sub_session",
+        );
+        if (hasReply) break;
+        if (entry.turn.blocks.some((block) =>
+          block.type === "thinking" || block.type === "tool_call" || block.type === "tool_call_group",
+        )) {
+          liveIndex = index;
           break;
+        }
       }
     }
     if (liveIndex >= 0) latestActivityIndex = liveIndex;
   }
-  return entries.map((entry, index) => {
+  return visibleEntries.map((entry, visibleIndex) => {
+    const index = start + visibleIndex;
     let isLiveEntry = false;
     if (liveEntryIds) {
       for (const stepId of liveEntryIds) {
@@ -254,7 +255,7 @@ function renderTimelineRows({
         sessionId={sessionId}
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
-        eager={eager || index >= eagerStart}
+        eager={eager}
         cacheVersion={entryCacheVersion}
         appended={appendedIds.has(entry.id)}
         isWorking={Boolean(streaming && index === latestActivityIndex)}
@@ -312,32 +313,16 @@ function TimelineRows({
   }, [entries, live, liveId, liveSeed]);
   // Appending a row reveals it; a history page or a folded round must not.
   const appendedIds = useAppendedEntryIds(combined, sessionId);
-  const rows = useMemo(
-    () =>
-      renderTimelineRows({
-        entries: combined,
-        sessionId,
-        streaming,
-        liveId,
-        onExpandChild,
-        scrollRootRef,
-        cacheVersion,
-        liveEntryIds,
-        appendedIds,
-      }),
-    [
-      combined,
-      sessionId,
-      streaming,
-      liveId,
-      onExpandChild,
-      scrollRootRef,
-      cacheVersion,
-      liveEntryIds,
-      appendedIds,
-    ],
-  );
-  return <>{rows}</>;
+  return <TimelineVirtualWindow
+    key={sessionId ?? "standalone"}
+    cacheKey={`${sessionId ?? "standalone"}:${cacheVersion}`}
+    entries={combined}
+    scrollRootRef={scrollRootRef}
+    renderRows={(visibleEntries, start) => renderTimelineRows({
+      entries: combined, visibleEntries, start, sessionId, streaming, liveId,
+      onExpandChild, scrollRootRef, cacheVersion, liveEntryIds, appendedIds, eager: true,
+    })}
+  />;
 }
 
 export const SessionStaticTimeline = memo(function SessionStaticTimeline({

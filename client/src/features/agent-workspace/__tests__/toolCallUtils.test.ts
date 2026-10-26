@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildTurnRenderSegments,
+  formatToolDuration,
   isFinalTextBlock,
   toolBlocksToBatches,
 } from "../toolCallUtils";
@@ -18,6 +19,11 @@ const bashCall = (id: string) => ({
 });
 
 describe("toolCallUtils", () => {
+  it("omits tool durations through ten seconds and keeps longer calls", () => {
+    expect(formatToolDuration("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.000Z")).toBeNull();
+    expect(formatToolDuration("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.001Z")).toBe("10.0s");
+  });
+
   it("groups parallel same-tool calls into one batch row", () => {
     const blocks: TurnContentBlock[] = [
       {
