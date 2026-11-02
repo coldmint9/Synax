@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildLoopModelMessages } from "../loop-model-messages.js";
 import { snapshotRuntimeReminder } from "../runtime-request-snapshot.js";
+import type { PatchDiagnostic } from "../tools/patch-diagnostics.js";
 
 function createMockStore(data: {
   messages?: Array<{ id: string; role: string; content: string }>;
@@ -52,6 +53,59 @@ const mockToolSet = {
 };
 
 describe("buildLoopModelMessages", () => {
+  it.each([false, true])("retains complete patch recovery under output-budget pressure (saved receipt: %s)", (saved) => {
+    const diagnostic: PatchDiagnostic = {
+      error: true, code: "PATCH_CONTEXT_MISMATCH", applied: false,
+      message: "Failed to find expected lines", path: "source.ts", hunkIndex: 2,
+      expectedExcerpt: { lines: Array.from({ length: 12 }, () => "old source ".repeat(20)), truncated: true },
+      actualExcerpt: { startLine: 38, lines: Array.from({ length: 12 }, () => "new source ".repeat(20)), truncated: true },
+      recovery: "Read the current source, then submit a corrected patch; do not replay unchanged.",
+      suggestedRead: { path: "source.ts", startLine: 41, lineCount: 20 },
+    };
+    const serialized = JSON.stringify(diagnostic);
+    expect(serialized.length).toBeGreaterThan(4000);
+    const store = createMockStore({
+      messages: [{ id: "u", role: "user", content: "Fix source" }],
+      runs: [{ id: "r", triggerMessageId: "u", startedAt: "" }],
+      steps: [{ id: "s", runId: "r", index: 1, metadata: saved ? {
+        contextProjectionVersion: 2,
+        toolContextReceipts: { t: { version: 1, outputType: "error-text", text: "Old clipped failure without recovery" } },
+      } : {} }],
+      parts: [{ id: "p", stepId: "s", kind: "tool_call", content: "", toolCallId: "t" }],
+      toolCalls: [{ id: "t", runId: "r", stepId: "s", toolId: "file.patch", status: "failed",
+        outputRef: diagnostic, error: "Legacy short error", inputRef: { patch: "patch" } }],
+    });
+    const messages = buildLoopModelMessages(store, "session", mockToolSet, {
+      toolOutputBudgetTokens: 1,
+      clearing: { priorInputTokens: 100, contextLimit: 100, threshold: 0.5, keepRecent: 0, excludeTools: [], forceActivated: true },
+    });
+    const toolMessage = messages.find(message => message.role === "tool")!;
+    expect(toolMessage.content).toEqual([expect.objectContaining({
+      type: "tool-result", toolName: "file.patch", output: { type: "error-text", value: serialized },
+    })]);
+  });
+
+  it.each([
+    ["file.patch", "failed", "error-text"],
+    ["file.read", "failed", "error-text"],
+    ["file.patch", "denied", "execution-denied"],
+  ])("keeps ordinary %s %s results unchanged", (toolId, status, outputType) => {
+    const store = createMockStore({
+      messages: [{ id: "u", role: "user", content: "Work" }],
+      runs: [{ id: "r", triggerMessageId: "u", startedAt: "" }],
+      steps: [{ id: "s", runId: "r", index: 1 }],
+      parts: [{ id: "p", stepId: "s", kind: "tool_call", content: "", toolCallId: "t" }],
+      toolCalls: [{ id: "t", runId: "r", stepId: "s", toolId, status, error: "Original failure",
+        outputRef: { error: true, message: "Other payload" } }],
+    });
+    const messages = buildLoopModelMessages(store, "session", mockToolSet, { toolOutputBudgetTokens: 1 });
+    expect(messages.find(message => message.role === "tool")!.content).toEqual([expect.objectContaining({
+      output: outputType === "execution-denied"
+        ? { type: outputType, reason: "Original failure" }
+        : { type: outputType, value: "Original failure" },
+    })]);
+  });
+
   function loadedSkillsFixture() {
     const content = "Skill requirement. ".repeat(400) + "FINAL_REQUIRED_INSTRUCTION";
     const store = createMockStore({

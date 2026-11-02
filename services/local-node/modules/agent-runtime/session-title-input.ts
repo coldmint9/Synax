@@ -3,8 +3,8 @@ import type {
   TitleGenerator,
   TitleGeneratorContext,
 } from "./session-title-service.js";
-import { generateGatewayTextResult } from "../../infrastructure/llm-runtime/gateway.js";
 import { getSessionUserPrompt } from "./session-metadata.js";
+import { generateSessionTitleWithModel } from "./session-title-llm.js";
 
 export function extractLegacyUserRequestFromPrompt(
   prompt: string,
@@ -45,34 +45,6 @@ export function resolveSessionTitleInput(input: {
   );
 }
 
-async function generateSessionTitleWithLlm(
-  projectId: string,
-  userInput: string,
-): Promise<string | null> {
-  const truncated = userInput.slice(0, 600);
-  const result = await generateGatewayTextResult({
-    projectId,
-    purpose: "session-title",
-    messages: [
-      {
-        role: "user",
-        content: [
-          "Generate a short title (max 10 Chinese characters or 6 English words) from the user input below.",
-          "Return ONLY the title, no quotes or punctuation.",
-          "",
-          truncated,
-        ].join("\n"),
-      },
-    ],
-    maxTokens: 2048,
-    maxRetries: 0,
-    temperature: 0.3,
-  }, AbortSignal.timeout(22_000));
-
-  const title = (result.text ?? "").trim().slice(0, 50);
-  return title || null;
-}
-
 export const sessionTitleGenerator: TitleGenerator = {
   generate(ctx: TitleGeneratorContext) {
     const session = agentRuntimeStore.tryGetSession(ctx.sessionId);
@@ -81,6 +53,10 @@ export const sessionTitleGenerator: TitleGenerator = {
       prompt: ctx.prompt,
     });
     if (!userInput) return null;
-    return generateSessionTitleWithLlm(ctx.projectId, userInput);
+    return generateSessionTitleWithModel({
+      sessionId: ctx.sessionId,
+      projectId: ctx.projectId,
+      userInput,
+    });
   },
 };

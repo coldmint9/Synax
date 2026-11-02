@@ -129,6 +129,144 @@ fn started(tag: &str) -> (PathBuf, HotOps) {
     (dir, ops)
 }
 
+fn assert_record_state_matches_ui(ops: &HotOps) -> serde_json::Value {
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&ops.ui_snapshot("s", None).unwrap()).unwrap();
+    let compact: serde_json::Value =
+        serde_json::from_slice(&ops.record_state("s").unwrap()).unwrap();
+    let expected = json!({
+        "status": snapshot["session"]["status"],
+        "activeRunId": snapshot["session"]["activeRunId"],
+        "pendingResumeToken": snapshot["session"]["pendingResumeToken"],
+        "blockedReason": snapshot["session"]["blockedReason"],
+        "updatedAt": snapshot["session"]["updatedAt"],
+    });
+    assert_eq!(compact, expected);
+    compact
+}
+
+#[test]
+fn record_state_matches_published_control_transitions_and_reopen() {
+    let (dir, ops) = started("record-state-controls");
+    assert_record_state_matches_ui(&ops);
+    for (index, status) in [
+        "waiting_permission",
+        "waiting_input",
+        "paused",
+        "running",
+        "cancelled",
+        "interrupted",
+        "failed",
+        "completed",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let fence = ops.snapshot("s").unwrap();
+        let waiting = status.starts_with("waiting_");
+        let active = waiting || *status == "running";
+        let patch = json!({
+            "status": status,
+            "activeRunId": if active { Some("r") } else { None },
+            "pendingResumeToken": if waiting { Some("resume") } else { None },
+            "blockedReason": if *status == "failed" { Some("failure") } else { None },
+            "updatedAt": format!("transition-{index}"),
+        });
+        ops.control(
+            "s",
+            &format!("state-{index}"),
+            fence.epoch,
+            fence.revision,
+            "session_patch",
+            &serde_json::to_vec(&json!({ "patch": patch })).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(assert_record_state_matches_ui(&ops), patch);
+    }
+    let before = ops.record_state("s").unwrap();
+    ops.flush().unwrap();
+    drop(ops);
+    let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
+    assert_eq!(ops.record_state("s").unwrap(), before);
+    assert_record_state_matches_ui(&ops);
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn record_state_size_is_independent_of_metadata_and_live_history() {
+    let (dir, ops) = started("record-state-size");
+    let fence = ops.snapshot("s").unwrap();
+    ops.control(
+        "s",
+        "metadata",
+        fence.epoch,
+        fence.revision,
+        "session_patch",
+        &serde_json::to_vec(&json!({
+            "patch": { "sessionMetadata": { "mcpToolDefinitions": "m".repeat(180_000) } }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    ops.append_stream(
+        "s",
+        "r",
+        "p",
+        1,
+        1,
+        Durability::GroupCommit,
+        vec![step("a"), delta("a", "x")],
+    )
+    .unwrap();
+    let before = ops.record_state("s").unwrap();
+    let before_ui = ops.ui_snapshot("s", None).unwrap().len();
+    for sequence in 2..34 {
+        ops.append_stream(
+            "s",
+            "r",
+            "p",
+            sequence,
+            1,
+            Durability::GroupCommit,
+            vec![delta("a", &"x".repeat(1024))],
+        )
+        .unwrap();
+    }
+    assert_eq!(ops.record_state("s").unwrap(), before);
+    assert!(before.len() < 256);
+    assert!(ops.ui_snapshot("s", None).unwrap().len() > before_ui + 32_000);
+    assert_record_state_matches_ui(&ops);
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn record_state_preserves_missing_projection_errors() {
+    let dir = root("record-state-missing");
+    let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
+    assert!(matches!(
+        ops.ui_snapshot("missing", None),
+        Err(RuntimeError::ProjectionMissing)
+    ));
+    assert!(matches!(
+        ops.record_state("missing"),
+        Err(RuntimeError::ProjectionMissing)
+    ));
+    assert!(ops.ui_snapshot("../invalid", None).is_err());
+    assert!(ops.record_state("../invalid").is_err());
+    ops.ui_snapshot("s", Some(&seed("s"))).unwrap();
+    assert_eq!(
+        assert_record_state_matches_ui(&ops),
+        json!({
+            "status": "queued", "activeRunId": null, "pendingResumeToken": null,
+            "blockedReason": null, "updatedAt": "2026-10-20"
+        })
+    );
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn appended_events_survive_reopen_with_identical_projection() {
     let (dir, ops) = started("reopen");
@@ -1209,16 +1347,59 @@ fn workspace_binding_is_idle_only_and_fences_prepared_runs() {
         "expectedBindingRevision": 0,
         "patch": {"sessionMetadata": {"backend": {"workspaceBindingRevision": 1, "workDir": "/worktree"}}}
     })).unwrap();
-    ops.control("s", "bind", 1, 0, "workspace_bind", &change).unwrap();
+    ops.control("s", "bind", 1, 0, "workspace_bind", &change)
+        .unwrap();
     let fence = ops.snapshot("s").unwrap();
-    assert!(matches!(ops.control("s", "stale-bind", fence.epoch, fence.revision, "workspace_bind", &change), Err(RuntimeError::InvalidCommand(_))));
+    assert!(matches!(
+        ops.control(
+            "s",
+            "stale-bind",
+            fence.epoch,
+            fence.revision,
+            "workspace_bind",
+            &change
+        ),
+        Err(RuntimeError::InvalidCommand(_))
+    ));
     let stale = serde_json::to_vec(&json!({"id":"r", "sessionId":"s", "status":"queued", "startedAt":"2026-10-23", "metadata":{"runtime":{"workspaceBindingRevision":0}}})).unwrap();
-    assert!(matches!(ops.admit_run("s", "stale-run", "body", "r", fence.epoch, fence.revision, &[], &stale), Err(RuntimeError::InvalidCommand(_))));
+    assert!(matches!(
+        ops.admit_run(
+            "s",
+            "stale-run",
+            "body",
+            "r",
+            fence.epoch,
+            fence.revision,
+            &[],
+            &stale
+        ),
+        Err(RuntimeError::InvalidCommand(_))
+    ));
     let current = serde_json::to_vec(&json!({"id":"r", "sessionId":"s", "status":"queued", "startedAt":"2026-10-23", "metadata":{"runtime":{"workspaceBindingRevision":1}}})).unwrap();
-    ops.admit_run("s", "current-run", "body", "r", fence.epoch, fence.revision, &[], &current).unwrap();
+    ops.admit_run(
+        "s",
+        "current-run",
+        "body",
+        "r",
+        fence.epoch,
+        fence.revision,
+        &[],
+        &current,
+    )
+    .unwrap();
     let fence = ops.snapshot("s").unwrap();
     let second = serde_json::to_vec(&json!({"expectedBindingRevision":1,"patch":{"sessionMetadata":{"backend":{"workspaceBindingRevision":2}}}})).unwrap();
-    assert!(matches!(ops.control("s", "busy-bind", fence.epoch, fence.revision, "workspace_bind", &second), Err(RuntimeError::SessionBusy)));
+    assert!(matches!(
+        ops.control(
+            "s",
+            "busy-bind",
+            fence.epoch,
+            fence.revision,
+            "workspace_bind",
+            &second
+        ),
+        Err(RuntimeError::SessionBusy)
+    ));
     drop(ops);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -1228,24 +1409,54 @@ fn metadata_compare_and_set_rejects_a_stale_mailbox_after_reopen() {
     let (dir, ops) = started("metadata-cas");
     let first = json!({"schema":1,"eventSeq":1,"status":"running"});
     let fence = ops.snapshot("s").unwrap();
-    ops.control("s", "mailbox-first", fence.epoch, fence.revision, "session_patch", &serde_json::to_vec(&json!({
-        "expectedMetadata":{"key":"subagentControl","value":null},
-        "patch":{"sessionMetadata":{"subagentControl":first}}
-    })).unwrap()).unwrap();
-    ops.flush().unwrap(); drop(ops);
+    ops.control(
+        "s",
+        "mailbox-first",
+        fence.epoch,
+        fence.revision,
+        "session_patch",
+        &serde_json::to_vec(&json!({
+            "expectedMetadata":{"key":"subagentControl","value":null},
+            "patch":{"sessionMetadata":{"subagentControl":first}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    ops.flush().unwrap();
+    drop(ops);
     let ops = HotOps::new(Arc::new(JsonlStore::open(&dir).unwrap()));
     let fence = ops.snapshot("s").unwrap();
-    let stale = ops.control("s", "mailbox-stale", fence.epoch, fence.revision, "session_patch", &serde_json::to_vec(&json!({
-        "expectedMetadata":{"key":"subagentControl","value":null},
-        "patch":{"sessionMetadata":{"subagentControl":{"schema":1,"eventSeq":2}}}
-    })).unwrap());
-    assert!(matches!(stale, Err(RuntimeError::InvalidCommand(message)) if message.contains("METADATA_CONFLICT")));
+    let stale = ops.control(
+        "s",
+        "mailbox-stale",
+        fence.epoch,
+        fence.revision,
+        "session_patch",
+        &serde_json::to_vec(&json!({
+            "expectedMetadata":{"key":"subagentControl","value":null},
+            "patch":{"sessionMetadata":{"subagentControl":{"schema":1,"eventSeq":2}}}
+        }))
+        .unwrap(),
+    );
+    assert!(
+        matches!(stale, Err(RuntimeError::InvalidCommand(message)) if message.contains("METADATA_CONFLICT"))
+    );
     let fence = ops.snapshot("s").unwrap();
-    ops.control("s", "mailbox-next", fence.epoch, fence.revision, "session_patch", &serde_json::to_vec(&json!({
-        "expectedMetadata":{"key":"subagentControl","value":first},
-        "patch":{"sessionMetadata":{"subagentControl":{"schema":1,"eventSeq":2}}}
-    })).unwrap()).unwrap();
-    drop(ops); std::fs::remove_dir_all(dir).unwrap();
+    ops.control(
+        "s",
+        "mailbox-next",
+        fence.epoch,
+        fence.revision,
+        "session_patch",
+        &serde_json::to_vec(&json!({
+            "expectedMetadata":{"key":"subagentControl","value":first},
+            "patch":{"sessionMetadata":{"subagentControl":{"schema":1,"eventSeq":2}}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -1253,18 +1464,69 @@ fn workspace_binding_accepts_only_the_live_agent_lease() {
     let (dir, ops) = started("agent-workspace-binding");
     let lease = json!({"sessionId":"s", "runId":"r", "epoch":"generation", "hostId":"host"});
     let fence = ops.snapshot("s").unwrap();
-    ops.control("s", "open", fence.epoch, fence.revision, "execution_open", &serde_json::to_vec(&lease).unwrap()).unwrap();
+    ops.control(
+        "s",
+        "open",
+        fence.epoch,
+        fence.revision,
+        "execution_open",
+        &serde_json::to_vec(&lease).unwrap(),
+    )
+    .unwrap();
     let change = json!({"execution":lease, "expectedBindingRevision":0,
         "patch":{"sessionMetadata":{"backend":{"workspaceBindingRevision":1,"workDir":"/tree"}}}});
     let fence = ops.snapshot("s").unwrap();
-    let mut stale = change.clone(); stale["execution"]["epoch"] = json!("old-generation");
-    assert!(matches!(ops.control("s", "stale-agent", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&stale).unwrap()), Err(RuntimeError::ExecutionSuperseded(_))));
-    ops.control("s", "agent-bind", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&change).unwrap()).unwrap();
-    assert_eq!(ops.snapshot("s").unwrap().active_run_id.as_deref(), Some("r"));
+    let mut stale = change.clone();
+    stale["execution"]["epoch"] = json!("old-generation");
+    assert!(matches!(
+        ops.control(
+            "s",
+            "stale-agent",
+            fence.epoch,
+            fence.revision,
+            "workspace_bind",
+            &serde_json::to_vec(&stale).unwrap()
+        ),
+        Err(RuntimeError::ExecutionSuperseded(_))
+    ));
+    ops.control(
+        "s",
+        "agent-bind",
+        fence.epoch,
+        fence.revision,
+        "workspace_bind",
+        &serde_json::to_vec(&change).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        ops.snapshot("s").unwrap().active_run_id.as_deref(),
+        Some("r")
+    );
     let fence = ops.snapshot("s").unwrap();
-    ops.control("s", "close", fence.epoch, fence.revision, "execution_close", &serde_json::to_vec(&lease).unwrap()).unwrap();
+    ops.control(
+        "s",
+        "close",
+        fence.epoch,
+        fence.revision,
+        "execution_close",
+        &serde_json::to_vec(&lease).unwrap(),
+    )
+    .unwrap();
     let fence = ops.snapshot("s").unwrap();
-    let mut closed = change; closed["expectedBindingRevision"] = json!(1); closed["patch"]["sessionMetadata"]["backend"]["workspaceBindingRevision"] = json!(2);
-    assert!(matches!(ops.control("s", "closed-agent", fence.epoch, fence.revision, "workspace_bind", &serde_json::to_vec(&closed).unwrap()), Err(RuntimeError::ExecutionSuperseded(_))));
-    drop(ops); std::fs::remove_dir_all(dir).unwrap();
+    let mut closed = change;
+    closed["expectedBindingRevision"] = json!(1);
+    closed["patch"]["sessionMetadata"]["backend"]["workspaceBindingRevision"] = json!(2);
+    assert!(matches!(
+        ops.control(
+            "s",
+            "closed-agent",
+            fence.epoch,
+            fence.revision,
+            "workspace_bind",
+            &serde_json::to_vec(&closed).unwrap()
+        ),
+        Err(RuntimeError::ExecutionSuperseded(_))
+    ));
+    drop(ops);
+    std::fs::remove_dir_all(dir).unwrap();
 }

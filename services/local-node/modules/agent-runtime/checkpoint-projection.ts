@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { contextInputBudget, type ContextBudget, type ContextCheckpoint } from "./context-checkpoint.js";
-import { persistCompactedContextUsage, readCheckpointHead, recoverCheckpointHead, runSessionCheckpoint, type CheckpointHead } from "./checkpoint-service.js";
+import { readCheckpointHead, recoverCheckpointHead, runSessionCheckpoint, type CheckpointHead } from "./checkpoint-service.js";
 import { runtimeClient, decode } from "./sidecar/runtime-repository.js";
 import { hydrateHistoryValues } from "./sidecar/history-pages.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
@@ -123,9 +123,6 @@ export async function prepareCheckpointContext(input: Input): Promise<Checkpoint
         candidate = { prompt, tokens, originalTokens, compacted: true };
         return true;
       },
-      onCommitted: checkpoint => candidate
-        ? persistCompactedContextUsage(input.sessionId, checkpoint.throughStepId, candidate.tokens, input.budget.contextLimit)
-        : null,
     });
     if (checkpoint && candidate) {
       failedCandidates.delete(input.sessionId);

@@ -4,6 +4,7 @@ import css from '../../../index.css?raw';
 import deckCss from '../../../shared/design/command-deck.css?raw';
 import layoutSource from '../WorkbenchLayout.tsx?raw';
 import headerSource from '../WorkbenchHeader.tsx?raw';
+import navSource from '../toolbar/WorkbenchNav.tsx?raw';
 import gitWorkbenchCss from '../../../features/git/gitWorkbench.css?raw';
 
 const stylesheet = postcss.parse(css + '\n' + deckCss);
@@ -90,10 +91,10 @@ describe('canonical command deck', () => {
     expect(declaration('.dark .synax-island', '--island-ink-halo')).toContain('var(--theme-shadow-rgb)');
   });
   it('represents collapsible navigation as toggle buttons, not fake tabs with no panel', () => {
-    const nav = headerSource.split('function MainNavTabs(')[1].split('function GoalToolbar(')[0];
-    expect(nav).toContain('aria-pressed={activePanel === tab.id}');
+    const nav = navSource.split('export function WorkbenchNav(')[1];
+    expect(nav).toContain('aria-pressed={selected}');
     expect(nav).not.toContain('Tabs.ListContainer');
-    expect(nav).toContain('onClick={() => onPanelToggle(tab.id)}');
+    expect(nav).toContain('onClick={() => onPanelToggle(item.id)}');
   });
   it('retains Git actions and removes the obsolete overlay gutter', () => {
     expect(layoutSource).toContain('<GitToolbarProvider>');

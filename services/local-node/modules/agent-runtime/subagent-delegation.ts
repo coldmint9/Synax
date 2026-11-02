@@ -11,11 +11,15 @@ import { profileService } from "./profile-service.js";
 import { AgentPermissionError, AgentValidationError } from "./runtime-errors.js";
 import { bindAssets, sessionHasAsset, validateAssets } from "./media-assets.js";
 import { runChildToCompletion, type SubagentSpec } from "./subagent-orchestrator.js";
+import { subagentHoldsSlot } from "./subagent-control-broker.js";
+import { resolveRequestedSubagentModel } from "./subagent-models.js";
 
 export const delegateArgsSchema = z.object({ ...subagentStartFields, contentParts: contentPartsSchema.optional() }).strict();
 export type DelegateArgs = z.infer<typeof delegateArgsSchema>;
 
-function resolveConfig(parentId: string, args: DelegateArgs): { profile: SubagentProfileConfig; templateId?: string } {
+function resolveConfig(parentId: string, args: DelegateArgs): { profile: SubagentProfileConfig; templateId?: string;
+  /** Only a template-supplied model is user configuration the agent cannot change. */
+  modelContext?: { templateName?: string } } {
   const selected = activeTurnReferences(parentId)?.subagentProfiles ?? [];
   if (selected.length && args.templateId && !selected.some(item => item.id === args.templateId))
     throw new AgentValidationError("Use one of the user-selected subagent templateId values for this turn.");
@@ -34,7 +38,8 @@ function resolveConfig(parentId: string, args: DelegateArgs): { profile: Subagen
       throw new AgentPermissionError(`Custom subagent ${key} cannot be expanded by delegation.`);
   if (base.writeScope && requested.writeScope?.some(scope => !base.writeScope!.some(allowed => scope === allowed || scope.startsWith(allowed.replace(/\/$/, "") + "/"))))
     throw new AgentPermissionError("Custom subagent writeScope cannot be expanded by delegation.");
-  return { templateId: template?.id, profile: { ...base, ...requested,
+  return { templateId: template?.id, modelContext: !requested.model?.trim() && base.model?.trim() ? { templateName: base.name } : undefined,
+    profile: { ...base, ...requested,
     name: args.name ?? base.name ?? requested.name ?? "Subagent",
     description: base.description ?? requested.description ?? "Complete the assigned task",
     instructions: [base.instructions, requested.instructions].filter(Boolean).join("\n\n") || "Complete the assigned task and report the result.",
@@ -42,25 +47,31 @@ function resolveConfig(parentId: string, args: DelegateArgs): { profile: Subagen
 }
 
 export async function createConfiguredSubagent(input: ToolExecutionInput, raw: DelegateArgs) {
-  // Resolve the cycle before checking admission. No await may split the child
-  // count check and registration, or parallel delegations can exceed the cap.
   const { toolRegistry } = await import("./tool-registry.js");
   const args = delegateArgsSchema.parse(raw);
   const parent = agentRuntimeStore.getSession(input.sessionId);
-  const active = parent.childSessionIds.map(id => agentRuntimeStore.tryGetSession(id))
-    .filter(child => child && ["queued", "running", "waiting_permission", "waiting_input"].includes(child.status));
+  const { profile, templateId, modelContext } = resolveConfig(parent.id, args);
+  // Resolve the child model against the configured catalog before the child
+  // exists: an unknown ref is a fixable tool error here, never a subtask that
+  // dies inside the provider resolver after the parent already committed.
+  profile.model = await resolveRequestedSubagentModel(parent.projectId, profile.model, modelContext);
+  // Re-read the parent after that await: no await may split the child count
+  // check and registration, and a sibling delegation may have registered a
+  // child in the meantime. Parallel delegations must still hit the cap.
+  const admitted = agentRuntimeStore.getSession(parent.id);
+  const active = admitted.childSessionIds.map(id => agentRuntimeStore.tryGetSession(id))
+    .filter(child => child && subagentHoldsSlot(child));
   if (active.length >= 5) throw new AgentValidationError("Maximum concurrent subagents (5) reached. Wait for a child to finish.");
   if (args.contentParts) {
-    validateAssets(args.contentParts, parent.projectId);
+    validateAssets(args.contentParts, admitted.projectId);
     for (const part of args.contentParts)
-      if (part.type !== "text" && !sessionHasAsset(parent.id, part.assetId))
+      if (part.type !== "text" && !sessionHasAsset(admitted.id, part.assetId))
         throw new AgentPermissionError("Only parent-attached assets may be delegated.");
   }
-  const { profile, templateId } = resolveConfig(parent.id, args);
   const prompt = [args.prompt, args.deliverable && `Deliverable: ${args.deliverable}`,
     args.acceptanceCriteria?.length && `Acceptance criteria:\n${args.acceptanceCriteria.map(item => `- ${item}`).join("\n")}`].filter(Boolean).join("\n\n");
-  const child = agentSessionRuntime.create(buildSubagentChildInput(parent, profile, prompt,
-    profileService.getForSession(parent), toolRegistry.listForSession(parent.id), templateId));
+  const child = agentSessionRuntime.create(buildSubagentChildInput(admitted, profile, prompt,
+    profileService.getForSession(admitted), toolRegistry.listForSession(admitted.id), templateId));
   if (args.contentParts) {
     const parts: RuntimeContentPart[] = [{ type: "text", text: prompt }, ...args.contentParts];
     await bindAssets(child.id, parts);
@@ -68,6 +79,34 @@ export async function createConfiguredSubagent(input: ToolExecutionInput, raw: D
   }
   const spec: SubagentSpec = { profileId: "subagent", prompt, nodeId: child.nodeId, thinkingMode: child.thinkingMode, label: profile.name };
   return { child, spec };
+}
+
+/**
+ * Create a user-facing child conversation without entering the delegated-task
+ * orchestrator. The child shares the parent's workspace, tools and permissions
+ * but not its transcript; its next turns are submitted through the ordinary
+ * session runs API.
+ */
+export async function createInteractiveSideChat(parentSessionId: string, prompt: string, options?: { forkPreparing?: boolean }) {
+  const { toolRegistry } = await import("./tool-registry.js");
+  const parent = agentRuntimeStore.getSession(parentSessionId);
+  const parentProfile = profileService.getForSession(parent);
+  const config: SubagentProfileConfig = {
+    name: "Side chat",
+    description: "Temporary conversation beside the primary session.",
+    instructions: "Answer the user in this temporary side conversation. Its context starts from a snapshot of the primary conversation taken when it opened, while the user only sees messages exchanged here. It shares the primary session's workspace, tools and permissions. Do not report a delegated task result and do not start child agents.",
+    access: "inherit",
+  };
+  const input = buildSubagentChildInput(
+    parent,
+    config,
+    prompt,
+    parentProfile,
+    toolRegistry.listForSession(parent.id, { includeGated: true }),
+    undefined,
+    { interactive: true },
+  );
+  return agentSessionRuntime.create(input, options);
 }
 
 export async function delegateSubagent(input: ToolExecutionInput): Promise<ToolExecutionResult> {
@@ -78,7 +117,10 @@ export async function delegateSubagent(input: ToolExecutionInput): Promise<ToolE
   const status = agentRuntimeStore.getSession(child.id).status;
   const summary = outcome.summary ?? outcome.error ?? `Child session ended as ${status}.`;
   return { result: { taskId: child.id, childSessionId: child.id, childStatus: status,
-    session: { id: child.id, profileId: "subagent", status }, status: outcome.status, summary, error: outcome.error },
+    session: { id: child.id, profileId: "subagent", status }, status: outcome.status, summary, error: outcome.error,
+    // Success already carries its result; only a non-completed child needs the
+    // facts that let the parent continue instead of redoing the work.
+    ...(outcome.facts ? { facts: outcome.facts } : {}) },
     displaySummary: `Subtask ${child.id} ${outcome.status}: ${summary}`,
     outcome: outcome.status === "completed" ? undefined : "failed",
     artifacts: [{ kind: "decision", title: "Subtask result", summary, risk: "low" }],

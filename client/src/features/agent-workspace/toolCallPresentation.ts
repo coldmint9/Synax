@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { t, type I18nKey, type Locale } from "../../shared/lib/i18n";
 import type { ToolCallView } from "./buildInterleavedTurns";
+import { readSubagentSessionId } from "./subagentCallMatch";
 
 const TOOLS: Record<string, { label: I18nKey; icon: typeof Wrench }> = {
   "file.read": { label: "activityToolRead", icon: FileSearch },
@@ -42,6 +43,10 @@ const ALIASES: Record<string, [string, string, typeof Wrench]> = {
   "agent.discover": ["查找可用工具", "Find tools", Search],
   "agent.execute": ["执行工具步骤", "Run tool steps", ListChecks],
   "agent.adapt": ["调整助手配置", "Configure assistant", Wrench],
+  "command.manage": ["管理命令任务", "Manage command tasks", Terminal],
+  "code.result": ["读取执行结果", "Read execution result", BookOpen],
+  "code.tools": ["查找可组合工具", "Find composable tools", Search],
+  "code.run": ["执行工具步骤", "Run tool steps", ListChecks],
   "webSearch": ["搜索网页", "Search the web", Globe],
   "web.search": ["搜索网页", "Search the web", Globe],
   "web_search": ["搜索网页", "Search the web", Globe],
@@ -64,9 +69,25 @@ const ALIASES: Record<string, [string, string, typeof Wrench]> = {
   "task.get": ["查看待办", "View task", ListChecks],
   "task.list": ["查看待办列表", "List tasks", ListChecks],
   "plan.propose": ["提交实施计划", "Propose plan", ListChecks],
+  "plan.execute": ["执行实施计划", "Execute plan", ListChecks],
+  "goal.finish": ["提交目标验收", "Submit goal acceptance", ListChecks],
+  "work.checkpoint": ["更新工作检查点", "Update work checkpoint", ListChecks],
+  "presentation.select": ["选择呈现方式", "Select presentation", Monitor],
   "human.ask": ["确认任务细节", "Clarify task", ListChecks],
   "mode.switch": ["切换工作模式", "Switch workflow", ListChecks],
   "subagent.delegate": ["委派子任务", "Delegate task", GitBranch],
+  "subagent.lifecycle": ["管理子任务", "Manage subagents", GitBranch],
+  "super.plan": ["编排多智能体任务", "Orchestrate multi-agent tasks", GitBranch],
+  "super.message": ["传递多智能体指令", "Send multi-agent directive", GitBranch],
+  "super.close": ["完成多智能体协同验证", "Finalize multi-agent verification", ListChecks],
+  "git.merge.create": ["创建合并任务", "Create merge task", GitBranch],
+  "git.merge.analyze": ["分析合并", "Analyze merge", GitBranch],
+  "git.merge.resume": ["继续合并任务", "Resume merge task", GitBranch],
+  "git.merge.cancel": ["取消合并任务", "Cancel merge task", GitBranch],
+  "git.merge.configure": ["配置合并检查", "Configure merge checks", ListChecks],
+  "git.merge.read": ["查看合并任务", "Inspect merge task", GitBranch],
+  "git.merge.propose": ["提交冲突解决方案", "Propose conflict resolution", FileEdit],
+  "git.pr.read": ["查看合并请求", "Read pull request", GitBranch],
   "git.merge.worker.inspect": ["查看合并进度", "Inspect merge progress", GitBranch],
   "git.merge.worker.next": ["推进智能合并", "Advance smart merge", GitBranch],
   "git.merge.worker.packet": ["查看冲突摘要", "Read conflict packet", FileSearch],
@@ -100,6 +121,102 @@ const ALIASES: Record<string, [string, string, typeof Wrench]> = {
   "get_api_by_path": ["查看接口信息", "Inspect API", Search],
 };
 
+const ACTION_ALIASES: Record<string, Record<string, [string, string, typeof Wrench]>> = {
+  "subagent.lifecycle": {
+    start: ["启动子代理", "Start subagent", GitBranch],
+    list: ["列出子代理", "List subagents", ListChecks],
+    inspect: ["查看子代理", "Inspect subagent", Search],
+    wait: ["等待子代理", "Wait for subagent", GitBranch],
+    message: ["向子代理发送消息", "Message subagent", GitBranch],
+    pause: ["暂停子代理", "Pause subagent", GitBranch],
+    resume: ["恢复子代理", "Resume subagent", GitBranch],
+    cancel: ["取消子代理", "Cancel subagent", GitBranch],
+    terminate: ["终止子代理", "Terminate subagent", GitBranch],
+    close: ["关闭子代理", "Close subagent", GitBranch],
+  },
+};
+
+function parseInputObject(inputSummary: string): Record<string, unknown> | null {
+  try {
+    const input: unknown = JSON.parse(inputSummary);
+    return input && typeof input === "object" && !Array.isArray(input)
+      ? input as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface SubagentTarget {
+  id: string | null;
+  subject: string;
+}
+
+function readSubagentName(value: unknown, seen = new Set<unknown>()): string | null {
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  const record = value as Record<string, unknown>;
+  if (typeof record.name === "string" && record.name.trim()) return record.name.trim();
+  const session = record.session;
+  if (session && typeof session === "object") {
+    const metadata = (session as Record<string, unknown>).sessionMetadata;
+    if (metadata && typeof metadata === "object") {
+      const name = (metadata as Record<string, unknown>).subagentName;
+      if (typeof name === "string" && name.trim()) return name.trim();
+    }
+  }
+  for (const key of ["result", "output", "data", "payload", "session"]) {
+    const name = readSubagentName(record[key], seen);
+    if (name) return name;
+  }
+  return null;
+}
+
+export function subagentTargetOf(call: { inputSummary: string; outputRef?: unknown }): SubagentTarget | null {
+  const input = parseInputObject(call.inputSummary);
+  if (!input || typeof input.action !== "string") return null;
+  const name =
+    (typeof input.name === "string" && input.name.trim() ? input.name.trim() : null) ??
+    readSubagentName(call.outputRef);
+  const id = readSubagentSessionId(input) ?? readSubagentSessionId(call.outputRef);
+  const base = name ?? (id ? `子代理 ${id.slice(0, 8)}` : null);
+  if (!base) return null;
+  return { id, subject: base.includes("子代理") ? base : `${base}子代理` };
+}
+
+function actionAliasWithSubject(
+  action: string,
+  subject: string | null,
+  alias: [string, string, typeof Wrench] | undefined,
+): [string, string, typeof Wrench] | undefined {
+  if (!alias || !subject) return alias;
+  const zh: Record<string, string> = {
+    start: `启动${subject}`,
+    list: `列出${subject}`,
+    inspect: `查看${subject}`,
+    wait: `等待${subject}`,
+    message: `向${subject}发送消息`,
+    pause: `暂停${subject}`,
+    resume: `恢复${subject}`,
+    cancel: `取消${subject}`,
+    terminate: `终止${subject}`,
+    close: `关闭${subject}`,
+  };
+  const en: Record<string, string> = {
+    start: `Start ${subject}`,
+    list: `List all subagents`,
+    inspect: `Inspect ${subject}`,
+    wait: `Wait for ${subject}`,
+    message: `Message ${subject}`,
+    pause: `Pause ${subject}`,
+    resume: `Resume ${subject}`,
+    cancel: `Cancel ${subject}`,
+    terminate: `Terminate ${subject}`,
+    close: `Close ${subject}`,
+  };
+  return zh[action] && en[action] ? [zh[action], en[action], alias[2]] : alias;
+}
+
 function patchTargets(patch: string, truncated = false): string {
   const paths = Array.from(
     patch.matchAll(/^\*\*\* (?:Update File|Add File|Delete File|Move to): ([^\r\n]+)(?:\r?\n|$)/gm),
@@ -110,7 +227,7 @@ function patchTargets(patch: string, truncated = false): string {
 }
 
 export function toolCallPresentation(
-  call: Pick<ToolCallView, "toolId" | "inputSummary"> & Partial<Pick<ToolCallView, "outputSummary" | "status">> & { category?: string },
+  call: Pick<ToolCallView, "toolId" | "inputSummary" | "outputRef"> & Partial<Pick<ToolCallView, "outputSummary" | "status">> & { category?: string },
   locale: Locale = "zh",
 ) {
   const tool = TOOLS[call.toolId];
@@ -120,7 +237,13 @@ export function toolCallPresentation(
         ? call.toolId.split("__").slice(2).join("__")
         : call.toolId.split(".").slice(2).join("."))
     : call.toolId;
-  const alias = ALIASES[call.toolId] ?? (isMcp ? ALIASES[operation] : undefined);
+  const input = parseInputObject(call.inputSummary);
+  const action = typeof input?.action === "string" ? input.action : null;
+  const actionAlias = action ? ACTION_ALIASES[call.toolId]?.[action] : undefined;
+  const subagent = call.toolId === "subagent.lifecycle" ? subagentTargetOf(call) : null;
+  const alias = actionAliasWithSubject(action ?? "", subagent?.subject ?? (action === "list" ? "全部子代理" : null), actionAlias)
+    ?? ALIASES[call.toolId]
+    ?? (isMcp ? ALIASES[operation] : undefined);
   const readable = operation
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/[_.-]+/g, " ")
@@ -153,7 +276,7 @@ export function toolCallPresentation(
       if (call.toolId === "file.patch" && typeof values.patch === "string") {
         target = patchTargets(values.patch);
       }
-      for (const key of [
+      for (const key of call.toolId === "subagent.lifecycle" ? [] : [
         "command",
         "query",
         "pattern",
@@ -202,19 +325,36 @@ export function toolCallPresentation(
     source: isMcp ? "MCP" : undefined,
     icon: tool?.icon ?? alias?.[2] ?? CATEGORY_ICONS[call.category ?? ""] ?? Wrench,
     target,
+    ...(subagent ? { subagent } : {}),
   };
 }
 
+/** A narrow compatibility projection for receipts saved before blocked existed.
+ * Never downgrade an arbitrary lifecycle error (or another tool's output). */
+export function isSubagentMessageNotSent(call: ToolCallView): boolean {
+  if (call.toolId !== "subagent.lifecycle") return false;
+  if (call.status === "blocked" && call.outputRef && typeof call.outputRef === "object")
+    return (call.outputRef as { code?: unknown }).code === "SUBAGENT_BUSY";
+  return call.status === "failed" && call.outputSummary ===
+    "The subagent is already running; wait or pause it before messaging it.";
+}
+
+export function toolCallDisplayStatus(call: ToolCallView): string {
+  return isSubagentMessageNotSent(call) ? "blocked" : call.status;
+}
+
 export function aggregateToolStatus(calls: ToolCallView[]): string {
+  const statuses = calls.map(toolCallDisplayStatus);
   for (const status of [
     "failed",
     "running",
     "denied",
     "cancelled",
     "pending",
+    "blocked",
   ]) {
-    if (calls.some((call) => call.status === status)) return status;
+    if (statuses.includes(status)) return status;
   }
-  if (calls.every((call) => call.status === "completed")) return "completed";
-  return calls.find((call) => call.status !== "completed")?.status ?? "pending";
+  if (statuses.every((status) => status === "completed")) return "completed";
+  return statuses.find((status) => status !== "completed") ?? "pending";
 }

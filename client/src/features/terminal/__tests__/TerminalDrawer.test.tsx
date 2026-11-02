@@ -112,6 +112,23 @@ it("restores a manually created terminal without mixing in services", async () =
   expect(await screen.findByText("terminal:existing")).toBeVisible();
   expect(terminalApi.create).not.toHaveBeenCalled();
 });
+it("starts a working terminal when the restored record has already ended", async () => {
+  vi.mocked(terminalApi.list).mockResolvedValue({
+    items: [
+      {
+        ...item("stale"),
+        state: "unconfirmed",
+        endedAt: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  });
+  vi.mocked(terminalApi.create).mockResolvedValue(item("auto"));
+  useTerminalStore.setState({ open: false, tabs: [], activeId: null });
+  render(<TerminalDrawer projectId="p" sessionId={null} />);
+  act(() => useTerminalStore.getState().show());
+  expect(await screen.findByText("terminal:auto")).toBeVisible();
+  expect(screen.queryByText("terminal:stale")).not.toBeInTheDocument();
+});
 it("keeps legacy services untouched until the explicit restart confirmation is submitted", async () => {
   useTerminalStore
     .getState()

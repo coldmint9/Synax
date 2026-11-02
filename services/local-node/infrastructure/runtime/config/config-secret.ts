@@ -12,18 +12,18 @@ export function isEncryptedSecret(value: string | undefined | null): boolean {
   return Boolean(value?.startsWith(ENCRYPTED_PREFIX))
 }
 
-export function encryptSecret(value: string | undefined | null): string | undefined {
+export function encryptSecret(value: string | undefined | null, key: Buffer = encryptionKey()): string | undefined {
   if (!value) return undefined
   if (isEncryptedSecret(value)) return value
 
   const iv = randomBytes(12)
-  const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
   const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()])
   const tag = cipher.getAuthTag()
   return `${ENCRYPTED_PREFIX}${iv.toString('base64')}:${tag.toString('base64')}:${ciphertext.toString('base64')}`
 }
 
-export function decryptSecret(value: string | undefined | null): string | undefined {
+export function decryptSecret(value: string | undefined | null, key: Buffer = encryptionKey()): string | undefined {
   if (!value) return undefined
   if (!isEncryptedSecret(value)) return value
 
@@ -32,7 +32,7 @@ export function decryptSecret(value: string | undefined | null): string | undefi
   if (!ivB64 || !tagB64 || !ciphertextB64) return undefined
 
   try {
-    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivB64, 'base64'))
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64'))
     decipher.setAuthTag(Buffer.from(tagB64, 'base64'))
     const plaintext = Buffer.concat([
       decipher.update(Buffer.from(ciphertextB64, 'base64')),

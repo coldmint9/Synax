@@ -1,4 +1,5 @@
 import type { MediaAdapter, MediaCapabilities, MediaModelSelection, ModelCapability } from "../../../modules/media/contracts.js";
+import type { SuperCodingConfig } from "../../../../../packages/contracts/super-coding.js";
 export type ProviderStatus = "live" | "experimental" | "inactive";
 export type ProviderKind = "api";
 export type ApiFormat = "openai" | "openai-responses" | "anthropic" | "jev";
@@ -62,6 +63,8 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   cwd?: string;
   enabled?: boolean;
+  /** Ships inside Synax; project files only persist its enable flag. */
+  builtin?: boolean;
 }
 
 export type WebSearchRouting = "auto" | "remote" | "local" | "disabled";
@@ -174,6 +177,7 @@ export interface GlobalConfig {
   computerUse?: GlobalComputerUseSettings;
   gitLab?: GitLabConfig;
   webSearch: WebSearchConfig;
+  superCoding?: SuperCodingConfig;
   sessionArchiveRetentionDays?: number | null;
   limits: {
     maxAgentsPerProject: number;
@@ -234,6 +238,7 @@ export interface UpdateGlobalConfigRequest {
   computerUse?: GlobalComputerUseSettings;
   gitLab?: GitLabConfig;
   webSearch?: WebSearchConfig;
+  superCoding?: SuperCodingConfig;
   sessionArchiveRetentionDays?: number | null;
   limits?: GlobalConfig["limits"];
   features?: GlobalConfig["features"];

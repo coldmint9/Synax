@@ -100,9 +100,9 @@ class ObservationBridge {
     this.worker?.port.postMessage({ type: "sync", origin: this.origin, wake,
       subscriptions: [...this.bindings].map(([id, b]) => ({ id, path: b.path, cursor: b.cursor })) });
   }
-  subscribe(path: string, notify: ObservationHandler): () => void {
+  subscribe(path: string, notify: ObservationHandler, cursor?: string): () => void {
     const id = `observation:${++nextId}`;
-    const binding: Binding = { path, notify };
+    const binding: Binding = { path, notify, cursor };
     this.bindings.set(id, binding);
     if (this.direct) this.bindDirect(id, binding);
     else this.sync();
@@ -110,11 +110,11 @@ class ObservationBridge {
   }
 }
 
-export function subscribeObservation(path: string, notify: ObservationHandler): () => void {
+export function subscribeObservation(path: string, notify: ObservationHandler, cursor?: string): () => void {
   const origin = getApiOrigin() || window.location.origin;
   // Desktop sidecar port can change after a failed/retried startup.
   if (!bridge || bridge.origin !== origin) { bridge?.dispose(); bridge = new ObservationBridge(origin); }
-  return bridge.subscribe(path, notify);
+  return bridge.subscribe(path, notify, cursor);
 }
 
 if (import.meta.hot) import.meta.hot.dispose(() => { bridge?.dispose(); bridge = undefined; });

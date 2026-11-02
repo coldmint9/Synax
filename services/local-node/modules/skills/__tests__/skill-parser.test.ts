@@ -83,3 +83,20 @@ describe('parseSkillFile — profile-ids and injection', () => {
     expect(parsed.injection).toBe('on-demand');
   });
 });
+
+describe('parseSkillFile — account scopes', () => {
+  const fixture = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures',
+    'account-restricted-skill',
+    'SKILL.md',
+  );
+
+  it('parses requires-account into requiresAccounts', () => {
+    expect(parseSkillFile(fixture).requiresAccounts).toEqual(['enterprise']);
+  });
+
+  it('defaults requiresAccounts to [] for skills without an account scope', () => {
+    expect(parseSkillFile(FIXTURE).requiresAccounts).toEqual([]);
+  });
+});

@@ -1,20 +1,19 @@
-import { Description, Label, Radio, RadioGroup } from "@headlessui/react";
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
+import { Radio, RadioGroup } from "@headlessui/react";
 import {
-  ArrowUp,
   Check,
   Download,
   Monitor,
   Moon,
   Palette,
   RotateCcw,
-  Sparkles,
   Sun,
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { ACCENT_PRESETS, DEFAULT_ACCENT } from "../../../shared/lib/appearance";
 import { DEFAULT_THEME } from "../../../shared/lib/theme/defaults";
-import { BUILTIN_THEMES } from "../../../shared/lib/theme/presets";
+import { BUILTIN_THEMES, DEFAULT_APP_THEME } from "../../../shared/lib/theme/presets";
 import { themeToExport } from "../../../shared/lib/theme/normalize";
 import {
   downloadThemeFile,
@@ -30,6 +29,7 @@ import {
 import { useLocale } from "../../../shared/hooks/useLocale";
 import { useNotificationStore } from "../../../shared/state/notificationStore";
 import { AccentColorPicker } from "./AccentColorPicker";
+import { FormRow } from "./FormRow";
 import { SettingsCard } from "./SettingsCard";
 import type { GlobalConfig, MacWindowAppearance } from "../../../shared/contracts/config";
 import { applyMacWindowAppearance, desktopWindowApi, DEFAULT_MAC_WINDOW_APPEARANCE } from "../../../adapters/electron/mac-window-appearance";
@@ -86,12 +86,10 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
   const setActiveTheme = useThemeStore((s) => s.setActiveTheme);
   const [feedback, setFeedback] = useState<AppearanceFeedback | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
-  const preset = ACCENT_PRESETS.find((item) => item.color === accent);
-  const colorName = preset ? preset[locale] : zh ? "自定义" : "Custom";
   const themeSource =
     source === "imported" ? (zh ? "已导入" : "Imported") : zh ? "内置" : "Built-in";
   const resetDisabled =
-    source === "builtin" && themesEquivalent(activeTheme, DEFAULT_THEME);
+    source === "builtin" && themesEquivalent(activeTheme, DEFAULT_APP_THEME);
   const modes = [
     { id: "light", label: zh ? "浅色" : "Light", Icon: Sun },
     { id: "dark", label: zh ? "深色" : "Dark", Icon: Moon },
@@ -210,13 +208,65 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
       zh ? "已恢复内置默认主题" : "Restored built-in default theme",
     );
   };
+  const title = isMac
+    ? zh
+      ? "外观与窗口"
+      : "Appearance & window"
+    : zh
+      ? "外观"
+      : "Appearance";
+  const densityPercent = Math.round(macAppearance.opacity * 100);
+  const scanlinePercent = Math.round(macAppearance.scanlineOpacity * 1000) / 10;
 
   return (
     <SettingsCard
-      title={zh ? "外观" : "Appearance"}
+      title={title}
       icon={Palette}
-      description={
-        zh ? "即时生效，自动保存" : "Applied instantly · saved automatically"
+      trailing={
+        <div className="appearance-card-actions">
+          <span className="appearance-theme-name" title={activeTheme.name}>
+            {activeTheme.name}
+          </span>
+          <span className="appearance-theme-source">{themeSource}</span>
+          <span className="appearance-action-group">
+            <button
+              type="button"
+              className="appearance-icon-button"
+              aria-label={zh ? "导入主题" : "Import theme"}
+              title={zh ? "导入主题" : "Import theme"}
+              onClick={() => importInputRef.current?.click()}
+            >
+              <Upload size={13} aria-hidden="true" />
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              aria-label={zh ? "导入主题 JSON 文件" : "Import theme JSON file"}
+              className="appearance-visually-hidden"
+              onChange={handleImport}
+            />
+            <button
+              type="button"
+              className="appearance-icon-button"
+              aria-label={zh ? "导出主题" : "Export theme"}
+              title={zh ? "导出主题" : "Export theme"}
+              onClick={handleExport}
+            >
+              <Download size={13} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="appearance-icon-button"
+              disabled={resetDisabled}
+              aria-label={zh ? "恢复默认主题" : "Reset theme"}
+              title={zh ? "恢复默认主题" : "Reset theme"}
+              onClick={handleReset}
+            >
+              <RotateCcw size={13} aria-hidden="true" />
+            </button>
+          </span>
+        </div>
       }
     >
       <p
@@ -226,197 +276,109 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
       >
         {feedback?.message}
       </p>
-      <section
-        className="appearance-theme-management"
-        aria-labelledby="appearance-theme-management-title"
-      >
-        <h3
-          id="appearance-theme-management-title"
-          className="appearance-visually-hidden"
-        >
-          {zh ? "主题信息与操作" : "Theme information and actions"}
-        </h3>
-        <dl className="appearance-theme-meta">
-          <div>
-            <dt>{zh ? "主题名称" : "Theme name"}</dt>
-            <dd>{activeTheme.name}</dd>
-          </div>
-          <div>
-            <dt>{zh ? "来源" : "Source"}</dt>
-            <dd>{themeSource}</dd>
-          </div>
-        </dl>
-        <div className="appearance-theme-actions">
-          <button
-            type="button"
-            className="appearance-action"
-            onClick={() => importInputRef.current?.click()}
-          >
-            <Upload size={14} aria-hidden="true" />
-            <span>{zh ? "导入主题" : "Import theme"}</span>
-          </button>
-          <input
-            ref={importInputRef}
-            type="file"
-            accept="application/json,.json"
-            aria-label={zh ? "导入主题 JSON 文件" : "Import theme JSON file"}
-            className="appearance-visually-hidden"
-            onChange={handleImport}
-          />
-          <button type="button" className="appearance-action" onClick={handleExport}>
-            <Download size={14} aria-hidden="true" />
-            <span>{zh ? "导出主题" : "Export theme"}</span>
-          </button>
-          <button
-            type="button"
-            className="appearance-action"
-            disabled={resetDisabled}
-            onClick={handleReset}
-          >
-            <RotateCcw size={14} aria-hidden="true" />
-            <span>{zh ? "恢复默认" : "Reset theme"}</span>
-          </button>
-        </div>
-      </section>
-      <section className="appearance-builtins" aria-labelledby="appearance-builtins-title">
-        <div className="appearance-heading">
-          <span id="appearance-builtins-title" className="appearance-label">
-            {zh ? "经典主题" : "Classic themes"}
-          </span>
-          <span className="appearance-hint">
-            {zh ? "选择一套熟悉的编辑器配色" : "Choose a familiar editor palette"}
-          </span>
-        </div>
-        <div className="appearance-builtins-grid">
-          {BUILTIN_THEMES.map((theme) => {
-            const checked = activeTheme.id === theme.id && source === "builtin";
-            const colors = theme.colors[resolved];
-            return (
-              <button
-                type="button"
-                key={theme.id}
-                className="appearance-builtin"
-                data-checked={checked ? "" : undefined}
-                aria-pressed={checked}
-                onClick={() => {
-                  setActiveTheme(theme, "builtin");
-                  ensureThemeRuntime();
-                  announce("success", zh ? `已切换到「${theme.name}」` : `Switched to ${theme.name}`);
-                }}
-              >
-                <span
-                  className="appearance-builtin__preview"
-                  style={{
-                    background: colors.canvas,
-                    borderColor: colors.border,
-                  }}
-                  aria-hidden="true"
-                >
-                  <i style={{ background: colors.accent }} />
-                  <i style={{ background: colors.textMuted }} />
-                  <i style={{ background: colors.borderStrong }} />
-                </span>
-                <span className="appearance-builtin__meta">
-                  <strong>{theme.name}</strong>
-                  <span>{theme.id === "synax-default" ? (zh ? "Synax" : "Default") : "Built-in"}</span>
-                </span>
-                <Check className="appearance-builtin__check" size={14} aria-hidden="true" />
-              </button>
-            );
-          })}
-        </div>
-      </section>
-      <RadioGroup value={mode} onChange={handleModeChange} className="appearance-modes">
-        <div className="appearance-heading">
-          <Label className="appearance-label">
-            {zh ? "明暗模式" : "Color mode"}
-          </Label>
-          <Description as="span" className="appearance-hint" aria-live="polite">
-            {mode === "system"
-              ? zh
-                ? `当前随系统使用${resolved === "dark" ? "深色" : "浅色"}`
-                : `System is currently ${resolved}`
-              : zh
-                ? "选择适合你的工作氛围"
-                : "Set the tone for your workspace"}
-          </Description>
-        </div>
-        <div className="appearance-mode-group">
-          {modes.map(({ id, label, Icon }) => (
-            <Radio
-              as="button"
-              type="button"
-              key={id}
-              value={id}
-              className="appearance-mode"
+      <div className="settings-rows appearance-rows">
+        <FormRow label={zh ? "色彩模式" : "Color mode"}>
+          <div className="appearance-mode-cluster">
+            <RadioGroup
+              value={mode}
+              onChange={handleModeChange}
+              aria-label={zh ? "色彩模式" : "Color mode"}
+              className="appearance-modes"
             >
-              <span
-                className={`appearance-mini appearance-mini--${id}`}
-                aria-hidden="true"
-              >
-                <span className="appearance-mini__sidebar">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span className="appearance-mini__content">
-                  <i />
-                  <i />
-                  <span>
-                    <i />
-                    <b />
-                  </span>
-                </span>
+              {modes.map(({ id, label, Icon }) => (
+                <Radio
+                  as="button"
+                  type="button"
+                  key={id}
+                  value={id}
+                  className="appearance-mode"
+                >
+                  <Icon size={13} aria-hidden="true" />
+                  <span>{label}</span>
+                  <Check
+                    size={11}
+                    aria-hidden="true"
+                    className="appearance-mode__check"
+                  />
+                </Radio>
+              ))}
+            </RadioGroup>
+            {mode === "system" && (
+              <span className="appearance-hint" aria-live="polite">
+                {zh
+                  ? `系统：${resolved === "dark" ? "深色" : "浅色"}`
+                  : `System: ${resolved}`}
               </span>
-              <span className="appearance-mode__caption">
-                <Icon size={14} aria-hidden="true" />
-                <span>{label}</span>
-                <span className="appearance-mode__check" aria-hidden="true">
-                  <Check size={11} />
-                </span>
-              </span>
-            </Radio>
-          ))}
-        </div>
-      </RadioGroup>
-      <div className="appearance-colors">
-        <div className="appearance-palette">
-          <div className="appearance-heading">
-            <span className="appearance-label">
-              {zh ? "主题色" : "Accent color"}
-            </span>
-            <span className="appearance-color-name" aria-live="polite">
-              {colorName}
-            </span>
+            )}
           </div>
-          <p className="appearance-hint">
-            {zh
-              ? "一点色彩，让专注更有自己的样子。"
-              : "A little color. A workspace that feels like you."}
-          </p>
-          <RadioGroup
-            value={accent}
-            onChange={handleAccentChange}
-            aria-label={zh ? "预设主题色" : "Accent presets"}
-            className="appearance-swatches"
-          >
-            {ACCENT_PRESETS.map((item) => (
-              <Radio
-                as="button"
-                type="button"
-                key={item.color}
-                value={item.color}
-                aria-label={item[locale]}
-                className="appearance-swatch"
-                style={{ backgroundColor: item.color }}
-              >
-                {({ checked }) => (
-                  <>{checked && <Check size={15} aria-hidden="true" />}</>
-                )}
-              </Radio>
-            ))}
-          </RadioGroup>
-          <div className="appearance-custom-row">
+        </FormRow>
+
+        <FormRow label={zh ? "经典主题" : "Classic themes"}>
+          <div className="appearance-theme-chips">
+            {BUILTIN_THEMES.map((theme) => {
+              const checked = activeTheme.id === theme.id && source === "builtin";
+              const colors = theme.colors[resolved];
+              return (
+                <button
+                  type="button"
+                  key={theme.id}
+                  className="appearance-chip"
+                  data-checked={checked ? "" : undefined}
+                  aria-pressed={checked}
+                  title={theme.name}
+                  onClick={() => {
+                    setActiveTheme(theme, "builtin");
+                    ensureThemeRuntime();
+                    announce(
+                      "success",
+                      zh
+                        ? `已切换到「${theme.name}」`
+                        : `Switched to ${theme.name}`,
+                    );
+                  }}
+                >
+                  <span
+                    className="appearance-chip__preview"
+                    style={{
+                      background: colors.canvas,
+                      borderColor: colors.border,
+                    }}
+                    aria-hidden="true"
+                  >
+                    <i style={{ background: colors.accent }} />
+                    <i style={{ background: colors.textMuted }} />
+                  </span>
+                  <span className="appearance-chip__name">{theme.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        </FormRow>
+
+        <FormRow label={zh ? "主题色" : "Accent color"}>
+          <div className="appearance-accent-row">
+            <RadioGroup
+              value={accent}
+              onChange={handleAccentChange}
+              aria-label={zh ? "预设主题色" : "Accent presets"}
+              className="appearance-swatches"
+            >
+              {ACCENT_PRESETS.map((item) => (
+                <Radio
+                  as="button"
+                  type="button"
+                  key={item.color}
+                  value={item.color}
+                  aria-label={item[locale]}
+                  className="appearance-swatch"
+                  style={{ backgroundColor: item.color }}
+                >
+                  {({ checked }) => (
+                    <>{checked && <Check size={13} aria-hidden="true" />}</>
+                  )}
+                </Radio>
+              ))}
+            </RadioGroup>
             <AccentColorPicker
               value={accent}
               onChange={handleAccentChange}
@@ -430,73 +392,134 @@ export function AppearanceSection({ config, onUpdate }: AppearanceSectionProps) 
               title={zh ? "恢复默认主题色" : "Reset accent color"}
               onClick={() => handleAccentChange(DEFAULT_ACCENT)}
             >
-              <RotateCcw size={14} aria-hidden="true" />
+              <RotateCcw size={13} aria-hidden="true" />
             </button>
           </div>
-        </div>
-        <div className="appearance-preview" aria-hidden="true">
-          <div className="appearance-preview__header">
-            <span>
-              <Sparkles size={13} /> Synax
-            </span>
-            <span>{zh ? "实时预览" : "Live preview"}</span>
-          </div>
-          <div className="appearance-preview__body">
-            <span className="appearance-preview__badge">
-              <span />
-              {zh ? "专注于下一步" : "Focus on what’s next"}
-            </span>
-            <div className="appearance-preview__line" />
-            <div className="appearance-preview__line appearance-preview__line--short" />
-            <div className="appearance-preview__composer">
-              <span>{zh ? "从一个想法开始…" : "Start with an idea…"}</span>
-              <span>
-                <ArrowUp size={15} />
-              </span>
-            </div>
-          </div>
-        </div>
+        </FormRow>
       </div>
       {isMac ? (
-        <section className="appearance-window-material" aria-labelledby="appearance-window-material-title">
-          <div className="appearance-heading">
-            <span id="appearance-window-material-title" className="appearance-label">
+        <section
+          className="appearance-window-material"
+          aria-labelledby="appearance-window-material-title"
+        >
+          <div className="appearance-group-head">
+            <span
+              id="appearance-window-material-title"
+              className="appearance-group-title"
+            >
               {zh ? "窗口材质" : "Window material"}
             </span>
-            <span className="appearance-hint">
-              {zh ? "即时生效，默认关闭；浓度越低，原生毛玻璃越明显" : "Applied instantly and disabled by default; lower density reveals more native frost"}
-            </span>
+            <InfoTooltip label={zh ? "窗口材质说明" : "About window material"}>
+              {zh
+                ? "浓度越低，窗口越透明。"
+                : "Lower density makes the window more transparent."}
+            </InfoTooltip>
           </div>
-          <label className="appearance-window-row">
-            <span>{zh ? "启用透明窗口" : "Enable transparent window"}</span>
-            <input type="checkbox" checked={macAppearance.enabled} onChange={(event) => void updateMacAppearance({ enabled: event.target.checked })} />
-          </label>
-          <label className="appearance-window-row">
-            <span>{zh ? "原生材质" : "Native material"}</span>
-            <select value={macAppearance.vibrancy} onChange={(event) => void updateMacAppearance({ vibrancy: event.target.value as MacWindowAppearance["vibrancy"] })}>
-              <option value="under-window">Under window</option>
-              <option value="hud-window">HUD window</option>
-              <option value="none">None</option>
-            </select>
-          </label>
-          <label className="appearance-window-row">
-            <span>{zh ? `毛玻璃浓度 ${Math.round(macAppearance.opacity * 100)}%` : `Glass density ${Math.round(macAppearance.opacity * 100)}%`}</span>
-            <input type="range" min="0.35" max="1" step="0.01" value={macAppearance.opacity} onChange={(event) => void updateMacAppearance({ opacity: Number(event.target.value) })} />
-          </label>
-          <label className="appearance-window-row">
-            <span>{zh ? "底部分隔线" : "Bottom separator"}</span>
-            <input type="checkbox" checked={macAppearance.bottomSeparator} onChange={(event) => void updateMacAppearance({ bottomSeparator: event.target.checked })} />
-          </label>
-          <label className="appearance-window-row">
-            <span>{zh ? "横向纹理" : "Scanlines"}</span>
-            <input type="checkbox" checked={macAppearance.scanlines} onChange={(event) => void updateMacAppearance({ scanlines: event.target.checked })} />
-          </label>
-          {macAppearance.scanlines ? (
-            <label className="appearance-window-row">
-              <span>{zh ? `纹理强度 ${Math.round(macAppearance.scanlineOpacity * 1000) / 10}%` : `Scanline strength ${Math.round(macAppearance.scanlineOpacity * 1000) / 10}%`}</span>
-              <input type="range" min="0" max="0.08" step="0.005" value={macAppearance.scanlineOpacity} onChange={(event) => void updateMacAppearance({ scanlineOpacity: Number(event.target.value) })} />
-            </label>
-          ) : null}
+          <div className="settings-rows settings-rows--split">
+            <FormRow label={zh ? "透明窗口" : "Transparent window"}>
+              <input
+                type="checkbox"
+                className="appearance-check"
+                checked={macAppearance.enabled}
+                aria-label={zh ? "启用透明窗口" : "Enable transparent window"}
+                onChange={(event) =>
+                  void updateMacAppearance({ enabled: event.target.checked })
+                }
+              />
+            </FormRow>
+            <FormRow
+              label={
+                zh
+                  ? `毛玻璃浓度 ${densityPercent}%`
+                  : `Glass density ${densityPercent}%`
+              }
+            >
+              <input
+                type="range"
+                className="appearance-range"
+                min="0.35"
+                max="1"
+                step="0.01"
+                value={macAppearance.opacity}
+                aria-label={
+                  zh
+                    ? `毛玻璃浓度 ${densityPercent}%`
+                    : `Glass density ${densityPercent}%`
+                }
+                onChange={(event) =>
+                  void updateMacAppearance({ opacity: Number(event.target.value) })
+                }
+              />
+            </FormRow>
+            <FormRow label={zh ? "原生材质" : "Native material"}>
+              <select
+                className="appearance-select"
+                value={macAppearance.vibrancy}
+                aria-label={zh ? "原生材质" : "Native material"}
+                onChange={(event) =>
+                  void updateMacAppearance({
+                    vibrancy: event.target.value as MacWindowAppearance["vibrancy"],
+                  })
+                }
+              >
+                <option value="under-window">Under window</option>
+                <option value="hud-window">HUD window</option>
+                <option value="none">None</option>
+              </select>
+            </FormRow>
+            <FormRow label={zh ? "底部分隔线" : "Bottom separator"}>
+              <input
+                type="checkbox"
+                className="appearance-check"
+                checked={macAppearance.bottomSeparator}
+                aria-label={zh ? "底部分隔线" : "Bottom separator"}
+                onChange={(event) =>
+                  void updateMacAppearance({
+                    bottomSeparator: event.target.checked,
+                  })
+                }
+              />
+            </FormRow>
+            <FormRow label={zh ? "横向纹理" : "Scanlines"}>
+              <input
+                type="checkbox"
+                className="appearance-check"
+                checked={macAppearance.scanlines}
+                aria-label={zh ? "横向纹理" : "Scanlines"}
+                onChange={(event) =>
+                  void updateMacAppearance({ scanlines: event.target.checked })
+                }
+              />
+            </FormRow>
+            {macAppearance.scanlines ? (
+              <FormRow
+                label={
+                  zh
+                    ? `纹理强度 ${scanlinePercent}%`
+                    : `Scanline strength ${scanlinePercent}%`
+                }
+              >
+                <input
+                  type="range"
+                  className="appearance-range"
+                  min="0"
+                  max="0.08"
+                  step="0.005"
+                  value={macAppearance.scanlineOpacity}
+                  aria-label={
+                    zh
+                      ? `纹理强度 ${scanlinePercent}%`
+                      : `Scanline strength ${scanlinePercent}%`
+                  }
+                  onChange={(event) =>
+                    void updateMacAppearance({
+                      scanlineOpacity: Number(event.target.value),
+                    })
+                  }
+                />
+              </FormRow>
+            ) : null}
+          </div>
         </section>
       ) : null}
     </SettingsCard>

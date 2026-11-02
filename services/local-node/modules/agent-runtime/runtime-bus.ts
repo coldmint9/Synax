@@ -11,7 +11,12 @@ export type RuntimeBusEventType =
   | "session_step_completed"
   | "merge_worker_progress"
   | "session_input_queue_changed"
-  | "subagent_state_changed";
+  | "subagent_state_changed"
+  /** Auto-resume queue state for one session (queued/retrying/waiting_network). */
+  | "session_auto_resume"
+  /** Super orchestration snapshot/delta; patch carries the graph or its nodes. */
+  | "super.snapshot"
+  | "super.nodes";
 
 export interface RuntimeBusEvent {
   type: RuntimeBusEventType;

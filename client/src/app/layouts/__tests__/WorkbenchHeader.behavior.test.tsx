@@ -16,6 +16,10 @@ import { useApiConnectivityStore } from "../../../shared/lib/apiConnectivity";
 import type { ProjectSessionBadge } from "../../../features/agent-workspace/projectSessionBadges";
 
 const badgeState = vi.hoisted(() => ({ badges: {} as Record<string, ProjectSessionBadge> }));
+const gitState = vi.hoisted(() => ({
+  snapshot: null as unknown,
+  listeners: new Set<() => void>(),
+}));
 
 vi.mock("../../../shared/hooks/useLocale", () => ({
   useLocale: () => ({ locale: "en", t: (key: string) => key }),
@@ -23,6 +27,14 @@ vi.mock("../../../shared/hooks/useLocale", () => ({
 vi.mock("../../../features/agent-workspace/projectSessionBadges", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../../features/agent-workspace/projectSessionBadges")>(),
   useProjectSessionBadges: () => ({ badges: badgeState.badges, refresh: async () => {} }),
+}));
+vi.mock("../../../features/agent-workspace/workspaceGitStore", () => ({
+  subscribeWorkspaceGit: (listener: () => void) => {
+    gitState.listeners.add(listener);
+    return () => gitState.listeners.delete(listener);
+  },
+  getWorkspaceGitSnapshot: () => gitState.snapshot,
+  loadWorkspaceGit: async () => null,
 }));
 vi.mock("../useIslandPresence", () => ({
   useIslandPresence: (open: boolean) => ({ ref: () => {}, present: open }),
@@ -61,6 +73,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 beforeEach(() => {
   badgeState.badges = {};
+  gitState.snapshot = null;
   useAgentSessionStore.setState(useAgentSessionStore.getInitialState());
   useTerminalStore.setState({ open: false });
   useApiConnectivityStore.setState({
@@ -84,12 +97,13 @@ async function openRemoval(user: ReturnType<typeof userEvent.setup>) {
     await screen.findByRole("button", { name: "Workspace actions: Example" }),
   );
   await user.click(
-    await screen.findByRole("button", { name: "appRemoveProject: Example" }),
+    await screen.findByRole("menuitem", { name: "appRemoveProject: Example" }),
   );
   return screen.findByRole("dialog", { name: "appRemoveProject" });
 }
 
 describe("workbench action state", () => {
+
   it("hosts the widget toggle beside the global actions and removes it outside sessions", async () => {
     const user = userEvent.setup();
     function Harness({ panel }: { panel: "sessions" | "git" }) {
@@ -224,7 +238,7 @@ describe("workbench action state", () => {
     expect(within(header).getByRole("button", { name: "Git" })).toHaveTextContent("Git");
   });
 
-  it("filters workspaces and supports keyboard return from target actions", async () => {
+  it("filters workspaces and keeps the list behind the row actions", async () => {
     const user = userEvent.setup();
     render(
       <WorkbenchHeader
@@ -244,7 +258,24 @@ describe("workbench action state", () => {
     await user.click(
       screen.getByRole("button", { name: "Workspace actions: Other" }),
     );
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Manage workspace" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Rename workspace" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "appRemoveProject: Other" }),
+    ).toBeInTheDocument();
+    // The row actions pop out; the workspace list stays in place.
+    expect(
+      screen.getByRole("textbox", { name: "Search workspaces" }),
+    ).toHaveValue("Other");
     await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Workspace actions: Other" }),
@@ -283,7 +314,40 @@ describe("workbench action state", () => {
       screen.queryByRole("button", { name: "Rearrange widgets" }),
     ).not.toBeInTheDocument();
   });
-  it("opens management for the menu target without switching the current workspace", async () => {
+  it("keeps the unpushed reminder on the Git switch, not in a separate menu", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchHeader {...base} />, { wrapper });
+    expect(screen.queryByRole("button", { name: "Git actions" })).not.toBeInTheDocument();
+
+    gitState.snapshot = {
+      projectId: "p",
+      revision: "rev",
+      refreshedAt: new Date(0).toISOString(),
+      repositories: [
+        {
+          role: "primary",
+          status: "ready",
+          revision: "rev-1",
+          unpushedCommitCount: 2,
+          unpushedSince: "2026-10-31T14:32:00+08:00",
+        },
+      ],
+    };
+    for (const listener of gitState.listeners) listener();
+
+    const git = screen.getByRole("button", { name: "Git" });
+    await waitFor(() =>
+      expect(git).toHaveAccessibleDescription(/^2 unpushed commits · oldest /),
+    );
+    expect(git.querySelector(".wh-tab__badge")).toHaveTextContent("2");
+
+    await user.click(git.querySelector(".wh-tab__badge") as HTMLElement);
+    expect(base.onPanelToggle).not.toHaveBeenCalled();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /^2 unpushed commits · oldest /,
+    );
+  });
+  it("opens management from the row actions without switching the current workspace", async () => {
     const user = userEvent.setup();
     render(
       <WorkbenchHeader
@@ -296,9 +360,31 @@ describe("workbench action state", () => {
     await user.click(
       await screen.findByRole("button", { name: "Workspace actions: Other" }),
     );
-    await user.click(screen.getByRole("button", { name: "Manage workspace" }));
+    await user.click(screen.getByRole("menuitem", { name: "Manage workspace" }));
     expect(screen.getByTestId("route")).toHaveTextContent(
       "/workspaces/other/manage",
+    );
+    expect(base.onProjectSwitch).not.toHaveBeenCalled();
+  });
+  it("renames a workspace from its row actions without switching", async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkbenchHeader
+        {...base}
+        projects={[project, { ...project, id: "other", name: "Other" }]}
+      />,
+      { wrapper },
+    );
+    await user.click(screen.getByRole("button", { name: "appSwitchProject" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Workspace actions: Other" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Rename workspace" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Rename workspace" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Workspace name" })).toHaveValue(
+      "Other",
     );
     expect(base.onProjectSwitch).not.toHaveBeenCalled();
   });

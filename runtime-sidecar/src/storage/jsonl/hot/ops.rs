@@ -111,6 +111,34 @@ pub fn set_projection_state(
 }
 
 impl SessionHandle {
+    /// Read only the stream payload state from one published projection. Do not
+    /// materialize the header, metadata or timeline just to select five fields.
+    pub fn record_state(&self) -> Result<Vec<u8>, RuntimeError> {
+        let lake = self.read();
+        if !lake.projection_ready {
+            return Err(RuntimeError::ProjectionMissing);
+        }
+        let mut state = serde_json::Map::with_capacity(5);
+        let value_or_null = |key: &str| {
+            lake.projection
+                .session
+                .get(key)
+                .map(PValue::to_json)
+                .unwrap_or(serde_json::Value::Null)
+        };
+        for key in [
+            "status",
+            "activeRunId",
+            "pendingResumeToken",
+            "blockedReason",
+            "updatedAt",
+        ] {
+            state.insert(key.to_owned(), value_or_null(key));
+        }
+        serde_json::to_vec(&state)
+            .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))
+    }
+
     /// Read the published projection, encoding it when its generation moved.
     pub fn ui_snapshot(&self) -> Result<Vec<u8>, RuntimeError> {
         let lake = self.read();
@@ -203,13 +231,23 @@ impl SessionActor {
             .projection
             .clone()
             .ok_or(RuntimeError::ProjectionMissing)?;
-        if let Some(expected) = run_document.as_ref()
+        if let Some(expected) = run_document
+            .as_ref()
             .and_then(|run| run["metadata"]["runtime"]["workspaceBindingRevision"].as_u64())
         {
-            let metadata = projection.session.get("sessionMetadata")
-                .map(PValue::to_json).unwrap_or(Value::Null);
-            if metadata["backend"]["workspaceBindingRevision"].as_u64().unwrap_or(0) != expected {
-                return Err(RuntimeError::InvalidCommand("workspace binding changed while preparing the run; retry".into()));
+            let metadata = projection
+                .session
+                .get("sessionMetadata")
+                .map(PValue::to_json)
+                .unwrap_or(Value::Null);
+            if metadata["backend"]["workspaceBindingRevision"]
+                .as_u64()
+                .unwrap_or(0)
+                != expected
+            {
+                return Err(RuntimeError::InvalidCommand(
+                    "workspace binding changed while preparing the run; retry".into(),
+                ));
             }
         }
         // A settled session can still carry a run pointer: completion is

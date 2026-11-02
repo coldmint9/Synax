@@ -21,6 +21,33 @@ export interface RemotePrCheck {
   status: "pending" | "passed" | "failed" | "unknown";
   url?: string;
 }
+/** One GitLab pipeline stage; GitHub pipelines are projected as a single stage. */
+export interface RemotePrPipelineStage {
+  name: string;
+  status: RemotePrCheck["status"];
+  jobs: { name: string; status: RemotePrCheck["status"]; url?: string }[];
+}
+export interface RemotePrPipeline {
+  id: number;
+  stages: RemotePrPipelineStage[];
+  url?: string;
+}
+export interface RemotePrCommit {
+  sha: string;
+  title: string;
+  author: string;
+  createdAt: string;
+}
+export interface RemotePrStats {
+  additions: number;
+  deletions: number;
+  files: number;
+}
+export interface RemotePrReview {
+  required: number;
+  approvedBy: string[];
+  reviewers: string[];
+}
 export interface RemotePullRequest {
   number: number;
   title: string;
@@ -39,6 +66,17 @@ export interface RemotePullRequest {
   checksError?: string;
   sameRepository: boolean;
   updatedAt: string;
+  createdAt?: string;
+  labels?: string[];
+  notesCount?: number;
+  /** Populated when the platform exposes a pipeline for the head commit. */
+  pipeline?: RemotePrPipeline | null;
+  /** Bounded commit list of the request, newest first. */
+  commits?: RemotePrCommit[];
+  stats?: RemotePrStats | null;
+  review?: RemotePrReview | null;
+  /** Detail cannot be read right now; the card still renders the core state. */
+  detailError?: string;
 }
 export interface RemotePrReference {
   schema: "synax.git-pr";

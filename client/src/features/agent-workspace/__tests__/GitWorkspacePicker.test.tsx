@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { projectApi, type GitWorkspaceSummary } from "../../../adapters/transport/project";
+import { clearStaleResourceCache } from "../../../shared/lib/staleResource";
 import { GitWorkspacePicker } from "../GitWorkspacePicker";
 
 vi.mock("../../../adapters/transport/project", () => ({ projectApi: { listGitWorkspaces: vi.fn() } }));
@@ -16,14 +17,17 @@ const summary: GitWorkspaceSummary = {
 };
 beforeEach(() => {
   vi.resetAllMocks();
+  clearStaleResourceCache();
   vi.mocked(projectApi.listGitWorkspaces).mockResolvedValue(summary);
 });
 
-it("preserves default, worktree and managed-branch detail and selects with Headless keyboard navigation", async () => {
+it("names the current branch before opening and preserves default, worktree and managed-branch detail", async () => {
   const user = userEvent.setup(), change = vi.fn();
   const { container } = render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled={false} onChange={change} />);
-  const trigger = screen.getByRole("button", { name: "Git workspace" });
-  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
+  const trigger = screen.getByRole("button", { name: /^Git workspace/ });
+  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", undefined, "inventory"));
+  await waitFor(() => expect(trigger).toHaveTextContent("main"));
+  expect(trigger).toHaveAccessibleName("Git workspace · main");
   expect(trigger).toBeEnabled();
   await user.tab();
   await user.keyboard(" ");
@@ -44,24 +48,34 @@ it("preserves default, worktree and managed-branch detail and selects with Headl
   expect(change).toHaveBeenLastCalledWith({ kind: "worktree", path: "/repo" });
 });
 
+it("shows the branch only for the default workspace label", async () => {
+  const change = vi.fn();
+  const view = render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled={false} onChange={change} />);
+  const trigger = screen.getByRole("button", { name: /^Git workspace/ });
+  await waitFor(() => expect(trigger).toHaveTextContent("main"));
+  view.rerender(<GitWorkspacePicker projectId="p" value={{ kind: "branch", branch: "feature/ui" }} disabled={false} onChange={change} />);
+  expect(trigger).toHaveTextContent("feature/ui");
+  expect(trigger).not.toHaveTextContent("main");
+  expect(trigger).toHaveAccessibleName("Git workspace");
+});
+
 it("does not allow selecting a workspace while disabled and hides unavailable repositories", async () => {
   const change = vi.fn();
   const view = render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled onChange={change} />);
-  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Git workspace" }));
+  await userEvent.click(screen.getByRole("button", { name: /^Git workspace/ }));
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   expect(change).not.toHaveBeenCalled();
   vi.mocked(projectApi.listGitWorkspaces).mockRejectedValue(new Error("Not a Git repository"));
   view.rerender(<GitWorkspacePicker projectId="other" value={{ kind: "default" }} disabled={false} onChange={change} />);
-  await userEvent.click(screen.getByRole("button", { name: "Git workspace" }));
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Git workspace" })).not.toBeInTheDocument());
+  await userEvent.click(screen.getByRole("button", { name: /^Git workspace/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^Git workspace/ })).not.toBeInTheDocument());
 });
 
 it('offers a fresh detached worktree first and filters workspaces without changing selection', async () => {
   const user = userEvent.setup(), change = vi.fn();
   render(<GitWorkspacePicker projectId="p" value={{ kind: "default" }} disabled={false} onChange={change} />);
-  const trigger = screen.getByRole('button', { name: 'Git workspace' });
-  expect(projectApi.listGitWorkspaces).not.toHaveBeenCalled();
+  const trigger = screen.getByRole('button', { name: /^Git workspace/ });
+  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith('p', undefined, 'inventory'));
   expect(trigger).toBeEnabled();
   await user.click(trigger);
   await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith('p', undefined));

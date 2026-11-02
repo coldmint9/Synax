@@ -39,6 +39,14 @@ describe("GlobalSessionSearch", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(editor).toHaveFocus();
   });
+  it("opens from the native desktop menu command", () => {
+    mount();
+    act(() => {
+      document.dispatchEvent(new CustomEvent("menu:search-sessions"));
+    });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).toHaveFocus();
+  });
   it("searches the route workspace, highlights matches and opens the chosen workflow", async () => {
     mount(); await search();
     expect(vi.mocked(agentRuntimeApi.searchSessions).mock.calls[0].slice(0, 2)).toEqual(["route-project", "needle"]);

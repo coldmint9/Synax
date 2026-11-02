@@ -1,5 +1,4 @@
-/* A single neutral plus opens all composer actions. Only the writing surface
-   communicates non-default modes; keyboard/screen-reader users get named radios. */
+/* Mode selection and its small mark never tint the writing surface. */
 .session-context-picker {
   max-height: min(36rem, calc(100dvh - 3rem));
   overflow-y: auto;
@@ -17,6 +16,7 @@
 }
 .session-composer-mode-option {
   display: inline-flex;
+  gap: 0.375rem;
   flex: 1 1 0;
   align-items: center;
   justify-content: center;
@@ -25,29 +25,24 @@
   position: relative;
   border: 1px solid hsl(var(--border-hsl) / 0.55);
   border-radius: 0.75rem;
-  background: hsl(var(--background-hsl) / 0.22);
+  background: transparent;
   color: hsl(var(--muted-foreground));
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 .session-composer-mode-option:hover:not([data-disabled="true"]) {
-  color: hsl(var(--foreground));
+  color: var(--foreground);
   background: hsl(var(--foreground-hsl) / 0.045);
 }
 .session-composer-mode-option[data-checked] {
-  border-color: hsl(var(--foreground-hsl) / 0.16);
-  background: hsl(var(--foreground-hsl) / 0.09);
-  color: hsl(var(--foreground));
-  box-shadow: inset 0 1px 2px hsl(0 0% 0% / 0.12), 0 1px 2px hsl(0 0% 100% / 0.04);
-}
-.session-composer-mode-option[data-mode="goal"][data-checked] {
-  border-color: hsl(var(--electric-purple) / 0.42);
-  color: hsl(var(--electric-purple));
-  text-shadow: 0 0 10px hsl(var(--electric-purple) / 0.22);
+  border-color: hsl(var(--muted-foreground) / 0.6);
+  background: hsl(var(--foreground-hsl) / 0.07);
+  color: var(--foreground);
 }
 .session-composer-mode-option:focus-visible {
+  border-color: var(--theme-focus);
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
@@ -55,19 +50,113 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
-.session-composer-mode-option[data-mode="goal"] > svg:first-of-type {
-  color: #8b5cf6;
+.session-composer-mode-beta {
+  flex-shrink: 0;
+  padding: 0.0625rem 0.25rem;
+  border: 1px solid hsl(var(--border-hsl) / 0.7);
+  border-radius: 0.3125rem;
+  background: hsl(var(--foreground-hsl) / 0.06);
+  color: hsl(var(--muted-foreground));
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
-/* Mode is a quiet state cue, not a permanent fluorescent outline. */
-.agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: hsl(var(--electric-purple)); }
-:root .agent-session-controls[data-composer-mode="goal"] .agent-session-composer-shell.agent-dock-shell {
-  border: 1px solid var(--ui-line);
-  border-inline-start: 2px solid color-mix(in srgb, var(--composer-mode-border) 40%, var(--ui-line));
-  background: var(--ui-panel);
+@media (max-width: 360px) {
+  .session-composer-mode-option {
+    gap: 0.25rem;
+    font-size: 0.75rem;
+  }
+  .session-composer-mode-beta {
+    padding-inline: 0.1875rem;
+    font-size: 0.5rem;
+  }
 }
-:root .agent-session-controls[data-composer-mode="goal"] .agent-session-composer-shell.agent-dock-shell:focus-within {
-  border-color: color-mix(in srgb, var(--composer-mode-border) 35%, var(--ui-line));
+.agent-composer-mode-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Re-enable hit testing outside the input in footer and focusRail layouts. */
+.agent-session-action-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0.25rem 0.375rem;
+  pointer-events: auto;
+}
+.agent-session-action-row:empty {
+  display: none;
+}
+.agent-session-action-row > .super-dag-trigger {
+  min-height: 32px;
+  background: var(--work-surface, var(--surface));
+}
+.agent-session-action-row > .super-dag-card {
+  flex-basis: 100%;
+}
+.super-dag-trigger:focus-visible {
+  /* The global focus policy suppresses rings; use the existing control edge. */
+  border-color: var(--theme-focus);
+  background: var(--surface-secondary);
+  color: var(--foreground);
+}
+.agent-composer-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+  min-width: 0;
+  margin: 0 0 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid hsl(var(--border-hsl) / 0.65);
+  border-radius: 0.5rem;
+  background: hsl(var(--card));
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  pointer-events: auto;
+}
+.agent-composer-notice > svg {
+  flex-shrink: 0;
+  margin-top: 0.09375rem;
+  color: hsl(var(--destructive));
+}
+.agent-composer-notice > span {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-composer-mode-option {
+    transition: none;
+  }
 }
 @media (forced-colors: active) {
-  :root .agent-session-controls[data-composer-mode="goal"] { --composer-mode-border: Highlight; }
+  .super-dag-trigger:focus-visible {
+    border-color: Highlight;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .session-composer-mode-option[data-checked] {
+    border-color: Highlight;
+    color: Highlight;
+  }
+  .agent-composer-notice {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .session-composer-mode-beta {
+    border-color: CanvasText;
+    color: CanvasText;
+  }
+  .agent-composer-mode-mark,
+  .agent-composer-notice > svg {
+    color: CanvasText;
+  }
 }

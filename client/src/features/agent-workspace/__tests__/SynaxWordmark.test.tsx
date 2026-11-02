@@ -43,6 +43,17 @@ describe("block wordmark glow", () => {
     const rows = art.textContent!.split("\n");
     expect(rows).toHaveLength(7);
     expect(new Set(rows.map((row) => row.length)).size).toBe(1);
+    // Decode every double-width glyph: catches misspellings hidden by an aria-label change.
+    const glyphs = Array.from({ length: 6 }, (_, letter) =>
+      rows.map((row) => row.slice(letter * 12, letter * 12 + 10)
+        .replace(/██/g, "1").replace(/  /g, "0")),
+    );
+    const y = ["10001", "10001", "01010", "00100", "00100", "00100", "00100"];
+    const u = ["10001", "10001", "10001", "10001", "10001", "10001", "01110"];
+    const n = ["10001", "11001", "11001", "10101", "10011", "10011", "10001"];
+    const f = ["11111", "10000", "10000", "11110", "10000", "10000", "10000"];
+    expect(rows[0]).toHaveLength(70);
+    expect(glyphs).toEqual([y, u, n, f, u, n]);
     expect(art).toHaveAttribute("data-ascii-art", art.textContent);
     expect(mark.querySelector("svg")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();

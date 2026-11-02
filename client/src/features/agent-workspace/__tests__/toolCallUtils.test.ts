@@ -4,8 +4,10 @@ import {
   formatToolDuration,
   isFinalTextBlock,
   toolBlocksToBatches,
+  toolCallRecordToView,
 } from "../toolCallUtils";
 import type { TurnContentBlock } from "../buildInterleavedTurns";
+import type { ToolCallRecord } from "../../../adapters/transport/agentRuntime";
 
 const bashCall = (id: string) => ({
   id,
@@ -19,6 +21,15 @@ const bashCall = (id: string) => ({
 });
 
 describe("toolCallUtils", () => {
+  it("reuses unchanged call views and replaces only an updated record", () => {
+    const record = { ...bashCall("cached"), startedAt: "2026-10-28T01:00:00Z", endedAt: null, status: "running" } as ToolCallRecord;
+    const first = toolCallRecordToView(record);
+    expect(toolCallRecordToView(record)).toBe(first);
+    const updated = toolCallRecordToView({ ...record, status: "completed", outputSummary: "done" });
+    expect(updated).not.toBe(first);
+    expect(updated).toMatchObject({ status: "completed", outputSummary: "done" });
+    expect(toolCallRecordToView(record)).toBe(first);
+  });
   it("omits tool durations through ten seconds and keeps longer calls", () => {
     expect(formatToolDuration("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.000Z")).toBeNull();
     expect(formatToolDuration("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:10.001Z")).toBe("10.0s");

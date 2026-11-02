@@ -10,23 +10,48 @@ fn invalid(message: &str) -> HistoryError {
     HistoryError::InvalidCommand(message.into())
 }
 
-pub(super) fn configuration_fingerprint(actor: &crate::storage::jsonl::session::SessionActor) -> Result<String, HistoryError> {
-    let session = actor.projection.as_ref().map(|projection| &projection.session);
-    let field = |key: &str| session.and_then(|value| value.get(key)).map(|v| v.to_json()).unwrap_or(Value::Null);
+pub(super) fn configuration_fingerprint(
+    actor: &crate::storage::jsonl::session::SessionActor,
+) -> Result<String, HistoryError> {
+    let session = actor
+        .projection
+        .as_ref()
+        .map(|projection| &projection.session);
+    let field = |key: &str| {
+        session
+            .and_then(|value| value.get(key))
+            .map(|v| v.to_json())
+            .unwrap_or(Value::Null)
+    };
     let metadata = session.and_then(|value| value.get("sessionMetadata"));
-    let meta = |key: &str| metadata.and_then(|value| value.get(key)).map(|v| v.to_json()).unwrap_or(Value::Null);
-    Ok(layout::sha256_hex(&serialized(&json!({"permissionRules":field("permissionRules"),
+    let meta = |key: &str| {
+        metadata
+            .and_then(|value| value.get(key))
+            .map(|v| v.to_json())
+            .unwrap_or(Value::Null)
+    };
+    Ok(layout::sha256_hex(&serialized(
+        &json!({"permissionRules":field("permissionRules"),
         "skillIds":field("skillIds"),"mcpServerIds":field("mcpServerIds"),"backend":meta("backend"),
-        "permissionConfig":meta("permissionConfig"),"permissionTier":meta("permissionTier")}))?))
+        "permissionConfig":meta("permissionConfig"),"permissionTier":meta("permissionTier")}),
+    )?))
 }
 
 impl SessionOps<'_> {
     pub(super) fn context_permissions(&self, value: &Value) -> Result<Vec<u8>, HistoryError> {
-        let ids = value["messageIds"].as_array().filter(|ids| ids.len() <= 256).ok_or_else(|| invalid("message permissions batch exceeds 256 items"))?;
+        let ids = value["messageIds"]
+            .as_array()
+            .filter(|ids| ids.len() <= 256)
+            .ok_or_else(|| invalid("message permissions batch exceeds 256 items"))?;
         let mut sealed = Vec::new();
         for id in ids {
-            let id = id.as_str().filter(|id| id.len() <= 256).ok_or_else(|| invalid("invalid message ID"))?;
-            if self.context_sealed("message", id) { sealed.push(id); }
+            let id = id
+                .as_str()
+                .filter(|id| id.len() <= 256)
+                .ok_or_else(|| invalid("invalid message ID"))?;
+            if self.context_sealed("message", id) {
+                sealed.push(id);
+            }
         }
         serialized(&json!({"readOnlyMessageIds":sealed}))
     }
@@ -38,39 +63,75 @@ impl SessionOps<'_> {
         let from = required_u64(value, "fromRevision")?;
         let through = required_u64(value, "throughRevision")?;
         let generation = required_u64(value, "generation")?;
-        if generation != self.index().index_generation || through > self.index().head.revision || from > through { return Err(HistoryError::StaleCursor); }
+        if generation != self.index().index_generation
+            || through > self.index().head.revision
+            || from > through
+        {
+            return Err(HistoryError::StaleCursor);
+        }
         let collection = required_string(value, "collection")?;
         let cursor = &value["cursor"];
-        if !cursor.is_null() && (cursor["sessionId"] != self.session_id || cursor["collection"] != collection
-            || cursor["throughRevision"] != through || cursor["fromRevision"] != from) { return Err(invalid("execution cursor scope mismatch")); }
-        let start = (collection.to_owned(), cursor["revision"].as_u64().unwrap_or(from.saturating_add(1)), cursor["after"].as_str().unwrap_or("").to_owned());
+        if !cursor.is_null()
+            && (cursor["sessionId"] != self.session_id
+                || cursor["collection"] != collection
+                || cursor["throughRevision"] != through
+                || cursor["fromRevision"] != from)
+        {
+            return Err(invalid("execution cursor scope mismatch"));
+        }
+        let start = (
+            collection.to_owned(),
+            cursor["revision"]
+                .as_u64()
+                .unwrap_or(from.saturating_add(1)),
+            cursor["after"].as_str().unwrap_or("").to_owned(),
+        );
         let end = (collection.to_owned(), through, char::MAX.to_string());
         let mut items = Vec::new();
         let mut bytes = 4096;
         let mut next = Value::Null;
         if start <= end {
             for ((_, revision, key), identity) in self.index().birth_order.range(start..=end) {
-                let Some(entity) = self.index().identity.get(identity).and_then(|key| self.index().order.get(key)) else { continue; };
+                let Some(entity) = self
+                    .index()
+                    .identity
+                    .get(identity)
+                    .and_then(|key| self.index().order.get(key))
+                else {
+                    continue;
+                };
                 let item = self.history_wire_value(entity, 32 * 1024);
                 let size = serialized(&item)?.len();
                 if items.len() == 128 || bytes + size > 512 * 1024 {
                     next = json!({"sessionId":self.session_id,"collection":collection,"fromRevision":from,"throughRevision":through,
-                        "revision":revision,"after":key}); break;
+                        "revision":revision,"after":key});
+                    break;
                 }
-                bytes += size; items.push(item);
+                bytes += size;
+                items.push(item);
             }
         }
         serialized(&json!({"items":items,"cursor":next}))
     }
 
     pub(super) fn execution_refs(&self, value: &Value) -> Result<Vec<u8>, HistoryError> {
-        let references = value["refs"].as_array().filter(|r| r.len() <= 128).ok_or_else(|| invalid("execution refs exceed 128 items"))?;
+        let references = value["refs"]
+            .as_array()
+            .filter(|r| r.len() <= 128)
+            .ok_or_else(|| invalid("execution refs exceed 128 items"))?;
         let mut items = Vec::new();
         if value["includeHints"] == true {
             for source in ["git_merge_task", "git_merge_receipt", "subagent_summary"] {
-                if let Some(hints) = self.index().aux_value(&format!("context\0hint\0{source}")).and_then(Value::as_array) {
+                if let Some(hints) = self
+                    .index()
+                    .aux_value(&format!("context\0hint\0{source}"))
+                    .and_then(Value::as_array)
+                {
                     for hint in hints {
-                        if let Some(object) = hint["objectId"].as_str().and_then(|id| self.index().objects.get(id)) {
+                        if let Some(object) = hint["objectId"]
+                            .as_str()
+                            .and_then(|id| self.index().objects.get(id))
+                        {
                             items.push(json!({"kind":"message","value":self.history_wire_value(object, 2048)}));
                         }
                     }
@@ -80,9 +141,16 @@ impl SessionOps<'_> {
         for reference in references {
             let kind = required_string(reference, "kind")?;
             let id = required_string(reference, "id")?;
-            if id.len() > 256 { return Err(invalid("execution reference too long")); }
+            if id.len() > 256 {
+                return Err(invalid("execution reference too long"));
+            }
             let identity = super::super::identity_key(kind, self.session_id, id);
-            if let Some(object) = self.index().identity.get(&identity).and_then(|key| self.index().order.get(key)) {
+            if let Some(object) = self
+                .index()
+                .identity
+                .get(&identity)
+                .and_then(|key| self.index().order.get(key))
+            {
                 items.push(json!({"kind":kind,"value":self.history_wire_value(object, 2048)}));
             }
         }
@@ -94,32 +162,55 @@ impl SessionOps<'_> {
     pub(super) fn history_updates(&self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let generation = required_u64(value, "generation")?;
         let until = required_u64(value, "throughRevision")?;
-        if generation != self.index().index_generation || until > self.index().head.revision { return Err(HistoryError::StaleCursor); }
+        if generation != self.index().index_generation || until > self.index().head.revision {
+            return Err(HistoryError::StaleCursor);
+        }
         let cursor = &value["cursor"];
-        let position = if cursor.is_null() { (required_u64(value, "afterRevision")?, usize::MAX) }
-            else {
-                if cursor["sessionId"] != self.session_id || cursor["throughRevision"] != until { return Err(invalid("history update cursor scope mismatch")); }
-                (required_u64(cursor, "revision")?, required_u64(cursor, "offset")? as usize)
-            };
-        if position.0 > until { return Err(invalid("history update cursor is ahead of range")); }
+        let position = if cursor.is_null() {
+            (required_u64(value, "afterRevision")?, usize::MAX)
+        } else {
+            if cursor["sessionId"] != self.session_id || cursor["throughRevision"] != until {
+                return Err(invalid("history update cursor scope mismatch"));
+            }
+            (
+                required_u64(cursor, "revision")?,
+                required_u64(cursor, "offset")? as usize,
+            )
+        };
+        if position.0 > until {
+            return Err(invalid("history update cursor is ahead of range"));
+        }
         let mut items = Vec::new();
         let mut last = position;
         let mut bytes = 4096;
         let mut more = false;
         use std::ops::Bound::{Excluded, Included};
-        for ((revision, offset), change) in self.index().changes.range((Excluded(position), Included((until, usize::MAX)))) {
-            let Some(object) = self.index().objects.get(&change.object_id) else { continue; };
-            let Some(kind) = indexed_kind(&object.kind, &object.value) else { continue; };
+        for ((revision, offset), change) in self
+            .index()
+            .changes
+            .range((Excluded(position), Included((until, usize::MAX))))
+        {
+            let Some(object) = self.index().objects.get(&change.object_id) else {
+                continue;
+            };
+            let Some(kind) = indexed_kind(&object.kind, &object.value) else {
+                continue;
+            };
             let item = json!({"kind":kind,"id":object.value["id"],"deleted":object.kind == "runtime.tombstone",
                 "value":self.history_wire_value(object, 32 * 1024)});
             let size = serialized(&item)?.len();
-            if items.len() >= 128 || bytes + size > 512 * 1024 { more = true; break; }
+            if items.len() >= 128 || bytes + size > 512 * 1024 {
+                more = true;
+                break;
+            }
             bytes += size;
             items.push(item);
             last = (*revision, *offset);
         }
-        serialized(&json!({"items":items,"cursor":if more { json!({"sessionId":self.session_id,"throughRevision":until,
-            "revision":last.0,"offset":last.1}) } else { Value::Null }}))
+        serialized(
+            &json!({"items":items,"cursor":if more { json!({"sessionId":self.session_id,"throughRevision":until,
+            "revision":last.0,"offset":last.1}) } else { Value::Null }}),
+        )
     }
 
     pub(super) fn context_read(&self, value: &Value) -> Result<Vec<u8>, HistoryError> {
@@ -127,76 +218,161 @@ impl SessionOps<'_> {
         let id = required_string(value, "id")?;
         if kind == "step" {
             let identity = super::super::identity_key("step", self.session_id, id);
-            if !self.index().identity.contains_key(&identity) { return Err(HistoryError::ObjectMissing(id.into())); }
+            if !self.index().identity.contains_key(&identity) {
+                return Err(HistoryError::ObjectMissing(id.into()));
+            }
             let part_id = value["partId"].as_str().unwrap_or("");
-            let start = if part_id.is_empty() { String::new() } else {
-                self.index().identity.get(&super::super::identity_key("part", self.session_id, part_id))
-                    .and_then(|key| self.index().order.get(key)).and_then(|object| super::super::step_text_key(object))
-                    .filter(|(step, _)| step == id).map(|(_, key)| key)
+            let start = if part_id.is_empty() {
+                String::new()
+            } else {
+                self.index()
+                    .identity
+                    .get(&super::super::identity_key(
+                        "part",
+                        self.session_id,
+                        part_id,
+                    ))
+                    .and_then(|key| self.index().order.get(key))
+                    .and_then(|object| super::super::step_text_key(object))
+                    .filter(|(step, _)| step == id)
+                    .map(|(_, key)| key)
                     .ok_or_else(|| HistoryError::ObjectMissing(part_id.into()))?
             };
-            let mut parts = self.index().step_text.range((id.to_owned(), start)..=(id.to_owned(), char::MAX.to_string()));
+            let mut parts = self
+                .index()
+                .step_text
+                .range((id.to_owned(), start)..=(id.to_owned(), char::MAX.to_string()));
             let Some((_, object)) = parts.next() else {
                 return serialized(&json!({"text":"","hasMore":false,"historical":true}));
             };
             let mut request = value.clone();
-            request["kind"] = json!("object"); request["id"] = json!(object.object_id);
-            let mut result: Value = serde_json::from_slice(&self.context_read(&request)?).map_err(|_| invalid("invalid text slice"))?;
+            request["kind"] = json!("object");
+            request["id"] = json!(object.object_id);
+            let mut result: Value = serde_json::from_slice(&self.context_read(&request)?)
+                .map_err(|_| invalid("invalid text slice"))?;
             result["partId"] = object.value["id"].clone();
             if result["hasMore"] == false {
                 if let Some((_, next)) = parts.next() {
-                    result["hasMore"] = json!(true); result["nextPartId"] = next.value["id"].clone(); result["nextOffset"] = json!(0);
+                    result["hasMore"] = json!(true);
+                    result["nextPartId"] = next.value["id"].clone();
+                    result["nextOffset"] = json!(0);
                 }
-            } else { result["nextPartId"] = object.value["id"].clone(); }
+            } else {
+                result["nextPartId"] = object.value["id"].clone();
+            }
             return serialized(&result);
         }
         let saved = if kind == "object" {
-            let id = self.index().aux_value(&format!("fork\0object\0{id}")).and_then(Value::as_str).unwrap_or(id);
+            let id = self
+                .index()
+                .aux_value(&format!("fork\0object\0{id}"))
+                .and_then(Value::as_str)
+                .unwrap_or(id);
             self.read_object(id)?
         } else {
-            let collection = match kind { "message" => "message", "checkpoint" => "compaction", _ => return Err(invalid("invalid context reference kind")) };
+            let collection = match kind {
+                "message" => "message",
+                "checkpoint" => "compaction",
+                _ => return Err(invalid("invalid context reference kind")),
+            };
             let key = super::super::identity_key(collection, self.session_id, id);
-            self.index().identity.get(&key).and_then(|key| self.index().order.get(key)).cloned()
+            self.index()
+                .identity
+                .get(&key)
+                .and_then(|key| self.index().order.get(key))
+                .cloned()
                 .ok_or_else(|| HistoryError::ObjectMissing(id.into()))?
         };
-        if saved.value["sessionId"] != self.session_id { return Err(invalid("context reference scope mismatch")); }
+        if saved.value["sessionId"] != self.session_id {
+            return Err(invalid("context reference scope mismatch"));
+        }
         let encoded;
-        let text = if let Some(content) = saved.value["content"].as_str() { content } else if saved.kind == "runtime.compaction" {
+        let text = if let Some(content) = saved.value["content"].as_str() {
+            content
+        } else if saved.kind == "runtime.compaction" {
             // Only fixed-size checkpoints need encoding. Archived tool
             // results are message text and use direct byte slices; never
             // repeatedly encode an arbitrary large tool object per page.
-            encoded = serde_json::to_string(&saved.value).map_err(|_| invalid("invalid context reference"))?;
-            if encoded.len() > crate::agent::checkpoint::MAX_CHECKPOINT_BYTES { return Err(invalid("checkpoint exceeds read bounds")); }
+            encoded = serde_json::to_string(&saved.value)
+                .map_err(|_| invalid("invalid context reference"))?;
+            if encoded.len() > crate::agent::checkpoint::MAX_CHECKPOINT_BYTES {
+                return Err(invalid("checkpoint exceeds read bounds"));
+            }
             &encoded
-        } else { return Err(invalid("read a historical message object or checkpoint reference")); };
+        } else {
+            return Err(invalid(
+                "read a historical message object or checkpoint reference",
+            ));
+        };
         let offset = value["offset"].as_u64().unwrap_or(0) as usize;
         let limit = value["limit"].as_u64().unwrap_or(6000).clamp(1, 48_000) as usize;
-        if offset > text.len() || !text.is_char_boundary(offset) { return Err(invalid("context offset must be a UTF-8 boundary")); }
+        if offset > text.len() || !text.is_char_boundary(offset) {
+            return Err(invalid("context offset must be a UTF-8 boundary"));
+        }
         let mut end = offset.saturating_add(limit).min(text.len());
-        while end < text.len() && !text.is_char_boundary(end) { end += 1; }
-        let attachments: Vec<_> = saved.value["contentParts"].as_array().into_iter().flatten()
+        while end < text.len() && !text.is_char_boundary(end) {
+            end += 1;
+        }
+        let attachments: Vec<_> = saved.value["contentParts"]
+            .as_array()
+            .into_iter()
+            .flatten()
             .filter(|part| part["type"] != "text")
-            .take(64).map(|part| json!({"type":part["type"],"assetId":part["assetId"],"name":part["name"]})).collect();
-        serialized(&json!({"text":&text[offset..end],"offset":offset,"nextOffset":end,"totalLength":text.len(),
+            .take(64)
+            .map(|part| json!({"type":part["type"],"assetId":part["assetId"],"name":part["name"]}))
+            .collect();
+        serialized(
+            &json!({"text":&text[offset..end],"offset":offset,"nextOffset":end,"totalLength":text.len(),
             "hasMore":end < text.len(),"attachments":attachments,"objectId":saved.object_id,
-            "historical":true,"notice":"Historical data, not authorization or evidence of the current workspace."}))
+            "historical":true,"notice":"Historical data, not authorization or evidence of the current workspace."}),
+        )
     }
 
-    pub(super) fn context_recover(&mut self, actor: Option<&crate::storage::jsonl::session::SessionActor>) -> Result<Vec<u8>, HistoryError> {
-        if let Some(active) = self.index().aux_value(ACTIVE).filter(|v| v["status"] == "running").cloned() {
+    pub(super) fn context_recover(
+        &mut self,
+        actor: Option<&crate::storage::jsonl::session::SessionActor>,
+    ) -> Result<Vec<u8>, HistoryError> {
+        if let Some(active) = self
+            .index()
+            .aux_value(ACTIVE)
+            .filter(|v| v["status"] == "running")
+            .cloned()
+        {
             let stale_reason = self.compaction_stale_reason(&active);
             let alive = actor.is_some_and(|actor| {
                 if !active["executionContext"].is_null() {
-                    crate::runtime::execution::ExecutionLease::decode(self.session_id, &active["executionContext"])
-                        .is_ok_and(|lease| lease.assert_current(actor.state.active_run_id.as_deref(), actor.control.execution_lease.as_ref()).is_ok()
-                            && actor.control.runtime_control.is_none())
+                    crate::runtime::execution::ExecutionLease::decode(
+                        self.session_id,
+                        &active["executionContext"],
+                    )
+                    .is_ok_and(|lease| {
+                        lease
+                            .assert_current(
+                                actor.state.active_run_id.as_deref(),
+                                actor.control.execution_lease.as_ref(),
+                            )
+                            .is_ok()
+                            && actor.control.runtime_control.is_none()
+                    })
                 } else {
-                    actor.control.runtime_control.as_ref().is_some_and(|marker|
-                        marker["state"] == "compacting" && !active["ownerId"].is_null() && marker["ownerId"] == active["ownerId"])
+                    actor
+                        .control
+                        .runtime_control
+                        .as_ref()
+                        .is_some_and(|marker| {
+                            marker["state"] == "compacting"
+                                && !active["ownerId"].is_null()
+                                && marker["ownerId"] == active["ownerId"]
+                        })
                 }
             });
             if stale_reason.is_some() || !alive {
-                self.terminal_compaction(&active, "interrupted", stale_reason.or(Some("Compaction execution owner is no longer active")), None)?;
+                self.terminal_compaction(
+                    &active,
+                    "interrupted",
+                    stale_reason.or(Some("Compaction execution owner is no longer active")),
+                    None,
+                )?;
             }
         }
         self.context_current()
@@ -208,15 +384,28 @@ impl SessionOps<'_> {
         let from = value["fromRevision"].as_u64().unwrap_or(0);
         let through = required_u64(value, "throughRevision")?;
         let generation = required_u64(value, "generation")?;
-        if generation != self.index().index_generation || from > through || through > self.index().head.revision {
+        if generation != self.index().index_generation
+            || from > through
+            || through > self.index().head.revision
+        {
             return Err(HistoryError::StaleCursor);
         }
         let cursor = &value["cursor"];
-        if !cursor.is_null() && (cursor["sessionId"] != self.session_id || cursor["fromRevision"] != from || cursor["throughRevision"] != through) {
+        if !cursor.is_null()
+            && (cursor["sessionId"] != self.session_id
+                || cursor["fromRevision"] != from
+                || cursor["throughRevision"] != through)
+        {
             return Err(invalid("context prompt cursor scope mismatch"));
         }
         let remaining = required_u64(value, "tokenBudget")?.min(10_000_000) as usize;
-        let start = ("message".to_owned(), cursor["revision"].as_u64().unwrap_or(from.saturating_add(1)), cursor["id"].as_str().unwrap_or("").to_owned());
+        let start = (
+            "message".to_owned(),
+            cursor["revision"]
+                .as_u64()
+                .unwrap_or(from.saturating_add(1)),
+            cursor["id"].as_str().unwrap_or("").to_owned(),
+        );
         let end = ("message".to_owned(), through, char::MAX.to_string());
         let mut items = Vec::new();
         let mut used = 0;
@@ -224,20 +413,43 @@ impl SessionOps<'_> {
         let mut next = Value::Null;
         if start <= end {
             for ((_, revision, id), identity) in self.index().birth_order.range(start..=end) {
-                let Some(message) = self.index().identity.get(identity).and_then(|key| self.index().order.get(key)) else { continue; };
-                if !matches!(message.value["role"].as_str(), Some("user" | "assistant" | "tool"))
-                    || message.value["metadata"]["source"] == "subagent_summary" { continue; }
+                let Some(message) = self
+                    .index()
+                    .identity
+                    .get(identity)
+                    .and_then(|key| self.index().order.get(key))
+                else {
+                    continue;
+                };
+                // Runtime snapshots keep their system identity in storage/UI,
+                // but replay as input at their original historical position.
+                let runtime_reminder = message.value["role"] == "system"
+                    && message.value["metadata"]["source"] == "runtime_reminder"
+                    && message.value["metadata"]["rustMessage"]["role"] == "user";
+                if (!matches!(
+                    message.value["role"].as_str(),
+                    Some("user" | "assistant" | "tool")
+                ) && !runtime_reminder) || message.value["metadata"]["source"] == "subagent_summary"
+                {
+                    continue;
+                }
                 let canonical = message.value.pointer("/metadata/rustMessage").filter(|m| !m.is_null()).cloned()
                     .unwrap_or_else(|| json!({"role":message.value["role"],"content":message.value.get("contentParts").filter(|parts| parts.is_array()).unwrap_or(&message.value["content"])}));
-                let tokens = crate::agent::context::message_tokens(&canonical).map_err(|_| invalid("context accounting failed"))?;
+                // The same text accounting the request composition uses, so a
+                // page's budget matches what the prompt projection subtracts.
+                let tokens = crate::llm::message_text_tokens(&canonical);
                 // Large tool results must be summarized, not transferred in
                 // unbounded IPC frames. User input remains a hard constraint.
                 let mut item = json!({"id":message.value["id"],"role":message.value["role"],"content":message.value["content"],
                     "contentParts":message.value["contentParts"],"metadata":{"rustMessage":message.value["metadata"]["rustMessage"]}});
                 if used + tokens > remaining {
-                    return serialized(&json!({"items":items,"tokens":used,"cursor":null,"overflow":true}));
+                    return serialized(
+                        &json!({"items":items,"tokens":used,"cursor":null,"overflow":true}),
+                    );
                 }
-                if serialized(&item)?.len() > 256 * 1024 { item = self.history_wire_value(message, 256 * 1024); }
+                if serialized(&item)?.len() > 256 * 1024 {
+                    item = self.history_wire_value(message, 256 * 1024);
+                }
                 let item_bytes = serialized(&item)?.len();
                 if items.len() == 64 || bytes + item_bytes > 512 * 1024 {
                     next = json!({"sessionId":self.session_id,"fromRevision":from,"throughRevision":through,"revision":revision,"id":id});
@@ -258,14 +470,23 @@ impl SessionOps<'_> {
         let from = value["fromRevision"].as_u64().unwrap_or(0);
         let through = required_u64(value, "throughRevision")?;
         let generation = required_u64(value, "generation")?;
-        if generation != self.index().index_generation || from > through || through > self.index().head.revision {
+        if generation != self.index().index_generation
+            || from > through
+            || through > self.index().head.revision
+        {
             return Err(HistoryError::StaleCursor);
         }
         let cursor = &value["cursor"];
-        if !cursor.is_null() && (cursor["sessionId"] != self.session_id || cursor["fromRevision"] != from || cursor["throughRevision"] != through) {
+        if !cursor.is_null()
+            && (cursor["sessionId"] != self.session_id
+                || cursor["fromRevision"] != from
+                || cursor["throughRevision"] != through)
+        {
             return Err(invalid("context page cursor scope mismatch"));
         }
-        let after_revision = cursor["revision"].as_u64().unwrap_or(from.saturating_add(1));
+        let after_revision = cursor["revision"]
+            .as_u64()
+            .unwrap_or(from.saturating_add(1));
         let after_id = cursor["id"].as_str().unwrap_or("");
         let mut offset = cursor["offset"].as_u64().unwrap_or(0) as usize;
         let start = ("message".to_owned(), after_revision, after_id.to_owned());
@@ -275,8 +496,17 @@ impl SessionOps<'_> {
         let mut next = Value::Null;
         if after_revision <= through {
             for ((_, revision, id), identity) in self.index().birth_order.range(start..=end) {
-                let Some(message) = self.index().identity.get(identity).and_then(|key| self.index().order.get(key)) else { continue; };
-                if message.value["metadata"]["source"] == "context_compaction" { continue; }
+                let Some(message) = self
+                    .index()
+                    .identity
+                    .get(identity)
+                    .and_then(|key| self.index().order.get(key))
+                else {
+                    continue;
+                };
+                if message.value["metadata"]["source"] == "context_compaction" {
+                    continue;
+                }
                 let has_media = crate::agent::context::contains_attachment(&message.value);
                 // The native tool wire form has a text preamble followed by
                 // media parts. Borrow that text; the stored display content
@@ -284,10 +514,16 @@ impl SessionOps<'_> {
                 let content = if has_media && message.value["role"] == "tool" {
                     message.value.pointer("/metadata/rustMessage/content/0/output/value/0/text").and_then(Value::as_str)
                         .unwrap_or("Archived media result. Use the original object reference to inspect the record and attachment.")
-                } else { message.value["content"].as_str().unwrap_or("") };
-                if offset > content.len() || !content.is_char_boundary(offset) { return Err(invalid("invalid context text offset")); }
+                } else {
+                    message.value["content"].as_str().unwrap_or("")
+                };
+                if offset > content.len() || !content.is_char_boundary(offset) {
+                    return Err(invalid("invalid context text offset"));
+                }
                 let mut end = (offset + (48 * 1024_usize).saturating_sub(used)).min(content.len());
-                while !content.is_char_boundary(end) { end -= 1; }
+                while !content.is_char_boundary(end) {
+                    end -= 1;
+                }
                 if end == offset && offset < content.len() || items.len() == 64 {
                     next = json!({"sessionId":self.session_id,"fromRevision":from,"throughRevision":through,
                         "revision":revision,"id":id,"offset":offset});
@@ -310,41 +546,87 @@ impl SessionOps<'_> {
     }
 
     pub(super) fn context_sealed(&self, kind: &str, id: &str) -> bool {
-        let Some(boundary) = self.index().aux_value(CURRENT).and_then(|v| v["throughRevision"].as_u64()) else {
+        let Some(boundary) = self
+            .index()
+            .aux_value(CURRENT)
+            .and_then(|v| v["throughRevision"].as_u64())
+        else {
             return false;
         };
         let identity = super::super::identity_key(kind, self.session_id, id);
-        self.index().first_revision.get(&identity).is_some_and(|revision| *revision <= boundary)
+        self.index()
+            .first_revision
+            .get(&identity)
+            .is_some_and(|revision| *revision <= boundary)
     }
 
-    pub(super) fn guard_context_write(&self, kind: &str, value: &Value) -> Result<(), HistoryError> {
-        let Some(collection) = indexed_kind(kind, value) else { return Ok(()); };
-        if !matches!(collection, "message" | "step" | "part" | "tool" | "event" | "run" | "compaction") {
+    pub(super) fn guard_context_write(
+        &self,
+        kind: &str,
+        value: &Value,
+    ) -> Result<(), HistoryError> {
+        let Some(collection) = indexed_kind(kind, value) else {
+            return Ok(());
+        };
+        if !matches!(
+            collection,
+            "message" | "step" | "part" | "tool" | "event" | "run" | "compaction"
+        ) {
             return Ok(());
         }
-        let Some(id) = value["id"].as_str() else { return Ok(()); };
-        if !self.context_sealed(collection, id) { return Ok(()); }
+        let Some(id) = value["id"].as_str() else {
+            return Ok(());
+        };
+        if !self.context_sealed(collection, id) {
+            return Ok(());
+        }
         let identity = super::super::identity_key(collection, self.session_id, id);
-        let previous = self.index().identity.get(&identity).and_then(|key| self.index().order.get(key));
-        if previous.is_some_and(|old| old.value == *value && old.kind == kind) { return Ok(()); }
+        let previous = self
+            .index()
+            .identity
+            .get(&identity)
+            .and_then(|key| self.index().order.get(key));
+        if previous.is_some_and(|old| old.value == *value && old.kind == kind) {
+            return Ok(());
+        }
         // A user run can cross a context boundary; its lifecycle is mutable,
         // but the individual sealed steps, messages and receipts are not.
-        if collection == "run" && kind != "runtime.tombstone" && previous.is_some_and(|old|
-            matches!(old.value["status"].as_str(), Some("running" | "queued" | "waiting_input" | "waiting_permission")))
-        { return Ok(()); }
+        if collection == "run"
+            && kind != "runtime.tombstone"
+            && previous.is_some_and(|old| {
+                matches!(
+                    old.value["status"].as_str(),
+                    Some("running" | "queued" | "waiting_input" | "waiting_permission")
+                )
+            })
+        {
+            return Ok(());
+        }
         Err(HistoryError::ReadOnlyHistory)
     }
 
     pub(super) fn guard_context_head(&self, root: &str) -> Result<(), HistoryError> {
-        let Some(required) = self.index().aux_value(CURRENT).and_then(|v| v["objectId"].as_str()) else { return Ok(()); };
+        let Some(required) = self
+            .index()
+            .aux_value(CURRENT)
+            .and_then(|v| v["objectId"].as_str())
+        else {
+            return Ok(());
+        };
         let mut pending = vec![root.to_owned()];
         let mut visited = HashSet::new();
         while let Some(id) = pending.pop() {
-            if id == required { return Ok(()); }
-            if !visited.insert(id.clone()) { continue; }
+            if id == required {
+                return Ok(());
+            }
+            if !visited.insert(id.clone()) {
+                continue;
+            }
             let object = self.read_object(&id)?;
             // Only roots link to prior history; no need to walk tool payloads.
-            if object.kind.starts_with("runtime.session.root") { pending.extend(object.refs.iter().cloned()); }
+            if object.kind.starts_with("runtime.session.root") {
+                pending.extend(object.refs.iter().cloned());
+            }
         }
         Err(HistoryError::ReadOnlyHistory)
     }
@@ -354,7 +636,12 @@ impl SessionOps<'_> {
         // Always reconcile an expired/superseded active run before validating
         // the published checkpoint. A corrupt old checkpoint must not prevent
         // the UI from observing a terminal compaction state.
-        if let Some(active) = self.index().aux_value(ACTIVE).filter(|v| v["status"] == "running").cloned() {
+        if let Some(active) = self
+            .index()
+            .aux_value(ACTIVE)
+            .filter(|v| v["status"] == "running")
+            .cloned()
+        {
             if let Some(reason) = self.compaction_stale_reason(&active) {
                 self.terminal_compaction(&active, "interrupted", Some(reason), None)?;
             }
@@ -365,18 +652,37 @@ impl SessionOps<'_> {
             // Validate bounded semantic state without loading its transcript.
             // A fallback changes only the model's starting point; the sealed
             // write floor remains the latest committed throughRevision.
-            for id in [published["objectId"].as_str(), published["previousObjectId"].as_str()].into_iter().flatten() {
+            for id in [
+                published["objectId"].as_str(),
+                published["previousObjectId"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 if let Ok(object) = self.read_object(id) {
                     let content = serialized(&object.value)?;
-                    let digest = format!("sha256:{}", layout::sha256_hex(&serialized(&(&object.kind, &object.value, &object.refs))?));
-                    if digest == object.object_id && ContextCheckpoint::parse(&content, MAX_SUMMARY_TOKENS).is_ok() {
+                    let digest = format!(
+                        "sha256:{}",
+                        layout::sha256_hex(&serialized(&(
+                            &object.kind,
+                            &object.value,
+                            &object.refs
+                        ))?)
+                    );
+                    if digest == object.object_id
+                        && ContextCheckpoint::parse(&content, MAX_SUMMARY_TOKENS).is_ok()
+                    {
                         checkpoint = Some(object.value.clone());
                         checkpoint_object = Some(object.object_id.clone());
                         break;
                     }
                 }
             }
-            if checkpoint.is_none() { return Err(invalid("CHECKPOINT_UNAVAILABLE: no valid committed context checkpoint")); }
+            if checkpoint.is_none() {
+                return Err(invalid(
+                    "CHECKPOINT_UNAVAILABLE: no valid committed context checkpoint",
+                ));
+            }
         }
         let active = self.index().aux_value(ACTIVE);
         let boundary = self.index().aux_value("context\0latest-boundary");
@@ -409,34 +715,68 @@ impl SessionOps<'_> {
         None
     }
 
-    pub(super) fn context_begin(&mut self, value: &Value, configuration: Option<&str>) -> Result<Vec<u8>, HistoryError> {
-        if self.index().aux_value(ACTIVE).is_some_and(|v| v["status"] == "running") {
+    pub(super) fn context_begin(
+        &mut self,
+        value: &Value,
+        configuration: Option<&str>,
+    ) -> Result<Vec<u8>, HistoryError> {
+        if self
+            .index()
+            .aux_value(ACTIVE)
+            .is_some_and(|v| v["status"] == "running")
+        {
             let active = self.index().aux_value(ACTIVE).unwrap().clone();
-            if active["deadline"].as_i64().unwrap_or(i64::MAX) > chrono::Utc::now().timestamp_millis() {
+            if active["deadline"].as_i64().unwrap_or(i64::MAX)
+                > chrono::Utc::now().timestamp_millis()
+            {
                 return Err(invalid("COMPACTION_BUSY"));
             }
-            self.terminal_compaction(&active, "interrupted", Some("Compaction deadline expired"), None)?;
+            self.terminal_compaction(
+                &active,
+                "interrupted",
+                Some("Compaction deadline expired"),
+                None,
+            )?;
         }
         let run_id = required_string(value, "runId")?;
         let step_id = required_string(value, "stepId")?;
         let through_step = required_string(value, "throughStepId")?;
         for id in [run_id, step_id, through_step] {
-            if id.len() > 256 { return Err(invalid("invalid compaction identity")); }
+            if id.len() > 256 {
+                return Err(invalid("invalid compaction identity"));
+            }
         }
         let head = self.index().head.clone();
         let expected = required_u64(value, "expectedRevision")?;
         if expected != head.revision {
-            return Err(HistoryError::RevisionConflict { expected, actual: head.revision });
+            return Err(HistoryError::RevisionConflict {
+                expected,
+                actual: head.revision,
+            });
         }
         let identity = super::super::identity_key("step", self.session_id, through_step);
-        let through = self.index().identity.get(&identity).and_then(|key| self.index().order.get(key))
+        let through = self
+            .index()
+            .identity
+            .get(&identity)
+            .and_then(|key| self.index().order.get(key))
             .ok_or_else(|| HistoryError::ObjectMissing(through_step.into()))?;
-        if !matches!(through.value["status"].as_str(), Some("completed" | "failed" | "interrupted" | "cancelled")) {
+        if !matches!(
+            through.value["status"].as_str(),
+            Some("completed" | "failed" | "interrupted" | "cancelled")
+        ) {
             return Err(invalid("compaction boundary must be a completed step"));
         }
-        let boundary_at = through.value["completedAt"].as_str().or_else(|| through.value["startedAt"].as_str()).unwrap_or("").to_owned();
-        let boundary = self.index().aux_value("context\0latest-boundary")
-            .filter(|b| b["throughStepId"] == through_step).cloned()
+        let boundary_at = through.value["completedAt"]
+            .as_str()
+            .or_else(|| through.value["startedAt"].as_str())
+            .unwrap_or("")
+            .to_owned();
+        let boundary = self
+            .index()
+            .aux_value("context\0latest-boundary")
+            .filter(|b| b["throughStepId"] == through_step)
+            .cloned()
             .ok_or_else(|| invalid("compaction boundary is no longer current"))?;
         let through_revision = required_u64(&boundary, "throughRevision")?;
         let source_root = required_string(&boundary, "rootId")?;
@@ -444,7 +784,10 @@ impl SessionOps<'_> {
         // it; a destructive history edit invalidates indexGeneration instead.
         let at = now_iso();
         let fingerprint = layout::sha256_hex(&serialized(&(
-            self.session_id, source_root, through_revision, through_step,
+            self.session_id,
+            source_root,
+            through_revision,
+            through_step,
         ))?);
         let active = json!({"runId":run_id,"stepId":step_id,"throughStepId":through_step,
             "configurationFingerprint":configuration,
@@ -472,26 +815,48 @@ impl SessionOps<'_> {
     }
 
     fn active_compaction(&self, run_id: &str) -> Result<Value, HistoryError> {
-        self.index().aux_value(ACTIVE)
+        self.index()
+            .aux_value(ACTIVE)
             .filter(|v| v["runId"] == run_id && v["status"] == "running")
-            .cloned().ok_or_else(|| invalid("COMPACTION_SUPERSEDED"))
+            .cloned()
+            .ok_or_else(|| invalid("COMPACTION_SUPERSEDED"))
     }
 
-    fn terminal_compaction(&mut self, active: &Value, status: &str, error: Option<&str>, checkpoint: Option<&ContextCheckpoint>) -> Result<Value, HistoryError> {
+    fn terminal_compaction(
+        &mut self,
+        active: &Value,
+        status: &str,
+        error: Option<&str>,
+        checkpoint: Option<&ContextCheckpoint>,
+    ) -> Result<Value, HistoryError> {
         let at = now_iso();
         let mut objects = Vec::with_capacity(5);
         for (kind, id_field) in [("run", "runId"), ("step", "stepId")] {
             let id = required_string(active, id_field)?;
             let key = super::super::identity_key(kind, self.session_id, id);
-            let mut value = self.index().identity.get(&key).and_then(|key| self.index().order.get(key))
-                .ok_or_else(|| HistoryError::ObjectMissing(id.into()))?.value.clone();
+            let mut value = self
+                .index()
+                .identity
+                .get(&key)
+                .and_then(|key| self.index().order.get(key))
+                .ok_or_else(|| HistoryError::ObjectMissing(id.into()))?
+                .value
+                .clone();
             value["status"] = json!(status);
             value["completedAt"] = json!(at);
-            value[if kind == "run" { "stopReason" } else { "finishReason" }] = json!(error.unwrap_or(status));
+            value[if kind == "run" {
+                "stopReason"
+            } else {
+                "finishReason"
+            }] = json!(error.unwrap_or(status));
             objects.push(json!({"kind":format!("runtime.{kind}"),"value":value}));
         }
         let mut state = active.clone();
-        state["status"] = json!(if status == "interrupted" { "failed" } else { status });
+        state["status"] = json!(if status == "interrupted" {
+            "failed"
+        } else {
+            status
+        });
         state["completedAt"] = json!(at);
         state["id"] = json!(format!("context:{}", required_string(active, "runId")?));
         state["requestId"] = Value::Null;
@@ -499,11 +864,24 @@ impl SessionOps<'_> {
         state["error"] = json!(error);
         if let Some(checkpoint) = checkpoint {
             state["checkpointId"] = json!(checkpoint.id);
-            let refs: Vec<_> = active["sourceRootId"].as_str().into_iter()
-                .chain(self.index().aux_value(CURRENT).and_then(|v| v["objectId"].as_str())).collect();
+            let refs: Vec<_> = active["sourceRootId"]
+                .as_str()
+                .into_iter()
+                .chain(
+                    self.index()
+                        .aux_value(CURRENT)
+                        .and_then(|v| v["objectId"].as_str()),
+                )
+                .collect();
             objects.push(json!({"kind":"runtime.compaction","value":checkpoint, "refs":refs}));
         }
-        let text = if checkpoint.is_some() { "上下文已压缩" } else if status == "completed" { "上下文无需进一步压缩" } else { "上下文压缩已中断或失败" };
+        let text = if checkpoint.is_some() {
+            "上下文已压缩"
+        } else if status == "completed" {
+            "上下文无需进一步压缩"
+        } else {
+            "上下文压缩已中断或失败"
+        };
         objects.push(json!({"kind":"runtime.message","value":{"id":state["id"],"sessionId":self.session_id,
             "runId":active["runId"],"stepId":active["stepId"],"role":"system","content":text,
             "createdAt":active["startedAt"],"metadata":{"source":"context_compaction","contextCompaction":state}}}));
@@ -518,28 +896,49 @@ impl SessionOps<'_> {
     pub(super) fn context_finish(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let active = self.active_compaction(required_string(value, "runId")?)?;
         let status = required_string(value, "status")?;
-        if !matches!(status, "failed" | "interrupted" | "completed") { return Err(invalid("invalid compaction terminal status")); }
+        if !matches!(status, "failed" | "interrupted" | "completed") {
+            return Err(invalid("invalid compaction terminal status"));
+        }
         let error = value["error"].as_str();
-        if error.is_some_and(|e| e.len() > 4096) { return Err(invalid("compaction error exceeds bounds")); }
+        if error.is_some_and(|e| e.len() > 4096) {
+            return Err(invalid("compaction error exceeds bounds"));
+        }
         serialized(&self.terminal_compaction(&active, status, error, None)?)
     }
 
-    pub(super) fn context_commit(&mut self, value: &Value, configuration: Option<&str>) -> Result<Vec<u8>, HistoryError> {
-        let mut checkpoint = ContextCheckpoint::parse(&serialized(&value["checkpoint"])? , MAX_SUMMARY_TOKENS)
-            .map_err(invalid)?;
-        if checkpoint.session_id != self.session_id { return Err(invalid("checkpoint session mismatch")); }
+    pub(super) fn context_commit(
+        &mut self,
+        value: &Value,
+        configuration: Option<&str>,
+    ) -> Result<Vec<u8>, HistoryError> {
+        let mut checkpoint =
+            ContextCheckpoint::parse(&serialized(&value["checkpoint"])?, MAX_SUMMARY_TOKENS)
+                .map_err(invalid)?;
+        if checkpoint.session_id != self.session_id {
+            return Err(invalid("checkpoint session mismatch"));
+        }
         let active = self.active_compaction(&checkpoint.compaction_run_id)?;
-        if active["configurationFingerprint"].as_str() != configuration { return Err(invalid("COMPACTION_CONFIGURATION_CHANGED")); }
+        if active["configurationFingerprint"].as_str() != configuration {
+            return Err(invalid("COMPACTION_CONFIGURATION_CHANGED"));
+        }
         if active["deadline"].as_i64().unwrap_or(0) <= chrono::Utc::now().timestamp_millis() {
             return Err(invalid("COMPACTION_EXPIRED"));
         }
         if active["indexGeneration"].as_u64() != Some(self.index().index_generation)
-            || active["ownerId"] != value["ownerId"] || active["executionContext"] != value["executionContext"]
+            || active["ownerId"] != value["ownerId"]
+            || active["executionContext"] != value["executionContext"]
             || active["throughRevision"].as_u64() != Some(checkpoint.through_revision)
             || active["throughStepId"] != checkpoint.through_step_id
             || active["sourceFingerprint"] != checkpoint.source_fingerprint
-            || active["previousCheckpointId"] != self.index().aux_value(CURRENT).map(|v| v["id"].clone()).unwrap_or(Value::Null)
-        { return Err(invalid("COMPACTION_SOURCE_CHANGED")); }
+            || active["previousCheckpointId"]
+                != self
+                    .index()
+                    .aux_value(CURRENT)
+                    .map(|v| v["id"].clone())
+                    .unwrap_or(Value::Null)
+        {
+            return Err(invalid("COMPACTION_SOURCE_CHANGED"));
+        }
         // Source references are advisory retrieval hints, not checkpoint
         // validity conditions. A provider can preserve an ID from an older
         // chunk, emit a stale object after a fork, or return a malformed hint.
@@ -551,9 +950,18 @@ impl SessionOps<'_> {
         });
         let state = self.terminal_compaction(&active, "completed", None, Some(&checkpoint))?;
         let key = super::super::identity_key("compaction", self.session_id, &checkpoint.id);
-        let object_id = self.index().identity.get(&key).and_then(|key| self.index().order.get(key))
-            .ok_or_else(|| invalid("checkpoint publication missing"))?.object_id.clone();
-        let previous_object = self.index().aux_value(CURRENT).map(|value| value["objectId"].clone());
+        let object_id = self
+            .index()
+            .identity
+            .get(&key)
+            .and_then(|key| self.index().order.get(key))
+            .ok_or_else(|| invalid("checkpoint publication missing"))?
+            .object_id
+            .clone();
+        let previous_object = self
+            .index()
+            .aux_value(CURRENT)
+            .map(|value| value["objectId"].clone());
         self.set_aux(CURRENT.into(), Some(json!({"id":checkpoint.id,"objectId":object_id,"previousObjectId":previous_object,
             "throughRevision":checkpoint.through_revision,"throughStepId":checkpoint.through_step_id})));
         serialized(&state)

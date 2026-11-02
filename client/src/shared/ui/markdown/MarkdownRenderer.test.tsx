@@ -89,4 +89,42 @@ describe("MarkdownRenderer", () => {
     expect(container.querySelector("p code")).toHaveTextContent("hello");
     expect(container.querySelector(".markdown-code-block")).not.toBeInTheDocument();
   });
+
+  it("wraps Markdown tables in a keyboard-accessible scroll region", () => {
+    const { container } = render(
+      <MarkdownRenderer
+        content={
+          "| 代码 / 发现 | 引入提交 | 是否已经在 master 基线 | beta 是否‘新引入’ |\n| --- | --- | --- | --- |\n| `refreshState` | `f7be77f76` | 是，但没有调用方 | ❌ 不是 beta 新增 |"
+        }
+      />,
+    );
+    const scrollContainer = container.querySelector(".markdown-table-scroll");
+    expect(scrollContainer).toBe(screen.getByRole("region", { name: "表格" }));
+    expect(scrollContainer).toHaveAttribute("tabindex", "0");
+    expect(scrollContainer?.querySelector("table")).toBeInTheDocument();
+    expect(scrollContainer?.querySelectorAll("th")).toHaveLength(4);
+    expect(scrollContainer?.querySelector("th:last-child")).toHaveTextContent(
+      "beta 是否‘新引入’",
+    );
+  });
+
+  it("preserves GFM alignment, inline content and nested table semantics", () => {
+    render(<MarkdownRenderer content={"> | 名称 | 提交 | 链接 |\n> | :--- | :---: | ---: |\n> | **方法** | `f7be77f76` | [文件](https://example.com/file) |"} />);
+    const table = screen.getByRole("table");
+    expect(table.closest("blockquote")).toBeInTheDocument();
+    expect(table.querySelectorAll("th")[1]).toHaveStyle({ textAlign: "center" });
+    expect(table.querySelectorAll("td")[2]).toHaveStyle({ textAlign: "right" });
+    expect(table.querySelector("strong")).toHaveTextContent("方法");
+    expect(table.querySelector("code")).toHaveTextContent("f7be77f76");
+    expect(screen.getByRole("link", { name: "文件" })).toHaveAttribute("href", "https://example.com/file");
+  });
+
+  it("keeps caller-provided table rendering without an extra scroll wrapper", () => {
+    const { container } = render(<MarkdownRenderer
+      content={"| 名称 |\n| --- |\n| 示例 |"}
+      components={{ table: ({ children }) => <div className="custom-table"><table>{children}</table></div> }}
+    />);
+    expect(container.querySelector(".custom-table table")).toBeInTheDocument();
+    expect(container.querySelector(".markdown-table-scroll")).not.toBeInTheDocument();
+  });
 });

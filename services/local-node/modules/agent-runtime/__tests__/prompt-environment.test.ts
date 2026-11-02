@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import os from "node:os";
 import { buildRuntimeEnvironment } from "../prompt-environment.js";
 import { snapshotRuntimeReminder } from "../runtime-request-snapshot.js";
 
@@ -27,6 +28,7 @@ vi.mock("../tools/workspace.js", () => ({
 afterEach(() => {
   vi.unstubAllEnvs();
   fixture.roots = fixture.roots.slice(0, 1);
+  fixture.cwd = "/session-worktree";
 });
 const data = (text: string) => JSON.parse(text.split("\n")[1]);
 
@@ -100,4 +102,51 @@ it("advances the host date for new requests but reuses the persisted reminder on
   expect(snapshotRuntimeReminder({}, [next], []).fingerprint).not.toBe(
     saved.fingerprint,
   );
+});
+
+const hostFacts = {
+  probedAt: 1,
+  tools: {
+    java: { version: "21.0.2", path: "/opt/jdk/bin/java" },
+    node: { version: "22.23.2", path: "/opt/node/bin/node" },
+    mvn: null,
+  },
+  env: { JAVA_HOME: "/opt/jdk" },
+};
+
+it("reports host OS facts and the probed toolchain so the agent stops re-checking", () => {
+  const text = buildRuntimeEnvironment(
+    "session",
+    "project",
+    new Date(2026, 8, 18, 12),
+    hostFacts,
+  );
+  const env = data(text);
+  expect(env.os).toEqual({
+    name: os.type(),
+    release: os.release(),
+    arch: os.arch(),
+    cpus: os.cpus().length,
+    memoryGiB: Math.round(os.totalmem() / 1024 ** 3),
+  });
+  expect(env.toolchain).toEqual(hostFacts.tools);
+  expect(env.env).toEqual(hostFacts.env);
+  expect(text).toContain("so do not re-check them");
+});
+
+it("withholds host OS and toolchain facts from WSL sessions", () => {
+  fixture.cwd = "\\\\wsl.localhost\\Ubuntu\\home\\me\\repo";
+  const text = buildRuntimeEnvironment("session", "project", undefined, hostFacts);
+  const env = data(text);
+  expect(env).toMatchObject({
+    cwd: "/home/me/repo",
+    platform: "linux",
+    executionHost: "wsl",
+    distribution: "Ubuntu",
+    executionShell: "/bin/sh",
+  });
+  expect(env.os).toBeUndefined();
+  expect(env.toolchain).toBeUndefined();
+  expect(env.env).toBeUndefined();
+  expect(text).not.toContain("so do not re-check them");
 });

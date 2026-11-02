@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../infrastructure/llm-runtime/gateway.js', () => ({ generateGatewayTextResult: vi.fn() }));
 
-import { normalizeCommitMessage, resolveConflictText } from '../session-git-commit.js';
+import { MAX_COMMIT_MESSAGE_LEN, normalizeCommitMessage, resolveConflictText } from '../session-git-commit.js';
 
 describe('normalizeCommitMessage', () => {
   it('keeps a single-line message as-is', () => {
@@ -33,8 +33,8 @@ describe('normalizeCommitMessage', () => {
     expect(normalizeCommitMessage('x'.repeat(400))).toHaveLength(200);
   });
 
-  it('caps the whole subject-plus-body message at 2000 characters', () => {
-    expect(normalizeCommitMessage(`feat: big\n\n${'y'.repeat(3000)}`)).toHaveLength(2000);
+  it('caps the whole subject-plus-body message at the generated-changelog limit', () => {
+    expect(normalizeCommitMessage(`feat: big\n\n${'y'.repeat(70_000)}`)).toHaveLength(MAX_COMMIT_MESSAGE_LEN);
   });
 });
 

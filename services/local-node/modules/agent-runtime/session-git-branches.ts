@@ -1,7 +1,9 @@
 import {
   listGitWorkspaces,
+  listGitRemoteBranches,
   switchGitBranch,
   createAndSwitchGitBranch,
+  mergeGitBranch,
   countGitCheckoutChanges,
   GitWorkspaceError,
 } from "../git-workspaces.js";
@@ -114,10 +116,14 @@ export function listSessionGitBranches(sessionId: string, rootId?: string) {
       rootId,
       true,
     );
-    const [summary, dirtyFileCount] = await Promise.all([
+    const [summary, dirtyFileCount, remoteRefs] = await Promise.all([
       listGitWorkspaces(workspaceRootLocation(root), session.projectId),
       countGitCheckoutChanges(workspaceRootLocation(root)),
+      // Remote refs are optional context: a repository without a remote, or one
+      // whose refs cannot be read, still lists and switches local branches.
+      listGitRemoteBranches(workspaceRootLocation(root)).catch(() => []),
     ]);
+    const localBranches = new Set(summary.branches.map((branch) => branch.name));
     return {
       rootId: root.id,
       dirtyFileCount,
@@ -132,6 +138,11 @@ export function listSessionGitBranches(sessionId: string, rootId?: string) {
           branch.checkedOutPath !== summary.defaultPath,
         ),
       })),
+      // A remote ref whose local branch exists is already reachable through the
+      // local entry, so listing it again would duplicate the same checkout.
+      remoteBranches: remoteRefs.filter(
+        (branch) => !localBranches.has(branch.branch),
+      ),
     };
   });
 }
@@ -141,6 +152,7 @@ export function switchSessionGitBranch(
   branch: string,
   rootId?: string,
   transferChanges = false,
+  remote = false,
 ) {
   return withGitErrors(async () => {
     const session = agentRuntimeStore.getSession(sessionId);
@@ -153,6 +165,7 @@ export function switchSessionGitBranch(
     try {
       await switchGitBranch(workspaceRootLocation(root), branch, {
         transferChanges,
+        remote,
       });
     } finally {
       // Stash restoration may fail after HEAD changes. Refresh shared snapshots
@@ -174,5 +187,22 @@ export function createSessionGitBranch(
     await createAndSwitchGitBranch(workspaceRootLocation(root), branch);
     refreshSharedSessions(root.path);
     return listSessionGitBranches(sessionId, root.id);
+  });
+}
+
+/** Ordinary local branch merge from the branch context menu. It merges into the
+ * checked-out branch only; remote requests stay in the merge request module. */
+export function mergeSessionGitBranch(
+  sessionId: string,
+  source: string,
+  rootId?: string,
+) {
+  return withGitErrors(async () => {
+    const session = agentRuntimeStore.getSession(sessionId);
+    const root = resolveSessionRepository(sessionId, session.projectId, rootId, true);
+    const merged = await mergeGitBranch(workspaceRootLocation(root), source);
+    refreshSharedSessions(root.path);
+    invalidateSessionEnvironment(sessionId);
+    return { merged, ...(await listSessionGitBranches(sessionId, root.id)) };
   });
 }

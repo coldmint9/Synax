@@ -144,4 +144,13 @@ describe("SynaxAgent", () => {
     expect(section).toContain("Specialist focus: reviewer");
     expect(section).toContain("does not change the user request");
   });
+
+  it("ignores a persisted automatic route while preserving explicit adaptation", () => {
+    const session = { profileId: SYNAX_AGENT_PROFILE_ID,
+      sessionMetadata: { activeVariant: "reviewer", routeSource: "auto" } };
+    expect(synaxAgent.buildVariantPromptSection(session)).toBeNull();
+    expect(synaxAgent.buildVariantPromptSection({ ...session,
+      sessionMetadata: { ...session.sessionMetadata, routeSource: "adapt" },
+    })).toContain("Specialist focus: reviewer");
+  });
 });

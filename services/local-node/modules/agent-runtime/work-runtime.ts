@@ -64,6 +64,12 @@ class WorkRuntime {
     const user = trigger?.metadata.source !== 'system_injection';
     const hasMedia = Boolean(trigger?.contentParts?.some(part => part.type !== 'text'));
     const hasContent = Boolean(text) || hasMedia;
+    // A user turn reopens a stop written by an earlier one. Every stop entry point
+    // writes a stop status together with this marker, but only `paused` reopens its
+    // checkpoints, so a marker left by any other stop used to outlive the turn that
+    // resumed the conversation and fenced work that turn was allowed to do.
+    if (trigger && user && hasContent && session.sessionMetadata?.manualStop)
+      store.updateSessionMetadata(sessionId, { manualStop: null });
     const continuing = !hasMedia && (isWorkContinuation(text) || text.startsWith('Session was ') || text.startsWith('Session previously '));
     const historicalGoal = usesGoalWorkflow(session) ? getGoalState(session.sessionMetadata) : null;
     if (!work && historicalGoal?.status === 'completed') {
@@ -185,15 +191,29 @@ class WorkRuntime {
     return null;
   }
 
-  recordTool(call: ToolCallRecord, before?: string, after?: string): void {
+  markWorkspaceDirty(sessionId: string): void {
+    const work = workStore.current(sessionId);
+    if (!work || TERMINAL.has(work.status) || work.workspaceDirty) return;
+    work.workspaceDirty = true;
+    workStore.save(work);
+  }
+
+  recordTool(call: ToolCallRecord): void {
     const work = workStore.current(call.sessionId);
     if (!work || TERMINAL.has(work.status)) return;
     this.syncPlan(work);
-    const args = (call.inputRef ?? {}) as Record<string, unknown>;
     let progressed = false;
-    if (before && after && before !== after) {
+    // Native file tools already return the paths they wrote. Do not rediscover
+    // those edits by hashing the entire worktree around every operation.
+    const output = call.outputRef as { path?: string; files?: Array<{ path: string; movePath?: string }>; error?: unknown } | null;
+    const successful = ['completed', 'compacted'].includes(call.status) && !call.error && !output?.error;
+    const changedPaths = !successful ? []
+      : ['file.write', 'file.delete'].includes(call.toolId) && output?.path ? [output.path]
+      : ['file.patch', 'file.generate'].includes(call.toolId)
+        ? (output?.files ?? []).flatMap(file => file.movePath ? [file.path, file.movePath] : [file.path]) : [];
+    if (changedPaths.length) {
       work.hasChanges = true; work.changeVersion++;
-      if (typeof args.path === 'string' && !work.changedPaths.includes(args.path)) work.changedPaths.push(args.path);
+      work.changedPaths = [...new Set([...work.changedPaths, ...changedPaths])];
       progressed = true;
     }
     // Every executed call is information the first time its (tool, args) pair appears, or when
@@ -367,7 +387,7 @@ class WorkRuntime {
     for (const stale of normalized.stale) if (citedIds.has(stale.id))
       throw new AgentValidationError(`Stale or unsuccessful verification evidence: ${stale.id} (${stale.criterion} is not attested by it because ${stale.reason}). ${evidenceRemedy(receipts, stale.criterion)}`);
     const missingCurrentVerification =
-      (owners.some(w => w.hasChanges) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) &&
+      (owners.some(w => w.hasChanges || w.workspaceDirty) || work.legacyEvidenceIncomplete && calls.some(c => c.mutability === 'write')) &&
       !receipts.current.size;
     if (missingCurrentVerification && !rootGoal)
       throw new AgentValidationError(`Missing current-version verification. Use verification.run for the changed scope; TODO completion and arbitrary shell exit 0 are not verification. ${evidenceRemedy(receipts)}`);

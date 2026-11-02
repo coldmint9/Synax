@@ -238,6 +238,7 @@ function readSubagents(
       if (!child) continue;
       if (child.sessionMetadata?.archivedAt || child.sessionMetadata?.deletedAt)
         continue;
+      if (child.sessionMetadata?.subagentKind === "side-chat") continue;
       subagents.push({
         id: child.id,
         parentSessionId: child.parentSessionId,

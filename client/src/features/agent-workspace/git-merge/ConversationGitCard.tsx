@@ -32,7 +32,7 @@ import { refreshWorkspace } from "../workspaceRefresh";
 import { Button } from "../../../shared/ui/ui/Button";
 import { Dialog, DialogPanel, DialogTitle } from "../../../shared/ui/ui/Dialog";
 import { FileViewerDialog } from "../../../shared/ui/file-viewer/FileViewerDialog";
-import { taskPresentation } from "./model";
+import { mergeErrorText, taskPresentation } from "./model";
 import { applyMergeState, chooseMergeSnapshot } from "./mergeTaskProjection";
 import { MergeFileIndex } from "./mergeFileIndex";
 import { CommitGraph } from "./CommitGraph";
@@ -556,9 +556,11 @@ function ConversationGitCardInstance({
               ? "正在停止"
               : execution?.status === "cancelling"
                 ? "正在取消"
-                : canResume
-                  ? "继续"
-                  : "停止"}
+                : !execution
+                  ? "开始合并"
+                  : canResume
+                    ? "继续"
+                    : "停止"}
         </Button>
         {!cleanupPending && (
           <Button
@@ -720,7 +722,7 @@ function ConversationGitCardInstance({
             )}
             {(execution?.error || mr.error || error || readError) && (
               <p className="conversation-git-inline-error" role="alert">
-                {error || execution?.error || mr.error || readError}
+                {mergeErrorText(error || execution?.error || mr.error) || readError}
               </p>
             )}
             {mr.checks.length > 0 && (

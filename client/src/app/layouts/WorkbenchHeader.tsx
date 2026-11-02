@@ -1,23 +1,9 @@
 import { GitToolbarTarget } from "../../features/git/GitToolbarPortal";
 import { useLocation } from "react-router-dom";
-import { Terminal as TerminalIcon, WifiOff } from "lucide-react";
-import { ThemeToggle } from "../../shared/ui/ThemeToggle";
-import { useTerminalStore } from "../../features/terminal/terminalStore";
 import { useState, useCallback, useEffect } from "react";
 import { WorkspaceSwitcher } from "../../features/workspace/WorkspaceSwitcher";
 import { WorkspaceRemoveDialog } from "../../features/workspace/WorkspaceRemoveDialog";
-import { Popover, PopoverButton } from "@/shared/ui/ui/Popover";
-import { Tooltip } from "@/shared/ui/ui/Tooltip";
-import { IslandPopoverPanel } from "./IslandOverlays";
-import { IslandSelection } from "./IslandSelection";
 import { SessionToolbarTarget, SessionToolbarActionsTarget } from "../../features/agent-workspace/SessionToolbarPortal";
-import { Button } from "@/shared/ui/ui/Button";
-import {
-  GitMerge,
-  Bot,
-  Settings2,
-  Target,
-} from "lucide-react";
 import type { ProjectSummary } from "../../shared/state/shellStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
@@ -28,14 +14,15 @@ import {
 } from "../../features/agent-workspace/projectSessionBadges";
 import { useWorkspaceCopy } from "../../features/workspace/workspaceCopy";
 import { useSessionWorkspaceStore } from "../../features/agent-workspace/state/sessionWorkspaceStore";
-import { GoalMonitorPanel } from "../../features/agent-workspace/GoalMonitorPanel";
 import { ProjectImportHint } from "./ProjectImportHint";
 import { SubagentIsland } from "../../features/agent-workspace/SubagentIsland";
-import { SideChatIsland } from "../../features/agent-workspace/SideChatIsland";
 import type { ActivityPanel } from "./ActivityBar";
-import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { useMacWindowButtons } from "../../adapters/electron/useMacWindowButtons";
 import { WindowChrome } from "./WindowChrome";
+import { WorkbenchNav } from "./toolbar/WorkbenchNav";
+import { WorkbenchActions } from "./toolbar/WorkbenchActions";
+import { BackendConnectionStatus } from "./toolbar/BackendConnectionStatus";
+import { GoalToolbar } from "./toolbar/GoalToolbar";
 
 export type ChromeMode =
   | "global"
@@ -55,11 +42,6 @@ interface WorkbenchHeaderProps {
   onCreateProject: () => void;
   onRemoveProject: (projectId: string) => Promise<void>;
 }
-
-const navTabs: { id: ActivityPanel; icon: typeof Bot; label: string }[] = [
-  { id: "sessions", icon: Bot, label: "Work" },
-  { id: "git", icon: GitMerge, label: "Git" },
-];
 
 function ProjectSessionBadgeMark({
   badge,
@@ -149,91 +131,6 @@ function ProjectSwitcher({
   />;
 }
 
-function MainNavTabs({
-  activePanel,
-  hasProject,
-  onPanelToggle,
-}: {
-  activePanel: ActivityPanel | null;
-  hasProject: boolean;
-  onPanelToggle: (panel: ActivityPanel) => void;
-}) {
-  const { t } = useLocale();
-
-  return (
-    <nav
-      aria-label={t("workspaceMainNav")}
-      className="wh-tabs"
-    >
-      <IslandSelection activeKey={activePanel} className="wh-tabs-list">
-        {navTabs
-          .map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <Button
-                key={tab.id}
-                data-island-option={tab.id}
-                variant="ghost"
-                size="sm"
-                disabled={!hasProject}
-                aria-pressed={activePanel === tab.id}
-                onClick={() => onPanelToggle(tab.id)}
-                aria-label={tab.label}
-                className={`wh-tab wh-tab--${tab.id} ${activePanel === tab.id ? "bg-primary/10 text-primary" : ""}`}
-              >
-                <Icon size={15} aria-hidden="true" />
-                <span>{tab.label}</span>
-              </Button>
-            );
-          })}
-      </IslandSelection>
-    </nav>
-  );
-}
-
-function GoalToolbar({ sessionId }: { sessionId: string | null }) {
-  const { locale } = useLocale();
-  const label = locale === "zh" ? "目标" : "Goal";
-  if (!sessionId) return null;
-  return (
-    <Popover>
-      {({ open }) => <>
-        <Tooltip content={label}>
-          <PopoverButton className="wh-btn" aria-label={label}>
-            <Target size={16} aria-hidden="true" />
-          </PopoverButton>
-        </Tooltip>
-        <IslandPopoverPanel open={open} focus className="goal-monitor-menu" aria-label={label}>
-          <GoalMonitorPanel sessionId={sessionId} />
-        </IslandPopoverPanel>
-      </>}
-    </Popover>
-  );
-}
-
-function BackendConnectionStatus() {
-  const { locale } = useLocale();
-  const browserOnline = useApiConnectivityStore((state) => state.browserOnline);
-  const apiReachable = useApiConnectivityStore((state) => state.apiReachable);
-  const disconnected = !browserOnline || apiReachable === "unreachable";
-
-  if (!disconnected) return null;
-
-  const label = locale === "zh" ? "后端服务已断联" : "Backend disconnected";
-  return (
-    <Tooltip content={label}>
-      <span
-        role="img"
-        aria-label={label}
-        title={label}
-        className="workbench-header__connection-status text-danger"
-      >
-        <WifiOff size={14} aria-hidden="true" />
-      </span>
-    </Tooltip>
-  );
-}
-
 export function WorkbenchHeader({
   chromeMode,
   activePanel,
@@ -247,9 +144,8 @@ export function WorkbenchHeader({
   onRemoveProject,
 }: WorkbenchHeaderProps) {
   const leadingRef = useMacWindowButtons();
-  const { t, locale } = useLocale();
+  const { locale } = useLocale();
   const location = useLocation();
-  const terminalOpen = useTerminalStore((state) => state.open);
   const gitToolbarVisible =
     activePanel === "git" && !location.pathname.includes("/git/mr/");
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
@@ -287,8 +183,6 @@ export function WorkbenchHeader({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [chromeMode, selectedSessionId]);
 
-  const terminalLabel = locale === "zh" ? "终端" : "Terminal";
-
   return (
     <header className="workbench-header" aria-label={locale === "zh" ? "工作区工具栏" : "Workspace toolbar"}>
       <div className="workbench-header__bar">
@@ -309,33 +203,22 @@ export function WorkbenchHeader({
           {activePanel === "sessions" && hasProject ? <SessionToolbarTarget /> : null}
         </div>
         <div className="workbench-header__navigation">
-          <MainNavTabs activePanel={activePanel} hasProject={hasProject} onPanelToggle={onPanelToggle} />
+          <WorkbenchNav
+            activePanel={activePanel}
+            hasProject={hasProject}
+            projectId={hasProject ? currentProjectId : null}
+            sessionId={selectedSessionId}
+            onPanelToggle={onPanelToggle}
+          />
           {gitToolbarVisible && <div className="workbench-header__git-tools"><GitToolbarTarget /></div>}
         </div>
         <div className="wh-actions workbench-header__actions">
           <BackendConnectionStatus />
           {activePanel === "sessions" && selectedSessionId && chromeMode !== "global" ? (
-            <>
-              <SubagentIsland sessionId={selectedSessionId} />
-              <SideChatIsland sessionId={selectedSessionId} />
-            </>
+            <SubagentIsland sessionId={selectedSessionId} />
           ) : null}
           <GoalToolbar sessionId={hasProject ? goalSessionId : null} />
-          <Tooltip content={terminalLabel}>
-            <button type="button" className={`wh-btn ${terminalOpen ? "active" : ""}`}
-              aria-pressed={terminalOpen} aria-label={terminalLabel}
-              onClick={() => useTerminalStore.getState().toggle()}>
-              <TerminalIcon size={16} aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <Tooltip content={t("appSettings")}>
-            <button type="button" className={`wh-btn ${activePanel === "settings" ? "active" : ""}`}
-              aria-pressed={activePanel === "settings"} aria-label={t("appSettings")}
-              onClick={() => onPanelToggle("settings")}>
-              <Settings2 size={16} aria-hidden="true" />
-            </button>
-          </Tooltip>
-          <ThemeToggle />
+          <WorkbenchActions activePanel={activePanel} onPanelToggle={onPanelToggle} />
           {activePanel === "sessions" && hasProject ? <SessionToolbarActionsTarget /> : null}
         </div>
         <WindowChrome />

@@ -38,7 +38,8 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
     Box::pin(async_stream::try_stream! {
         let (input, tool_names) = crate::llm::tool_names::ToolNames::prepare(input)?;
         let request = request(&input)?;
-        let mut stream = model(&input)?.stream(request)?;
+        let (model, response_activity) = model(&input)?;
+        let mut stream = model.stream(request)?;
         yield json!({"type":"stream-start","warnings":[]});
         // Rig normalizes OpenAI Chat, OpenAI Responses and Anthropic streams
         // into the same events. Keep cumulative display telemetry here so the
@@ -48,7 +49,30 @@ fn provider_events_once(input: ProviderRequest) -> BoxStream<'static, Result<Val
         let mut streamed_reasoning = String::new();
         let mut reasoning_sent = HashMap::<usize, String>::new();
         let idle_timeout = super::deadline::configured_timeout();
-        while let Some(item) = super::deadline::next(stream.next(), idle_timeout).await? {
+        // The first event of an attempt also has to arrive: a request that
+        // hangs in connect/first-byte keeps the pending socket after the
+        // outage that created it, so waiting for the longer stream idle
+        // watchdog leaves the session parked on the same retry even though the
+        // network is back. Bounding it lets the retry run over the new
+        // connection instead.
+        let first_event_timeout = super::deadline::configured_first_event_timeout();
+        let mut awaiting_first_event = true;
+        loop {
+            let item = if awaiting_first_event {
+                let next = tokio::select! {
+                    item = super::deadline::next(stream.next(), first_event_timeout) => Some(item),
+                    _ = response_activity.wait() => {
+                        awaiting_first_event = false;
+                        None
+                    }
+                };
+                let Some(item) = next else { continue };
+                item?
+            } else {
+                super::deadline::next(stream.next(), idle_timeout).await?
+            };
+            let Some(item) = item else { break };
+            awaiting_first_event = false;
             match item? {
                 Item::Event(StreamEvent::Text { part, text }) => {
                     let timing = if first_text_at.is_none() && !text.is_empty() {
@@ -177,8 +201,12 @@ fn truncation_reason<'a>(error: Option<&'a str>, has_answer: bool) -> Option<&'a
     if !has_answer {
         return None;
     }
-    error.and_then(incomplete_reason).filter(|reason| matches!(*reason,
-        "length" | "max_output_tokens" | "max_tokens" | "max_completion_tokens"))
+    error.and_then(incomplete_reason).filter(|reason| {
+        matches!(
+            *reason,
+            "length" | "max_output_tokens" | "max_tokens" | "max_completion_tokens"
+        )
+    })
 }
 
 fn display_block(block: &AssistantContent) -> Value {

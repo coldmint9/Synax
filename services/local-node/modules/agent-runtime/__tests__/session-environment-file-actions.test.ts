@@ -19,6 +19,8 @@ const action = (sessionId: string, kind: 'rename' | 'trash', body: Record<string
   agentRuntimeRoutes.request(`/sessions/${sessionId}/environment/file/${kind}`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
+const entry = (sessionId: string, query: string) =>
+  agentRuntimeRoutes.request(`/sessions/${sessionId}/environment/file/exists?${query}`);
 function session(status = 'completed') {
   const item = agentSessionRuntime.create({ projectId: 'file-actions-test', profileId: 'synax', prompt: 'test' });
   agentRuntimeStore.updateSession(item.id, { status: status as typeof item.status });
@@ -84,4 +86,18 @@ it('moves the file via trash and leaves it untouched when trash fails', async ()
   expect(await done.json()).toMatchObject({ trashed: true, path: 'a.txt' });
   expect(trashed).toHaveBeenCalledWith(fs.realpathSync(repo) + path.sep + 'a.txt', { glob: false });
   expect(fs.existsSync(path.join(repo, 'a.txt'))).toBe(false);
+});
+
+it('answers whether a document link resolves to an openable file without reading it', async () => {
+  const item = session();
+  fs.mkdirSync(path.join(repo, 'docs'));
+  const file = await entry(item.id, 'path=a.txt&rootId=primary');
+  expect(file.status).toBe(200);
+  expect(await file.json()).toEqual({ sessionId: item.id, path: 'a.txt', exists: true, isFile: true });
+  const missing = await entry(item.id, 'path=docs/missing.md&rootId=primary');
+  expect(await missing.json()).toEqual({ sessionId: item.id, path: 'docs/missing.md', exists: false, isFile: false });
+  const directory = await entry(item.id, 'path=docs&rootId=primary');
+  expect(await directory.json()).toEqual({ sessionId: item.id, path: 'docs', exists: true, isFile: false });
+  expect((await entry(item.id, 'path=../outside.md&rootId=primary')).status).toBe(400);
+  expect((await entry(item.id, 'rootId=primary')).status).toBe(400);
 });

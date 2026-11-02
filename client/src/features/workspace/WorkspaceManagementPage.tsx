@@ -1,3 +1,4 @@
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
 import {
   useCallback,
   useEffect,
@@ -17,7 +18,6 @@ import {
   Check,
   Ellipsis,
   Folder,
-  Info,
   Pencil,
   Plus,
   Search,
@@ -37,6 +37,8 @@ import {
 } from "@/shared/ui/ui/Dialog";
 import {
   projectApi,
+  type AddProjectReferenceRequest,
+  type WorkspaceReferenceChanges,
   type ProjectWorkspace,
   type WorkspaceLocation,
 } from "../../adapters/transport/project";
@@ -55,7 +57,7 @@ import { useWorkspaceCopy } from "./workspaceCopy";
 import "./workspaceManagement.css";
 
 type Selection = { path: string; name: string };
-type Busy = "load" | "browse" | "add" | "remove";
+type Busy = "load" | "browse" | "add" | "remove" | "primary";
 export default function WorkspaceManagementPage() {
   const { workspaceId = "" } = useParams();
   return (
@@ -150,25 +152,63 @@ export function WorkspaceManagementContent({
       : (removeButtons.current.get(target) ?? addTrigger.current)
     )?.focus();
   }, [busy, removeId, workspace, pickerOpen]);
-  const addSelection = (selected: Selection) => {
-    if (!location || roots.length >= 50) return;
+  const referenceRequest = (selected: Selection): AddProjectReferenceRequest => ({
+    location:
+      location?.kind === "wsl"
+        ? {
+            kind: "wsl",
+            distribution: location.distribution,
+            path: selected.path,
+          }
+        : { kind: "host", path: selected.path },
+    ...(selected.name.trim() ? { name: selected.name.trim() } : {}),
+  });
+  // A multi-selection becomes one request, so the summaries stay a single line.
+  const describeSelection = (
+    total: number,
+    normalizations: WorkspaceReferenceChanges["normalizations"],
+  ) => {
+    const items = normalizations ?? [];
+    const duplicates = items.filter((item) => item.duplicate);
+    const skipped = duplicates.filter((item) => !item.redirected).length;
+    const added = Math.max(total - duplicates.length, 0);
+    const parts: string[] = [];
+    if (added)
+      parts.push(
+        added === 1 ? c.added : c.addedCount.replace("{count}", String(added)),
+      );
+    if (skipped)
+      parts.push(c.skippedExisting.replace("{count}", String(skipped)));
+    for (const item of items)
+      if (item.redirected)
+        parts.push(
+          `${c.worktreeRedirected}${item.location.path}${item.duplicate ? ` · ${c.worktreeAlreadyAdded}` : ""}`,
+        );
+    return parts.join(" · ");
+  };
+  const addSelections = (selected: Selection[]) => {
+    if (!location || !selected.length) return;
+    const room = 50 - roots.length;
+    if (room <= 0) return;
+    const batch = selected.slice(0, room);
     void run("add", c.addError, async () => {
-      const result = await projectApi.addReference(workspaceId, {
-        location:
-          location.kind === "wsl"
-            ? {
-                kind: "wsl",
-                distribution: location.distribution,
-                path: selected.path,
-              }
-            : { kind: "host", path: selected.path },
-        ...(selected.name.trim() ? { name: selected.name.trim() } : {}),
-      });
+      const result = await projectApi.addReferences(
+        workspaceId,
+        batch.map(referenceRequest),
+      );
       if (!active.current) return;
-      setWorkspace(result);
-      setNotice(result.normalization?.redirected
-        ? `${c.worktreeRedirected}${result.normalization.location.path}${result.normalization.duplicate ? ` · ${c.worktreeAlreadyAdded}` : ""}`
-        : c.added);
+      setWorkspace({ roots: result.roots });
+      setNotice(describeSelection(batch.length, result.normalizations));
+      if (selected.length > room) setError(c.limit);
+      focusAfter.current = "add";
+    });
+  };
+  const setPrimary = (rootId: string) => {
+    void run("primary", c.primaryError, async () => {
+      const result = await projectApi.setPrimaryRoot(workspaceId, rootId);
+      if (!active.current) return;
+      setWorkspace({ roots: result.roots });
+      setNotice(c.primaryChanged);
       focusAfter.current = "add";
     });
   };
@@ -180,11 +220,11 @@ export function WorkspaceManagementContent({
       setPickerOpen(true);
       return;
     }
-    let selected: Selection | null = null;
+    let selected: Selection[] = [];
     await run("browse", c.browseError, async () => {
-      selected = await openDirectoryPicker();
+      selected = await openDirectoryPicker({ multiple: true });
     });
-    if (active.current && selected) addSelection(selected);
+    if (active.current && selected.length) addSelections(selected);
   };
   const cancelRemove = () => {
     if (busy) return;
@@ -299,7 +339,7 @@ export function WorkspaceManagementContent({
                   {workspace ? roots.length : "—"}
                 </span>
               </h2>
-              <p className="workspace-manager-note">{c.manageHint}</p>
+              <InfoTooltip label={c.members}>{c.manageHint} {c.nextRun}</InfoTooltip>
             </div>
             <Button
               ref={addTrigger}
@@ -381,23 +421,35 @@ export function WorkspaceManagementContent({
                     missing={root.status === "missing"}
                   >
                     {root.role === "reference" && (
-                      <Button
-                        ref={(el) => {
-                          if (el) removeButtons.current.set(root.id, el);
-                          else removeButtons.current.delete(root.id);
-                        }}
-                        variant="ghost"
-                        size="sm"
-                        disabled={disabled}
-                        aria-label={`${c.remove}: ${root.name}`}
-                        onClick={() => {
-                          setRemoveId(root.id);
-                          setError(null);
-                          setNotice("");
-                        }}
-                      >
-                        {c.remove}
-                      </Button>
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={disabled || root.status === "missing"}
+                          aria-label={`${c.makePrimary}: ${root.name}`}
+                          title={c.makePrimary}
+                          onClick={() => setPrimary(root.id)}
+                        >
+                          {c.makePrimary}
+                        </Button>
+                        <Button
+                          ref={(el) => {
+                            if (el) removeButtons.current.set(root.id, el);
+                            else removeButtons.current.delete(root.id);
+                          }}
+                          variant="ghost"
+                          size="sm"
+                          disabled={disabled}
+                          aria-label={`${c.remove}: ${root.name}`}
+                          onClick={() => {
+                            setRemoveId(root.id);
+                            setError(null);
+                            setNotice("");
+                          }}
+                        >
+                          {c.remove}
+                        </Button>
+                      </>
                     )}
                   </WorkspaceProjectRow>
                 </div>
@@ -416,12 +468,6 @@ export function WorkspaceManagementContent({
               )}
             </div>
           )}
-          <div className="workspace-manager-footer">
-            <Info size={14} aria-hidden="true" />
-            <span>
-              {c.unlinkHint} {c.nextRun}
-            </span>
-          </div>
         </section>
       </div>
       <Dialog
@@ -483,18 +529,27 @@ export function WorkspaceManagementContent({
       )}
       <DirectoryPickerDialog
         open={pickerOpen}
+        multiple
         locationKind={location?.kind ?? "host"}
         distribution={
           location?.kind === "wsl" ? location.distribution : undefined
         }
-        labels={{ title: c.pickerTitle, confirm: c.chooseFolder }}
+        labels={{
+          title: c.pickerTitle,
+          confirm: c.pickerConfirm,
+          confirmMultiple: c.pickerConfirm,
+        }}
         onClose={() => {
           focusAfter.current = "add";
           setPickerOpen(false);
         }}
         onSelect={(selected) => {
           setPickerOpen(false);
-          addSelection(selected);
+          addSelections([selected]);
+        }}
+        onSelectMultiple={(selections) => {
+          setPickerOpen(false);
+          addSelections(selections);
         }}
       />
     </main>

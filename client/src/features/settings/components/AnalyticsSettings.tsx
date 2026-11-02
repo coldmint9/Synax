@@ -33,6 +33,52 @@ const percent = (value: number | null) =>
 const share = (value: number, total: number) =>
   total > 0 ? (value / total) * 100 : 0;
 
+const formatDuration = (value: number, zh: boolean) => {
+  const totalSeconds = Math.max(0, Math.floor(value / 1_000));
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  if (zh) {
+    if (days) return `${days}天${hours}时`;
+    if (hours) return `${hours}时${minutes}分`;
+    if (minutes) return `${minutes}分${seconds}秒`;
+    return `${seconds}秒`;
+  }
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+};
+
+const formatDateTime = (value: string | null, zh: boolean) =>
+  value
+    ? new Date(value).toLocaleString(zh ? "zh-CN" : "en-US", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "—";
+
+/** Archived and deleted sessions stay in the totals; name the split, not a paragraph. */
+const sessionPartitions = (totals: ProjectAnalytics["totals"], zh: boolean) =>
+  [
+    zh ? `${totals.activeSessions} 进行中` : `${totals.activeSessions} active`,
+    (totals.archivedSessions ?? 0) > 0
+      ? zh
+        ? `${totals.archivedSessions} 已归档`
+        : `${totals.archivedSessions} archived`
+      : null,
+    (totals.deletedSessions ?? 0) > 0
+      ? zh
+        ? `${totals.deletedSessions} 已删除`
+        : `${totals.deletedSessions} deleted`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
 function CompositionDonut({
   composition,
 }: {
@@ -311,8 +357,8 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
           <h2>{zh ? "数据统计" : "Analytics"}</h2>
           <p>
             {zh
-              ? "基于每个会话增量持久化的运行统计，分析上下文构成、模型与工具使用情况。"
-              : "Incremental runtime statistics per session: context composition, models, tools and cache."}
+              ? "按会话增量统计分组、用时、用户输入、上下文、模型与工具使用情况。"
+              : "Incremental per-session statistics for groups, duration, user input, context, models and tools."}
           </p>
         </div>
         <div className="analytics-header__actions">
@@ -358,7 +404,17 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
             <Kpi
               label={zh ? "会话" : "Sessions"}
               value={String(data.totals.sessions)}
-              hint={zh ? `${data.totals.activeSessions} 个进行中` : `${data.totals.activeSessions} active`}
+              hint={sessionPartitions(data.totals, zh)}
+            />
+            <Kpi
+              label={zh ? "累计用时" : "Total duration"}
+              value={formatDuration(data.totals.durationMs, zh)}
+              hint={zh ? "已完成步骤的执行用时" : "Completed-step execution time"}
+            />
+            <Kpi
+              label={zh ? "用户输入" : "User inputs"}
+              value={String(data.totals.userInputs)}
+              hint={zh ? "不含系统注入" : "System injections excluded"}
             />
             <Kpi
               label={zh ? "上下文占用" : "Context usage"}
@@ -476,6 +532,43 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
                 </ul>
               )}
             </section>
+
+            <section className="analytics-card analytics-card--groups">
+              <div className="analytics-card__head">
+                <h3>{zh ? "会话分组" : "Session groups"}</h3>
+                <span>{data.groups.length}</span>
+              </div>
+              {data.groups.length === 0 ? (
+                <p className="analytics-empty analytics-empty--inline">
+                  {zh ? "暂无会话分组" : "No session groups yet"}
+                </p>
+              ) : (
+                <ul className="analytics-bars analytics-bars--groups">
+                  {data.groups.map((group) => (
+                    <li key={group.sessionGroup ?? "uncategorized"}>
+                      <div className="analytics-bars__label">
+                        <span>{group.sessionGroup ?? (zh ? "未分类" : "Uncategorized")}</span>
+                        <span>
+                          {group.sessions} · {formatTokenCount(group.tokens.total)}
+                        </span>
+                      </div>
+                      <div className="analytics-bars__track">
+                        <span
+                          style={{
+                            width: `${share(group.sessions, data.totals.sessions)}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="analytics-group__facts">
+                        <span>{formatDuration(group.durationMs, zh)}</span>
+                        <span>{group.userInputs} {zh ? "次输入" : "inputs"}</span>
+                        <span>{group.toolCalls} {zh ? "次工具" : "tools"}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
 
           <section className="analytics-card analytics-sessions">
@@ -487,10 +580,13 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
               <div className="analytics-table__row analytics-table__row--head" role="row">
                 <span role="columnheader">{zh ? "会话" : "Session"}</span>
                 <span role="columnheader">{zh ? "状态" : "Status"}</span>
+                <span role="columnheader">{zh ? "分组" : "Group"}</span>
                 <span role="columnheader">{zh ? "上下文" : "Context"}</span>
                 <span role="columnheader">{zh ? "轮次" : "Rounds"}</span>
                 <span role="columnheader">{zh ? "工具" : "Tools"}</span>
                 <span role="columnheader">{zh ? "缓存" : "Cache"}</span>
+                <span role="columnheader">{zh ? "用时" : "Duration"}</span>
+                <span role="columnheader">{zh ? "输入" : "Inputs"}</span>
               </div>
               {data.sessions.map((row) => (
                 <button
@@ -509,6 +605,9 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
                     </span>
                   </span>
                   <span role="cell"><SessionStatus status={row.status} /></span>
+                  <span role="cell" className="analytics-table__group">
+                    {row.sessionGroup ?? (zh ? "未分类" : "Uncategorized")}
+                  </span>
                   <span role="cell">
                     <SessionUsageBars row={row} maxContext={maxContext} />
                   </span>
@@ -519,6 +618,10 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
                       ? percent((row.analytics.usage.cacheRead / row.analytics.usage.input) * 100)
                       : "—"}
                   </span>
+                  <span role="cell" className="analytics-table__number">
+                    {formatDuration(row.durationMs, zh)}
+                  </span>
+                  <span role="cell" className="analytics-table__number">{row.userInputCount}</span>
                 </button>
               ))}
               {data.sessions.length === 0 && (
@@ -547,6 +650,10 @@ export function AnalyticsSettings({ projectId }: { projectId: string | null }) {
                       <div><dt>{zh ? "运行轮次" : "Rounds"}</dt><dd>{detail.stats.roundCount ?? "—"}</dd></div>
                       <div><dt>{zh ? "平均每轮步数" : "Steps per run"}</dt><dd>{detail.stats.averageStepsPerCompletedRun?.toFixed(1) ?? "—"}</dd></div>
                       <div><dt>{zh ? "工具调用" : "Tool calls"}</dt><dd>{detail.usage.totalCalls ?? detail.stats.toolCallCount ?? "—"}</dd></div>
+                      <div><dt>{zh ? "创建时间" : "Created"}</dt><dd>{formatDateTime(selected.createdAt, zh)}</dd></div>
+                      <div><dt>{zh ? "完成时间" : "Completed"}</dt><dd>{formatDateTime(selected.completedAt, zh)}</dd></div>
+                      <div><dt>{zh ? "累计用时" : "Duration"}</dt><dd>{formatDuration(selected.durationMs, zh)}</dd></div>
+                      <div><dt>{zh ? "用户输入" : "User inputs"}</dt><dd>{selected.userInputCount}</dd></div>
                       <div><dt>{zh ? "输入 Token" : "Input tokens"}</dt><dd>{formatTokenCount(detail.stats.usage?.self.input ?? 0)}</dd></div>
                       <div><dt>{zh ? "输出 Token" : "Output tokens"}</dt><dd>{formatTokenCount(detail.stats.usage?.self.output ?? 0)}</dd></div>
                       <div><dt>{zh ? "上下文" : "Context"}</dt><dd>

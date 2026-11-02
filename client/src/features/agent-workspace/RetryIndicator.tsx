@@ -7,9 +7,13 @@ import { StatusIndicator } from "../../shared/ui/StatusIndicator";
 export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
   const { locale } = useLocale();
   const [now, setNow] = useState(Date.now);
+  // A retried attempt waits for the provider instead of a scheduled delay, so
+  // the elapsed wait is the only honest progress signal while it runs.
+  const [attemptStartedAt, setAttemptStartedAt] = useState(Date.now);
   useEffect(() => {
     setNow(Date.now());
-    if (retry.phase === "recovered" || retry.phase === "exhausted" || retry.nextRetryAt == null) return;
+    setAttemptStartedAt(Date.now());
+    if (retry.phase === "recovered" || retry.phase === "exhausted") return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [retry.nextRetryAt, retry.phase]);
@@ -19,6 +23,7 @@ export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
     0,
     Math.ceil(((retry.nextRetryAt ?? now) - now) / 1000),
   );
+  const waited = Math.max(0, Math.floor((now - attemptStartedAt) / 1000));
   const reason =
     retry.reason === "network"
       ? zh
@@ -58,8 +63,8 @@ export function RetryIndicator({ retry }: { retry: LlmRetryState }) {
           : `Failed after ${retry.maxRetries} retries`
         : retrying
           ? zh
-            ? `${attempt} · 正在重试…`
-            : `${attempt} · Retrying…`
+            ? `${attempt} · 正在重试 · 已等待 ${waited} 秒`
+            : `${attempt} · Retrying · waited ${waited}s`
           : seconds === 0
             ? zh
               ? `${attempt} · 即将重试…`

@@ -1,9 +1,25 @@
+import { SuperDagCard } from "./super-coding/SuperDagCard";
 import "./composerModes.css";
+import { composerErrorText } from "./composerErrorPresentation";
 import ComposerGitActions from "./git-actions/ComposerGitActions";
-import { Target } from "lucide-react";
+import { AlertCircle, Goal, Zap } from "lucide-react";
 import { NewSessionScene } from "./NewSessionScene";
 import { welcomePlaceholderDelay } from "./welcomeTyping";
 import { NewSessionWelcome } from "./NewSessionWelcome";
+import { HomeFeaturePanel } from "../home/HomeFeaturePanel";
+import { QuickActionAttachmentBar } from "../quick-actions/QuickActionAttachmentBar";
+import {
+  QUICK_ACTIONS,
+  appendQuickActionContext,
+  buildQuickActionLaunch,
+  findQuickAction,
+  quickActionAttachment,
+  restrictQuickActionSkills,
+  visibleQuickActions,
+  type QuickAction,
+  type QuickActionAttachment,
+  type QuickActionLaunch,
+} from "../quick-actions/quickActions";
 import {
   composerDraftScope,
   sessionComposerText,
@@ -15,6 +31,7 @@ import {
   sessionComposerError,
   sessionComposerMode,
   sessionComposerPermissionTier,
+  sessionComposerQuickAction,
 } from "./state/sessionComposerDraftStore";
 import { useSessionComposerSelection } from "./useSessionComposerSelection";
 import {
@@ -47,6 +64,7 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useMemo,
   useState,
 } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -54,6 +72,8 @@ import {
   EMPTY_INPUT_QUEUE,
   useAgentSessionStore,
 } from "./state/agentSessionStore";
+import { EMPTY_STREAMING_BUFFERS } from "./streamingLiveBlocks";
+import { readReplyActivity } from "./state/sessionLifecycle";
 import { useConfig } from "../settings/useConfig";
 import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useAgentDockStore } from "./state/agentDockStore";
@@ -78,6 +98,10 @@ import type {
   QueuedInput,
 } from "../../adapters/transport/agentRuntime";
 import { AgentInteractionPanel } from "./AgentInteractionPanel";
+import type { ConversationController } from "./state/conversationController";
+import { useScopedConversationValue } from "./state/useConversationState";
+import { conversationActions } from "./state/conversationActions";
+import { AgentQuickApproval, listPendingPermissions } from "./dock/AgentQuickApproval";
 import { effectiveReasoningEfforts } from "../settings/lib/providerPresets";
 import {
   readSynaxPermissionTier,
@@ -94,6 +118,7 @@ interface Props {
   /** Rendered directly above the input pill (e.g. the file-change island). */
   statusSlot?: React.ReactNode;
   readingHistory?: boolean;
+  scopedConversation?: ConversationController;
 }
 
 export function SessionComposer({
@@ -103,9 +128,15 @@ export function SessionComposer({
   onOpenSideChat,
   statusSlot,
   readingHistory = false,
+  scopedConversation,
 }: Props) {
   const { t, locale } = useLocale();
   const zh = locale === "zh";
+  const signedIn = false;
+  const availableQuickActions = useMemo(
+    () => visibleQuickActions(QUICK_ACTIONS, { signedIn }).filter((action) => action.kind === "launch"),
+    [signedIn],
+  );
   const navigate = useNavigate();
   const sessionId = session?.id;
   const viewKey = composerDraftScope(
@@ -138,15 +169,21 @@ export function SessionComposer({
   );
   const editLock = useRef<object | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [launchingActionId, setLaunchingActionId] = useState<string | null>(null);
   const [error, setError] = sessionComposerError.useDraft(viewKey, () => null);
   const [draftMode, setDraftMode] = sessionComposerMode.useDraft(
     viewKey,
     () => "chat",
   );
   const updateSessionMode = useAgentSessionStore((s) => s.updateSessionMode);
-  const interactionState = useAgentSessionStore((s) => s.interactionState);
+  const interactionState = useAgentSessionStore((s) => scopedConversation ? null : s.interactionState);
+  const scopedActions = useMemo(() => scopedConversation ? conversationActions(scopedConversation) : null, [scopedConversation]);
+  const scopedPermissions = useScopedConversationValue(scopedConversation, s => s.history.permissions);
+  const scopedInteractions = useScopedConversationValue(scopedConversation, s => s.interactions);
+  const scopedInteractionLoading = useScopedConversationValue(scopedConversation, s => s.interactionLoading);
+  const scopedInteractionError = useScopedConversationValue(scopedConversation, s => s.interactionError);
   const sendSessionMessage = useAgentSessionStore((s) => s.sendSessionMessage);
-  const submitOrEnqueueSessionInput = useAgentSessionStore(
+  const defaultSubmitOrEnqueue = useAgentSessionStore(
     (s) => s.submitOrEnqueueSessionInput,
   );
   const loadInputQueue = useAgentSessionStore((s) => s.loadInputQueue);
@@ -169,12 +206,17 @@ export function SessionComposer({
       : EMPTY_INPUT_QUEUE,
   );
   const submitSessionDraft = useAgentSessionStore((s) => s.submitSessionDraft);
-  const cancelSessionRun = useAgentSessionStore((s) => s.cancelSessionRun);
-  const resumeSession = useAgentSessionStore((s) => s.resumeSession);
+  const defaultCancel = useAgentSessionStore((s) => s.cancelSessionRun);
+  const defaultResume = useAgentSessionStore((s) => s.resumeSession);
+  const submitOrEnqueueSessionInput = scopedActions?.submitOrEnqueueSessionInput ?? defaultSubmitOrEnqueue;
+  const cancelSessionRun = scopedActions?.cancelSessionRun ?? defaultCancel;
+  const resumeSession = scopedActions?.resumeSession ?? defaultResume;
   const refreshSessions = useAgentSessionStore((s) => s.refreshSessions);
-  const hasPendingPermissions = useAgentSessionStore((s) =>
-    sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
+  const globalPendingPermissions = useAgentSessionStore((s) =>
+    !scopedConversation && sessionHasPendingPermissions(sessionId, s.selectedSessionId, s.permissions),
   );
+  const hasPendingPermissions = scopedConversation
+    ? listPendingPermissions(scopedPermissions ?? []).length > 0 : globalPendingPermissions;
   const media = useMediaDraft(
     projectId,
     undefined,
@@ -186,6 +228,12 @@ export function SessionComposer({
   const [references, setReferences] = sessionComposerReferences.useDraft(
     viewKey,
     () => (isDraft ? loadDraftComposerContext(projectId).references : []),
+  );
+  // A procedure that needs user context is attached to the composer, never
+  // sent on click. Drafts restore it with the rest of the cached context.
+  const [pendingQuickAction, setPendingQuickAction] = sessionComposerQuickAction.useDraft(
+    viewKey,
+    () => (isDraft ? loadDraftComposerContext(projectId).quickAction : null),
   );
   const createdDraftRef = useRef<AgentSession | null>(null);
   useLayoutEffect(() => {
@@ -214,6 +262,7 @@ export function SessionComposer({
     saveDraftComposerContext(projectId, {
       parts: JSON.parse(contextPartsKey) as RuntimeContentPart[],
       references,
+      quickAction: pendingQuickAction,
     });
   }, [
     isDraft,
@@ -223,6 +272,7 @@ export function SessionComposer({
     media.uploading,
     contextPartsKey,
     references,
+    pendingQuickAction,
   ]);
   // Reattach cached attachments once their assets are confirmed. Only hydrate
   // an empty tray: items already in the composer are newer than the cache.
@@ -261,8 +311,9 @@ export function SessionComposer({
     },
     [],
   );
-  const currentInteractions =
-    interactionState?.sessionId === sessionId ? interactionState : null;
+  const currentInteractions = scopedConversation ? {
+    sessionId, items: scopedInteractions ?? [], loading: scopedInteractionLoading, error: scopedInteractionError,
+  } : interactionState?.sessionId === sessionId ? interactionState : null;
   const pendingInteractions =
     currentInteractions?.items.filter((item) => item.status === "pending") ??
     [];
@@ -274,6 +325,38 @@ export function SessionComposer({
   });
   const queueWhileGenerating =
     !hasPendingInteractions && canEnqueueSessionInput(session);
+  // The hint reads the streaming step, not the persisted transcript: the reply
+  // phase only exists while a step is still being written. These fields already
+  // belong to the open transcript, so the composer reads them directly instead
+  // of gating on `selectedSessionId` — a missed selection write must never make
+  // the phase permanently invisible.
+  const streamedLive = useAgentSessionStore((s) => s.streamingLive);
+  const streamedStepId = useAgentSessionStore((s) => s.streamingStepId);
+  const scopedLive = useScopedConversationValue(
+    scopedConversation,
+    (s) => s.streamingLive,
+  );
+  const scopedStepId = useScopedConversationValue(
+    scopedConversation,
+    (s) => s.streamingStepId,
+  );
+  const streamedBuffers = scopedConversation
+    ? (scopedLive ?? EMPTY_STREAMING_BUFFERS)
+    : streamedLive;
+  const streamedStep = scopedConversation
+    ? (scopedStepId ?? null)
+    : streamedStepId;
+  const replyActivity = useMemo(
+    () => ({
+      snapshot: readReplyActivity(
+        streamedBuffers,
+        streamedStep,
+        isGenerating,
+      ),
+      text: streamedBuffers.pendingText,
+    }),
+    [isGenerating, streamedBuffers, streamedStep],
+  );
   const resyncedStaleWaitingRef = useRef(false);
 
   useEffect(() => {
@@ -286,8 +369,10 @@ export function SessionComposer({
     if (hasPendingPermissions) return;
     if (resyncedStaleWaitingRef.current) return;
     resyncedStaleWaitingRef.current = true;
-    void refreshSessions();
+    if (scopedConversation) void scopedConversation.refresh();
+    else void refreshSessions();
   }, [
+    scopedConversation,
     hasPendingPermissions,
     isDraft,
     refreshSessions,
@@ -412,9 +497,32 @@ export function SessionComposer({
     void loadInputQueue(sessionId);
   }, [loadInputQueue, sessionId]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(async (launch?: QuickActionLaunch) => {
     if (capability !== "chat") return;
-    const message = content.trim();
+    const typed = content.trim();
+    const attachedLaunch: QuickActionLaunch | undefined = pendingQuickAction
+      ? {
+          actionId: pendingQuickAction.actionId,
+          text: pendingQuickAction.text,
+          skillIds: pendingQuickAction.skillIds,
+          mode: pendingQuickAction.mode,
+        }
+      : undefined;
+    const effectiveLaunch = launch ?? attachedLaunch;
+    // A shortcut starts the session with its own brief; anything already typed
+    // is preserved as additional context instead of being overwritten.
+    const message = (effectiveLaunch
+      ? appendQuickActionContext(effectiveLaunch.text, typed, locale)
+      : typed).trim();
+    // Compose actions carry a procedure but not the user's context. Text, media
+    // or a file reference counts as the missing context; skill chips do not.
+    const hasFileReference = references.some((reference) => reference.kind === "file");
+    if (!launch && pendingQuickAction?.requiresInput && !typed && !media.items.length && !hasFileReference) {
+      setError(zh
+        ? `先补充：${pendingQuickAction.hint ?? "任务所需信息"}，再发送。`
+        : `Add ${pendingQuickAction.hint ?? "the required details"} before sending.`);
+      return;
+    }
     if (
       (!message && !media.items.length) ||
       media.blocked ||
@@ -444,6 +552,11 @@ export function SessionComposer({
             parts: media.parts,
             itemIds: media.items.map((item) => item.id),
           };
+      const attachedSkillIds = pendingQuickAction?.skillIds ?? [];
+      const activeSkillIds = launch?.skillIds ?? [...new Set([...skillIds, ...attachedSkillIds])];
+      // A reused draft already exists, so its skills cannot be mounted at
+      // creation; send them as this turn's references instead.
+      const mountSkillsPerTurn = (!isDraft || Boolean(createdDraftRef.current)) && activeSkillIds.length > 0;
       const body = {
         message,
         contentParts: uploaded.parts.length
@@ -455,6 +568,7 @@ export function SessionComposer({
         model,
         reasoningEffort,
         references,
+        ...(mountSkillsPerTurn ? { skillIds: activeSkillIds } : {}),
       };
       if (isDraft) {
         const created =
@@ -462,9 +576,10 @@ export function SessionComposer({
           (await submitSessionDraft(projectId, {
             ...body,
             backendId: "native",
+            skillIds: activeSkillIds.length ? activeSkillIds : undefined,
             permissionTier,
             permissionOverrides: { task: subagentsEnabled ? "allow" : "deny" },
-            mode: draftMode,
+            mode: launch?.mode ?? draftMode,
             prompt: message,
             gitWorkspace,
           }));
@@ -495,12 +610,14 @@ export function SessionComposer({
         // Attachments added while this send waited stay in the composer.
         media.clear(uploaded.itemIds);
         setReferences([]);
+        setPendingQuickAction(null);
+        if (isDraft) setSkillIds([]);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!isDraft || isCurrent()) {
         setError(message);
-        setContent(content);
+        setContent(typed);
       }
       if (!isCurrent())
         useNotificationStore.getState().push({
@@ -517,12 +634,16 @@ export function SessionComposer({
     readSubmitting,
     setContent,
     setReferences,
+    setSkillIds,
+    setPendingQuickAction,
     setSubmitting,
     setError,
     zh,
+    locale,
     viewKey,
     content,
     submitting,
+    pendingQuickAction,
     editingQueue,
     changingMode,
     incompatibleModel,
@@ -532,6 +653,7 @@ export function SessionComposer({
     providerId,
     modelId,
     reasoningEffort,
+    skillIds,
     permissionTier,
     subagentsEnabled,
     references,
@@ -548,8 +670,8 @@ export function SessionComposer({
   ]);
 
   const commands = useComposerCommands({
-    onOpenSideChat,
     onAttachFiles: media.add,
+    onOpenSideChat,
     projectId,
     sessionId,
     backendId,
@@ -560,7 +682,9 @@ export function SessionComposer({
     mode,
     modeEnabled,
     onModeChange: handleModeChange,
+    allowSubagents: !session?.parentSessionId,
     compactDisabled:
+      Boolean(scopedConversation) ||
       isGenerating ||
       submitting ||
       !session ||
@@ -652,8 +776,10 @@ export function SessionComposer({
   };
 
   const handleStop = useCallback(() => {
-    if (session) void cancelSessionRun(session.id);
-  }, [cancelSessionRun, session]);
+    if (session) void cancelSessionRun(session.id).catch((error: unknown) => {
+      setError(error instanceof Error ? error.message : String(error));
+    });
+  }, [cancelSessionRun, session, setError]);
 
   const isResumable = isSessionResumable(session);
   const handleResume = useCallback(() => {
@@ -664,8 +790,12 @@ export function SessionComposer({
       return;
     }
     setError(null);
-    void resumeSession(session.id);
-  }, [session, content, media, handleSubmit, resumeSession]);
+    // A refused continuation must land in the composer: an unhandled rejection
+    // would leave the play key looking dead.
+    void resumeSession(session.id).catch((error: unknown) => {
+      setError(error instanceof Error ? error.message : String(error));
+    });
+  }, [session, content, media, handleSubmit, resumeSession, setError]);
 
   const allowedReasoningEfforts = providerId
     ? effectiveReasoningEfforts(globalConfig, providerId)
@@ -673,29 +803,133 @@ export function SessionComposer({
   const isCentered = layout === "centered";
   const isFocusRail = layout === "focusRail";
 
+  const focusComposerInput = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const input = commands.inputRef.current;
+    if (!input?.isConnected) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }));
+
+  const attachQuickActionAttachment = (attachment: QuickActionAttachment) => {
+    if (submitting || changingMode || editingQueue || capability !== "chat") return;
+    setPendingQuickAction(attachment);
+    setError(null);
+    focusComposerInput();
+  };
+
+  // A shortcut is a complete procedure. Without an attachment it starts the
+  // session immediately. Once something is attached, choosing another
+  // procedure replaces the attachment instead of sending a mixed request.
+  const stageOrSendQuickAction = (action: QuickAction, launch: QuickActionLaunch) => {
+    if (submitting || changingMode || editingQueue || capability !== "chat") return;
+    if (pendingQuickAction) {
+      const attachment = quickActionAttachment(action, launch, locale);
+      if (attachment) attachQuickActionAttachment(attachment);
+      return;
+    }
+    setError(null);
+    if (isDraft) {
+      setSkillIds(launch.skillIds);
+      setLaunchingActionId(launch.actionId);
+    }
+    void handleSubmit(launch).finally(() => {
+      if (isDraft) setLaunchingActionId(null);
+    });
+  };
+
+  const runQuickAction = (launch: QuickActionLaunch) => {
+    if (!isDraft) return;
+    const action = findQuickAction(launch.actionId);
+    if (!action) return;
+    stageOrSendQuickAction(action, launch);
+  };
+
+  // The plus menu follows the same policy as the home grid: procedures that
+  // need user context attach; everything else runs immediately.
+  const selectQuickAction = (action: QuickAction, availableSkillIds?: readonly string[]) => {
+    if (submitting || changingMode || editingQueue || capability !== "chat") return;
+    const launch = buildQuickActionLaunch(action, { locale, signedIn });
+    if (!launch) return;
+    const restricted = restrictQuickActionSkills(action, launch, locale, availableSkillIds);
+    if (action.kind === "launch" && action.policy === "compose") {
+      const attachment = quickActionAttachment(action, restricted, locale);
+      if (attachment) attachQuickActionAttachment(attachment);
+      return;
+    }
+    stageOrSendQuickAction(action, restricted);
+  };
+
+  const dismissQuickAction = () => {
+    setPendingQuickAction(null);
+    setError(null);
+    focusComposerInput();
+  };
+
+  const composerPlaceholder = pendingQuickAction
+    ? pendingQuickAction.requiresInput
+      ? pendingQuickAction.placeholder ?? t("sessionComposePlaceholder")
+      : zh ? "可直接发送，或补充上下文后发送…" : "Send now, or add context…"
+    : mode === "goal"
+      ? t("sessionGoalPlaceholder")
+      : t("sessionComposePlaceholder");
+  const attachedActionReady = pendingQuickAction
+    ? !pendingQuickAction.requiresInput ||
+      Boolean(content.trim()) ||
+      media.items.length > 0 ||
+      references.some((reference) => reference.kind === "file")
+    : false;
+  const quickActionBar = pendingQuickAction ? (
+    <QuickActionAttachmentBar attachment={pendingQuickAction} locale={locale}
+      ready={attachedActionReady} onDismiss={dismissQuickAction} />
+  ) : null;
+
+  const superOrchestration =
+    backendId === "native" && mode === "super" && sessionId ? (
+      <SuperDagCard sessionId={sessionId} />
+    ) : null;
+
+  // Only the native runtime has mode marks; plan and every other backend
+  // read as chat.
+  const composerMode: "chat" | "goal" | "super" =
+    backendId === "native" && (mode === "goal" || mode === "super")
+      ? mode
+      : "chat";
+  const composerModeMark =
+    composerMode === "goal"
+      ? {
+          icon: <Goal size={14} aria-hidden="true" />,
+          label: zh ? "目标模式" : "Goal mode",
+        }
+      : composerMode === "super"
+        ? {
+            icon: <Zap size={14} aria-hidden="true" />,
+            label: zh ? "Super 编码" : "Super mode",
+          }
+        : null;
+
   const composer = (
     <AgentComposer
       optimizationScope={viewKey}
       media={media}
       sessionId={sessionId ?? undefined}
       commands={commands}
-      placeholder={
-        mode === "goal"
-          ? t("sessionGoalPlaceholder")
-          : t("sessionComposePlaceholder")
-      }
-      welcomePlaceholderDelay={isCentered ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
+      placeholder={composerPlaceholder}
+      welcomePlaceholderDelay={isCentered && !pendingQuickAction ? welcomePlaceholderDelay(t("sessionDraftTitle")) : undefined}
+      quickActions={capability === "chat" && !scopedConversation ? availableQuickActions : undefined}
+      onQuickActionSelect={selectQuickAction}
+      attachedActionReady={attachedActionReady}
       onOverlayOpenChange={setOverlayOpen}
       modeControl={
         <div className="flex items-center gap-1">
-          {backendId === "native" && mode === "goal" && (
+          {composerModeMark && (
             <span
               role="img"
-              aria-label={zh ? "目标模式" : "Goal mode"}
-              title={zh ? "目标模式" : "Goal mode"}
-              className="inline-flex shrink-0 items-center text-[hsl(var(--electric-purple))]"
+              aria-label={composerModeMark.label}
+              title={composerModeMark.label}
+              className="agent-composer-mode-mark"
+              data-mode={composerMode}
             >
-              <Target size={14} aria-hidden="true" />
+              {composerModeMark.icon}
             </span>
           )}
         </div>
@@ -707,6 +941,7 @@ export function SessionComposer({
       onSubmit={() => void handleSubmit()}
       onCreateMediaSession={async (prompt) => {
         if (backendId !== "native") throw new Error("媒体生成仅支持原生执行后端。");
+        if (scopedConversation) throw new Error(zh ? "侧边聊天使用对话模型" : "Choose a chat model for side chat");
         if (session) return session.id;
         if (createdDraftRef.current) return createdDraftRef.current.id;
         const created = await submitSessionDraft(projectId, {
@@ -736,12 +971,17 @@ export function SessionComposer({
       isGenerating={isGenerating}
       isResumable={isResumable}
       onResume={isResumable ? handleResume : undefined}
+      replyActivity={replyActivity}
       defaultExpanded={isCentered}
       providerId={providerId}
       modelId={modelId}
       contextUsage={readSessionContextUsage(session)}
       capability={capability}
       onModelSelect={(selection) => {
+        if (scopedConversation && selection.capability !== "chat") {
+          setError(zh ? "侧边聊天使用对话模型" : "Choose a chat model for side chat");
+          return;
+        }
         if (backendId !== "native") {
           setError(
             zh
@@ -766,6 +1006,7 @@ export function SessionComposer({
       onReasoningEffortChange={setReasoningEffort}
       allowedReasoningEfforts={allowedReasoningEfforts}
       permissionTier={permissionTier}
+      permissionControl={scopedConversation ? <span className="agent-dock-composer-chip text-xs" title={zh ? "与主会话相同的读写权限；需要审批的操作在这里确认" : "Same read/write permissions as the main session; approvals happen here"}>{zh ? "同主会话" : "Same as main"}</span> : undefined}
       onPermissionTierChange={handlePermissionTierChange}
       disabled={
         unsupportedBackend ||
@@ -781,12 +1022,13 @@ export function SessionComposer({
     />
   );
 
-  const goalMode = backendId === "native" && mode === "goal";
-
-  const gitActions = session ? <ComposerGitActions
+  // Git entries act on the repository, never on the transcript viewport:
+  // scrolling back into history must not lock Commit, Push or MR.
+  const gitActions = session && !scopedConversation ? <ComposerGitActions
     session={session}
     projectId={projectId}
-    disabled={readingHistory || submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
+    inline
+    disabled={submitting || changingMode || editingQueue || Boolean(session?.activeRunId)}
     ensureSession={async () => session}
     onOpenConversation={(id) => {
       void refreshSessions();
@@ -794,23 +1036,37 @@ export function SessionComposer({
     }}
   /> : null;
 
+  // Repository actions and orchestration share the session action surface.
+  // The expanded graph takes a full row without moving it into the input shell.
+  const composerTopRow = gitActions || superOrchestration ? (
+    <div className="agent-session-action-row flex min-w-0 flex-wrap items-center">
+      {gitActions}
+      {superOrchestration}
+    </div>
+  ) : null;
+
   const composerShell = (
     <div
       className="agent-session-controls w-full"
-      data-composer-mode={goalMode ? "goal" : "chat"}
+      data-composer-mode={composerMode}
+      data-composer-submitting={submitting ? "true" : "false"}
     >
       {error && (
-        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
-          {error}
+        <p data-error-toast="off" role="alert" className="agent-composer-notice">
+          <AlertCircle size={15} aria-hidden="true" />
+          <span>{composerErrorText(error, locale)}</span>
         </p>
       )}
       {incompatibleModel && (
-        <p data-error-toast="off" role="alert" className="mb-2 px-2 text-xs text-danger">
-          {unsupportedBackend
+        <p data-error-toast="off" role="alert" className="agent-composer-notice">
+          <AlertCircle size={15} aria-hidden="true" />
+          <span>{unsupportedBackend
             ? (zh ? "此会话使用的执行后端已移除。历史记录仍可查看，请新建 Synax 会话继续。" : "This session's execution backend has been removed. Its history remains available; start a new Synax session to continue.")
-            : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}
+            : (zh ? "请选择当前后端的模型；切换执行后端需新建会话。" : "Choose a model for this backend; start a new session to change backends.")}</span>
         </p>
       )}
+      {scopedConversation && scopedPermissions && <AgentQuickApproval
+        permissions={scopedPermissions} onReply={scopedConversation.replyPermission} />}
       {session && !hasPendingInteractions && (
         <AgentInteractionPanel
           key={`interactions-${session.id}`}
@@ -895,23 +1151,27 @@ export function SessionComposer({
       ref={composerRoot}
       className={
         isCentered
-          ? "agent-session-composer--centered flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10"
+          ? `agent-session-composer--centered ${isDraft ? "agent-session-composer--home" : ""} flex flex-1 flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-10`
           : isFocusRail
             ? "agent-session-composer agent-session-composer--focus-rail w-full shrink-0"
             : "agent-session-composer agent-session-composer--footer shrink-0 px-4 pb-4 pt-2"
       }
     >
       {isCentered ? (
-        <NewSessionScene key={viewKey}>
-          <NewSessionWelcome finish={Boolean(content)} />
-          <div className="w-full min-w-0">
-            <div data-welcome-enter="">{gitActions}{composerShell}</div>
+        <NewSessionScene key={viewKey} home={isDraft}>
+          {isDraft ? <HomeFeaturePanel locale={locale} onLaunch={runQuickAction}
+            onAttach={attachQuickActionAttachment} launchingId={launchingActionId}
+            launchDisabled={submitting || changingMode || editingQueue || capability !== "chat"} />
+            : <NewSessionWelcome finish={Boolean(content)} />}
+          <div className="session-welcome-composer w-full min-w-0">
+            <div data-welcome-enter="">{composerTopRow}{quickActionBar}{composerShell}</div>
           </div>
         </NewSessionScene>
       ) : (
         <div className="relative mx-auto w-full min-w-0 max-w-3xl">
-          {gitActions}
+          {composerTopRow}
           {statusSlot}
+          {quickActionBar}
           {composerShell}
         </div>
       )}

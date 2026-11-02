@@ -21,12 +21,21 @@ export interface WorkspaceTab {
   dirty?: boolean;
 }
 
+export interface SideChatState {
+  /** Null while an open panel is still creating its side chat. */
+  sessionId: string | null;
+  /** Open shows the conversation panel; collapsed keeps the floating pill. */
+  open: boolean;
+}
+
 export interface WorkspaceSessionState {
   tabs: WorkspaceTab[];
   activeTabId: string | null;
   presentation: WorkspacePresentation;
   /** Child conversation shown beside the parent transcript. */
   subagent?: { sessionId: string; title: string; fullscreen?: boolean };
+  /** Side chat beside the parent transcript; part of the session's layout. */
+  sideChat?: SideChatState;
   /** Keep the inspected project when a file viewer temporarily replaces the dashboard. */
   selectedRootId?: string;
 }
@@ -162,6 +171,15 @@ interface SessionWorkspaceStoreState {
   ) => void;
   closeSubagent: (sessionId: string) => void;
   setSubagentFullscreen: (sessionId: string, fullscreen: boolean) => void;
+  /** Open the side chat panel, creating the side chat when none exists yet. */
+  openSideChat: (sessionId: string) => void;
+  collapseSideChat: (sessionId: string) => void;
+  /** Bind the side chat the opening panel just created or adopted. */
+  attachSideChat: (sessionId: string, childSessionId: string) => void;
+  /** Adopt the side chat the runtime already stores, collapsed. */
+  discoverSideChat: (sessionId: string, childSessionId: string) => void;
+  /** The stored side chat is gone: drop the slot so the panel creates one. */
+  forgetSideChat: (sessionId: string) => void;
   openTab: (sessionId: string, tab: Omit<WorkspaceTab, "id">) => void;
   activateTab: (sessionId: string, id: string) => void;
   selectRepository: (sessionId: string, rootId: string) => void;
@@ -250,6 +268,52 @@ export const useSessionWorkspaceStore = create<SessionWorkspaceStoreState>(
         sessions: patchSession(state.sessions, sessionId, (current) =>
           current.subagent
             ? { ...current, subagent: { ...current.subagent, fullscreen } }
+            : current,
+        ),
+      })),
+
+    openSideChat: (sessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) => ({
+          ...current,
+          // The right side shows one conversation at a time.
+          subagent: undefined,
+          sideChat: { sessionId: current.sideChat?.sessionId ?? null, open: true },
+        })),
+      })),
+
+    collapseSideChat: (sessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) =>
+          current.sideChat?.open
+            ? { ...current, sideChat: { ...current.sideChat, open: false } }
+            : current,
+        ),
+      })),
+
+    attachSideChat: (sessionId, childSessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) =>
+          current.sideChat?.sessionId === childSessionId && current.sideChat.open
+            ? current
+            : { ...current, sideChat: { sessionId: childSessionId, open: true } },
+        ),
+      })),
+
+    discoverSideChat: (sessionId, childSessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) =>
+          current.sideChat
+            ? current
+            : { ...current, sideChat: { sessionId: childSessionId, open: false } },
+        ),
+      })),
+
+    forgetSideChat: (sessionId) =>
+      set((state) => ({
+        sessions: patchSession(state.sessions, sessionId, (current) =>
+          current.sideChat
+            ? { ...current, sideChat: undefined }
             : current,
         ),
       })),
@@ -518,50 +582,6 @@ export function openWorkspaceFile(
     path,
     line,
     ...(rootId ? { rootId } : {}),
-  });
-}
-
-/** Replace the active diff tab with its editable file tab in place. */
-export function replaceWorkspaceDiffWithFile(
-  sessionId: string,
-  path: string,
-  rootId?: string,
-): void {
-  const store = useSessionWorkspaceStore.getState();
-  const current = store.sessions[sessionId];
-  const active = current?.tabs.find((tab) => tab.id === current.activeTabId);
-  if (
-    !active ||
-    active.kind !== "diff" ||
-    active.path !== path ||
-    active.rootId !== rootId
-  ) {
-    openWorkspaceFile(sessionId, path, null, rootId);
-    return;
-  }
-  const name = path.split(/[\\/]/).pop() || path;
-  const next = {
-    kind: "file" as const,
-    title: name,
-    path,
-    ...(rootId ? { rootId } : {}),
-  };
-  const nextId = tabIdentity(next);
-  const existing = current.tabs.find((tab) => tab.id === nextId);
-  const tabs = existing
-    ? current.tabs.filter((tab) => tab.id !== active.id)
-    : current.tabs.map((tab) =>
-        tab.id === active.id ? { ...next, id: nextId } : tab,
-      );
-  useSessionWorkspaceStore.setState({
-    sessions: {
-      ...useSessionWorkspaceStore.getState().sessions,
-      [sessionId]: {
-        ...current,
-        tabs,
-        activeTabId: nextId,
-      },
-    },
   });
 }
 

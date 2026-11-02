@@ -15,7 +15,10 @@ export const markdownImage: FileParser = {
     (input.mediaType.startsWith("text/") &&
       /\.(md|markdown|mdown)$/i.test(input.filename)),
   async parse(input): Promise<ParsedDocument> {
-    const text = decodeCharacterFile(input.bytes);
+    const text = decodeCharacterFile(input.bytes, {
+      filename: input.filename,
+      mediaType: input.mediaType,
+    });
     if (text === undefined || text.length > MAX_PARSED_CHARACTERS)
       throw new Error(
         `Markdown 编码无效或超过 ${MAX_PARSED_CHARACTERS} 字符。`,

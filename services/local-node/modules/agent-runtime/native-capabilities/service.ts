@@ -6,6 +6,7 @@ import type { RegisteredTool } from "../contracts.js";
 import { modelCanUseTool, profileCanUseTool } from "../tool-mount-policy.js";
 import { getProjectSettings } from "../../../infrastructure/runtime/config/project-settings-store.js";
 import { getGlobalConfigForRuntime } from "../../../infrastructure/runtime/config/config-store.js";
+import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
 import { canComposeTool, CODE_TOOL_IDS } from "../code-mode/policy.js";
 import { createCompositionExecutor, response } from "../code-mode/composition-service.js";
 import { CODE_LIMITS } from "../code-mode/contracts.js";
@@ -69,15 +70,16 @@ export class NativeCapabilities {
 
   /** Called once before each model request, including requests after compaction.
    * Current definitions rehydrate session discoveries; no stale history is needed. */
-  project(sessionId: string, allowed: CapabilityTool[]): { tools: CapabilityTool[]; prompt: string } {
+  async project(sessionId: string, allowed: CapabilityTool[]): Promise<{ tools: CapabilityTool[]; prompt: string }> {
     if (!nativeCapabilitiesEnabled(this.store.getSession(sessionId)))
       return { tools: allowed.filter((tool) => !["agent.discover", "agent.execute"].includes(tool.id)), prompt: "" };
+    const initialIds = new Set(CORE_TOOL_IDS);
     const business = allowed.filter((tool) => !CODE_TOOL_IDS.has(tool.id));
     const catalog = this.catalog(sessionId, business);
     const state = this.state(sessionId, catalog);
     const disclosed = new Set(state.entries.map((entry) => entry.id));
     const tools = business
-      .filter((tool) => CORE_TOOL_IDS.has(tool.id) || disclosed.has(tool.id))
+      .filter((tool) => initialIds.has(tool.id) || disclosed.has(tool.id))
       .toSorted((a, b) => a.id.localeCompare(b.id));
     const advertised = {
       owner: sessionId,
@@ -88,7 +90,7 @@ export class NativeCapabilities {
     };
     if (JSON.stringify(this.store.getSession(sessionId).sessionMetadata?.advertisedCapabilities) !== JSON.stringify(advertised))
       this.store.updateSessionMetadata(sessionId, { advertisedCapabilities: advertised });
-    const directory = capabilityDirectory(business.filter((tool) => !CORE_TOOL_IDS.has(tool.id)));
+    const directory = capabilityDirectory(business.filter((tool) => !initialIds.has(tool.id)));
     const composable = tools.filter((tool) => catalog.get(tool.id)?.compose).map((tool) => tool.id).sort();
     return {
       tools,
@@ -138,8 +140,12 @@ export class NativeCapabilities {
         ids: z.array(z.string().min(1).max(256)).max(4).optional().describe("Exact runtime IDs to load; use [] or omit for keyword search or browsing."),
         cursor: z.number().int().min(0).max(100000).optional(),
       }).strict(),
-      execute: (input) => {
+      execute: async (input) => {
         if (!nativeCapabilitiesEnabled(this.store.getSession(input.sessionId))) return response({ status: "denied" }, "Native capability discovery is disabled.");
+        // Initial model output never waits for MCP. An explicit discovery is
+        // the point where fresh remote definitions are actually required.
+        const { warmupMcpForSession } = await import("../../../infrastructure/mcp/mcp-session-tool-provider.js");
+        await warmupMcpForSession(input.sessionId);
         const args = input.args as { mode?: "search" | "list"; query?: string; group?: string; ids?: string[]; cursor?: number };
         const available = this.available(input.sessionId).sort((a, b) => a.id.localeCompare(b.id));
         const catalog = this.catalog(input.sessionId, available);
@@ -160,9 +166,12 @@ export class NativeCapabilities {
         }
         const state = disclose(this.state(input.sessionId, catalog), selected, catalog);
         this.save(input.sessionId, state);
+        const advertised = this.store.getSession(input.sessionId).sessionMetadata?.advertisedCapabilities as
+          { owner?: string; contracts?: Record<string, string> } | undefined;
         return response({
           mode: listing ? "list" : "search",
-          results: page.map((tool) => ({ id: tool.id, label: tool.label, description: tool.description.slice(0, 240), group: capabilityGroup(tool), loaded: CORE_TOOL_IDS.has(tool.id) || state.entries.some((entry) => entry.id === tool.id) })),
+          results: page.map((tool) => ({ id: tool.id, label: tool.label, description: tool.description.slice(0, 240), group: capabilityGroup(tool), loaded: CORE_TOOL_IDS.has(tool.id) || state.entries.some((entry) => entry.id === tool.id) ||
+            (advertised?.owner === input.sessionId && Boolean(catalog.get(tool.id)) && advertised.contracts?.[tool.id] === catalog.get(tool.id)?.version) })),
           ...((listing || matching.length === 0) ? { groups: capabilityDirectory(available).map(({ group, count }) => ({ group, count })) } : {}),
           contracts: selected.map(({ tokens: _tokens, ...contract }) => contract),
           unavailable,
@@ -179,7 +188,7 @@ export class NativeCapabilities {
       },
     }, {
       id: "agent.execute", label: "Code Mode", category: "read", mutability: "read", resumeBehavior: "none",
-      description: "Run an isolated JavaScript async function body to call tools and filter, join or aggregate intermediate results. Use await tools.call(runtimeToolId,args), process the JSON results locally, then return only selected evidence or a compact JSON answer. Only your explicit return enters model context; intermediate results/logs stay in the audit journal. Returns above 16 KB are stored (up to 1 MB); use code.result with the returned executionId to retrieve exact fields/pages without rerunning operations. Return the code or evidence needed for reasoning, not just file sizes. Supports approved reads, file.write and file.patch with their existing permissions. Use currently supplied composable contracts; discover others first. Up to 32 calls and 15 seconds; await all calls (calls are ordered; excess concurrent requests queue). No imports, Node, direct filesystem/network, Shell or nested execution. Stateless; failure never automatically replays code or asks for approval. Use direct tools when approval is needed.",
+      description: "Run an isolated JavaScript async function body to call tools and filter, join or aggregate intermediate results. Use await tools.call(runtimeToolId,args), process the JSON results locally, then return only selected evidence or a compact JSON answer. Only your explicit return enters model context; intermediate results/logs stay in the audit journal. Returns above 16 KB are stored (up to 1 MB); use code.result with the returned executionId to retrieve exact fields/pages without rerunning operations. Return the code or evidence needed for reasoning, not just file sizes. Supports approved reads, file.write and file.patch with their existing permissions. Use currently supplied composable contracts; discover others first. Promise.all runs approved reads concurrently (up to 4); writes form ordered barriers. Await dependencies explicitly; try/catch or Promise.allSettled can handle individual failures. Up to 32 calls and 15 seconds execution; busy workers queue for up to 30 seconds before execution. Await all calls. No imports, Node, direct filesystem/network, Shell or nested execution. Stateless; failure never automatically replays code or asks for approval. Use direct tools when approval is needed.",
       inputSchema: z.object({ code: z.string().min(1).max(CODE_LIMITS.maxCodeBytes) }).strict(),
       execute: createCompositionExecutor(this.registry, this.store, this.profiles, (sessionId, id) => this.assertContract(sessionId, id)),
     }];

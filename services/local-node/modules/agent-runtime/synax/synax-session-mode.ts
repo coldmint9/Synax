@@ -9,6 +9,7 @@ export const SYNAX_SESSION_MODES = [
   "plan",
   "goal",
   "plan_node",
+  "super",
 ] as const;
 export type SynaxSessionMode = (typeof SYNAX_SESSION_MODES)[number];
 

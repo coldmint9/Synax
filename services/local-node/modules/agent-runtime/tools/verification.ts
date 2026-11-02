@@ -58,19 +58,29 @@ export const verificationTool: RegisteredTool = {
     args.scope = [...new Set([...args.scope, ...work.changedPaths])];
     const startedAt = nowIso();
     const fingerprint = await workspaceFingerprint(input.sessionId, args.scope);
+    const beforeCommand = workStore.current(input.sessionId)!;
+    beforeCommand.workspaceDirty = true;
+    workStore.save(beforeCommand);
     const result = await executeBash(input, args.timeoutMs);
     const output = result.result as { exitCode?: number; stderr?: string };
-    const after = await workspaceFingerprint(input.sessionId, args.scope);
+    // Failed/interrupted checks cannot become proof, so no closing scan is
+    // needed. A successful check must still detect edits made while it ran.
+    const after = output.exitCode === 0 ? await workspaceFingerprint(input.sessionId, args.scope) : undefined;
     const current = workStore.current(input.sessionId)!;
+    const inputsChanged = after !== undefined && (fingerprint !== after || current.changeVersion !== work.changeVersion);
+    if (inputsChanged) {
+      current.hasChanges = true;
+      if (current.changeVersion === work.changeVersion) current.changeVersion++;
+    }
     const receipt = {
       runId: input.runId, toolCallId: input.toolCallId, criterion, purpose: args.purpose,
       command: args.command, workdir: args.workdir ?? '.', scope: args.scope,
       fingerprint, changeVersion: current.changeVersion,
-      status: (output.exitCode === 0 && fingerprint === after ? 'success' : output.exitCode == null ? 'interrupted' : 'failed') as 'success' | 'failed' | 'interrupted',
+      status: (output.exitCode === 0 && !inputsChanged ? 'success' : output.exitCode == null ? 'interrupted' : 'failed') as 'success' | 'failed' | 'interrupted',
       startedAt, completedAt: nowIso(), external: args.external, risk: args.risk,
     };
     current.verifications.push(receipt);
     workStore.save(current);
-    return { ...result, result: { ...output, verification: receipt }, displaySummary: `Verification ${receipt.status}: ${args.purpose}${fingerprint !== after ? ' (inputs changed during the check; re-verify)' : ''}` };
+    return { ...result, result: { ...output, verification: receipt }, displaySummary: `Verification ${receipt.status}: ${args.purpose}${inputsChanged ? ' (inputs changed during the check; re-verify)' : ''}` };
   },
 };

@@ -1,10 +1,12 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { agentRuntimeStore as store } from "../session-store.js";
+import { AgentRuntimeStore, agentRuntimeStore as store } from "../session-store.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { executorInput, resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
 import { runtimeClient, decode } from "../sidecar/runtime-repository.js";
 import { randomUUID } from "node:crypto";
 import { patchRuntime } from "../sidecar/runtime-repository.js";
+import { acceptRuntimeRunAuthoritative } from "../run-admission.js";
+import { runtimeFacade } from "../sidecar/runtime-facade.js";
 
 beforeEach(resetAgentRuntimeFixtures);
 afterEach(() => vi.restoreAllMocks());
@@ -50,6 +52,54 @@ it("refreshes new messages and non-UI entities without rereading existing collec
   const read = reads.mock.calls.findIndex(([c]) => c.operation === "history_updates");
   const page = decode<{ items: unknown[] }>(await reads.mock.results[read].value);
   expect(page.items).toHaveLength(0);
+});
+
+it("refreshes a retained worker cache when a new run is admitted by the host", async () => {
+  const session = agentSessionRuntime.create(executorInput);
+  await store.flushSession(session.id);
+
+  // A retained worker has already loaded the session before the host admits
+  // the next turn. Its local cache therefore starts without either run.
+  const workerStore = new AgentRuntimeStore();
+  await workerStore.hydrateExecutionSession(session.id);
+
+  const first = await acceptRuntimeRunAuthoritative(
+    session.id,
+    { message: "first" },
+    "retained-worker-first",
+  );
+  await runtimeFacade.admitExecution({
+    sessionId: session.id,
+    run: first.run,
+    runtime: first.run.metadata.runtime as import("../run-admission.js").AcceptedRuntimeInput,
+  });
+  const firstRunning = store.updateRun(first.run.id, { status: "running" });
+  store.updateSession(session.id, { status: "running", activeRunId: firstRunning.id });
+  await store.flushSession(session.id);
+
+  await workerStore.hydrateExecutionSession(session.id, true);
+  expect(workerStore.getRun(first.run.id).id).toBe(first.run.id);
+
+  const finished = store.updateRun(first.run.id, {
+    status: "completed",
+    completedAt: new Date().toISOString(),
+    stopReason: "fixture",
+  });
+  store.updateSession(session.id, {
+    status: "completed",
+    activeRunId: null,
+    completedAt: finished.completedAt,
+  });
+  await runtimeFacade.finishExecution(session.id, finished);
+  await store.flushSession(session.id);
+
+  const second = await acceptRuntimeRunAuthoritative(
+    session.id,
+    { message: "second" },
+    "retained-worker-second",
+  );
+  await workerStore.hydrateExecutionSession(session.id, true);
+  expect(workerStore.getRun(second.run.id).id).toBe(second.run.id);
 });
 
 it("evicts sealed transcript from execution cache but retains current work and evidence", async () => {

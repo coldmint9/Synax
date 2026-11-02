@@ -30,7 +30,9 @@ impl ContextPolicy {
             || self.context_limit > 10_000_000
             || self.output_reserve == 0
             || self.output_reserve >= self.context_limit
-            || self.input_limit.is_some_and(|limit| limit == 0 || limit > 10_000_000)
+            || self
+                .input_limit
+                .is_some_and(|limit| limit == 0 || limit > 10_000_000)
             || self.keep_recent_messages < 2
             || self.keep_recent_messages > 256
         {
@@ -42,7 +44,8 @@ impl ContextPolicy {
         self.budget_for_output(self.output_reserve)
     }
     fn budget_for_output(&self, output: usize) -> usize {
-        self.context_limit.saturating_sub(output)
+        self.context_limit
+            .saturating_sub(output)
             .min(self.input_limit.unwrap_or(self.context_limit))
     }
 }
@@ -71,12 +74,13 @@ pub(crate) fn composition(input: &ProviderRequest) -> Result<Composition, Contex
         skills: 0,
         total: 0,
         measured_at: chrono::Utc::now().to_rfc3339(),
-        estimator: "o200k-json-estimate".into(),
+        estimator: "o200k-text-estimate".into(),
     };
     for message in crate::llm::expanded_messages(&input.prompt) {
-        // This is a text estimate. Media billing depends on the provider; raw
-        // attachment bytes/URLs must never be tokenized as conversation text.
-        let count = tokens(&serde_json::to_string(&without_attachments(message))?) + 4;
+        // Prompt text only: the record may also carry the provider's native
+        // copy of the same turn, and media billing depends on the provider
+        // (raw attachment bytes/URLs are never conversation text).
+        let count = crate::llm::message_text_tokens(message);
         if message["role"] == "system" {
             result.system += count;
         } else {
@@ -138,28 +142,6 @@ pub(crate) fn contains_attachment(value: &Value) -> bool {
         Value::Object(fields) => fields.values().any(contains_attachment),
         _ => false,
     }
-}
-
-/// Only the accounting projection changes. The original provider message is
-/// retained byte-for-byte, including nested tool media and native replay data.
-fn without_attachments(value: &Value) -> Value {
-    if is_attachment(value) {
-        return json!({"type":"retained-attachment"});
-    }
-    match value {
-        Value::Array(items) => Value::Array(items.iter().map(without_attachments).collect()),
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(key, value)| (key.clone(), without_attachments(value)))
-                .collect(),
-        ),
-        _ => value.clone(),
-    }
-}
-
-pub(crate) fn message_tokens(message: &Value) -> Result<usize, ContextError> {
-    Ok(tokens(&serde_json::to_string(&without_attachments(message))?) + 4)
 }
 
 fn has_tool_result(message: &Value) -> bool {
@@ -353,7 +335,9 @@ mod tests {
     #[test]
     fn input_limit_does_not_pay_output_reserve_twice() {
         let policy = ContextPolicy {
-            context_limit: 1000, input_limit: Some(700), output_reserve: 200,
+            context_limit: 1000,
+            input_limit: Some(700),
+            output_reserve: 200,
             keep_recent_messages: 2,
         };
         policy.validate().unwrap();
@@ -370,7 +354,9 @@ mod tests {
             json!({"role":"assistant","content":"Checking"}),
         ]);
         let policy = ContextPolicy {
-            context_limit: 2000, input_limit: Some(700), output_reserve: 200,
+            context_limit: 2000,
+            input_limit: Some(700),
+            output_reserve: 200,
             keep_recent_messages: 2,
         };
         let ContextAction::Compact(compact) = plan(&source, &policy).unwrap() else {

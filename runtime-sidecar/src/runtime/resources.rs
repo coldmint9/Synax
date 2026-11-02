@@ -88,11 +88,17 @@ pub struct ResourceScheduler {
 }
 impl Default for ResourceScheduler {
     fn default() -> Self {
+        let cores = std::thread::available_parallelism().map_or(4, usize::from);
         let limits = [
             ("search", 4),
             ("io", 8),
             ("command", 4),
             ("cpu", 2),
+            // Code Mode runs isolated QuickJS workers. Keep their CPU-bound
+            // execution globally bounded across all session child processes;
+            // nested tools use their own resource pools.
+            ("code", (cores / 2).clamp(1, 4)),
+            ("external", 16),
             ("provider", 100),
         ]
         .into_iter()
@@ -173,11 +179,6 @@ impl ResourceScheduler {
         let Some(pool) = state.pools.get_mut(resource) else {
             return;
         };
-        let per_root = if resource.starts_with("provider:") {
-            limit
-        } else {
-            1
-        };
         // Foreground work gets the next free permit; running background work is not preempted.
         loop {
             if pool.active_total >= limit {
@@ -189,6 +190,22 @@ impl ResourceScheduler {
                     .get(id)
                     .is_some_and(|e| e.status.state == "queued" && !e.request.background)
             });
+            // Borrow idle capacity within a root, but give the next free slot
+            // to the eligible root with the fewest active jobs. Round-robin
+            // order breaks ties; queued roots cannot be starved by a busy tree.
+            let eligible = |id: &String| {
+                state.entries.get(id).is_some_and(|e| {
+                    e.status.state == "queued"
+                        && (!e.request.background
+                            || (!foreground && pool.background_active < BACKGROUND_LIMIT))
+                })
+            };
+            let least_active = pool
+                .queues
+                .iter()
+                .filter(|(_, queue)| queue.iter().any(&eligible))
+                .map(|(root, _)| pool.active.get(root).copied().unwrap_or(0))
+                .min();
             let mut granted = false;
             let roots = pool.roots.len();
             for _ in 0..roots {
@@ -205,7 +222,7 @@ impl ResourceScheduler {
                         .get(id)
                         .is_some_and(|e| e.status.state == "queued")
                 });
-                if pool.active.get(&root).copied().unwrap_or(0) < per_root {
+                if Some(pool.active.get(&root).copied().unwrap_or(0)) == least_active {
                     let position = queue.iter().position(|id| {
                         let e = &state.entries[id];
                         !e.request.background
@@ -243,6 +260,10 @@ impl ResourceScheduler {
                     pool.queues.remove(&root);
                 } else {
                     pool.roots.push_back(root);
+                }
+                // Recompute the least-loaded root after every grant.
+                if granted {
+                    break;
                 }
             }
             if !granted {
@@ -647,6 +668,75 @@ mod tests {
         scheduler.release("a2", "owner").unwrap();
         assert_eq!(scheduler.request(b).unwrap().state, "running");
         assert_eq!(scheduler.request(a3).unwrap().state, "queued");
+    }
+    #[test]
+    fn children_borrow_idle_slots_and_a_new_root_gets_the_next_free_slot() {
+        let scheduler = scheduler(4);
+        for id in ["a1", "a2", "a3", "a4"] {
+            assert_eq!(
+                scheduler.request(request(id, "a")).unwrap().state,
+                "running"
+            );
+        }
+        let a5 = request("a5", "a");
+        let b1 = request("b1", "b");
+        assert_eq!(scheduler.request(a5.clone()).unwrap().state, "queued");
+        assert_eq!(scheduler.request(b1.clone()).unwrap().state, "queued");
+        scheduler.release("a1", "owner").unwrap();
+        assert_eq!(scheduler.request(b1).unwrap().state, "running");
+        assert_eq!(scheduler.request(a5.clone()).unwrap().state, "queued");
+        scheduler.release("a2", "owner").unwrap();
+        assert_eq!(scheduler.request(a5).unwrap().state, "running");
+        assert_eq!(scheduler.state.lock().pools["search"].active_total, 4);
+    }
+
+    #[test]
+    fn code_and_nested_tool_pools_do_not_block_each_other() {
+        let scheduler = ResourceScheduler {
+            state: Mutex::new(State::default()),
+            limits: ["command", "cpu", "code", "search", "external"]
+                .into_iter()
+                .map(|resource| (resource.to_owned(), 1))
+                .collect(),
+        };
+        for resource in ["cpu", "command", "code", "external", "search"] {
+            let mut req = request(resource, "same-root");
+            req.resource = resource.into();
+            assert_eq!(scheduler.request(req.clone()).unwrap().state, "running");
+            req.id.push_str("-queued");
+            assert_eq!(scheduler.request(req).unwrap().state, "queued");
+        }
+        scheduler.release("cpu", "owner").unwrap();
+        let state = scheduler.state.lock();
+        assert_eq!(state.entries["cpu-queued"].status.state, "running");
+        assert_eq!(state.entries["command-queued"].status.state, "queued");
+        assert_eq!(state.entries["external-queued"].status.state, "queued");
+        assert_eq!(state.entries["code-queued"].status.state, "queued");
+    }
+
+    #[test]
+    fn code_capacity_is_shared_by_process_owners_and_fair_to_other_roots() {
+        let scheduler = ResourceScheduler {
+            state: Mutex::new(State::default()),
+            limits: HashMap::from([("code".into(), 2)]),
+        };
+        let code = |id: &str, root: &str, owner: &str| {
+            let mut req = request(id, root);
+            req.resource = "code".into();
+            req.owner_id = owner.into();
+            req
+        };
+        for (id, owner) in [("a1", "process-1"), ("a2", "process-2")] {
+            assert_eq!(scheduler.request(code(id, "a", owner)).unwrap().state, "running");
+        }
+        let a3 = code("a3", "a", "process-3");
+        let b = code("b", "b", "process-4");
+        assert_eq!(scheduler.request(a3.clone()).unwrap().state, "queued");
+        assert_eq!(scheduler.request(b.clone()).unwrap().state, "queued");
+        scheduler.release("a1", "process-1").unwrap();
+        assert_eq!(scheduler.request(b).unwrap().state, "running");
+        assert_eq!(scheduler.request(a3).unwrap().state, "queued");
+        assert_eq!(scheduler.state.lock().pools["code"].active_total, 2);
     }
     #[test]
     fn cancellation_receipts_prevent_reacquisition_and_double_release() {

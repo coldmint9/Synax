@@ -137,6 +137,44 @@ function getSession(sessionId: string) {
   }
 }
 
+export interface SessionEnvironmentFileEntry {
+  sessionId: string;
+  path: string;
+  exists: boolean;
+  /** False for a directory, a device or anything else the viewer cannot render. */
+  isFile: boolean;
+}
+
+/**
+ * Answer whether a file reference resolves to something the viewer can open,
+ * without reading the target.
+ *
+ * Links inside a markdown document ask before they open a viewer tab: a missing
+ * target has to surface as an in-app notification instead of a tab that shows
+ * the read failure over the whole workspace.
+ */
+export async function sessionEnvironmentFileEntry(
+  sessionId: string,
+  relativePath: string,
+  rootId?: string,
+): Promise<SessionEnvironmentFileEntry> {
+  const session = getSession(sessionId);
+  const cleanPath = assertRelativePath(relativePath);
+  const workspacePath = resolveSessionFileRepository(
+    sessionId,
+    session.projectId,
+    cleanPath,
+    rootId,
+  ).path;
+  const absolutePath = resolveSafeFile(workspacePath, cleanPath);
+  try {
+    const info = fs.statSync(absolutePath);
+    return { sessionId, path: cleanPath, exists: true, isFile: info.isFile() };
+  } catch {
+    return { sessionId, path: cleanPath, exists: false, isFile: false };
+  }
+}
+
 /**
  * Drop every cached environment read for a session.
  *

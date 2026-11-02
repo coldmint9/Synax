@@ -69,6 +69,9 @@ export interface WorkRecord {
   verifications: VerificationRecord[];
   changedPaths: string[];
   hasChanges: boolean;
+  /** Opaque writes may have changed files; defer content checks to acceptance.
+   * This does not invalidate a receipt whose verified contents still match. */
+  workspaceDirty?: boolean;
   legacyEvidenceIncomplete: boolean;
   result: string | null;
   reason: string | null;
@@ -90,7 +93,7 @@ export const workStore = {
   },
   create(sessionId: string, objective: string, legacy = false): WorkRecord {
     const session = store.getSession(sessionId);
-    const parent = session.parentSessionId
+    const parent = session.parentSessionId && session.sessionMetadata?.subagentKind !== "side-chat"
       ? this.current(session.parentSessionId)
       : null;
     const work: WorkRecord = {

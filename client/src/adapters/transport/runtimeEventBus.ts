@@ -34,6 +34,9 @@ function connect() {
     "session_created",
     "session_deleted",
     "session_archived",
+    "session_auto_resume",
+    "super.snapshot",
+    "super.nodes",
   ];
 
   for (const type of eventTypes) {

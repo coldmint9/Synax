@@ -3,6 +3,7 @@ import { jsonSchema } from "../../infrastructure/llm-runtime/tool-schema.js";
 import { asSchema } from "../../infrastructure/llm-runtime/tool-schema.js";
 import { createHash } from 'node:crypto';
 import type { RegisteredTool } from './contracts.js';
+import { resolveToolName } from './tool-name-resolution.js';
 
 type LoopToolDefinition = Omit<RegisteredTool, 'execute'>;
 
@@ -65,7 +66,14 @@ export function buildLoopToolSet(
     ? activeDefinitions.map((d) => runtimeToModel.get(d.id)).filter((n): n is string => Boolean(n))
     : [...usedNames];
 
-  const resolveToolId = (modelToolName: string): string | null => modelToRuntime.get(modelToolName) ?? null;
+  const runtimeIds = [...runtimeToModel.keys()];
+  // Providers and models do not always echo the exposed name: they may strip a
+  // namespace, replace separators, or use the short name of another harness.
+  // Resolve those variants once here so the recorded call carries the real ID.
+  const resolveToolId = (modelToolName: string): string | null =>
+    modelToRuntime.get(modelToolName) ??
+    resolveToolName(modelToolName, runtimeIds).match?.toolId ??
+    null;
   const resolveModelToolName = (toolId: string): string | null => runtimeToModel.get(toolId) ?? null;
 
   return {

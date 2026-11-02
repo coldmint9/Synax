@@ -2,25 +2,38 @@
   margin: 0 4px 7px;
   pointer-events: auto;
 }
+.composer-git-actions-wrap.is-inline {
+  /* The shared action row owns the margin when Git entries sit beside it. */
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
 .composer-git-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  min-height: 28px;
+  gap: 4px;
+  min-height: 32px;
 }
 .composer-git-actions .ui-button {
   gap: 6px;
-  padding: 4px 9px;
-  font-size: 11px;
+  padding: 4px 8px;
+  font-size: 12px;
   color: var(--theme-text-muted);
   border: 1px solid transparent;
   border-radius: 7px;
-  min-height: 27px;
+  min-height: 32px;
 }
 .composer-git-actions .ui-button:hover {
   color: var(--theme-text);
   border-color: var(--theme-border);
   background: var(--surface-secondary);
+}
+.composer-git-actions .ui-button:focus-visible {
+  border-color: var(--theme-focus);
+  background: var(--surface-secondary);
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 .git-action-dialog {
   max-width: 620px;
@@ -110,41 +123,6 @@
   gap: 10px;
   min-width: 0;
 }
-.git-actions-pr-list {
-  display: grid;
-  gap: 7px;
-}
-.git-actions-pr-list > button {
-  border: 1px solid var(--theme-border);
-  border-radius: 8px;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px;
-  text-align: left;
-  min-width: 0;
-}
-.git-actions-pr-list > button:hover {
-  background: var(--surface-secondary);
-}
-.git-actions-pr-list > button > div {
-  flex: 1;
-  min-width: 0;
-}
-.git-actions-pr-list strong {
-  font-size: 12px;
-  font-weight: 550;
-  display: block;
-  overflow-wrap: anywhere;
-}
-.git-actions-pr-list small {
-  display: block;
-  font-size: 10px;
-  color: var(--theme-text-muted);
-  margin-top: 5px;
-  overflow-wrap: anywhere;
-}
 .git-actions-loading {
   display: flex;
   align-items: center;
@@ -173,68 +151,11 @@
     animation: none;
   }
 }
-.remote-pr-meta {
-  display: flex;
-  gap: 10px;
-  justify-content: space-between;
-  padding: 0 18px 13px;
-  font-size: 10px;
-  color: var(--theme-text-muted);
-  overflow-wrap: anywhere;
-}
-.remote-pr-meta a {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  white-space: nowrap;
-}
-.remote-pr-summary {
-  padding: 15px 18px;
-  display: flex;
-  gap: 22px;
-  border-top: 1px solid var(--theme-border);
-}
-.remote-pr-summary > div {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  font-size: 10px;
-}
-.remote-pr-summary strong {
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-.remote-pr-description {
-  padding: 0 18px 13px;
-  font-size: 11px;
-}
-.remote-pr-description summary {
-  cursor: pointer;
-}
-.remote-pr-description p {
-  white-space: pre-wrap;
-  line-height: 1.8;
-  overflow-wrap: anywhere;
-}
-.remote-pr-check {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  padding: 6px 0;
-}
-.remote-pr-check span {
-  flex: 1;
-}
 .remote-pr-notice {
   font-size: 11px;
   line-height: 1.8;
   padding: 10px 18px;
   margin: 0;
-}
-.remote-pr-meta a:hover {
-  text-decoration: underline;
 }
 /* Keep the explicit actions legible above the floating composer while history scrolls behind it. */
 .agent-command-rail .composer-git-actions-wrap {

@@ -1,5 +1,8 @@
 import type {
   AgentRuntimeMessage,
+  AgentRun,
+  AgentRunStep,
+  ToolCallRecord,
   HistoryWindowResponse,
 } from "../../../adapters/transport/agentRuntime";
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
@@ -20,12 +23,22 @@ export function previewTimelineMessage(message: AgentRuntimeMessage): AgentRunti
       type: message.metadata?.type,
       kind: message.metadata?.kind,
       partial: message.metadata?.partial,
+      contextCompaction: message.metadata?.contextCompaction,
       forkedFromMessageId: message.metadata?.forkedFromMessageId,
       ...(task ? { gitMergeTask: task.reference } : {}),
       ...(task?.superseded ? { gitMergeTimeline: { state: 'superseded', ...task.superseded } } : {}),
     },
   };
 }
+
+export const previewTimelineRun = (run: AgentRun): AgentRun => ({ ...run, metadata: {} });
+export const previewTimelineStep = (step: AgentRunStep): AgentRunStep => ({
+  ...step, metadata: { kind: step.metadata?.kind, contextCompaction: step.metadata?.contextCompaction },
+});
+export const previewTimelineToolCall = (call: ToolCallRecord): ToolCallRecord => ({
+  ...call, inputRef: undefined, outputRef: undefined, contentParts: undefined,
+  inputSummary: call.inputSummary?.slice(0, 240) ?? "", outputSummary: call.outputSummary?.slice(0, 240) ?? null,
+});
 
 function unique<T extends { id: string }>(first: T[], second: T[]): T[] {
   const items = new Map(first.map((item) => [item.id, item]));
@@ -39,21 +52,21 @@ export function extendTimelineIndex(
 ): Pick<SessionDetailCacheEntry, "timelineMessages" | "timelineRuns" | "timelineSteps" | "timelineToolCalls" | "timelineIndexLoaded"> {
   return {
     timelineMessages: unique(older.messages.map(previewTimelineMessage), current.timelineMessages ?? current.messages.map(previewTimelineMessage)).filter(item => !current.historyDeleted?.messages?.includes(item.id)),
-    timelineRuns: unique(older.runs, current.timelineRuns ?? current.runs).filter(item => !current.historyDeleted?.runs?.includes(item.id)),
-    timelineSteps: unique(older.steps, current.timelineSteps ?? current.steps).filter(item => !current.historyDeleted?.steps?.includes(item.id)),
-    timelineToolCalls: unique(older.toolCalls, current.timelineToolCalls ?? current.toolCalls).filter(item => !current.historyDeleted?.toolCalls?.includes(item.id)),
+    timelineRuns: unique(older.runs.map(previewTimelineRun), current.timelineRuns ?? current.runs.map(previewTimelineRun)).filter(item => !current.historyDeleted?.runs?.includes(item.id)),
+    timelineSteps: unique(older.steps.map(previewTimelineStep), current.timelineSteps ?? current.steps.map(previewTimelineStep)).filter(item => !current.historyDeleted?.steps?.includes(item.id)),
+    timelineToolCalls: unique(older.toolCalls.map(previewTimelineToolCall), current.timelineToolCalls ?? current.toolCalls.map(previewTimelineToolCall)).filter(item => !current.historyDeleted?.toolCalls?.includes(item.id)),
     timelineIndexLoaded: !older.historyWindow.olderCursor,
   };
 }
 
 export function seedTimelineIndex(
-  response: HistoryWindowResponse,
+  response: Pick<HistoryWindowResponse, "messages" | "runs" | "steps" | "toolCalls"> & Partial<HistoryWindowResponse>,
 ): Pick<SessionDetailCacheEntry, "timelineMessages" | "timelineRuns" | "timelineSteps" | "timelineToolCalls"> {
   return {
     timelineMessages: response.messages.map(previewTimelineMessage),
-    timelineRuns: response.runs,
-    timelineSteps: response.steps,
-    timelineToolCalls: response.toolCalls,
+    timelineRuns: response.runs.map(previewTimelineRun),
+    timelineSteps: response.steps.map(previewTimelineStep),
+    timelineToolCalls: response.toolCalls.map(previewTimelineToolCall),
   };
 }
 

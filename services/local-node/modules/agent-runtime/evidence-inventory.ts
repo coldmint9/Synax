@@ -156,6 +156,9 @@ export async function receiptReport(owners: WorkRecord[], runId?: string | null)
   const report: ReceiptReport = {
     current: new Set(), currentByCriterion: new Map(), superseded: new Map(), unsuccessful: new Map(), known: new Set(),
   };
+  // Share one read per session/scope within this acceptance only. A persistent
+  // cache could miss external edits between two acceptance attempts.
+  const fingerprints = new Map<string, Promise<string>>();
   for (const owner of owners) {
     for (const record of owner.verifications) {
       report.known.add(record.toolCallId);
@@ -174,7 +177,13 @@ export async function receiptReport(owners: WorkRecord[], runId?: string | null)
         report.superseded.set(record.toolCallId, { criterion: record.criterion, reason: 'an external receipt from another run cannot attest this run' });
         continue;
       }
-      if (record.fingerprint !== await workspaceFingerprint(owner.sessionId, record.scope)) {
+      const key = JSON.stringify([owner.sessionId, [...new Set(record.scope)].sort()]);
+      let fingerprint = fingerprints.get(key);
+      if (!fingerprint) {
+        fingerprint = workspaceFingerprint(owner.sessionId, record.scope);
+        fingerprints.set(key, fingerprint);
+      }
+      if (record.fingerprint !== await fingerprint) {
         report.superseded.set(record.toolCallId, {
           criterion: record.criterion,
           reason: 'the verified scope changed after the check',

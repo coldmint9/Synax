@@ -1,7 +1,14 @@
+// Algorithm-only coverage: production disables this legacy protocol.
+vi.mock("../updater/update-source.js", () => ({
+  requireLegacyUpdateSource: () => {},
+}));
+vi.mock("../updater/effective-update-source.js", () => ({
+  effectiveUpdateSource: () => "https://github.com/test/Synax/releases/download/",
+}));
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   cacheDesktopRelease,
   desktopReleaseDirectory,
@@ -25,7 +32,7 @@ function release(version: string): DesktopRelease {
       arch: "arm64",
       artifact: { name, size: bytes.length, sha256: sha256(bytes) },
     },
-    url: `https://github.com/coldmint9/Synax/releases/download/v${version}/${name}`,
+    url: `https://github.com/test/Synax/releases/download/v${version}/${name}`,
     notes: "Release notes",
   };
 }
@@ -72,7 +79,7 @@ it("restores the update ZIP instead of requiring the legacy DMG to be cached", a
     size: bytes.length,
     sha256: sha256(bytes),
   };
-  value.url = `https://github.com/coldmint9/Synax/releases/download/v0.2.0/${name}`;
+  value.url = `https://github.com/test/Synax/releases/download/v0.2.0/${name}`;
   await cacheDesktopRelease(root, value);
   const file = path.join(desktopReleaseDirectory(root, value.manifest), name);
   await fs.writeFile(file, bytes);

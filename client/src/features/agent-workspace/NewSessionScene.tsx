@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { loadMotion, reducedMotion } from "../../shared/design/motion";
+import { HomeGreeting } from "../home/HomeGreeting";
 import "./newSessionWelcome.css";
 
 /** Owns the welcome entrance animations. */
-export function NewSessionScene({ children }: { children: ReactNode }) {
+export function NewSessionScene({ children, home = false }: { children: ReactNode; home?: boolean }) {
   const root = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
@@ -16,7 +17,7 @@ export function NewSessionScene({ children }: { children: ReactNode }) {
         if (!active || reducedMotion()) return;
         const media = window.matchMedia("(prefers-reduced-motion: reduce)");
         const context = gsap.context(() => {
-          gsap.fromTo(
+          if (!home && scene.querySelector(".synax-wordmark")) gsap.fromTo(
             ".synax-wordmark",
             { opacity: 0, y: 6 },
             {
@@ -56,13 +57,14 @@ export function NewSessionScene({ children }: { children: ReactNode }) {
       active = false;
       cleanup();
     };
-  }, []);
+  }, [home]);
 
   return (
     <div
       ref={root}
-      className="session-welcome-layout flex w-full max-w-3xl flex-col items-center gap-6"
+      className={`session-welcome-layout flex w-full max-w-3xl flex-col items-center gap-6${home ? " session-welcome-layout--home" : ""}`}
     >
+      {home && <header className="home-scene-header"><HomeGreeting /></header>}
       {children}
     </div>
   );

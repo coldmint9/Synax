@@ -17,7 +17,6 @@ import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { sessionHooks } from "../session-hooks.js";
 import { resetAgentRuntimeFixtures } from "./agent-runtime-fixtures.js";
 import { nowIso, resetRuntimeIdsForTests } from "../runtime-ids.js";
-
 vi.mock("../../../infrastructure/llm-runtime/gateway.js", () => ({
   generateGatewayTextResult: vi.fn(),
 }));
@@ -590,5 +589,106 @@ describe("isValidGeneratedSessionTitle", () => {
 
   it("rejects overly long Chinese titles", () => {
     expect(isValidGeneratedSessionTitle("一二三四五六七八九十甲")).toBe(false);
+  });
+});
+
+describe("session classification from title generation", () => {
+  const createSession = () =>
+    agentSessionRuntime.create({
+      projectId: "project-alpha",
+      profileId: "synax",
+      prompt: LONG_INPUT,
+      sessionMetadata: {
+        mode: "goal",
+        source: "session-page",
+        goalContent: LONG_INPUT,
+      },
+    });
+
+  const answer = (text: string) =>
+    ({ text }) as Awaited<ReturnType<typeof generateGatewayTextResult>>;
+
+  beforeEach(async () => {
+    await resetAgentRuntimeFixtures();
+    ensureSynaxAgentRegistered();
+    mockGenerateGatewayTextResult.mockReset();
+  });
+
+  it("persists the intent category returned with the title", async () => {
+    mockGenerateGatewayTextResult.mockResolvedValue(
+      answer(
+        JSON.stringify({ title: "修复登录", intentCategory: "缺陷修复" }),
+      ),
+    );
+
+    const session = createSession();
+    ensureSessionTitleGenerated(session.id);
+
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe("修复登录");
+    });
+    expect(agentRuntimeStore.getSession(session.id).sessionMetadata).toMatchObject(
+      { intentCategory: "缺陷修复", titleSummarized: true },
+    );
+  });
+
+  it("reuses the label this workspace already published", async () => {
+    const first = createSession();
+    mockGenerateGatewayTextResult.mockResolvedValueOnce(
+      answer(JSON.stringify({ title: "修复登录", intentCategory: "Bugfix" })),
+    );
+    ensureSessionTitleGenerated(first.id);
+    await vi.waitFor(() => {
+      expect(
+        agentRuntimeStore.getSession(first.id).sessionMetadata?.intentCategory,
+      ).toBe("Bugfix");
+    });
+
+    const second = createSession();
+    mockGenerateGatewayTextResult.mockResolvedValueOnce(
+      answer(JSON.stringify({ title: "修复注册", intentCategory: "bugfix" })),
+    );
+    ensureSessionTitleGenerated(second.id);
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(second.id).title).toBe("修复注册");
+    });
+
+    // The second answer differs only in spelling, so the workspace keeps one label.
+    expect(
+      agentRuntimeStore.getSession(second.id).sessionMetadata?.intentCategory,
+    ).toBe("Bugfix");
+    const request = mockGenerateGatewayTextResult.mock.calls[1]?.[0] as
+      | { messages?: Array<{ content?: unknown }> }
+      | undefined;
+    expect(String(request?.messages?.[0]?.content)).toContain("- Bugfix");
+  });
+
+  it("drops a category that breaks the 2-10 character rule", async () => {
+    mockGenerateGatewayTextResult.mockResolvedValue(
+      answer(JSON.stringify({ title: "修复登录", intentCategory: "修" })),
+    );
+
+    const session = createSession();
+    ensureSessionTitleGenerated(session.id);
+
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe("修复登录");
+    });
+    expect(
+      agentRuntimeStore.getSession(session.id).sessionMetadata?.intentCategory,
+    ).toBeUndefined();
+  });
+
+  it("leaves the category out when the model answers with a bare title", async () => {
+    mockGenerateGatewayTextResult.mockResolvedValue(answer("问候用户"));
+
+    const session = createSession();
+    ensureSessionTitleGenerated(session.id);
+
+    await vi.waitFor(() => {
+      expect(agentRuntimeStore.getSession(session.id).title).toBe("问候用户");
+    });
+    const metadata = agentRuntimeStore.getSession(session.id).sessionMetadata;
+    expect(metadata?.intentCategory).toBeUndefined();
   });
 });

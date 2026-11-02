@@ -29,7 +29,7 @@ it("offers retry and a fixed release download link after failure", async () => {
   await act(async () => {});
   act(() => emitState({ ...initial, phase: "error", message: "下载中断，请重试。" }));
   expect(screen.getByRole("alert")).toHaveTextContent("下载中断");
-  expect(screen.getByRole("link")).toHaveAttribute("href", "https://github.com/coldmint9/Synax/releases/latest");
+  expect(screen.getByRole("link")).toHaveAttribute("href", "https://github.com/coldmint9/Synax");
   await userEvent.click(screen.getByRole("button", { name: /重试|Retry/ }));
   expect(api.checkDesktopUpdate).toHaveBeenCalledOnce();
 });
@@ -259,3 +259,4 @@ it("does not expose updater controls outside a supported desktop build", async (
   renderUpdates();
   expect(screen.getByTestId("settings")).toBeEmptyDOMElement();
 });
+

@@ -15,6 +15,7 @@ impl HistoryTask {
         let directory = layout::session_dir(self.root(), id).map_err(convert_io)?;
         let marker = layout::deletion_marker(self.root(), id);
         if marker.try_exists()? {
+            let _summary_lifecycle = self.store.summary_lifecycle();
             // A previous delete may have committed its fence before losing
             // the acknowledgement or being interrupted during disk cleanup.
             if let Some(history) = self.sessions.peek(id) {
@@ -32,11 +33,19 @@ impl HistoryTask {
         }
         let handle = self.store.session(id).map_err(convert_io)?;
         let history = self.session(id)?;
+        let _summary_lifecycle = self.store.summary_lifecycle();
         let _hot_checkpoint = handle.cell().checkpoint_lock.lock();
         let mut actor = handle.actor.lock();
         if actor.state.active_run_id.is_some()
-            || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed) {
-            return Err(HistoryError::InvalidCommand("Stop the session before permanently deleting it".into()));
+            || actor
+                .control
+                .execution_lease
+                .as_ref()
+                .is_some_and(|lease| !lease.closed)
+        {
+            return Err(HistoryError::InvalidCommand(
+                "Stop the session before permanently deleting it".into(),
+            ));
         }
         let _history_checkpoint = history.checkpoint_lock.lock();
         let mut writer = history.lock.lock();
@@ -50,7 +59,7 @@ impl HistoryTask {
         writer.index = SessionIndex::empty(id);
         history.published.store(Arc::new(writer.index.clone()));
         history.encoded_values.lock().clear();
-        actor.header = serde_json::Value::Null.into();
+        actor.header = crate::storage::jsonl::segment::PValue::Null;
         actor.projection = None;
         actor.events.clear();
         actor.receipts.clear();

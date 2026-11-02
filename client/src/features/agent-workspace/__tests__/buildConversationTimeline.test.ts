@@ -414,6 +414,37 @@ describe("buildUserMessageEntries", () => {
     expect(entries[1]?.label).toBe("Follow up");
   });
 
+  it("carries the turn references with the user message that selected them", () => {
+    const entries = buildUserMessageEntries([
+      makeMessage({
+        id: "msg-1",
+        content: "Review the parser",
+        metadata: {
+          source: "turn_request",
+          references: [
+            { kind: "skill", id: "code-review", label: "Code review" },
+            { kind: "mcp", id: "mcp-1" },
+            { kind: "teleport", id: "unknown-kind" },
+            { kind: "skill", id: "code-review", label: "Code review" },
+          ],
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      }),
+      makeMessage({
+        id: "msg-2",
+        content: "No references here",
+        metadata: { source: "turn_request" },
+        createdAt: "2026-01-01T00:00:03.000Z",
+      }),
+    ]);
+
+    expect(entries[0]?.references).toEqual([
+      { kind: "skill", id: "code-review", label: "Code review" },
+      { kind: "mcp", id: "mcp-1" },
+    ]);
+    expect(entries[1]?.references).toBeUndefined();
+  });
+
   it.each(["userPrompt", "goalContent"])(
     "includes %s as the first user bubble when initial run used session_prompt",
     (field) => {

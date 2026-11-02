@@ -28,6 +28,7 @@ describe("SessionListHeader", () => {
         ...state.preferences,
         locale: "zh",
         sessionListDisplayMode: "preview",
+        sessionListClusterByIntent: false,
       },
     }));
   });
@@ -51,7 +52,37 @@ describe("SessionListHeader", () => {
     fireEvent.click(newChat);
     expect(onNewSession).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: /refresh|刷新/i })).toBeNull();
-    expect(screen.getAllByRole("button")).toHaveLength(4);
+    expect(
+      screen.getByRole("button", { name: "按意图分类聚合会话" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("toggles intent clustering", () => {
+    renderHeader();
+    const toggle = screen.getByRole("button", { name: "按意图分类聚合会话" });
+
+    fireEvent.click(toggle);
+
+    expect(
+      useShellStore.getState().preferences.sessionListClusterByIntent,
+    ).toBe(true);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("pauses clustering while a search is active", () => {
+    renderHeader({ searchQuery: "登录" });
+
+    expect(
+      screen.getByRole("button", { name: "按意图分类聚合会话" }),
+    ).toBeDisabled();
+  });
+
+  it("keeps the clustering toggle off the workflow list", () => {
+    renderHeader({ listView: "workflow" });
+
+    expect(
+      screen.queryByRole("button", { name: "按意图分类聚合会话" }),
+    ).toBeNull();
   });
   it("disables new-chat while creating a session", () => {
     const onNewSession = vi.fn();

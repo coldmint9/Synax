@@ -6,6 +6,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { ALLOW_DRIVER_BROWSER_LAUNCH_ENV, applyKeychainPolicy } from './keychain-policy.js';
 
 export interface DriverMcpConfiguration {
   command: string;
@@ -91,13 +92,19 @@ export async function startCuaHelperBridge(
       driverStderr?.on('data', () => undefined);
     }
 
+    const allowDriverBrowserLaunch = process.env[ALLOW_DRIVER_BROWSER_LAUNCH_ENV] === '1';
+
     server.setRequestHandler(ListToolsRequestSchema, async () => client.listTools());
-    server.setRequestHandler(CallToolRequestSchema, async (request) =>
-      client.callTool({
-        name: request.params.name,
-        arguments: request.params.arguments ?? {},
-      }),
-    );
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+      const decision = applyKeychainPolicy(
+        request.params.name,
+        (request.params.arguments ?? {}) as Record<string, unknown>,
+        { allowDriverBrowserLaunch },
+      );
+      if (!decision.allow)
+        return { content: [{ type: 'text' as const, text: decision.message }], isError: true };
+      return client.callTool({ name: request.params.name, arguments: decision.args });
+    });
 
     const serverTransport = new StdioServerTransport();
     await server.connect(serverTransport);

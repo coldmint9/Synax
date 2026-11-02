@@ -1,12 +1,12 @@
-import { Menu, MenuButton, MenuItems, MenuAction } from "@/shared/ui/ui/Menu";
-import { Button } from "@/shared/ui/ui/Button";
-import { Switch } from "@/shared/ui/ui/Toggle";
+import { Menu, MenuButton, MenuItems, MenuAction } from '@/shared/ui/ui/Menu'
+import { Button } from '@/shared/ui/ui/Button'
+import { Switch } from '@/shared/ui/ui/Toggle'
 import { MoreHorizontal, Plug, Sparkles, Wrench } from 'lucide-react'
 import type { ExtensionItem } from '../../../adapters/transport/extensions'
 import { useExtensionCopy } from './extension-copy'
 export function ExtensionRow({
   item,
-  market,
+  showSource,
   busy,
   onOpen,
   onInstall,
@@ -15,7 +15,7 @@ export function ExtensionRow({
   onUninstall,
 }: {
   item: ExtensionItem
-  market: boolean
+  showSource: boolean
   busy: boolean
   onOpen: () => void
   onInstall: () => void
@@ -48,13 +48,12 @@ export function ExtensionRow({
         <span className="extension-row-copy">
           <span className="extension-row-title">
             <strong>{item.name}</strong>
-            {market && <small>{copy[item.kind]}</small>}
             {item.version && <small>{item.version}</small>}
           </span>
           <span className="extension-row-description" title={item.description}>
             {item.description}
           </span>
-          {market && (
+          {showSource && (
             <span className="extension-row-source">{sourceLabel}</span>
           )}
         </span>
@@ -73,11 +72,21 @@ export function ExtensionRow({
               aria-label={`${copy.toggle}: ${item.name}`}
             />
             <Menu>
-              <MenuButton className="size-7 text-muted-foreground hover:bg-muted" disabled={busy} aria-label={`${copy.more}: ${item.name}`}><MoreHorizontal size={16} /></MenuButton>
+              <MenuButton
+                className="size-7 text-muted-foreground hover:bg-muted"
+                disabled={busy}
+                aria-label={`${copy.more}: ${item.name}`}
+              >
+                <MoreHorizontal size={16} />
+              </MenuButton>
               <MenuItems aria-label={copy.more}>
                 <MenuAction onClick={onOpen}>{copy.details}</MenuAction>
-                {item.editable && <MenuAction onClick={onEdit}>{copy.edit}</MenuAction>}
-                <MenuAction danger onClick={onUninstall}>{copy.uninstall}</MenuAction>
+                {item.editable && (
+                  <MenuAction onClick={onEdit}>{copy.edit}</MenuAction>
+                )}
+                <MenuAction danger onClick={onUninstall}>
+                  {copy.uninstall}
+                </MenuAction>
               </MenuItems>
             </Menu>
           </>

@@ -8,6 +8,12 @@ import type { AppUpdater, UpdateInfo } from "electron-updater";
 import { UpdaterController, type ControllerDependencies } from "./controller.js";
 import type { UpdaterRequest } from "./contract.js";
 import { configureUpdateNetwork } from "../lib/update-network.js";
+import { effectiveUpdateSource } from "./effective-update-source.js";
+import { packagedUpdateConfig } from "./update-source.js";
+import {
+  DEFAULT_UPDATE_SETTINGS,
+  configureUpdateSettings,
+} from "./update-settings.js";
 
 let root: string;
 let request: UpdaterRequest;
@@ -29,11 +35,14 @@ async function ready() {
   return value;
 }
 beforeEach(async () => {
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS, enabled: true });
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", "https://updates.example/synax/");
   root = await fs.mkdtemp(path.join(os.tmpdir(), "synax-framework-"));
   file = path.join(root, "installer.exe");
   await fs.writeFile(file, bytes);
   request = { currentVersion: "0.1.2", uiVersion: null, executable: path.join(root, "Synax.exe"), profile: root, parentPid: process.pid };
   info = { version: "0.2.0", releaseDate: new Date().toISOString(), releaseNotes: "Release notes", path: file, sha512: "", files: [{ url: file, size: bytes.length, sha512: createHash("sha512").update(bytes).digest("base64") }] };
+  Object.assign(info, { productName: "Synax", bundleId: "com.Synax.desktop" });
   updater = Object.assign(new EventEmitter(), {
     checkForUpdates: vi.fn(async () => ({ isUpdateAvailable: true, updateInfo: info })),
     downloadUpdate: vi.fn(async () => [file]),
@@ -42,7 +51,12 @@ beforeEach(async () => {
   dependencies = { create: vi.fn(async () => updater as unknown as AppUpdater), configure: vi.fn(async () => {}), eligible: vi.fn(async () => {}) };
   configureUpdateNetwork({ mode: "direct", customProxyUrl: "" });
 });
-afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS });
+  await fs.rm(root, { recursive: true, force: true });
+});
 
 it("uses framework checks and transfers, and waits for verified bytes before readiness", async () => {
   const value = controller(); await value.initialize(); await value.check();
@@ -59,6 +73,25 @@ it("uses framework checks and transfers, and waits for verified bytes before rea
   expect(value.state.phase).toBe("installing");
   expect(value.state.history).toEqual([]);
   expect(JSON.parse(await fs.readFile(pending(), "utf8"))).toMatchObject({ version: "0.2.0", fromVersion: "0.1.2" });
+});
+
+it("uses the packaged source for check, cache persistence and restart restoration without env", async () => {
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", undefined);
+  const source = "https://packaged.example/synax/";
+  const config = path.join(root, "app-update.yml");
+  await fs.writeFile(config, JSON.stringify(packagedUpdateConfig({ SYNAX_FRAMEWORK_UPDATE_URL: source }, "darwin", "arm64")));
+  dependencies.resolveSource = () => effectiveUpdateSource({ env: process.env, resourcesPath: root });
+  await ready();
+  const cached = JSON.parse(await fs.readFile(path.join(root, "desktop-updates/framework-ready.json"), "utf8"));
+  expect(cached.source).toBe(source);
+  const reopened = controller(); await reopened.initialize();
+  expect(reopened.state.phase).toBe("ready");
+  await reopened.install();
+  expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  // Changing the effective source invalidates that exact same cache binding.
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", "https://override.example/synax/");
+  const changed = controller(); await changed.initialize();
+  expect(changed.state.phase).not.toBe("ready");
 });
 it("records installation only when the new application confirms startup, once", async () => {
   const value = await ready(); await value.install();
@@ -172,3 +205,51 @@ it("reports disabled framework checks without fabricating an available release",
   const value = controller(); await value.initialize(); await value.check();
   expect(value.state.phase).toBe("error"); expect(value.state.availableVersion).toBeNull();
 });
+
+it("never creates the updater or restores an upstream cache without a source", async () => {
+  await ready();
+  vi.clearAllMocks();
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", undefined);
+  const value = controller();
+  await value.initialize(); await value.check(); await value.download(); await value.install();
+  expect(value.state.phase).toBe("error");
+  expect(value.state.message).toContain("自动更新不可用");
+  expect(dependencies.create).not.toHaveBeenCalled();
+  expect(updater.checkForUpdates).not.toHaveBeenCalled();
+  expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it.each(["identity", "source"])("refuses a cached installer with stale %s", async (kind) => {
+  await ready();
+  const cache = path.join(root, "desktop-updates/framework-ready.json");
+  const data = JSON.parse(await fs.readFile(cache, "utf8"));
+  if (kind === "identity") { delete data.productName; delete data.bundleId; }
+  else data.source = "https://github.com/coldmint9/Synax/releases/latest/download/";
+  await fs.writeFile(cache, JSON.stringify(data));
+  vi.clearAllMocks();
+  const reopened = controller(); await reopened.initialize(); await reopened.install();
+  expect(reopened.state.phase).not.toBe("ready");
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("blocks installation if the enterprise source disappears after download", async () => {
+  const value = await ready();
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", undefined);
+  await value.install();
+  expect(value.state.phase).toBe("error");
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("refuses upstream product metadata before downloading", async () => {
+  Object.assign(info, { productName: "Synax", bundleId: "com.Synax.desktop" });
+  const value = controller(); await value.initialize(); await value.check(); await value.download();
+  expect(value.state.phase).toBe("error");
+  expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+it("requires installer bundle verification before becoming ready", async () => {
+  dependencies.verifyInstaller = vi.fn(async () => { throw new Error("更新包产品身份不匹配"); });
+  const value = controller(); await value.initialize(); await value.check(); await value.download();
+  expect(value.state.phase).toBe("error");
+  expect(dependencies.verifyInstaller).toHaveBeenCalledWith(file, info.version);
+  expect(updater.quitAndInstall).not.toHaveBeenCalled();
+});
+

@@ -23,6 +23,10 @@ import {
   resumeAgentSessionInBackground,
 } from "../../modules/agent-runtime/agent-stream-proxy.js";
 import {
+  dismissSessionAutoResume,
+  sessionAutoResumeSnapshot,
+} from "../../modules/agent-runtime/auto-resume/index.js";
+import {
   resolveSessionBackend,
   readBackendBinding,
   validateBackendTurnInput,
@@ -61,10 +65,15 @@ import {
   toHttpError,
   updateSessionPermissionRequestSchema,
 } from "../../modules/agent-runtime/index.js";
+import { listSideChatSessionIds, openSideChat, readSideChat } from "../../modules/agent-runtime/side-chat-service.js";
+import { sideChatRequestSchema } from "../../modules/agent-runtime/side-chat-contract.js";
+import { withSessionWorkspaceLock } from "../../modules/agent-runtime/session-workspace-lock.js";
+import { compareSessions } from "../../modules/agent-runtime/session-query/query.js";
 import {
   MAX_OPTIMIZATION_INPUT_CHARS,
   optimizeInput,
 } from "../../modules/agent-runtime/input-optimization.js";
+import { suggestNextInput } from "../../modules/agent-runtime/next-input-suggestion.js";
 import { inputQueueRuntime } from "../../modules/agent-runtime/input-queue-runtime.js";
 import { replyAndContinueInteraction } from "../../modules/agent-runtime/interaction-reply.js";
 import {
@@ -111,6 +120,7 @@ import {
   openSessionFileInSystemTerminal,
   renameSessionEnvironmentFile,
   saveSessionEnvironmentFile,
+  sessionEnvironmentFileEntry,
   trashSessionEnvironmentFile,
 } from "../../modules/agent-runtime/session-environment.js";
 import {
@@ -123,11 +133,13 @@ import { getWorkspaceGitChanges } from "../../modules/agent-runtime/workspace-gi
 import {
   createSessionGitBranch,
   listSessionGitBranches,
+  mergeSessionGitBranch,
   switchSessionGitBranch,
 } from "../../modules/agent-runtime/session-git-branches.js";
 import {
   commitSessionWorkspace,
   listSessionWorkspaceCommits,
+  MAX_COMMIT_MESSAGE_LEN,
   pushSessionWorkspace,
 } from "../../modules/agent-runtime/session-git-commit.js";
 import { restoreSessionFile } from "../../modules/agent-runtime/session-git-files.js";
@@ -137,10 +149,12 @@ import {
 import { sessionProcessManager } from "../../modules/agent-runtime/session-process-manager.js";
 import {
   projectSessionState,
+  projectRuntimeSessionEvent,
   markRevisionedHistory,
   projectSessionSummary,
 } from "../../modules/agent-runtime/session-projection.js";
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
+import { sessionSearchService } from "../../modules/agent-runtime/session-query/search-service.js";
 import { projectAnalytics } from "../../modules/agent-runtime/analytics-service.js";
 import { RuntimeSidecarError } from "../../modules/agent-runtime/sidecar/sidecar-client.js";
 import {
@@ -176,6 +190,11 @@ import {
 import { workspaceLocationHostPath, type WorkspaceLocation } from "../../modules/workspace-location.js";
 import { ensureSessionRecovered } from '../../modules/agent-runtime/session-recovery.js';
 import { subagentTemplateRoutes } from "./subagent-templates.js";
+import { getSuperCodingService } from "../../composition/super-coding.js";
+import {
+  SUPER_MAX_MESSAGE_CHARS,
+  liveNodeCount,
+} from "../../../../packages/contracts/super-coding.js";
 export const agentRuntimeRoutes = new Hono();
 agentRuntimeRoutes.route("/subagent-templates", subagentTemplateRoutes);
 // Load the execution working set at the HTTP boundary, and acknowledge only
@@ -203,7 +222,7 @@ agentRuntimeRoutes.use('*', async (c, next) => {
       // when the working set is skipped.
       const metadataOnly =
         (c.req.method === 'PATCH' && /\/(title|pin|mode|permissions)$/.test(c.req.path)) ||
-        (c.req.method === 'POST' && /\/(fork|side-chat)$/.test(c.req.path));
+        (c.req.method === 'POST' && c.req.path.endsWith('/fork'));
       const loadsWorkingSet =
         c.req.method !== 'GET' &&
         !metadataOnly &&
@@ -274,73 +293,28 @@ agentRuntimeRoutes.get("/sessions/search", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const { projectId, q, limit, offset } = parsed.data;
-    {
-      const sessions = (await runtimeFacade.listSessionProjection())
-        .map((item) => projectSessionState(item as never))
-        .filter(
-          (session) =>
-            session.projectId === projectId &&
-            !session.parentSessionId &&
-            !session.sessionMetadata?.archivedAt &&
-            !session.sessionMetadata?.deletedAt &&
-            !session.sessionMetadata?.forkPreparing &&
-            session.sessionMetadata?.sideChat !== true,
-        );
-      const lowered = q.toLocaleLowerCase();
-      const matches = (
-        await Promise.all(
-          sessions.map(async (session) => {
-            if (
-              session.title?.toLocaleLowerCase().includes(lowered) ||
-              session.prompt.toLocaleLowerCase().includes(lowered)
-            )
-              return {
-                session,
-                snippet: (session.title || session.prompt).slice(0, 160),
-                updatedAt: session.updatedAt,
-              };
-            const message = (
-              (await runtimeFacade.listMessageHistory(
-                session.id,
-              )) as AgentRuntimeMessage[]
-            ).find((item) =>
-              item.content.toLocaleLowerCase().includes(lowered),
-            );
-            return message
-              ? {
-                  session,
-                  snippet: message.content.slice(0, 160),
-                  updatedAt: session.updatedAt,
-                }
-              : null;
-          }),
-        )
-      )
-        .filter(
-          (
-            item,
-          ): item is {
-            session: AgentSession;
-            snippet: string;
-            updatedAt: string;
-          } => Boolean(item),
-        )
-        .sort(
-          (a, b) =>
-            b.updatedAt.localeCompare(a.updatedAt) ||
-            a.session.id.localeCompare(b.session.id),
-        );
-      const page = matches.slice(offset, offset + limit + 1);
-      return c.json({
-        items: page
-          .slice(0, limit)
-          .map((item) => ({
-            session: projectSessionSummary(item.session),
-            snippet: item.snippet,
-          })),
-        hasMore: page.length > limit,
-      });
-    }
+    // The index answers from memory: reading every transcript per keystroke was
+    // the whole cost of this route, and it blocked the host on long histories.
+    const result = await sessionSearchService.search({
+      projectId,
+      query: q,
+      limit,
+      offset,
+    });
+    return c.json({
+      items: result.items.map((item) => ({
+        session: projectSessionSummary(item.session),
+        snippet: item.snippet,
+        kind: item.kind,
+        messageId: item.messageId,
+        role: item.role,
+        createdAt: item.createdAt,
+        matchCount: item.matchCount,
+      })),
+      hasMore: result.hasMore,
+      terms: result.terms,
+      indexing: result.indexing,
+    });
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -359,15 +333,14 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
     {
       const selected = new Set(projectIds);
       return c.json({
-        items: (await runtimeFacade.listSessionProjection())
-          .map((item) => projectSessionState(item as never))
+        items: (await runtimeFacade.listSessionBadges())
+          .map((item) => projectSessionState(item))
           .filter(
             (session) =>
               selected.has(session.projectId) &&
               !session.parentSessionId &&
               !session.sessionMetadata?.archivedAt &&
-              !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing &&
-              session.sessionMetadata?.sideChat !== true,
+              !session.sessionMetadata?.deletedAt && !session.sessionMetadata?.forkPreparing,
           )
           .map((session) => ({
             id: session.id,
@@ -380,6 +353,22 @@ agentRuntimeRoutes.get("/sessions/badges", async (c) => {
   } catch (error) {
     return runtimeError(c, error);
   }
+});
+
+/**
+ * Sessions the runtime is continuing on its own after a restart or a network
+ * outage. Bounded and rarely changing, so the client reads this once and then
+ * follows `session_auto_resume` events.
+ */
+agentRuntimeRoutes.get("/sessions/auto-resume", (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(sessionAutoResumeSnapshot());
+});
+
+/** Stop continuing one session; the user takes over from here. */
+agentRuntimeRoutes.delete("/sessions/auto-resume/:sessionId", (c) => {
+  dismissSessionAutoResume(c.req.param("sessionId"));
+  return c.json({ ok: true });
 });
 
 agentRuntimeRoutes.post(
@@ -557,6 +546,83 @@ agentRuntimeRoutes.post("/input/optimize", async (c) => {
     return c.json(await optimizeInput(parsed.data, c.req.raw.signal));
   } catch (error) {
     return runtimeError(c, error);
+  }
+});
+const nextInputSuggestionSchema = z
+  .object({
+    sessionId: z.string().trim().min(1).max(256),
+    projectId: z.string().trim().min(1).max(256),
+    /** Assistant text already streamed when the reply phase started. */
+    replySoFar: z.string().max(8_000).optional(),
+    model: z.string().trim().min(1).max(512).optional(),
+    backendId: backendIdSchema.optional(),
+  })
+  .strict();
+agentRuntimeRoutes.post("/input/suggest", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = nextInputSuggestionSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  const { sessionId } = parsed.data;
+  const startedAt = Date.now();
+  try {
+    const [messages, toolCalls] = await Promise.all([
+      runtimeFacade.listMessageHistory(sessionId) as Promise<
+        AgentRuntimeMessage[]
+      >,
+      runtimeFacade.listHistoryObjects(
+        sessionId,
+        "list_tool_calls",
+      ) as Promise<ToolCallRecord[]>,
+    ]);
+    const userRequest =
+      [...messages]
+        .reverse()
+        .find((message) => message.role === "user" && message.content.trim())
+        ?.content ?? "";
+    // A hint is optional by design: nothing to predict means no hint.
+    if (!userRequest) {
+      logger.info(
+        { sessionId },
+        "[input-suggestion] skipped: no user request in history",
+      );
+      return c.json({ suggestion: null });
+    }
+    const activity = [...toolCalls]
+      .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
+      .slice(-8)
+      .map((call) => ({
+        toolId: call.toolId,
+        summary: call.outputSummary ?? call.inputSummary,
+      }));
+    const suggestion = await suggestNextInput(
+      {
+        projectId: parsed.data.projectId,
+        userRequest,
+        replySoFar: parsed.data.replySoFar,
+        activity,
+        model: parsed.data.model,
+        backendId: parsed.data.backendId,
+      },
+      c.req.raw.signal,
+    );
+    // One line per turn: enough to answer "did the pre-fill run, and did the
+    // provider produce anything" without logging the suggestion itself.
+    logger.info(
+      { sessionId, found: Boolean(suggestion), durationMs: Date.now() - startedAt },
+      "[input-suggestion] finished",
+    );
+    return c.json({ suggestion });
+  } catch (error) {
+    // The composer treats a missing hint as "no suggestion", never as an
+    // error: a missing model, a user-typed draft that aborted the call, and a
+    // provider failure all resolve to an empty hint.
+    if (!c.req.raw.signal.aborted)
+      logger.warn(
+        { sessionId, err: error },
+        "[input-suggestion] suggestion generation failed",
+      );
+    return c.json({ suggestion: null });
   }
 });
 agentRuntimeRoutes.get("/media/models/discover", async (c) => {
@@ -896,13 +962,9 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     }
     {
       await runtimeFacade.ensureUiProjection(session.id);
-      return c.json(
-        await withAuthoritativeSessionPayload(
-          session.id,
-          await runtimeFacade.uiSnapshotAuthoritative(session.id),
-        ),
-        201,
-      );
+      const payload = await withAuthoritativeSessionPayload(session.id, await runtimeFacade.uiSnapshotAuthoritative(session.id));
+      if (!parsed.data.mediaGeneration) sessionProcessManager.warmSession(session.id);
+      return c.json(payload, 201);
     }
   } catch (error) {
     if (error instanceof GitWorkspaceError) {
@@ -914,6 +976,55 @@ agentRuntimeRoutes.post("/sessions", async (c) => {
     return runtimeError(c, error);
   }
 });
+
+agentRuntimeRoutes.get("/sessions/:sessionId/side-chat", async (c) => {
+  try {
+    return c.json(await readSideChat(c.req.param("sessionId")));
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+agentRuntimeRoutes.post("/sessions/:sessionId/side-chat", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = sideChatRequestSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  try {
+    const result = await openSideChat(c.req.param("sessionId"), parsed.data);
+    return c.json(result, result.reused ? 200 : 201);
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+/**
+ * Discards the side chats of one primary conversation: the running turn stops,
+ * the child sessions are archived and then purged, so the copied snapshot,
+ * transcript and attachments are gone instead of merely hidden. Opening again
+ * starts from a new snapshot because the slot no longer holds a child.
+ */
+agentRuntimeRoutes.delete("/sessions/:sessionId/side-chat", async (c) => {
+  const parentSessionId = c.req.param("sessionId");
+  try {
+    // The open path holds the same lock, so a concurrent open cannot publish a
+    // child between the lookup and the purge and leave an orphan snapshot.
+    const deletedSessionIds = await withSessionWorkspaceLock(parentSessionId, async () => {
+      const removed: string[] = [];
+      for (const id of await listSideChatSessionIds(parentSessionId)) {
+        const summary = await runtimeFacade.sessionSummaryAuthoritative(id);
+        // An archived child has no live runtime to stop; the purge still owns
+        // its durable rows.
+        if (summary.sessionMetadata?.archivedAt) removed.push(id);
+        else removed.push(...(await archiveSessionAfterShutdown(id)).archivedSessionIds);
+      }
+      if (removed.length) await permanentlyDeleteSessions(removed, parentSessionId);
+      return removed;
+    });
+    return c.json({ ok: true, deletedSessionIds });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
 agentRuntimeRoutes.post("/sessions/:id/context/compact", async (c) => {
   try {
     return c.json(
@@ -929,7 +1040,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
     Object.fromEntries(new URL(c.req.url).searchParams),
   );
   if (!parsed.success) return validationError(c, parsed.error);
-  const { limit, offset, status, ...filter } = parsed.data;
+  const { limit, offset, status, includeChildren, ...filter } = parsed.data;
   {
     try {
       const all = (await runtimeFacade.listSessionProjection())
@@ -939,7 +1050,7 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
             !session.sessionMetadata?.archivedAt &&
             !session.sessionMetadata?.deletedAt &&
             !session.sessionMetadata?.forkPreparing &&
-            session.sessionMetadata?.sideChat !== true,
+            (includeChildren || !session.parentSessionId),
         )
         .filter(
           (session) =>
@@ -947,10 +1058,11 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
         )
         .filter((session) => !filter.nodeId || session.nodeId === filter.nodeId)
         .filter((session) => !status || session.status === status)
-        .sort(
-          (a, b) =>
-            b.updatedAt.localeCompare(a.updatedAt) || b.id.localeCompare(a.id),
-        );
+        // Pinned rows lead every page: the sidebar renders them as their own
+        // section, so a pinned row that fell past the first page would only
+        // appear after the user paged further. Pinning does not touch
+        // `updatedAt`, so recency alone can never surface it.
+        .sort(compareSessions);
       const countByStatus = Object.fromEntries(
         all.reduce(
           (counts, session) =>
@@ -970,20 +1082,19 @@ agentRuntimeRoutes.get("/sessions", async (c) => {
 });
 agentRuntimeRoutes.get("/sessions/:sessionId/summary", async (c) => {
   try {
-    return c.json({ session: projectSessionSummary(projectSessionState(
+    const session = projectSessionSummary(projectSessionState(
       await runtimeFacade.sessionSummaryAuthoritative(c.req.param("sessionId")),
-    )) });
+    ));
+    sessionProcessManager.warmSession(c.req.param("sessionId"));
+    return c.json({ session });
   } catch (error) { return runtimeError(c, error); }
 });
 agentRuntimeRoutes.get("/sessions/:sessionId", async (c) => {
   const sessionId = c.req.param("sessionId");
   try {
-    return c.json(
-      await withAuthoritativeSessionPayload(
-        sessionId,
-        await runtimeFacade.uiSnapshotAuthoritative(sessionId),
-      ),
-    );
+    const payload = await withAuthoritativeSessionPayload(sessionId, await runtimeFacade.uiSnapshotAuthoritative(sessionId));
+    sessionProcessManager.warmSession(sessionId);
+    return c.json(payload);
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -1029,7 +1140,6 @@ agentRuntimeRoutes.get("/session-archives", async (c) => {
         if (
           !archivedAt ||
           !archiveBatchId ||
-          session.sessionMetadata?.sideChat === true ||
           session.sessionMetadata?.deletedAt ||
           (projectId && session.projectId !== projectId)
         )
@@ -1178,18 +1288,23 @@ agentRuntimeRoutes.post("/sessions/:sessionId/cancel", async (c) => {
     const parentId = agentRuntimeStore.getSession(id).parentSessionId;
     const control = await readControl(c);
     const stopShutdown = async () => {
+      const tree = agentRuntimeStore.listSessionTree(id);
       await Promise.all(
-        agentRuntimeStore
-          .listSessionTree(id)
-          .map((session) =>
-            runtimeFacade.stopSessionAuthoritative(
-              session.id,
-              "interrupted",
-              "User requested session stop.",
-            ),
+        tree.map((session) =>
+          runtimeFacade.stopSessionAuthoritative(
+            session.id,
+            // The root session the user stopped rests on a pause: that is the
+            // state that keeps its one-click resume (play) affordance and
+            // reopens its checkpoints. Subagent conversations and descendants
+            // are hard-interrupted and resume only with a new turn.
+            session.id === id && !session.parentSessionId
+              ? "paused"
+              : "interrupted",
+            "User requested session stop.",
           ),
+        ),
       );
-      for (const session of agentRuntimeStore.listSessionTree(id))
+      for (const session of tree)
         invalidateSessionEnvironment(session.id);
       if (parentId) invalidateSessionEnvironment(parentId);
     };
@@ -1315,7 +1430,6 @@ async function archiveInactiveSessionsRoute(c: Context) {
     const toArchive = allSessions.filter(
       (s) =>
         !keep.has(s.status) &&
-        s.sessionMetadata?.sideChat !== true &&
         !s.sessionMetadata?.runtimeControl &&
         !runCoordinator.isActive(s.id),
     );
@@ -1657,6 +1771,7 @@ agentRuntimeRoutes.post("/sessions/:sessionId/runtime-ticket", async (c) => {
   if (!parsed.success) return validationError(c, parsed.error);
   try {
     const sessionId = c.req.param("sessionId");
+    sessionProcessManager.warmSession(sessionId);
     if (process.env.SYNAX_DESKTOP_SIDECAR !== "1") {
       return c.json({ transport: "node" as const });
     }
@@ -1678,6 +1793,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/snapshot", async (c) => {
     const snapshot = await runtimeJournal.snapshotDurable(
       c.req.param("sessionId"),
     );
+    sessionProcessManager.warmSession(c.req.param("sessionId"));
     return c.json({
       ...snapshot,
       session: projectSessionState(snapshot.session),
@@ -1696,6 +1812,7 @@ agentRuntimeRoutes.get("/sessions/:sessionId/stream", async (c) => {
       // HTTP observation stream backed by Rust replay.
       await runtimeFacade.uiSnapshotAuthoritative(sessionId);
     }
+    sessionProcessManager.warmSession(sessionId);
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -2257,6 +2374,31 @@ agentRuntimeRoutes.get(
     }
   },
 );
+/**
+ * Existence probe for document links.
+ *
+ * A markdown link inside a rendered file must never fall through to a browser
+ * navigation, so the viewer asks first and reports a missing target without
+ * creating a tab for it.
+ */
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/environment/file/exists",
+  async (c) => {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json({ error: "Missing path" }, 400);
+    try {
+      return c.json(
+        await sessionEnvironmentFileEntry(
+          c.req.param("sessionId"),
+          filePath,
+          c.req.query("rootId"),
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
 agentRuntimeRoutes.get("/sessions/:sessionId/environment/file", async (c) => {
   const filePath = c.req.query("path");
   const kind = c.req.query("kind") === "input" ? "input" : "diff";
@@ -2290,6 +2432,8 @@ const switchBranchSchema = z.object({
   branch: z.string().min(1).max(1024),
   rootId: z.string().min(1).optional(),
   transferChanges: z.boolean().optional(),
+  /** The branch names a remote-tracking ref to check out as a local branch. */
+  remote: z.boolean().optional(),
 });
 agentRuntimeRoutes.post(
   "/sessions/:sessionId/git/branches/switch",
@@ -2305,6 +2449,7 @@ agentRuntimeRoutes.post(
           parsed.data.branch,
           parsed.data.rootId,
           parsed.data.transferChanges ?? false,
+          parsed.data.remote ?? false,
         ),
       );
     } catch (error) {
@@ -2322,6 +2467,26 @@ agentRuntimeRoutes.post(
     try {
       return c.json(
         await createSessionGitBranch(
+          c.req.param("sessionId"),
+          parsed.data.branch,
+          parsed.data.rootId,
+        ),
+      );
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+agentRuntimeRoutes.post(
+  "/sessions/:sessionId/git/branches/merge",
+  async (c) => {
+    const body = await readJson(c);
+    if (!body.ok) return c.json({ error: body.error }, 400);
+    const parsed = switchBranchSchema.safeParse(body.data);
+    if (!parsed.success) return validationError(c, parsed.error);
+    try {
+      return c.json(
+        await mergeSessionGitBranch(
           c.req.param("sessionId"),
           parsed.data.branch,
           parsed.data.rootId,
@@ -2383,7 +2548,9 @@ agentRuntimeRoutes.post(
 const commitSessionWorkspaceSchema = z.object({
   rootId: z.string().min(1).optional(),
   branchName: z.string().min(1).max(1024).optional(),
-  message: z.string().trim().min(1).max(2000),
+  // A generated changelog lists every changed path, so the body is longer than
+  // a hand-written subject and body.
+  message: z.string().trim().min(1).max(MAX_COMMIT_MESSAGE_LEN),
   // Absent means "push after committing" so existing senders keep working.
   push: z.boolean().optional(),
   // Absent means "stage everything" so existing senders keep working.
@@ -2819,14 +2986,9 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
       // `projectId` lets workspace-scoped consumers (Git changes, cards) drop
       // the right cache without resolving the session first.
       const current = agentRuntimeStore.tryGetSession(event.sessionId);
-      const needsProjection =
-        event.patch &&
-        ("status" in event.patch ||
-          "activeRunId" in event.patch ||
-          "sessionMetadata" in event.patch);
-      const projected = current && needsProjection
-        ? projectSessionState(current)
-        : undefined;
+      // A worker owns the lifecycle of the session it runs; this process's copy
+      // may still be running. Project the event's own fields, not the copy.
+      const projected = projectRuntimeSessionEvent(event, current);
       const projectId = current?.projectId;
       const wire = {
         ...(projected
@@ -2834,8 +2996,7 @@ agentRuntimeRoutes.get("/events/stream", (c) => {
               ...event,
               patch: {
                 ...event.patch,
-                status: projected.status,
-                activeRunId: projected.activeRunId,
+                ...projected,
               },
             }
           : event),
@@ -2947,7 +3108,7 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
   const body = await readJson(c);
   if (!body.ok) return c.json({ error: body.error }, 400);
   const parsed = z
-    .object({ mode: z.enum(["chat", "goal"]) })
+    .object({ mode: z.enum(["chat", "goal", "super"]) })
     .strict()
     .safeParse(body.data);
   if (!parsed.success) return validationError(c, parsed.error);
@@ -2981,10 +3142,30 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
       );
     const mode = parsed.data.mode;
     const previousMode = workflowMode(session);
+    // A live orchestration owns the session's workflow: switching in either
+    // direction would orphan running children, so it is refused until the
+    // graph is closed or stopped.
+    if (previousMode === "super" || mode === "super") {
+      const graph = await getSuperCodingService().getGraph(id);
+      if (graph && liveNodeCount(graph) > 0)
+        return c.json(
+          {
+            error:
+              "Close or stop the current orchestration before switching mode.",
+          },
+          409,
+        );
+    }
     {
+      // A mode switch is a transition, not a target state: the patch carries a
+      // freshly initialized goal only the first time this session enters goal
+      // mode, so the same body never describes two switches. The sidecar keys
+      // idempotent control receipts by request id and rejects a changed body,
+      // which would make every later switch back to that mode a conflict. One
+      // id per attempt still lets a transport retry replay its own write.
       const patched = (await runtimeFacade.sessionPatch(
         id,
-        `session-mode:${id}:${mode}`,
+        `session-mode:${id}:${mode}:${randomUUID()}`,
         {
           sessionMetadata: {
             mode,
@@ -3000,6 +3181,80 @@ agentRuntimeRoutes.patch("/sessions/:sessionId/mode", async (c) => {
       workRuntime.onModeChanged(id, previousMode);
       return c.json({ session: patched });
     }
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+const superCommandSchema = z.union([
+  z
+    .object({
+      kind: z.literal("node.message"),
+      nodeId: z.string().min(1),
+      text: z.string().trim().min(1).max(SUPER_MAX_MESSAGE_CHARS),
+    })
+    .strict(),
+  z.object({ kind: z.literal("graph.close") }).strict(),
+  z.object({ kind: z.literal("graph.stop") }).strict(),
+]);
+
+agentRuntimeRoutes.get("/sessions/:sessionId/super", async (c) => {
+  try {
+    const graph = await getSuperCodingService().getGraph(
+      c.req.param("sessionId"),
+    );
+    return c.json({ graph });
+  } catch (error) {
+    return runtimeError(c, error);
+  }
+});
+
+agentRuntimeRoutes.get(
+  "/sessions/:sessionId/super/channels/:nodeId/messages",
+  async (c) => {
+    try {
+      const graph = await getSuperCodingService().getGraph(
+        c.req.param("sessionId"),
+      );
+      const node = graph?.nodes.find(
+        (item) => item.id === c.req.param("nodeId"),
+      );
+      if (!node) return c.json({ error: "Node not found." }, 404);
+      return c.json({ items: node.messageLog ?? [] });
+    } catch (error) {
+      return runtimeError(c, error);
+    }
+  },
+);
+
+agentRuntimeRoutes.post("/sessions/:sessionId/super/commands", async (c) => {
+  const body = await readJson(c);
+  if (!body.ok) return c.json({ error: body.error }, 400);
+  const parsed = superCommandSchema.safeParse(body.data);
+  if (!parsed.success) return validationError(c, parsed.error);
+  const sessionId = c.req.param("sessionId");
+  const service = getSuperCodingService();
+  try {
+    const command = parsed.data;
+    if (command.kind === "node.message")
+      return c.json(
+        await service.message({
+          sessionId,
+          nodeId: command.nodeId,
+          from: "user",
+          text: command.text,
+        }),
+      );
+    if (command.kind === "graph.close") {
+      const closed = await service.close({ sessionId });
+      if (!closed.ok) return c.json(closed);
+      // close reserves the verification slot; start it in the same request so
+      // the card never shows a finished graph with a queued verification.
+      // A failed start keeps close successful: the node carries the error and
+      // the graph revision is still returned.
+      const advanced = await service.advance(sessionId);
+      return c.json({ ...closed, graph: advanced.graph ?? closed.graph });
+    }
+    return c.json(await service.stop({ sessionId }));
   } catch (error) {
     return runtimeError(c, error);
   }
@@ -3214,25 +3469,22 @@ agentRuntimeRoutes.post("/sessions/:sessionId/history/edit", async (c) => {
     return runtimeError(c, error);
   }
 });
-for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
+for (const action of ["rollback", "fork", "fork-full"] as const) {
   agentRuntimeRoutes.post(
-    action === "side-chat" ? "/sessions/:sessionId/side-chat" : action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
+    action === "fork-full" ? "/sessions/:sessionId/fork" : `/sessions/:sessionId/history/${action}`,
     async (c) => {
       const body = await readJson(c);
       if (!body.ok) return c.json({ error: body.error }, 400);
       const parsed = (
-        action === "fork-full" || action === "side-chat" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
+        action === "fork-full" ? fullForkActionSchema : action === "fork" ? forkActionSchema : historyActionSchema
       ).safeParse(body.data);
       if (!parsed.success) return validationError(c, parsed.error);
       try {
         const sessionId = c.req.param("sessionId"),
           input = parsed.data;
-        const temporary = action === "side-chat";
-        if (temporary && input.workspaceMode !== "reuse_worktree")
-          throw new AgentValidationError("Side chats reuse the current workspace.");
         {
           if (action !== "rollback") {
-            const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId, ...(temporary ? ["side-chat"] : [])])).digest("hex");
+            const forkIdentity = createHash("sha256").update(JSON.stringify([sessionId, input.requestId])).digest("hex");
             const targetId = `ars_fork_${forkIdentity.slice(0, 32)}`;
             return (await singleForkRequest(targetId, JSON.stringify([sessionId, input.checkpointId, input.workspaceMode]), async () => {
             let existing: AgentSession | undefined;
@@ -3294,26 +3546,10 @@ for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
             sessionMetadata.forkRequestFingerprint = forkFingerprint;
             sessionMetadata.forkRequestId = input.requestId;
             sessionMetadata.forkHostId = process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
-            // Temporary chats start from a committed history snapshot without
-            // joining the subagent tree or inheriting an active goal/run.
-            if (temporary) {
-              for (const key of ["goal", "plan", "activeWorkId", "parentSessionId", "subagentName", "roleName", "roleDescription"])
-                delete sessionMetadata[key];
-              Object.assign(sessionMetadata, {
-                mode: "chat", source: "session-page", sideChat: true,
-                sideChatSourceSessionId: sessionId,
-                sideChatOpenedAt: existing?.sessionMetadata?.sideChatOpenedAt ?? new Date().toISOString(),
-                // Rust remaps context ids alongside copied history objects.
-                sideChatContextSnapshotId: source.contextSnapshotId,
-              });
-            } else {
-              for (const key of ["sideChat", "sideChatSourceSessionId", "sideChatOpenedAt", "sideChatContextSnapshotId"])
-                delete sessionMetadata[key];
-            }
-            let target = existing ? { ...existing, sessionMetadata } : agentSessionRuntime.create({
+            const target = existing ? { ...existing, sessionMetadata } : agentSessionRuntime.create({
               projectId: source.projectId,
               nodeId: source.nodeId,
-              profileId: temporary ? "synax" : source.profileId,
+              profileId: source.profileId,
               prompt: source.prompt,
               backendId: sourceBackend.id as CreateSessionRequest["backendId"],
               model: sourceBackend.model,
@@ -3322,24 +3558,13 @@ for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
               reasoningEffort: source.reasoningEffort ?? undefined,
               skillIds: source.skillIds,
               mcpServerIds: source.mcpServerIds,
-              ...(temporary ? {
-                permissionTier: source.sessionMetadata?.permissionTier as CreateSessionRequest["permissionTier"],
-                permissionOverrides: source.sessionMetadata?.permissionOverrides as CreateSessionRequest["permissionOverrides"],
-              } : {}),
               sessionMetadata,
             }, { id: targetId, forkPreparing: true });
-            if (temporary && !existing) {
-              // Carry all workspace bindings (including reference worktrees)
-              // without borrowing the source session's lifecycle.
-              target = agentRuntimeStore.updateSessionMetadata(target.id, {
-                backend: { ...(target.sessionMetadata?.backend as object), ...sourceBackend },
-              });
-            }
             // The fork inherits the source prompt, so its initial title would
             // duplicate the source. Number it before the copy is reported.
             // Read the authoritative projection: the local cache can still
             // show a sibling fork's pre-suffix title.
-            const siblingTitles = temporary ? [] : (
+            const siblingTitles = (
               (await runtimeFacade.listSessionProjection()) as AgentSession[]
             )
               .filter(
@@ -3350,7 +3575,7 @@ for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
                   !sibling.sessionMetadata?.archivedAt,
               )
               .map((sibling) => sibling.title);
-            const forkTitle = temporary ? "Side chat" : forkSessionTitle({
+            const forkTitle = forkSessionTitle({
               sourceTitle: source.title ?? target.title,
               existingTitles: siblingTitles,
             });
@@ -3360,7 +3585,7 @@ for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
               sourceSessionId: sessionId,
               targetSessionId: target.id,
               checkpointId: input.checkpointId,
-              fullHistory: action === "fork-full" || temporary,
+              fullHistory: action === "fork-full",
               revision: input.revision,
               requestId: input.requestId,
               sessionMetadata: target.sessionMetadata ?? {},
@@ -3375,10 +3600,6 @@ for (const action of ["rollback", "fork", "fork-full", "side-chat"] as const) {
                 activeRunId: null,
                 completedAt: null,
                 resultSummary: null,
-                ...(temporary ? {
-                  contextSnapshotId: typeof forked.sessionMetadata?.sideChatContextSnapshotId === "string"
-                    ? forked.sessionMetadata.sideChatContextSnapshotId : null,
-                } : {}),
                 updatedAt: new Date().toISOString(),
                 ...(forkTitle ? { title: forkTitle } : {}),
                 sessionMetadata: {

@@ -142,7 +142,6 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
           <div className="computer-use-panel__header">
             <div>
               <h3 id="computer-use-runtime-heading">{zh ? '操作偏好' : 'Action preferences'}</h3>
-              <p>{zh ? '控制默认的电脑操作方式和视觉能力。' : 'Choose how desktop actions and visual perception are handled by default.'}</p>
             </div>
             <ShieldCheck size={18} aria-hidden="true" />
           </div>
@@ -150,11 +149,10 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
             <label className="computer-use-row">
               <span className="computer-use-field-copy">
                 <span className="computer-use-field-title">{zh ? '策略' : 'Strategy'}</span>
-                <span className="computer-use-field-description">{zh ? '自动模式默认直接使用 Cua。' : 'Auto mode uses Direct Cua by default.'}</span>
               </span>
               <span className="computer-use-control">
                 <select className="computer-use-select" aria-label={zh ? '电脑操作策略' : 'Computer Use strategy'} value={current.strategy ?? 'auto'} disabled={saving || !enabled} onChange={e => void save({ ...current, strategy: e.target.value as Config['strategy'] })}>
-                  <option value="auto">{zh ? '自动' : 'Auto'}</option>
+                  <option value="auto">{zh ? '自动（Direct Cua）' : 'Auto (Direct Cua)'}</option>
                   <option value="direct">Direct Cua</option>
                   <option value="jev" disabled={jev.enabled !== true}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option>
                 </select>
@@ -194,7 +192,6 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
               <label className="computer-use-row">
                 <span className="computer-use-field-copy">
                   <span className="computer-use-field-title">{zh ? '失败时的处理' : 'Failure behavior'}</span>
-                  <span className="computer-use-field-description">{zh ? '安全默认会停止操作。' : 'The safe default stops desktop actions.'}</span>
                 </span>
                 <span className="computer-use-control">
                   <select className="computer-use-select" aria-label={zh ? 'Jev 失败策略' : 'Jev failure policy'} value={jev.fallback ?? 'fail_closed'} disabled={saving || !enabled} onChange={e => void save(withJev({ fallback: e.target.value as Jev['fallback'] }))}>
@@ -206,7 +203,7 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
               <label className="computer-use-row">
                 <span className="computer-use-field-copy">
                   <span className="computer-use-field-title">{zh ? '供应商' : 'Provider'}</span>
-                  <span className="computer-use-field-description">{zh ? '留空则直接调用 TypeSafe（使用 TYPESAFE_API_KEY）。选择 OpenRouter 连接后，其 Base URL 填 https://openrouter.ai/api/v1 即可，内部会归一化为 https://openrouter.ai/api。' : 'Leave empty to call TypeSafe directly (TYPESAFE_API_KEY). An OpenRouter connection base URL of https://openrouter.ai/api/v1 is normalized to https://openrouter.ai/api.'}</span>
+                  <span className="computer-use-field-description">{zh ? '留空使用 TypeSafe 的环境密钥；也可选择已配置的 OpenRouter 连接。' : 'Leave empty to use the TypeSafe environment key, or select an OpenRouter connection.'}</span>
                 </span>
                 <span className="computer-use-control">
                   <select className="computer-use-select" aria-label={zh ? 'Jev 供应商' : 'Jev provider'} value={jev.providerId ?? ''} disabled={saving || !enabled} onChange={e => void save(withJev({ providerId: e.target.value || null }))}>
@@ -219,7 +216,6 @@ export function ComputerUseGlobalSettings({ value, locale, providers, onConfigur
                 <div className="computer-use-row computer-use-row--key">
                   <div className="computer-use-field-copy">
                     <span className="computer-use-field-title">{zh ? '需要 OpenRouter？' : 'Need OpenRouter?'}</span>
-                    <span className="computer-use-field-description">{zh ? '先在供应商设置中添加 OpenRouter 连接，配置完成后它才会出现在上面的列表中。' : 'Add an OpenRouter connection in Provider settings first. It will appear in the list above after it is configured.'}</span>
                   </div>
                   <div className="computer-use-button-group">
                     <button type="button" className="computer-use-button computer-use-button--ghost" disabled={saving || !enabled} onClick={onConfigureProvider}>

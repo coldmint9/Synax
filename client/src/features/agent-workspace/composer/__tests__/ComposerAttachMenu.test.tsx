@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ComposerAttachMenu } from '../ComposerAttachMenu';
 import { useShellStore } from '../../../../shared/state/shellStore';
 import { skillsApi, type SkillSummary } from '../../../../adapters/transport/skills';
+import { QUICK_ACTIONS } from '../../../quick-actions/quickActions';
 
 vi.mock('../../../../shared/hooks/useLocale', () => ({ useLocale: () => ({ locale: 'en', t: (key: string) => key }) }));
 const skill: SkillSummary = {
@@ -51,5 +52,36 @@ describe('disabling attachment actions', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(await screen.findByRole('checkbox', { name: 'Review code' })).not.toHaveAttribute('aria-disabled');
     expect(props.onOverlayOpenChange).toHaveBeenLastCalledWith(true);
+  });
+});
+
+describe('quick actions in the plus menu', () => {
+  it('lists procedures and passes the skills that are actually available', async () => {
+    const user = userEvent.setup();
+    const skills: SkillSummary[] = [
+      { ...skill, id: 'synax-builtin/systematic-debugging', name: 'systematic-debugging', label: 'Systematic debugging', installPath: '/fixture/debug' },
+      { ...skill, id: 'synax-builtin/synax-explore', name: 'synax-explore', label: 'Read-only exploration', installPath: '/fixture/explore' },
+    ];
+    vi.spyOn(skillsApi, 'list').mockResolvedValue({ items: skills, total: 2, hasMore: false });
+    const onQuickActionSelect = vi.fn();
+    const props = attachmentProps();
+    render(
+      <ComposerAttachMenu
+        {...props}
+        quickActions={QUICK_ACTIONS.filter((action) => action.kind === 'launch')}
+        onQuickActionSelect={onQuickActionSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'agentAttach' }));
+    await screen.findByRole('checkbox', { name: 'Systematic debugging' });
+    const action = screen.getByRole('button', { name: /Investigate a bug/ });
+    expect(action).toHaveTextContent('Needs input');
+    await user.click(action);
+
+    expect(onQuickActionSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'diagnose' }),
+      ['synax-builtin/systematic-debugging', 'synax-builtin/synax-explore'],
+    );
   });
 });

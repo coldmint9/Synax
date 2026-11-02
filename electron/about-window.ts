@@ -3,7 +3,6 @@ import fs from "node:fs";
 import { getResourcePath } from "./lib/data-paths.js";
 
 const REPO_URL = "https://github.com/coldmint9/Synax";
-const AUTHOR_URL = "https://github.com/coldmint9";
 
 let aboutWindow: BrowserWindow | null = null;
 
@@ -43,7 +42,7 @@ export function buildAboutHtml(): string {
   const icon = loadIconDataUrl();
   const iconMarkup = icon
     ? `<img class="icon" src="${icon}" alt="" />`
-    : `<div class="icon icon-fallback">S</div>`;
+    : `<div class="icon icon-fallback">Y</div>`;
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -117,10 +116,10 @@ export function buildAboutHtml(): string {
     <div class="tagline">Local-first AI coding workspace</div>
     <section class="versions" aria-label="版本信息">${versionRows}</section>
     <section class="links">
-      <div><span class="label">作者</span>coldmint9</div>
-      <div><span class="label">GitHub</span><a href="${REPO_URL}">${REPO_URL}</a></div>
+      <div><span class="label">维护团队</span>Synax Team</div>
+      <div><span class="label">产品</span><a href="${REPO_URL}" target="_blank">Synax</a></div>
     </section>
-    <footer class="footer">Apache License 2.0<br />Copyright &copy; 2026 Synax contributors</footer>
+    <footer class="footer">Apache License 2.0<br />Licensed from coldmint9's Synax open-source project<br />Copyright &copy; 2026 Synax contributors &amp; Synax Team</footer>
   </main>
 </body>
 </html>`;
@@ -156,7 +155,7 @@ export function showAboutWindow(): void {
     aboutWindow = null;
   });
   aboutWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https://github.com/")) void shell.openExternal(url);
+    if (url === REPO_URL) void shell.openExternal(url);
     return { action: "deny" };
   });
   aboutWindow.webContents.on("will-navigate", (event) =>

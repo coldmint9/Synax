@@ -28,7 +28,9 @@ export function finalizeStoppedSessions(
           store.updateRun(run.id, {
             status: "interrupted",
             completedAt,
-            stopReason: reason,
+            // A run that already recorded why it stopped keeps its own cause;
+            // the worker exit is only the explanation when nothing else knows.
+            stopReason: run.stopReason ?? reason,
           });
         }
         if (TERMINAL_STATUSES.has(session.status)) continue;
@@ -36,7 +38,7 @@ export function finalizeStoppedSessions(
           status: "interrupted",
           completedAt,
           updatedAt: completedAt,
-          blockedReason: reason,
+          blockedReason: session.blockedReason ?? reason,
           activeRunId: null,
           pendingResumeToken: null,
         });

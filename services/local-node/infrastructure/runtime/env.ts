@@ -30,7 +30,7 @@ function defaultDataRoot(): string {
   return path.join(os.homedir(), ".synax", "v2");
 }
 
-/** 2.0 数据根目录：~/.synax/v2，全新安装，不读取 1.x 数据 */
+/** Synax 数据根目录：~/.synax/v2，与 Synax 数据独立，不自动迁移旧数据 */
 export const DATA_ROOT = env("DATA_ROOT", defaultDataRoot());
 
 /** 是否为开发环境 */

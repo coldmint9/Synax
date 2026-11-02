@@ -1,54 +1,63 @@
 import { createHash } from "node:crypto";
-import { expect, it } from "vitest";
-import { frameworkChannel, frameworkUpdateInfo, missingFrameworkChannel } from "./framework-feed.js";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { frameworkChannel, frameworkUpdateInfo } from "./framework-feed.js";
+import { frameworkFeedUrl } from "./update-source.js";
+import {
+  DEFAULT_UPDATE_SETTINGS,
+  configureUpdateSettings,
+} from "./update-settings.js";
 import type { UpdateInfo } from "electron-updater";
 
+beforeEach(() => {
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS, enabled: true });
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", "https://updates.example/synax/");
+});
+afterEach(() => {
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS });
+  vi.unstubAllEnvs();
+});
 function info(platform = "darwin", arch = "arm64"): UpdateInfo {
-  const name = platform === "darwin" ? `Synax-0.2.0-darwin-${arch}.zip` : `Synax-0.2.0-win32-${arch}-NSIS.exe`;
-  const url = `https://github.com/coldmint9/Synax/releases/download/v0.2.0/${name}`;
+  const name = platform === "darwin" ? `Synax-0.2.0-darwin-${arch}.dmg` : `Synax-0.2.0-win32-${arch}-NSIS.exe`;
+  const url = `https://updates.example/synax/${name}`;
   const sha512 = createHash("sha512").update("installer").digest("base64");
-  return { version: "0.2.0", files: [{ url, sha512, size: 9 }], path: url, sha512, releaseDate: new Date(0).toISOString() };
+  return Object.assign({ version: "0.2.0", files: [{ url, sha512, size: 9 }], path: url, sha512, releaseDate: new Date(0).toISOString() },
+    { productName: "Synax", bundleId: "com.Synax.desktop" });
 }
-
-it.each(["darwin", "win32"])("pins %s artifact URL and uses the selected proxy for downloads", (platform) => {
+it.each(["darwin", "win32"])("pins %s enterprise artifacts without a public GitHub proxy", (platform) => {
   const value = info(platform);
-  const result = frameworkUpdateInfo(value, platform, "arm64", "https://proxy.example/");
-  expect(result.files[0].url).toBe("https://proxy.example/" + value.files[0].url);
-  expect(value.files[0].url).toMatch(/^https:\/\/github.com/);
+  expect(frameworkUpdateInfo(value, platform, "arm64", "https://gh-proxy.org/").files[0].url).toBe(value.files[0].url);
   expect(frameworkChannel(platform, "arm64")).toBe(`stable-${platform}-arm64`);
 });
-
-it.each(["version", "platform", "arch", "host", "hash", "size", "traversal", "multiple", "blockmap", "package"])("rejects mismatched %s metadata", (kind) => {
+it('rejects a ZIP-only macOS feed', () => {
+  const value = info();
+  value.files[0].url = value.files[0].url.replace('.dmg', '.zip');
+  expect(() => frameworkUpdateInfo(value, 'darwin', 'arm64', null)).toThrow('不匹配');
+});
+it.each(["version", "platform", "arch", "host", "hash", "size", "traversal", "multiple", "blockmap", "package", "product", "bundle", "upstream", "missing-identity"])("rejects mismatched %s metadata", (kind) => {
   const value = info();
   if (kind === "version") value.version = "0.3.0-beta.1";
   if (kind === "platform") value.files[0].url = value.files[0].url.replace("darwin", "win32");
   if (kind === "arch") value.files[0].url = value.files[0].url.replace("arm64", "x64");
-  if (kind === "host") value.files[0].url = value.files[0].url.replace("github.com", "example.com");
+  if (kind === "host") value.files[0].url = value.files[0].url.replace("updates.example", "evil.example");
   if (kind === "hash") value.files[0].sha512 = "broken";
   if (kind === "size") value.files[0].size = -1;
   if (kind === "traversal") value.files[0].url = "../installer.zip";
   if (kind === "multiple") value.files.push(value.files[0]);
   if (kind === "blockmap") value.files[0].blockMapSize = 100;
   if (kind === "package") Object.assign(value, { packages: {} });
+  if (kind === "product") Object.assign(value, { productName: "Synax" });
+  if (kind === "bundle") Object.assign(value, { bundleId: "com.Synax.desktop" });
+  if (kind === "upstream") value.files[0].url = "https://github.com/coldmint9/Synax/releases/download/v0.2.0/Synax.zip";
+  if (kind === "missing-identity") Reflect.deleteProperty(value, "bundleId");
   expect(() => frameworkUpdateInfo(value, "darwin", "arm64", null)).toThrow();
 });
-it("does not activate unsupported platform or architecture", () => {
+it.each([undefined, "", "http://updates.example/", "https://user:pass@updates.example/", "https://updates.example/?token=secret", "https://github.com/coldmint9/Synax/releases/latest/download/"])("fails closed for unconfigured or unsafe source %s", (source) => {
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", source);
+  expect(() => frameworkFeedUrl(process.env)).toThrow();
+  expect(() => frameworkUpdateInfo(info(), "darwin", "arm64", null)).toThrow();
+});
+it("rejects unsupported platform or architecture", () => {
   expect(() => frameworkChannel("linux", "x64")).toThrow();
   expect(() => frameworkChannel("win32", "ia32")).toThrow();
 });
 
-it.each(["v1.6.6", "v1.12.1"])("treats missing legacy feed at %s as no upgrade after verifying stable metadata", (tag_name) => {
-  expect(missingFrameworkChannel({ tag_name, draft: false, prerelease: false }, "1.12.1"))
-    .toMatchObject({ version: "1.12.1", files: [] });
-});
-it("does not hide a missing feed for a newer stable release", () => {
-  expect(() => missingFrameworkChannel({ tag_name: "v1.13.0", draft: false, prerelease: false }, "1.12.1"))
-    .toThrow("更新清单尚未就绪");
-});
-it.each([
-  null, {}, { tag_name: "preview", draft: false, prerelease: true },
-  { tag_name: "v1.6.6", draft: true, prerelease: false },
-  { tag_name: "v1.6.6", draft: false, prerelease: true },
-])("does not report current from unverified release metadata %j", (release) => {
-  expect(() => missingFrameworkChannel(release, "1.12.1")).toThrow("无法确认");
-});

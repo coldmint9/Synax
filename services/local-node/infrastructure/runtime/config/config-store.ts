@@ -10,6 +10,7 @@ import {
   createDefaultUserGlobalConfig,
 } from "./config-defaults.js";
 import { normalizeLegacyProviders } from "./normalize-legacy-providers.js";
+import { normalizeGitLabHost } from "../../../modules/remote-pr/gitlab-host.js";
 import {
   mergeWebSearchConfig,
   normalizeWebSearchConfig,
@@ -585,6 +586,9 @@ function mergeGlobalConfigLayers(
       global.webSearch ?? template.webSearch,
       includeSecrets,
     ),
+    // The super coding pool is user configuration with no secrets, so the
+    // global layer wins and the template only fills a missing value.
+    superCoding: global.superCoding ?? template.superCoding,
     sessionArchiveRetentionDays: global.sessionArchiveRetentionDays,
     limits: global.limits ?? template.limits,
     features: global.features ?? template.features,
@@ -658,6 +662,7 @@ function applyGlobalConfigPatch(
     Boolean(patch.limits) ||
     Boolean(patch.features) ||
     Boolean(patch.webSearch) ||
+    patch.superCoding !== undefined ||
     Boolean(patch.mcpServers) ||
     Boolean(patch.macWindowAppearance) ||
     Boolean(patch.computerUse) ||
@@ -730,6 +735,7 @@ function applyGlobalConfigPatch(
     webSearch: patch.webSearch
       ? mergeWebSearchConfig(current.webSearch, patch.webSearch)
       : current.webSearch,
+    superCoding: patch.superCoding ?? current.superCoding,
     sessionArchiveRetentionDays:
       patch.sessionArchiveRetentionDays !== undefined
         ? patch.sessionArchiveRetentionDays
@@ -942,12 +948,6 @@ function normalizeGitLabConfig(
     });
   }
   return { accounts: Array.from(accounts.values()).sort((a, b) => a.host.localeCompare(b.host)) };
-}
-
-function normalizeGitLabHost(value: string | undefined): string {
-  const host = value?.trim().toLowerCase() ?? "";
-  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/.test(host)) return "";
-  try { return new URL(`https://${host}`).host; } catch { return ""; }
 }
 
 function mergeGitLabConfigPatch(

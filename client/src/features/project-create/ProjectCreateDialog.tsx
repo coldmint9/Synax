@@ -1,3 +1,4 @@
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, FolderOpen, Plus, X } from "lucide-react";
@@ -394,7 +395,7 @@ function ProjectCreateForm({
                     {members.length ? c.addProject : c.chooseFolder}
                   </Button>
                   {members.length > 0 && (
-                    <p className="project-create-hint">{c.primaryHint}</p>
+                    <InfoTooltip label={c.primary}>{c.primaryHint}</InfoTooltip>
                   )}
                 </section>
                 {notice && <p className="project-create-hint" role="status">{notice}</p>}

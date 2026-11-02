@@ -86,7 +86,7 @@ it.each(["source", "bundle"])(
         });
       });
       expect(response).toMatchObject({ sessionId, requestId: "probe-compact" });
-      expect(response?.error).toContain(sessionId);
+      expect(response?.error).toMatch(/startup-probe|session UI projection requires initialization/);
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await closed;

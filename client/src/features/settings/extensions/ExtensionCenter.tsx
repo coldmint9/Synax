@@ -1,32 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertDialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/shared/ui/ui/Dialog";
-import { Spinner } from "@/shared/ui/ui/Display";
-import { InputGroup, Field, InputPrefix, Input, InputSuffix } from "@/shared/ui/ui/Field";
-import { Button } from "@/shared/ui/ui/Button";
 import {
-  Compass,
-  Plus,
-  RefreshCw,
-  Search,
-  SlidersHorizontal,
-  X,
-} from 'lucide-react'
+  AlertDialog,
+  DialogContainer,
+  DialogPanel,
+  DialogHeader,
+  DialogTitle,
+  DialogBody,
+  DialogFooter,
+} from '@/shared/ui/ui/Dialog'
+import { Spinner } from '@/shared/ui/ui/Display'
+import {
+  InputGroup,
+  Field,
+  InputPrefix,
+  Input,
+  InputSuffix,
+} from '@/shared/ui/ui/Field'
+import { Button } from '@/shared/ui/ui/Button'
+import { Compass, FolderSearch, Plus, RefreshCw, Search, X } from 'lucide-react'
 import {
   extensionsApi,
   type ExtensionItem,
   type ExtensionKind,
   type ExtensionList,
-  type ExtensionSource,
 } from '../../../adapters/transport/extensions'
-import { AppSelect } from '../../../shared/ui/AppSelect'
 import { ExtensionRow } from './ExtensionRow'
 import { ExtensionDetails, type ExtensionDetail } from './ExtensionDetails'
 import { CustomExtensionEditor } from './CustomExtensionEditor'
-import { ExtensionSources } from './ExtensionSources'
+import { ExtensionScanSettings } from './ExtensionScanSettings'
+import {
+  Tab,
+  TabGroup,
+  TabList,
+  TabPanel,
+  TabPanels,
+} from '../../../shared/ui/ui/Tabs'
 import { useExtensionCopy } from './extension-copy'
 import './extensions.css'
 
 const PAGE_SIZE = 30
+const EMPTY_RESULT: ExtensionList = {
+  items: [],
+  total: 0,
+  hasMore: false,
+  warnings: [],
+}
+
+type CatalogView = 'installed' | 'local' | 'builtin'
+
 export function ExtensionCenter({
   projectId,
   section,
@@ -36,24 +57,83 @@ export function ExtensionCenter({
   section: ExtensionKind | 'market'
   onNavigate: (section: ExtensionKind | 'market') => void
 }) {
+  return section === 'market' ? (
+    <ExtensionMarketplace projectId={projectId} onNavigate={onNavigate} />
+  ) : (
+    <ExtensionCatalog
+      key={`${projectId}:${section}`}
+      projectId={projectId}
+      section={section}
+      onNavigate={onNavigate}
+    />
+  )
+}
+
+function ExtensionMarketplace({
+  projectId,
+  onNavigate,
+}: {
+  projectId: string
+  onNavigate: (section: ExtensionKind) => void
+}) {
   const copy = useExtensionCopy()
-  const market = section === 'market'
+  const [adding, setAdding] = useState(false)
+  return (
+    <section className="extension-page" aria-label={copy.market}>
+      <header className="extension-page-heading">
+        <div>
+          <h1>{copy.market}</h1>
+          <p>{copy.marketHint}</p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
+          <Plus size={15} />
+          {copy.addExtension}
+        </Button>
+      </header>
+      <div className="extension-market-empty">
+        <Compass size={30} strokeWidth={1.3} aria-hidden="true" />
+        <h2>{copy.enterpriseMarket}</h2>
+        <p>{copy.enterpriseMarketHint}</p>
+      </div>
+      {adding && (
+        <CustomExtensionEditor
+          projectId={projectId}
+          initialKind="tool"
+          onClose={() => setAdding(false)}
+          onSaved={(kind) => {
+            setAdding(false)
+            onNavigate(kind)
+          }}
+        />
+      )}
+    </section>
+  )
+}
+
+function ExtensionCatalog({
+  projectId,
+  section,
+  onNavigate,
+}: {
+  projectId: string
+  section: ExtensionKind
+  onNavigate: (section: ExtensionKind) => void
+}) {
+  const copy = useExtensionCopy()
+  const [view, setView] = useState<CatalogView>('installed')
+  const views: CatalogView[] =
+    section === 'mcp'
+      ? ['installed', 'local']
+      : ['installed', 'local', 'builtin']
   const [query, setQuery] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [source, setSource] = useState('')
-  const [type, setType] = useState('')
   const [offset, setOffset] = useState(0)
   const [revision, setRevision] = useState(0)
-  const [sources, setSources] = useState<ExtensionSource[]>([])
-  const [result, setResult] = useState<ExtensionList>({
-    items: [],
-    total: 0,
-    hasMore: false,
-    warnings: [],
-  })
+  const [result, setResult] = useState<ExtensionList>(EMPTY_RESULT)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState<ExtensionItem | null>(null)
   const [remove, setRemove] = useState<ExtensionItem | null>(null)
   const [editor, setEditor] = useState<{ detail?: ExtensionDetail } | null>(
@@ -71,32 +151,18 @@ export function ExtensionCenter({
     }
   }, [])
   useEffect(() => {
+    if (query.trim() === debounced) return
     const timer = window.setTimeout(() => {
       setDebounced(query.trim())
       setOffset(0)
       setRevision((value) => value + 1)
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [query])
-  useEffect(() => {
-    let active = true
-    extensionsApi
-      .sources(projectId)
-      .then((value) => {
-        if (active) setSources(value.items)
-      })
-      .catch((error) => {
-        if (active) setError(error.message)
-      })
-    return () => {
-      active = false
-    }
-  }, [projectId, showSources])
+  }, [query, debounced])
   const scope = JSON.stringify([
     projectId,
     section,
-    source,
-    type,
+    view,
     query,
     debounced,
     offset,
@@ -115,11 +181,9 @@ export function ExtensionCenter({
     setLoading(true)
     try {
       const next = await extensionsApi.list(projectId, {
-        view: market ? 'market' : 'installed',
-        kind: market
-          ? ((type || undefined) as ExtensionKind | undefined)
-          : section,
-        source: market ? source || undefined : undefined,
+        view: view === 'installed' ? 'installed' : 'market',
+        kind: section,
+        source: view === 'installed' ? undefined : view,
         q: debounced || undefined,
         offset,
         limit: PAGE_SIZE,
@@ -130,6 +194,12 @@ export function ExtensionCenter({
         !mounted.current
       )
         return
+      if (offset > 0 && next.total <= offset) {
+        setOffset(
+          Math.max(0, Math.ceil(next.total / PAGE_SIZE) - 1) * PAGE_SIZE,
+        )
+        return
+      }
       setResult(next)
       setError('')
     } catch (error) {
@@ -148,17 +218,7 @@ export function ExtensionCenter({
       )
         setLoading(false)
     }
-  }, [
-    projectId,
-    section,
-    market,
-    type,
-    source,
-    query,
-    debounced,
-    offset,
-    scope,
-  ])
+  }, [projectId, section, view, query, debounced, offset, scope])
   const refresh = useRef(reload)
   refresh.current = reload
   useEffect(() => {
@@ -172,6 +232,7 @@ export function ExtensionCenter({
     lock.current = true
     setBusy(true)
     setError('')
+    setNotice('')
     try {
       await operation()
       if (mounted.current) {
@@ -195,56 +256,87 @@ export function ExtensionCenter({
       }
     })
   }
-  const sourceName = (item: ExtensionSource) =>
-    item.kind === 'builtin'
-      ? copy.builtin
-      : item.kind === 'local'
-        ? copy.local
-        : item.kind === 'custom'
-          ? copy.custom
-          : item.name
-  const isSearching = Boolean(query.trim() || source || type)
-  return (
-    <section className="extension-page" aria-label={copy[section]}>
-      <header className="extension-page-heading">
-        <div>
-          <h1>{copy[section]}</h1>
-          <p>{copy[`${section}Hint`]}</p>
-        </div>
-        <div className="extension-heading-actions">
-          {market && (
-            <Button
-              size="sm"
-              variant="ghost"
-              iconOnly
-              aria-label={copy.sources}
-              onClick={() => setShowSources(true)}
-            >
-              <SlidersHorizontal size={16} />
-            </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={() => setEditor({})}>
-            <Plus size={15} />
-            {copy.custom}
+  const isSearching = Boolean(query.trim())
+  function changeView(next: CatalogView) {
+    generation.current++
+    setView(next)
+    setOffset(0)
+    setQuery('')
+    setDebounced('')
+    setResult(EMPTY_RESULT)
+    setLoading(true)
+    setError('')
+    setNotice('')
+  }
+  function showInstalled() {
+    changeView('installed')
+    setRevision((value) => value + 1)
+  }
+  const renderRows = () => (
+    <ul>
+      {result.items.map((item) => (
+        <ExtensionRow
+          key={`${item.kind}:${item.id}`}
+          item={item}
+          showSource={view === 'local'}
+          busy={busy || loading}
+          onOpen={() => setSelected(item)}
+          onInstall={() =>
+            void act(
+              () => extensionsApi.install(projectId, item),
+              () => setNotice(copy.installedNotice),
+            )
+          }
+          onToggle={(enabled) =>
+            void act(() =>
+              extensionsApi.changeState(
+                projectId,
+                item,
+                enabled ? 'enable' : 'disable',
+              ),
+            )
+          }
+          onEdit={() => void edit(item)}
+          onUninstall={() => {
+            setError('')
+            setRemove(item)
+          }}
+        />
+      ))}
+    </ul>
+  )
+  const content = (
+    <>
+      {view === 'local' && (
+        <div className="extension-discovery-heading">
+          <p>{copy[`${section}LocalHint`]}</p>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowSources(true)}
+          >
+            <FolderSearch size={15} />
+            {copy.localSettings}
           </Button>
         </div>
-      </header>
-      <div className={`extension-toolbar${market ? ' is-market' : ''}`}>
-        <Field
-          className="extension-search"
-
-
-
-        >
+      )}
+      <div className="extension-toolbar">
+        <Field className="extension-search">
           <InputGroup>
             <InputPrefix>
               <Search size={15} />
             </InputPrefix>
-            <Input type="search" placeholder={copy.search} aria-label={copy.search} value={query} onChange={(event) => { const value = event.currentTarget.value;
-            generation.current++
-            setQuery(value)
-            setLoading(true)
-           }} />
+            <Input
+              type="search"
+              placeholder={copy.search}
+              aria-label={copy.search}
+              value={query}
+              onChange={(event) => {
+                generation.current++
+                setQuery(event.currentTarget.value)
+                setLoading(true)
+              }}
+            />
             {query && (
               <InputSuffix>
                 <Button
@@ -255,6 +347,7 @@ export function ExtensionCenter({
                   onClick={() => {
                     generation.current++
                     setQuery('')
+                    setLoading(true)
                   }}
                 >
                   <X size={13} />
@@ -263,47 +356,11 @@ export function ExtensionCenter({
             )}
           </InputGroup>
         </Field>
-        {market && (
-          <>
-            <AppSelect
-              className="extension-filter"
-              aria-label={copy.type}
-              value={type}
-              onChange={(value) => {
-                setType(value ?? '')
-                setOffset(0)
-              }}
-              options={[
-                { key: '', label: copy.allKinds },
-                ...(['tool', 'skill', 'mcp'] as const).map((key) => ({
-                  key,
-                  label: copy[key],
-                })),
-              ]}
-            />
-            <AppSelect
-              className="extension-filter"
-              aria-label={copy.source}
-              value={source}
-              onChange={(value) => {
-                setSource(value ?? '')
-                setOffset(0)
-              }}
-              options={[
-                { key: '', label: copy.allSources },
-                ...sources.map((item) => ({
-                  key: item.id,
-                  label: sourceName(item),
-                })),
-              ]}
-            />
-          </>
-        )}
         <Button
           size="sm"
           variant="ghost"
           iconOnly
-          aria-label={copy.refresh}
+          aria-label={view === 'local' ? copy.rescan : copy.refresh}
           disabled={loading || busy}
           onClick={() => void reload()}
         >
@@ -311,32 +368,29 @@ export function ExtensionCenter({
         </Button>
       </div>
       {error && !remove && (
-        <p role="alert" className="extension-error">
+        <p role="alert" data-error-toast="off" className="extension-error">
           {error}
         </p>
       )}
-      {result.warnings.some((message) =>
-        message.includes('at least 2 characters'),
-      ) && (
-        <p role="status" className="extension-form-note mb-3">
-          {copy.searchLimit}
-        </p>
+      {notice && (
+        <div role="status" className="extension-success">
+          <span>{notice}</span>
+          <Button size="sm" variant="ghost" onClick={showInstalled}>
+            {copy.viewInstalled}
+          </Button>
+        </div>
       )}
-      {result.warnings.some(
-        (message) => !message.includes('at least 2 characters'),
-      ) && (
+      {result.warnings.length > 0 && (
         <details className="extension-notice">
           <summary>{copy.sourceError}</summary>
-          {result.warnings
-            .filter((message) => !message.includes('at least 2 characters'))
-            .map((message, index) => (
-              <p key={index}>{message}</p>
-            ))}
+          {result.warnings.map((message, index) => (
+            <p key={index}>{message}</p>
+          ))}
         </details>
       )}
       <div className="extension-list-meta">
         <span>
-          {market ? copy.market : copy.installed}
+          {copy[view]}
           {!loading &&
             ` · ${result.totalExact === false ? '≥ ' : ''}${result.total}`}
         </span>
@@ -344,50 +398,36 @@ export function ExtensionCenter({
       </div>
       <div aria-busy={loading}>
         {result.items.length > 0 ? (
-          <ul>
-            {result.items.map((item) => (
-              <ExtensionRow
-                key={`${item.kind}:${item.id}`}
-                item={item}
-                market={market}
-                busy={busy || loading}
-                onOpen={() => setSelected(item)}
-                onInstall={() =>
-                  void act(() => extensionsApi.install(projectId, item))
-                }
-                onToggle={(enabled) =>
-                  void act(() =>
-                    extensionsApi.changeState(
-                      projectId,
-                      item,
-                      enabled ? 'enable' : 'disable',
-                    ),
-                  )
-                }
-                onEdit={() => void edit(item)}
-                onUninstall={() => {
-                  setError('')
-                  setRemove(item)
-                }}
-              />
-            ))}
-          </ul>
+          renderRows()
         ) : !loading && !error ? (
           <div className="extension-empty">
-            <Compass
+            <FolderSearch
               size={26}
               strokeWidth={1.3}
               className="text-muted-foreground"
             />
-            <h2>{isSearching ? copy.noResults : copy.empty}</h2>
-            <p>{isSearching ? copy.noResultsHint : copy.emptyHint}</p>
-            {!market && (
+            <h2>
+              {isSearching
+                ? copy.noResults
+                : view === 'local'
+                  ? copy.localEmpty
+                  : copy.empty}
+            </h2>
+            <p>
+              {isSearching
+                ? copy.noResultsHint
+                : view === 'local'
+                  ? copy.localEmptyHint
+                  : copy.emptyHint}
+            </p>
+            {!isSearching && view === 'installed' && (
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => onNavigate('market')}
+                onClick={() => changeView('local')}
               >
-                {copy.browse}
+                <FolderSearch size={15} />
+                {copy.local}
               </Button>
             )}
           </div>
@@ -414,6 +454,39 @@ export function ExtensionCenter({
           </Button>
         </footer>
       )}
+    </>
+  )
+  return (
+    <section className="extension-page" aria-label={copy[section]}>
+      <header className="extension-page-heading">
+        <div>
+          <h1>{copy[section]}</h1>
+          <p>{copy[`${section}Hint`]}</p>
+        </div>
+        <div className="extension-heading-actions">
+          <Button size="sm" variant="secondary" onClick={() => setEditor({})}>
+            <Plus size={15} />
+            {copy.custom}
+          </Button>
+        </div>
+      </header>
+      <TabGroup
+        selectedIndex={views.indexOf(view)}
+        onChange={(index) => changeView(views[index])}
+      >
+        <TabList className="extension-views" aria-label={copy[section]}>
+          {views.map((value) => (
+            <Tab key={value} disabled={busy}>
+              {copy[value]}
+            </Tab>
+          ))}
+        </TabList>
+        <TabPanels>
+          {views.map((value) => (
+            <TabPanel key={value}>{view === value ? content : null}</TabPanel>
+          ))}
+        </TabPanels>
+      </TabGroup>
       <ExtensionDetails
         projectId={projectId}
         item={selected}
@@ -426,7 +499,10 @@ export function ExtensionCenter({
         onInstall={(item) =>
           void act(
             () => extensionsApi.install(projectId, item),
-            () => setSelected(null),
+            () => {
+              setSelected(null)
+              setNotice(copy.installedNotice)
+            },
           )
         }
         onUninstall={(item) => {
@@ -438,28 +514,34 @@ export function ExtensionCenter({
       {editor && (
         <CustomExtensionEditor
           projectId={projectId}
-          initialKind={market ? 'tool' : section}
+          initialKind={section}
           detail={editor.detail}
           onClose={() => setEditor(null)}
           onSaved={(kind) => {
             setEditor(null)
             if (section !== kind) onNavigate(kind)
-            else void refresh.current()
+            else showInstalled()
           }}
         />
       )}
       {showSources && (
-        <ExtensionSources
+        <ExtensionScanSettings
           projectId={projectId}
+          kind={section}
           onClose={() => setShowSources(false)}
-          onChanged={() => void refresh.current()}
+          onSaved={() => {
+            setShowSources(false)
+            setOffset(0)
+            setRevision((value) => value + 1)
+          }}
         />
       )}
       <AlertDialog
         open={Boolean(remove)}
         dismissible={!busy}
-
-        onClose={() => { if (!busy) setRemove(null); }}
+        onClose={() => {
+          if (!busy) setRemove(null)
+        }}
       >
         <DialogContainer>
           <DialogPanel className="sm:max-w-[420px]">
@@ -472,7 +554,11 @@ export function ExtensionCenter({
                 {copy.removeHint}
               </p>
               {error && (
-                <p role="alert" className="extension-error">
+                <p
+                  role="alert"
+                  data-error-toast="off"
+                  className="extension-error"
+                >
                   {error}
                 </p>
               )}

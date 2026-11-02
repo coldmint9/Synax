@@ -764,7 +764,7 @@ describe("WorkspaceDashboard", () => {
   });
 
   it("keeps long branch names ellipsized without losing their full value", async () => {
-    const longBranch = "2e-admin/hungrypanda_support_ronghan_settlement";
+    const longBranch = "2e-admin/support_settlement_backfill";
     const longName = "hp-finance-server-with-an-extremely-long-project-name";
     renderDashboard({
       repositories: [

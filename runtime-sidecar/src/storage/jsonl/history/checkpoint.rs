@@ -138,7 +138,9 @@ fn save_session_with(
 
 // Drop owns the session exclusively; there are no concurrent readers/writers.
 pub(super) fn save(state: &mut SessionState, force: bool) -> JsonlResult<()> {
-    if state.failed { return Ok(()); }
+    if state.failed {
+        return Ok(());
+    }
     if let Some((pending, offset)) = prepare(state, force)? {
         pending.stage()?.publish()?;
         state.checkpoint_offset = offset;
@@ -147,7 +149,9 @@ pub(super) fn save(state: &mut SessionState, force: bool) -> JsonlResult<()> {
 }
 
 fn prepare(state: &SessionState, force: bool) -> JsonlResult<Option<(checkpoint::Pending, u64)>> {
-    if state.failed { return Ok(None); }
+    if state.failed {
+        return Ok(None);
+    }
     let offset = state.file.len();
     // Full index snapshots grow with history. Geometric spacing bounds total
     // snapshot serialization/write volume over the lifetime of a hot session.

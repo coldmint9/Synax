@@ -7,7 +7,10 @@ import type {
   RemoteRepository,
   RemotePullRequest,
   RemotePrCheck,
+  RemotePrCommit,
   RemotePrCreate,
+  RemotePrPipeline,
+  RemotePrStats,
 } from "./contracts.js";
 
 type Json = Record<string, any>;
@@ -115,14 +118,35 @@ const status = (value: string): RemotePrCheck["status"] =>
             "waiting_for_resource",
             "preparing",
             "manual",
+            "scheduled",
           ].includes(value)
         ? "pending"
         : "unknown";
+const rank: Record<RemotePrCheck["status"], number> = {
+  failed: 3,
+  pending: 2,
+  unknown: 1,
+  passed: 0,
+};
+/** A stage reports the worst status of its jobs, so one red job is never hidden. */
+const aggregate = (jobs: RemotePrCheck[]): RemotePrCheck["status"] =>
+  jobs.reduce<RemotePrCheck["status"]>(
+    (worst, job) => (rank[job.status] > rank[worst] ? job.status : worst),
+    "passed",
+  );
+const MAX_STAGES = 12;
+const MAX_JOBS = 40;
+const MAX_COMMITS = 20;
+/** Diffs are read only for small requests so a huge MR cannot stall the card. */
+const MAX_COMPARE_FILES = 60;
+const boundedSha = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
+
 export class RemotePrProvider {
-  constructor(readonly api: PrApi = (repo, method, endpoint, body) =>
-    repo.provider === 'gitlab'
-      ? gitLabRequest(repo.host, method, endpoint, body)
-      : cliPrApi(repo, method, endpoint, body),
+  constructor(
+    readonly api: PrApi = (repo, method, endpoint, body) =>
+      repo.provider === "gitlab"
+        ? gitLabRequest(repo.host, method, endpoint, body)
+        : cliPrApi(repo, method, endpoint, body),
   ) {}
   private prefix(repo: RemoteRepository) {
     return repo.provider === "github"
@@ -137,6 +161,13 @@ export class RemotePrProvider {
     const number = Number(github ? row.number : row.iid);
     if (!Number.isSafeInteger(number) || number < 1)
       throw new GitMrError("远程请求编号无效。", "PR_INVALID_RESPONSE", 502);
+    const headPipeline = !github && row.head_pipeline
+      ? {
+          id: Number(row.head_pipeline.id),
+          status: status(String(row.head_pipeline.status ?? "")),
+          url: safeRemoteUrl(row.head_pipeline.web_url, repo),
+        }
+      : null;
     return {
       number,
       title: String(row.title ?? ""),
@@ -174,12 +205,249 @@ export class RemotePrProvider {
             : (row.detailed_merge_status ?? row.merge_status)) ?? "unknown",
       ),
       author: String((github ? row.user?.login : row.author?.username) ?? ""),
-      checks: [],
+      // The compact list needs one CI signal; per-job detail arrives with get().
+      checks: headPipeline
+        ? [
+            {
+              name: `Pipeline #${headPipeline.id}`,
+              status: headPipeline.status,
+              url: headPipeline.url,
+            },
+          ]
+        : [],
       sameRepository: github
         ? row.head?.repo?.full_name === row.base?.repo?.full_name
         : row.source_project_id === row.target_project_id,
       updatedAt: String(row.updated_at ?? ""),
+      createdAt: String(row.created_at ?? ""),
+      labels: (Array.isArray(row.labels) ? row.labels : [])
+        .map((label: unknown) =>
+          typeof label === "string"
+            ? label
+            : String((label as Json)?.name ?? ""),
+        )
+        .filter(Boolean)
+        .slice(0, 12),
+      notesCount: Number.isSafeInteger(row.user_notes_count)
+        ? row.user_notes_count
+        : undefined,
+      pipeline: headPipeline
+        ? { id: headPipeline.id, stages: [], url: headPipeline.url }
+        : null,
     };
+  }
+  /** Detail endpoints are optional context: one failure must not hide the MR. */
+  private async settle<T>(work: () => Promise<T>): Promise<T | null> {
+    try {
+      return await work();
+    } catch {
+      return null;
+    }
+  }
+  private async pipelineDetail(
+    repo: RemoteRepository,
+    pipeline: { id: number; url?: string },
+  ): Promise<RemotePrPipeline | null> {
+    const [detail, jobs] = await Promise.all([
+      this.settle(() =>
+        this.api(repo, "GET", `${this.prefix(repo)}/pipelines/${pipeline.id}`),
+      ),
+      this.settle(() =>
+        this.api(
+          repo,
+          "GET",
+          `${this.prefix(repo)}/pipelines/${pipeline.id}/jobs?per_page=100&include_retried=false`,
+        ),
+      ),
+    ]);
+    const jobRows: Json[] = Array.isArray(jobs) ? jobs : [];
+    const toJob = (job: Json): RemotePrCheck => ({
+      name: String(job.name ?? ""),
+      status: status(String(job.status ?? "")),
+      url: safeRemoteUrl(job.web_url, repo),
+    });
+    const grouped = (name: string) => jobRows.filter((job) => job.stage === name);
+    const stages: Json[] = Array.isArray(detail?.stages) ? detail!.stages : [];
+    const names = stages.length
+      ? stages.map((stage) => String(stage.name ?? ""))
+      : [...new Set(jobRows.map((job) => String(job.stage ?? "")))].filter(
+          Boolean,
+        );
+    if (!names.length && !detail) return null;
+    return {
+      id: pipeline.id,
+      url: pipeline.url ?? safeRemoteUrl(detail?.web_url, repo),
+      stages: names.slice(0, MAX_STAGES).map((name) => {
+        const stageJobs = grouped(name).slice(0, MAX_JOBS).map(toJob);
+        const declared = stages.find((stage) => String(stage.name) === name);
+        return {
+          name,
+          status: stageJobs.length
+            ? aggregate(stageJobs)
+            : status(String(declared?.status ?? "")),
+          jobs: stageJobs,
+        };
+      }),
+    };
+  }
+  private async commits(
+    repo: RemoteRepository,
+    number: number,
+  ): Promise<RemotePrCommit[] | null> {
+    const rows = await this.settle(() =>
+      this.api(
+        repo,
+        "GET",
+        `${this.listPath(repo)}/${number}/commits?per_page=${MAX_COMMITS}`,
+      ),
+    );
+    if (!Array.isArray(rows)) return null;
+    return rows.slice(0, MAX_COMMITS).map((row: Json) => ({
+      sha: String(row.id ?? row.sha ?? ""),
+      title: String(row.title ?? row.message ?? "").split("\n")[0] ?? "",
+      author: String(row.author_name ?? row.author?.name ?? ""),
+      createdAt: String(row.created_at ?? row.authored_date ?? ""),
+    }));
+  }
+  /** GitLab has no line counters on the MR resource, so small diffs are counted. */
+  private async stats(
+    repo: RemoteRepository,
+    pr: RemotePullRequest,
+    changesCount: unknown,
+  ): Promise<RemotePrStats | null> {
+    const files = Number(changesCount);
+    if (!Number.isSafeInteger(files) || files < 1 || files > MAX_COMPARE_FILES)
+      return null;
+    if (!boundedSha(pr.baseSha) || !boundedSha(pr.headSha)) return null;
+    const row = await this.settle(() =>
+      this.api(
+        repo,
+        "GET",
+        `${this.prefix(repo)}/repository/compare?from=${pr.baseSha}&to=${pr.headSha}&straight=true`,
+      ),
+    );
+    const diffs: Json[] = Array.isArray(row?.diffs) ? row!.diffs : [];
+    if (!diffs.length) return null;
+    let additions = 0;
+    let deletions = 0;
+    for (const diff of diffs) {
+      for (const line of String(diff.diff ?? "").split("\n")) {
+        if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+        else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+      }
+    }
+    return { additions, deletions, files: diffs.length };
+  }
+  private async gitLabDetail(
+    repo: RemoteRepository,
+    row: Json,
+    pr: RemotePullRequest,
+  ) {
+    const target = await this.settle(() =>
+      this.api(
+        repo,
+        "GET",
+        `${this.prefix(repo)}/repository/branches/${encodeURIComponent(pr.base)}`,
+      ),
+    );
+    // The target branch tip is the merge precondition; MR diff refs are the
+    // fallback when the branch itself is protected or unreadable.
+    const targetSha = target?.commit?.id;
+    if (typeof targetSha === "string" && boundedSha(targetSha))
+      pr.baseSha = targetSha;
+
+    const [pipeline, approvals, commits, stats] = await Promise.all([
+      pr.pipeline?.id
+        ? this.pipelineDetail(repo, {
+            id: pr.pipeline.id,
+            url: pr.pipeline.url,
+          })
+        : Promise.resolve(null),
+      this.settle(() =>
+        this.api(repo, "GET", `${this.listPath(repo)}/${pr.number}/approvals`),
+      ),
+      this.commits(repo, pr.number),
+      this.stats(repo, pr, row.changes_count),
+    ]);
+    if (pipeline) pr.pipeline = pipeline;
+    if (commits?.length) pr.commits = commits;
+    if (stats) pr.stats = stats;
+    if (approvals) {
+      const approvedBy = (Array.isArray(approvals.approved_by)
+        ? approvals.approved_by
+        : []
+      )
+        .map((entry: Json) => String(entry?.user?.username ?? ""))
+        .filter(Boolean);
+      pr.review = {
+        required: Number.isSafeInteger(approvals.approvals_required)
+          ? approvals.approvals_required
+          : 0,
+        approvedBy,
+        reviewers: (Array.isArray(row.reviewers) ? row.reviewers : [])
+          .map((reviewer: Json) => String(reviewer?.username ?? ""))
+          .filter(Boolean),
+      };
+    } else if (Array.isArray(row.reviewers) && row.reviewers.length) {
+      pr.review = {
+        required: 0,
+        approvedBy: [],
+        reviewers: row.reviewers
+          .map((reviewer: Json) => String(reviewer?.username ?? ""))
+          .filter(Boolean),
+      };
+    }
+    if (!pipeline && !commits && !stats && !approvals)
+      pr.detailError = "GitLab 详情暂时不可用，请刷新或前往平台核对。";
+  }
+  private async gitHubDetail(repo: RemoteRepository, pr: RemotePullRequest) {
+    if (!boundedSha(pr.headSha)) return;
+    try {
+      const [checks, combined] = await Promise.all([
+        this.api(
+          repo,
+          "GET",
+          `${this.prefix(repo)}/commits/${pr.headSha}/check-runs?per_page=100&filter=latest`,
+        ),
+        this.api(
+          repo,
+          "GET",
+          `${this.prefix(repo)}/commits/${pr.headSha}/status?per_page=100`,
+        ),
+      ]);
+      if (
+        (checks.total_count ?? 0) > (checks.check_runs?.length ?? 0) ||
+        (combined.total_count ?? 0) > (combined.statuses?.length ?? 0)
+      )
+        pr.checksError = "检查结果超过当前显示范围，请在平台核对完整结果。";
+      pr.checks = [
+        ...(checks.check_runs ?? []).map((check: Json) => ({
+          name: String(check.name),
+          status: status(
+            check.status === "completed" ? check.conclusion : check.status,
+          ),
+          url: safeRemoteUrl(check.html_url, repo),
+        })),
+        ...(combined.statuses ?? []).map((check: Json) => ({
+          name: String(check.context),
+          status: status(check.state),
+          url: safeRemoteUrl(check.target_url, repo),
+        })),
+      ];
+      pr.pipeline = pr.checks.length
+        ? {
+            id: 0,
+            url: pr.checks.find((check) => check.url)?.url,
+            stages: pr.checks.map((check) => ({
+              name: check.name,
+              status: check.status,
+              jobs: [{ name: check.name, status: check.status, url: check.url }],
+            })),
+          }
+        : null;
+    } catch {
+      pr.checksError = "检查状态暂时不可用，请刷新或前往平台核对。";
+    }
   }
   async list(
     repo: RemoteRepository,
@@ -212,65 +480,14 @@ export class RemotePrProvider {
       `${this.listPath(repo)}/${number}${repo.provider === "gitlab" ? "?include_rebase_in_progress=true" : ""}`,
     );
     const pr = this.normalize(repo, row);
-    if (repo.provider === "gitlab") {
-      const target = await this.api(
-        repo,
-        "GET",
-        `${this.prefix(repo)}/repository/branches/${encodeURIComponent(pr.base)}`,
+    if (repo.provider === "gitlab") await this.gitLabDetail(repo, row, pr);
+    else await this.gitHubDetail(repo, pr);
+    if (!boundedSha(pr.baseSha))
+      throw new GitMrError(
+        "无法读取目标分支版本，请刷新。",
+        "PR_INVALID_RESPONSE",
+        502,
       );
-      if (typeof target.commit?.id !== "string")
-        throw new GitMrError(
-          "无法读取目标分支版本，请刷新。",
-          "PR_INVALID_RESPONSE",
-          502,
-        );
-      pr.baseSha = target.commit.id;
-    }
-    try {
-      if (repo.provider === "github") {
-        const [checks, combined] = await Promise.all([
-          this.api(
-            repo,
-            "GET",
-            `${this.prefix(repo)}/commits/${pr.headSha}/check-runs?per_page=100&filter=latest`,
-          ),
-          this.api(
-            repo,
-            "GET",
-            `${this.prefix(repo)}/commits/${pr.headSha}/status?per_page=100`,
-          ),
-        ]);
-        if (
-          (checks.total_count ?? 0) > (checks.check_runs?.length ?? 0) ||
-          (combined.total_count ?? 0) > (combined.statuses?.length ?? 0)
-        )
-          pr.checksError = "检查结果超过当前显示范围，请在平台核对完整结果。";
-        pr.checks = [
-          ...(checks.check_runs ?? []).map((check: Json) => ({
-            name: String(check.name),
-            status: status(
-              check.status === "completed" ? check.conclusion : check.status,
-            ),
-            url: safeRemoteUrl(check.html_url, repo),
-          })),
-          ...(combined.statuses ?? []).map((check: Json) => ({
-            name: String(check.context),
-            status: status(check.state),
-            url: safeRemoteUrl(check.target_url, repo),
-          })),
-        ];
-      } else if (row.head_pipeline) {
-        pr.checks = [
-          {
-            name: `Pipeline #${row.head_pipeline.id}`,
-            status: status(row.head_pipeline.status),
-            url: safeRemoteUrl(row.head_pipeline.web_url, repo),
-          },
-        ];
-      }
-    } catch {
-      pr.checksError = "检查状态暂时不可用，请刷新或前往平台核对。";
-    }
     return pr;
   }
   async create(

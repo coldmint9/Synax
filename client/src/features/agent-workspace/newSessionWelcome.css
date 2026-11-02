@@ -10,7 +10,7 @@
 .synax-ascii-stage {
   display: grid;
   place-items: center;
-  inline-size: 62ch;
+  inline-size: 74ch;
   block-size: 10.4em;
   font-family: "Synax Liberation Mono", monospace;
 }

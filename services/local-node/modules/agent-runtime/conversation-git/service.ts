@@ -12,11 +12,13 @@ import { resolveSessionWorkspaceRoots } from '../tools/workspace.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { emitSessionLive } from '../../../infrastructure/runtime/ipc/agent-session-protocol.js';
 import { outsideExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
+import { logger } from '../../../infrastructure/runtime/logger.js';
 import { runtimeFacade } from '../sidecar/runtime-facade.js';
 import { hydrateHistoryValues } from '../sidecar/history-pages.js';
 import { runtimeClient } from '../sidecar/runtime-repository.js';
 import { ensureSessionRecovered } from '../session-recovery.js';
 import type { AgentRuntimeMessage } from '../contracts.js';
+import { parentFenceEvidence, parentStopReason } from './parent-fence.js';
 import type {
   ConversationGitAction, ConversationGitApplyProposal, ConversationGitCommit,
   ConversationGitCreate, ConversationGitReference, ConversationGitSave,
@@ -119,7 +121,9 @@ export class ConversationGitService {
   private async lock<T>(identity: string, action: () => Promise<T>): Promise<T> {
     const key = `${this.store.directory}:${identity}`;
     const previous = shortLocks.get(key) ?? Promise.resolve();
-    const operation = previous.catch(() => undefined).then(() => this.store.exclusive(identity, action));
+    // API and worker processes have separate local queues. Wait for their short
+    // metadata transactions without stealing a live lock or retrying an action.
+    const operation = previous.catch(() => undefined).then(() => this.store.exclusive(identity, action, { waitMs: 10_000 }));
     shortLocks.set(key, operation);
     try { return await operation; }
     finally { if (shortLocks.get(key) === operation) shortLocks.delete(key); }
@@ -542,7 +546,10 @@ export class ConversationGitService {
         (input.action === 'continue' && ['ready', 'check_failed'].includes(mr.status)) ||
         (input.action === 'resume' && ['draft', 'conflicted', 'ready', 'check_failed'].includes(mr.status))
       )) return `步骤已完成，继续当前合并状态：${mr.status}。`;
-      if (!workerSessionId && (task.execution || input.action === 'pause')) {
+      // A task without an execution record is an unstarted draft: continuing it must
+      // launch the worker (whose first step is `prepare`), not MR-level recovery, which
+      // only accepts a started merge and left such cards permanently unusable.
+      if (!workerSessionId && (task.execution || input.action === 'pause' || input.action === 'resume')) {
         const worker = await import('./worker.js');
         if (input.action === 'pause') { await worker.pauseConversationMergeWorker(sessionId, objectId); return '合并已停止，候选结果已保留。'; }
         if (input.action === 'resume') { await worker.resumeConversationMergeWorker(sessionId, objectId); return '已继续智能合并。'; }
@@ -648,14 +655,16 @@ export class ConversationGitService {
     ]);
     type Control = { runtimeControl?: unknown; executionLease?: { runId: string; closed?: boolean } };
     const parentFence = parentControl as Control, childFence = childControl as Control;
-    const parentStopped = parentFence.runtimeControl || parent.session.sessionMetadata?.runtimeControl || parent.session.sessionMetadata?.manualStop ||
-      ['paused', 'stopping', 'cancelled', 'interrupted', 'failed'].includes(parent.session.status);
+    const parentStopped = Boolean(parentFence.runtimeControl) || parentStopReason(parent.session) !== undefined;
     const childStopped = childFence.runtimeControl || child.session.sessionMetadata?.runtimeControl || child.session.sessionMetadata?.manualStop ||
       child.session.status !== 'running' || !child.session.activeRunId ||
       childFence.executionLease?.closed !== false || childFence.executionLease?.runId !== child.session.activeRunId;
     const parentReleased = task.execution?.joinMode === 'async' && parent.session.status === 'completed';
-    if (parentStopped || childStopped || (parent.session.status !== 'running' && !parentReleased))
+    if (parentStopped || childStopped || (parent.session.status !== 'running' && !parentReleased)) {
+      logger.debug({ taskId: task.id, parentStopped, childStopped, parentReleased, childStatus: child.session.status,
+        ...parentFenceEvidence(parent.session) }, 'Merge worker write fenced by the controlling session state');
       throw new GitMrError('The controlling session or worker execution has been stopped.', 'WORKER_FENCED', 409);
+    }
   }
 
   /** All projections are emitted only after their authority state is durable. */

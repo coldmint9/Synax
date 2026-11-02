@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { ResolvedThemeTokens } from "../../shared/lib/theme/runtime";
 import { TerminalConnection } from "../../adapters/transport/terminalConnection";
 import { type TerminalSession } from "../../adapters/transport/terminal";
+import { copyTextToClipboard } from "../../adapters/electron/clipboard";
 import { getResolvedThemeTokens, useThemeStore } from "../../shared/state/themeStore";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { terminalChanged, useTerminalStore } from "./terminalStore";
@@ -32,6 +33,42 @@ export function applyTerminalTheme(
   terminal.options.theme = terminalTheme(tokens);
 }
 
+function isMacPlatform(platform: string): boolean {
+  return platform.includes("Mac");
+}
+
+/** Keep terminal control keys available while handling desktop clipboard shortcuts. */
+export function isTerminalCopyShortcut(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): boolean {
+  if (event.key.toLowerCase() !== "c") return false;
+  return isMacPlatform(platform)
+    ? event.metaKey
+    : event.ctrlKey && event.shiftKey;
+}
+
+export function isTerminalPasteShortcut(
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "shiftKey">,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): boolean {
+  const key = event.key.toLowerCase();
+  if (key === "insert") return event.shiftKey;
+  if (key !== "v") return false;
+  if (isMacPlatform(platform)) return event.metaKey;
+  // Windows applications conventionally use Ctrl+V; Unix terminals use
+  // Ctrl+Shift+V so Ctrl+V remains readline's quoted-insert control key.
+  return event.ctrlKey && (platform.includes("Win") || event.shiftKey);
+}
+
+/**
+ * Only a running PTY can take input. Records restored after a host restart keep
+ * their output but have no terminal behind them, so they must stay read-only.
+ */
+export function terminalAcceptsInput(state: string): boolean {
+  return state === "active";
+}
+
 export function TerminalViewport({
   session,
   visible,
@@ -52,15 +89,15 @@ export function TerminalViewport({
   } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
-  const endedRef = useRef(session.state === "closed");
-  endedRef.current = session.state === "closed";
+  const endedRef = useRef(!terminalAcceptsInput(session.state));
+  endedRef.current = !terminalAcceptsInput(session.state);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (!host.current) return;
     let disposed = false,
       connected = false,
       replaying = false,
-      stopped = session.state === "closed";
+      stopped = !terminalAcceptsInput(session.state);
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const desktop = (
       window as Window & {
@@ -278,16 +315,25 @@ export function TerminalViewport({
         terminal.clear();
         return false;
       }
-      if (
-        command &&
-        event.key.toLowerCase() === "c" &&
-        terminal.hasSelection()
-      ) {
-        void navigator.clipboard
-          .writeText(terminal.getSelection())
-          .catch(() =>
-            setError(zh ? "无法复制到剪贴板" : "Clipboard unavailable"),
+      if (isTerminalCopyShortcut(event) && terminal.hasSelection()) {
+        void copyTextToClipboard(terminal.getSelection()).then((copied) => {
+          if (!copied) setError(zh ? "无法复制到剪贴板" : "Clipboard unavailable");
+        });
+        return false;
+      }
+      if (isTerminalPasteShortcut(event)) {
+        event.preventDefault();
+        const clipboard = navigator.clipboard;
+        if (!clipboard) {
+          setError(zh ? "无法读取剪贴板" : "Clipboard unavailable");
+        } else {
+          void clipboard.readText().then(
+            (text) => {
+              if (!disposed) terminal.paste(text);
+            },
+            () => setError(zh ? "无法读取剪贴板" : "Clipboard unavailable"),
           );
+        }
         return false;
       }
       if (event.metaKey && event.key.toLowerCase() === "a") {

@@ -110,7 +110,10 @@ export function detectMediaType(
         : "application/zip";
   else {
     try {
-      const text = decodeCharacterFile(bytes);
+      const text = decodeCharacterFile(bytes, {
+        filename,
+        mediaType: declared,
+      });
       if (text !== undefined)
         detected = /<svg[\s>]/i.test(text.slice(0, 1024))
           ? "image/svg+xml"

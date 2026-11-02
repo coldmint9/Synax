@@ -134,6 +134,8 @@ Usage:
   synax cancel --session <id> [--run <id>]
   synax rpc                              Concurrent JSONL request/event protocol
 
+The legacy synax command, synax profile ID and SYNAX_* environment variables remain supported.
+
 Options:
   --url <url>                            Runtime URL (default: SYNAX_API or http://127.0.0.1:3210)
   --token <token> | --token-file <path>   Runtime credentials; never passed in URLs

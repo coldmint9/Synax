@@ -120,7 +120,7 @@ it("does not scroll on mount into a session whose run already finished", () => {
   expect(scrollToBottom).not.toHaveBeenCalled();
 });
 
-it("keeps cached messages mounted and waits for refreshed detail before showing live content", () => {
+it("keeps the cached live projection visible while persisted history refreshes", () => {
   useAgentSessionStore.setState({
     detailRefreshing: true,
     streamingStepId: "step-live",
@@ -130,8 +130,8 @@ it("keeps cached messages mounted and waits for refreshed detail before showing 
   render(<SessionTranscript />);
 
   expect(conversationProps.current).toMatchObject({
-    excludeStepId: null,
-    unifiedLive: false,
+    excludeStepId: "step-live",
+    unifiedLive: true,
   });
   expect(screen.getByText("Cached answer")).toBeVisible();
 });
@@ -150,4 +150,31 @@ it("does not mistake replayed stream and terminal records for new scroll trigger
   }));
   await waitFor(() => expect(container.querySelector('.session-chat-scroll')).toHaveAttribute('data-preparing', 'false'));
   expect(scrollToBottom).not.toHaveBeenCalled();
+});
+
+it("loads the complete rail in the background without hiding a readable transcript", async () => {
+  const page = {
+    messages: [] as AgentRuntimeMessage[], runs: [], steps: [], toolCalls: [], events: [], permissions: [],
+    cachedAt: Date.now(), sessionStats: null, sessionTodos: [], sessionInvocationUsage: null,
+    historyWindow: { revision: 1, epoch: 1, generation: 1, olderCursor: "older", hasEarlier: true,
+      latest: true, detailsTruncated: false },
+  };
+  const loadTimelineIndex = vi.fn(async () => {});
+  useAgentSessionStore.setState({ sessionDetailCache: { s1: page }, loadTimelineIndex });
+  const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+  const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(300);
+  try {
+    const view = render(<SessionTranscript />);
+    await waitFor(() => expect(loadTimelineIndex).toHaveBeenCalledTimes(1));
+    expect(view.container.querySelector(".session-chat-scroll")).toHaveAttribute("data-preparing", "false");
+    act(() => useAgentSessionStore.setState({ sessionDetailCache: { s1: { ...page, timelineIndexLoaded: true } } }));
+    await waitFor(() => expect(view.container.querySelector(".session-chat-scroll")).toHaveAttribute("data-preparing", "false"));
+    act(() => useAgentSessionStore.setState({ selectedSessionId: "s2" }));
+    act(() => useAgentSessionStore.setState({ selectedSessionId: "s1" }));
+    await waitFor(() => expect(view.container.querySelector(".session-chat-scroll")).toHaveAttribute("data-preparing", "false"));
+    expect(loadTimelineIndex).toHaveBeenCalledTimes(1);
+  } finally {
+    height.mockRestore();
+    scrollHeight.mockRestore();
+  }
 });

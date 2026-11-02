@@ -4,6 +4,7 @@ vi.mock('../process-ownership.js', () => ({ hasBackgroundProcesses: vi.fn(async 
 vi.mock('../session-title-service.js', () => ({ ensureSessionTitleGenerated: vi.fn(), maybeScheduleSessionTitleFromStreamChunk: vi.fn() }));
 import { sessionProcessManager, SessionProcessManager } from '../session-process-manager.js';
 import { agentRuntimeStore } from '../session-store.js';
+import { runtimeBus } from '../runtime-bus.js';
 import { MAX_AGENT_SESSION_PROCESSES } from '../../../infrastructure/runtime/env.js';
 
 it('preserves a worker lease rejection through IPC instead of converting it into a generic run failure', async () => {
@@ -82,4 +83,43 @@ it('allows a new run to reuse an idle worker while deletion still requires physi
   internal.children.set('idle', { lease, child: { connected: true } });
   await expect(manager.waitForWorkerRelease('idle')).resolves.toBeUndefined();
   await expect(manager.waitForIdleSessions(['idle'], 0)).rejects.toMatchObject({ code: 'DELETE_TIMEOUT' });
+});
+
+it('forwards the terminal report of a worker that is being released', async () => {
+  // `releaseChild` removes the child before its last report lands, so the old
+  // gate dropped exactly the message that said the run had finished: the
+  // session list kept animating it until a client happened to read the row.
+  const manager = new SessionProcessManager() as any;
+  const lease = manager.admission.lifecycle.start('released');
+  manager.admission.lifecycle.running(lease);
+  const released = { lease, child: { connected: true }, streams: new Map(), compactions: new Map() };
+  manager.releasingChildren.add('released');
+  const seen: string[] = [];
+  const unsubscribe = runtimeBus.subscribe((event) =>
+    seen.push(`${event.type}:${String((event.patch as { status?: string } | undefined)?.status)}`),
+  );
+  const current = vi
+    .spyOn(agentRuntimeStore, 'tryGetSession')
+    .mockReturnValue({ id: 'released', status: 'running' } as never);
+  const event = (type: string, patch?: Record<string, unknown>) => ({
+    type: 'runtime:event',
+    event: { type, sessionId: 'released', ...(patch ? { patch } : {}) },
+  });
+  try {
+    await manager.handleChildMessage('released', event('session_changed', { status: 'completed', activeRunId: null }), released);
+    expect(seen).toEqual(['session_changed:completed']);
+
+    // A released worker still cannot report progress or reopen a settled row.
+    await manager.handleChildMessage('released', event('session_process_changed'), released);
+    await manager.handleChildMessage('released', event('session_changed', { status: 'running' }), released);
+    expect(seen).toEqual(['session_changed:completed']);
+
+    // A stop this process already recorded is not undone by the straggler.
+    current.mockReturnValue({ id: 'released', status: 'paused' } as never);
+    await manager.handleChildMessage('released', event('session_changed', { status: 'completed' }), released);
+    expect(seen).toEqual(['session_changed:completed']);
+  } finally {
+    unsubscribe();
+    current.mockRestore();
+  }
 });

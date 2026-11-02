@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { Clipboard, Download, LoaderCircle, Paperclip, X } from "lucide-react";
 import {
-  runtimeMedia,
-  type RuntimeAsset,
+  Clipboard,
+  Download,
+  LoaderCircle,
+  Paperclip,
+  X,
+} from "lucide-react";
+import {
   type RuntimeContentPart,
 } from "../../adapters/transport/runtimeMedia";
+import { ImageViewer } from "../../shared/ui/image-viewer/ImageViewer";
+import { useMediaAsset } from "./useMediaAsset";
+
+const IMAGE_MEDIA_TYPE = /^image\/(png|jpeg|gif|webp|avif|bmp)$/;
+
 function MediaAsset({
   id,
   onRemove,
@@ -12,50 +21,19 @@ function MediaAsset({
   id: string;
   onRemove?: (id: string) => void;
 }) {
-  const [asset, setAsset] = useState<RuntimeAsset>();
-  const [url, setUrl] = useState<string>();
-  const [error, setError] = useState("");
-  const [retry, setRetry] = useState(0);
-  const [opened, setOpened] = useState(false);
-  const [textContent, setTextContent] = useState<string>();
+  const { asset, url, textContent, error, retry } = useMediaAsset(id);
+  const [textOpen, setTextOpen] = useState(false);
+  const [imageOpen, setImageOpen] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    if (opened && dialogRef.current && !dialogRef.current.open)
+    if (textOpen && dialogRef.current && !dialogRef.current.open)
       dialogRef.current.showModal();
-  }, [opened]);
-  useEffect(() => {
-    const controller = new AbortController();
-    setAsset(undefined);
-    setUrl(undefined);
-    setError("");
-    setTextContent(undefined);
-    let objectUrl: string | undefined;
-    void runtimeMedia
-      .metadata(id)
-      .then(async ({ asset }) => {
-        if (controller.signal.aborted) return;
-        setAsset(asset);
-        const blob = await runtimeMedia.blob(id, controller.signal);
-        if (controller.signal.aborted) return;
-        const text = asset.mediaType === "text/plain" ? await blob.text() : undefined;
-        if (controller.signal.aborted) return;
-        setTextContent(text);
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e.message);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [id, retry]);
+  }, [textOpen]);
   if (error)
     return (
       <div role="alert" className="flex items-center gap-3 rounded-xl border border-danger/20 bg-surface/60 p-3 text-xs">
         <span className="text-danger">{error}</span>
-        <button type="button" className="shrink-0 rounded-md px-2 py-1 text-foreground hover:bg-background focus-visible:outline focus-visible:outline-2" onClick={() => setRetry((value) => value + 1)}>重试</button>
+        <button type="button" className="shrink-0 rounded-md px-2 py-1 text-foreground hover:bg-background focus-visible:outline focus-visible:outline-2" onClick={retry}>重试</button>
         {onRemove && <button type="button" aria-label="移除附件" onClick={() => onRemove(id)}><X size={14} /></button>}
       </div>
     );
@@ -72,7 +50,7 @@ function MediaAsset({
         {onRemove && <button type="button" aria-label="移除附件" className="absolute right-1.5 top-1.5 rounded-full p-1 text-muted-foreground hover:text-foreground" onClick={() => onRemove(id)}><X size={13} /></button>}
       </div>
     );
-  const image = /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(asset.mediaType);
+  const image = IMAGE_MEDIA_TYPE.test(asset.mediaType);
   const text = asset.mediaType === "text/plain";
   const copyText = async () => {
     if (textContent !== undefined) await navigator.clipboard.writeText(textContent);
@@ -93,8 +71,9 @@ function MediaAsset({
       {image && url && (
         <button
           type="button"
-          onClick={() => setOpened(true)}
+          onClick={() => setImageOpen(true)}
           aria-label={`查看 ${asset.filename}`}
+          className="block cursor-zoom-in overflow-hidden rounded-lg"
         >
           <img
             src={url}
@@ -129,7 +108,7 @@ function MediaAsset({
               type="button"
               className="max-w-48 truncate text-left text-primary hover:underline"
               title="预览文本摘要 / Preview text summary"
-              onClick={() => setOpened(true)}
+              onClick={() => setTextOpen(true)}
             >
               {asset.filename}
             </button>
@@ -165,19 +144,27 @@ function MediaAsset({
           )}
         </div>
       )}
-      {opened && url && (
+      {imageOpen && url && (
+        <ImageViewer
+          src={url}
+          alt={asset.filename}
+          downloadName={asset.filename}
+          onClose={() => setImageOpen(false)}
+        />
+      )}
+      {textOpen && (
         <dialog
           ref={dialogRef}
-          onClose={() => setOpened(false)}
+          onClose={() => setTextOpen(false)}
           role="dialog"
           aria-modal="true"
           aria-label={asset.filename}
           className="media-preview-dialog"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setOpened(false);
+            if (e.target === e.currentTarget) setTextOpen(false);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setOpened(false);
+            if (e.key === "Escape") setTextOpen(false);
           }}
         >
           <button
@@ -185,40 +172,33 @@ function MediaAsset({
             type="button"
             aria-label="关闭 / Close"
             className="absolute right-5 top-5 text-white"
-            onClick={() => setOpened(false)}
+            onClick={() => setTextOpen(false)}
           >
             <X />
           </button>
-          {text ? (
-            <div className="flex max-h-[80vh] w-[min(90vw,900px)] flex-col gap-3 rounded-xl bg-background p-4 text-foreground">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="truncate text-sm font-medium">{asset.filename}</h2>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-surface"
-                  onClick={() => void copyText()}
-                  disabled={textContent === undefined}
-                >
-                  <Clipboard size={13} />
-                  复制
-                </button>
-              </div>
-              <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 p-3 text-left text-xs leading-5">
-                {textContent ?? "加载文本… / Loading text…"}
-              </pre>
+          <div className="flex max-h-[80vh] w-[min(90vw,900px)] flex-col gap-3 rounded-xl bg-background p-4 text-foreground">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="truncate text-sm font-medium">{asset.filename}</h2>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-surface"
+                onClick={() => void copyText()}
+                disabled={textContent === undefined}
+              >
+                <Clipboard size={13} />
+                复制
+              </button>
             </div>
-          ) : (
-            <img
-              src={url}
-              alt={asset.filename}
-              className="max-h-full max-w-full object-contain"
-            />
-          )}
+            <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-surface/70 p-3 text-left text-xs leading-5">
+              {textContent ?? "加载文本… / Loading text…"}
+            </pre>
+          </div>
         </dialog>
       )}
     </div>
   );
 }
+
 export function MediaParts({
   parts,
   onRemove,

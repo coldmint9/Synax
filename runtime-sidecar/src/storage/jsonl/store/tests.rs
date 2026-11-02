@@ -275,6 +275,42 @@ fn background_summary_cannot_overwrite_a_live_title_or_status() {
     assert_eq!(index.page(None, 64).0[0]["title"], "Live title");
 }
 
+#[tokio::test]
+async fn summary_refreshes_once_after_a_fixed_window_and_coalesces_updates() {
+    let path =
+        std::env::temp_dir().join(format!("synax-summary-throttle-{}", uuid::Uuid::new_v4()));
+    let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let summary_path = layout::session_dir(&path, "s")
+        .unwrap()
+        .join("list-summary.json");
+    let original = std::fs::read(&summary_path).unwrap();
+
+    hot.control(
+        "s",
+        "rename",
+        1,
+        0,
+        "session_patch",
+        &serde_json::to_vec(&json!({
+            "patch": { "title": "Newest title" }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    hot.flush_session("s").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(std::fs::read(&summary_path).unwrap(), original);
+
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let refreshed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
+    assert_eq!(refreshed["row"]["h"]["title"], "Newest title");
+    drop(hot);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
 #[test]
 #[ignore = "manual session-list startup benchmark"]
 fn benchmark_session_list_restart() {
@@ -294,6 +330,7 @@ fn benchmark_session_list_restart() {
             }
             hot.flush_session(id).unwrap();
         }
+        hot.flush().unwrap();
     }
     let cold = {
         for id in &ids {
@@ -324,5 +361,441 @@ fn benchmark_session_list_restart() {
         ids.len()
     );
     drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+fn patch_summary(hot: &HotOps, request: &str, revision: u64, title: &str) {
+    hot.control(
+        "s",
+        request,
+        1,
+        revision,
+        "session_patch",
+        &serde_json::to_vec(&json!({"patch": {"title": title}})).unwrap(),
+    )
+    .unwrap();
+}
+
+fn wait_for_summary(path: &std::path::Path, title: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if summary_cache::read(path, "s").is_some_and(|row| row.h["title"] == title) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "summary did not reach {title}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn repeated_dirty_updates_keep_the_first_deadline_and_idle_flushes_do_not_rewrite() {
+    let path = std::env::temp_dir().join(format!("synax-summary-window-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    patch_summary(&hot, "one", 0, "One");
+    hot.flush_session("s").unwrap();
+    let first = store.root.summary_cache.pending_deadline("s").unwrap();
+    patch_summary(&hot, "two", 1, "Two");
+    hot.flush_session("s").unwrap();
+    assert_eq!(store.root.summary_cache.pending_deadline("s"), Some(first));
+    wait_for_summary(&path, "Two");
+    store.flush_session_summary("s");
+    let file = layout::session_dir(&path, "s")
+        .unwrap()
+        .join("list-summary.json");
+    let modified = std::fs::metadata(&file).unwrap().modified().unwrap();
+    for _ in 0..10 {
+        hot.flush_session("s").unwrap();
+    }
+    assert!(store.root.summary_cache.pending_deadline("s").is_none());
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().modified().unwrap(),
+        modified
+    );
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn updates_during_summary_staging_remain_dirty_and_capture_only_synced_commits() {
+    let path =
+        std::env::temp_dir().join(format!("synax-summary-inflight-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let (captured, wait_captured) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    store.root.summary_cache.before_stage(move || {
+        captured.send(()).unwrap();
+        resume
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+    });
+    patch_summary(&hot, "one", 0, "One");
+    hot.flush_session("s").unwrap();
+    wait_captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    patch_summary(&hot, "two", 1, "Two");
+    hot.flush_session("s").unwrap();
+    release.send(()).unwrap();
+    wait_for_summary(&path, "Two");
+    let handle = hot.handle("s").unwrap();
+    let actor = handle.actor.lock();
+    assert_eq!(actor.summary_commit, actor.commit);
+    assert_eq!(actor.durable_commit, actor.commit);
+    drop(actor);
+    drop(handle);
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn failed_summary_publication_does_not_fail_durability_and_retries_after_repair() {
+    let path = std::env::temp_dir().join(format!("synax-summary-retry-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let directory = layout::session_dir(&path, "s").unwrap();
+    let file = directory.join("list-summary.json");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    patch_summary(&hot, "changed", 0, "Durable despite cache failure");
+    hot.flush_session("s").unwrap();
+    // A final flush makes one failed attempt and returns without waiting through
+    // the retry backoff. Committed records remain available to recovery.
+    store.flush_session_summary("s");
+    assert!(store.root.summary_cache.pending_deadline("s").is_some());
+    assert!(!std::fs::read_dir(&directory).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".tmp")
+    }));
+    std::fs::remove_dir(&file).unwrap();
+    wait_for_summary(&path, "Durable despite cache failure");
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn a_summary_captured_before_reset_cannot_publish_into_a_recreated_session() {
+    let path = std::env::temp_dir().join(format!("synax-summary-reset-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let (captured, wait_captured) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    store.root.summary_cache.before_stage(move || {
+        captured.send(()).unwrap();
+        resume
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+    });
+    patch_summary(&hot, "old", 0, "Old lifecycle");
+    hot.flush_session("s").unwrap();
+    wait_captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    store.reset_all().unwrap();
+    seed_summary(&hot, "s");
+    patch_summary(&hot, "new", 0, "New lifecycle");
+    hot.flush_session("s").unwrap();
+    release.send(()).unwrap();
+    store.flush_session_summary("s");
+    wait_for_summary(&path, "New lifecycle");
+    assert_eq!(
+        store.session_summary("s").unwrap().unwrap()["title"],
+        "New lifecycle"
+    );
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn deletion_fences_a_captured_summary_and_removes_its_pending_work() {
+    let path = std::env::temp_dir().join(format!("synax-summary-delete-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let (captured, wait_captured) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    store.root.summary_cache.before_stage(move || {
+        captured.send(()).unwrap();
+        resume
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+    });
+    patch_summary(&hot, "old", 0, "Will be deleted");
+    hot.flush_session("s").unwrap();
+    wait_captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let directory = layout::session_dir(&path, "s").unwrap();
+    {
+        let _lifecycle = store.summary_lifecycle();
+        let marker = layout::deletion_marker(&path, "s");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(marker, b"").unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        store.forget_deleted_session("s").unwrap();
+    }
+    release.send(()).unwrap();
+    drop(hot);
+    drop(store);
+    assert!(!directory.exists());
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn summary_waits_for_normal_durability_and_process_lease_flush_wakes_existing_work() {
+    let path = std::env::temp_dir().join(format!("synax-summary-durable-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let saved = hot.handle("s").unwrap().actor.lock().summary_commit;
+    patch_summary(&hot, "synced", 0, "Synced");
+    hot.flush_session("s").unwrap();
+    patch_summary(&hot, "unsynced", 1, "Waiting for durability");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    {
+        let handle = hot.handle("s").unwrap();
+        let actor = handle.actor.lock();
+        assert_eq!(actor.summary_commit, saved);
+        assert!(actor.durable_commit < actor.commit);
+    }
+    assert!(store.root.summary_cache.pending_deadline("s").is_some());
+    store.flush_process_leases("s").unwrap();
+    wait_for_summary(&path, "Waiting for durability");
+    store.flush_session_summary("s");
+    // Lease-only durability with no pending summary does not schedule one.
+    store.flush_process_leases("s").unwrap();
+    assert!(store.root.summary_cache.pending_deadline("s").is_none());
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn unavailable_summary_source_metadata_is_retried_without_another_business_update() {
+    let path = std::env::temp_dir().join(format!(
+        "synax-summary-source-retry-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    patch_summary(&hot, "changed", 0, "Retry source metadata");
+    let (controls, saved) = {
+        let handle = hot.handle("s").unwrap();
+        let actor = handle.actor.lock();
+        (
+            actor.files.controls.path().to_path_buf(),
+            actor.summary_commit,
+        )
+    };
+    let moved = controls.with_extension("temporarily-moved");
+    std::fs::rename(&controls, &moved).unwrap();
+    // The open writer's fsync remains valid, while summary fingerprint capture
+    // cannot stat the original name. This is a cache failure, never an ACK error.
+    hot.flush_session("s").unwrap();
+    store.flush_session_summary("s");
+    assert!(store.root.summary_cache.pending_deadline("s").is_some());
+    assert_eq!(hot.handle("s").unwrap().actor.lock().summary_commit, saved);
+    std::fs::rename(&moved, &controls).unwrap();
+    wait_for_summary(&path, "Retry source metadata");
+    store.flush_session_summary("s");
+    assert!(store.root.summary_cache.pending_deadline("s").is_none());
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn stale_staged_summary_does_not_replace_a_newer_published_cache() {
+    let path = std::env::temp_dir().join(format!(
+        "synax-summary-publish-order-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    seed_summary(&hot, "s");
+    hot.flush().unwrap();
+    let old = {
+        let handle = hot.handle("s").unwrap();
+        let actor = handle.actor.lock();
+        summary_cache::capture(&path, &actor).unwrap().unwrap()
+    }
+    .stage()
+    .unwrap();
+    patch_summary(&hot, "new", 0, "Newer published cache");
+    hot.flush().unwrap();
+    assert!(!store.root.summary_cache.publish_rebuilt(old).unwrap());
+    assert_eq!(
+        summary_cache::read(&path, "s").unwrap().h["title"],
+        "Newer published cache"
+    );
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn sustained_sync_updates_publish_large_summaries_fairly_before_streams_stop() {
+    use std::{
+        collections::HashSet,
+        time::{Duration, Instant},
+    };
+
+    let path =
+        std::env::temp_dir().join(format!("synax-summary-continuous-{}", uuid::Uuid::new_v4()));
+    let store = JsonlStore::open(&path).unwrap();
+    let hot = HotOps::new(Arc::new(store.clone()));
+    let ids = ["stream-a", "stream-b"];
+    let metadata = json!({
+        "mcpToolDefinitions": [{ "name": "large-tool", "description": "x".repeat(190_000) }],
+    });
+    for id in ids {
+        hot.ui_snapshot(
+            id,
+            Some(
+                &serde_json::to_vec(&json!({
+                    "id": id, "projectId": "p", "status": "running", "title": format!("{id}-seed"),
+                    "updatedAt": "2026-10-28T00:00:00Z", "sessionMetadata": metadata,
+                }))
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+    }
+    hot.flush().unwrap();
+    let files = ids.map(|id| {
+        layout::session_dir(&path, id)
+            .unwrap()
+            .join("list-summary.json")
+    });
+    let mut published: [HashSet<String>; 2] = std::array::from_fn(|_| HashSet::new());
+    let mut revision = 0;
+    let started = Instant::now();
+    // Updates continue over multiple refresh windows. Reading the published row
+    // directly observes replacements even when the next committed source prefix
+    // has already invalidated that row for cold-start use.
+    while started.elapsed() < Duration::from_millis(3300) {
+        for (index, id) in ids.iter().enumerate() {
+            hot.control(
+                id,
+                &format!("patch-{revision}"),
+                1,
+                revision,
+                "session_patch",
+                &serde_json::to_vec(&json!({"patch": {"title": format!("{id}-{revision}")}}))
+                    .unwrap(),
+            )
+            .unwrap();
+            hot.flush_session(id).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&files[index]).unwrap()).unwrap();
+            let title = saved["row"]["h"]["title"].as_str().unwrap();
+            if title != format!("{id}-seed") {
+                published[index].insert(title.to_owned());
+            }
+            assert!(saved["row"]["h"]["sessionMetadata"].get("mcpToolDefinitions").is_none());
+            assert_eq!(hot.handle(id).unwrap().read().header.to_json()["sessionMetadata"]["mcpToolDefinitions"], metadata["mcpToolDefinitions"],
+                "execution metadata must remain authoritative outside the list projection");
+        }
+        revision += 1;
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    assert!(
+        revision > 4,
+        "test must keep producing across the refresh windows"
+    );
+    for (index, id) in ids.iter().enumerate() {
+        assert!(
+            published[index].len() >= 2,
+            "{id} must publish repeatedly while both streams are still updating: {:?}",
+            published[index]
+        );
+    }
+
+    hot.flush().unwrap();
+    let mut final_modified = Vec::new();
+    for (index, id) in ids.iter().enumerate() {
+        let final_row = summary_cache::read(&path, id).unwrap();
+        assert_eq!(final_row.h["title"], format!("{id}-{}", revision - 1));
+        assert!(final_row.h["sessionMetadata"].get("mcpToolDefinitions").is_none());
+        assert!(store.root.summary_cache.pending_deadline(id).is_none());
+        final_modified.push(
+            std::fs::metadata(&files[index])
+                .unwrap()
+                .modified()
+                .unwrap(),
+        );
+    }
+    // Cross another full refresh window with no business updates. Successful
+    // redundant durability calls must not requeue or rewrite an unchanged row.
+    let idle = Instant::now();
+    while idle.elapsed() < Duration::from_millis(1100) {
+        for id in ids {
+            hot.flush_session(id).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    for (index, id) in ids.iter().enumerate() {
+        assert!(store.root.summary_cache.pending_deadline(id).is_none());
+        assert_eq!(
+            std::fs::metadata(&files[index])
+                .unwrap()
+                .modified()
+                .unwrap(),
+            final_modified[index]
+        );
+    }
+    drop(hot);
+    drop(store);
+    std::fs::remove_dir_all(path).unwrap();
+}
+
+#[test]
+fn old_summary_cache_is_compacted_without_losing_execution_metadata_or_replaying_history() {
+    let path = std::env::temp_dir().join(format!("summary-upgrade-{}", uuid::Uuid::new_v4()));
+    let definitions = json!({"schema":"x".repeat(190_000)});
+    {
+        let hot = HotOps::new(Arc::new(JsonlStore::open(&path).unwrap()));
+        hot.ui_snapshot("s", Some(&serde_json::to_vec(&json!({"id":"s", "projectId":"p", "title":"upgrade", "status":"completed", "updatedAt":"2026-10-28T00:00:00Z", "sessionMetadata":{
+            "mcpToolDefinitions":definitions,"pinned":true
+        }})).unwrap())).unwrap();
+        hot.flush().unwrap();
+    }
+    let file = layout::session_dir(&path, "s").unwrap().join("list-summary.json");
+    let mut legacy: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    legacy["schema"] = json!(2);
+    legacy["row"]["h"]["sessionMetadata"]["mcpToolDefinitions"] = definitions.clone();
+    std::fs::write(&file, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let store = JsonlStore::open(&path).unwrap();
+    assert!(!store.load_list_entry("s").unwrap(), "valid legacy cache must not replay the journal");
+    assert!(store.root.sessions.values().is_empty());
+    assert!(std::fs::metadata(&file).unwrap().len() < 2000);
+    assert!(store.session_summary("s").unwrap().unwrap()["sessionMetadata"].get("mcpToolDefinitions").is_none());
+    let hot = HotOps::new(Arc::new(store.clone()));
+    let detail: serde_json::Value = serde_json::from_slice(&hot.ui_snapshot("s", None).unwrap()).unwrap();
+    assert_eq!(detail["session"]["sessionMetadata"]["mcpToolDefinitions"], definitions);
+    drop(hot); drop(store);
     std::fs::remove_dir_all(path).unwrap();
 }

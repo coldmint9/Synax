@@ -158,6 +158,8 @@ export interface ResolvedProviderConfig {
   providerId: string;
   /** Explicit supplier request setting, independent of catalog capabilities. */
   maxOutputTokens?: number;
+  /** Effort values this connection declares its endpoint accepts. */
+  supportedReasoningEfforts?: string[];
   /** Wire protocol selected for this provider connection. */
   apiFormat?: ApiFormat;
   baseUrl?: string;

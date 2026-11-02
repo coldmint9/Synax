@@ -148,7 +148,8 @@ describe("agent runtime wire projections", () => {
 
   it("GET /sessions list rows omit latestSystemPrompt", async () => {
     const session = await createSessionWithHeavyArtifacts();
-    agentRuntimeStore.updateSessionMetadata(session.id, { latestSystemPrompt: "P".repeat(4096) });
+    agentRuntimeStore.updateSessionMetadata(session.id, { latestSystemPrompt: "P".repeat(4096), mcpToolDefinitions: { schema: "T".repeat(190_000) } });
+    await agentRuntimeStore.flushSession(session.id);
     const { agentRuntimeRoutes } = await import("../agent-runtime.js");
     const response = await agentRuntimeRoutes.request(
       `http://localhost/sessions?projectId=${session.projectId}`,
@@ -157,5 +158,9 @@ describe("agent runtime wire projections", () => {
     const body = (await response.json()) as { items: Array<{ sessionMetadata: Record<string, unknown> }> };
     const row = body.items.find((item) => item.sessionMetadata && "latestSystemPrompt" in item.sessionMetadata);
     expect(row).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain('mcpToolDefinitions');
+    const detail = await agentRuntimeRoutes.request(`http://localhost/sessions/${session.id}`);
+    const snapshot = await detail.json() as { session: { sessionMetadata: Record<string, unknown> } };
+    expect(snapshot.session.sessionMetadata.mcpToolDefinitions).toEqual({ schema: "T".repeat(190_000) });
   });
 });

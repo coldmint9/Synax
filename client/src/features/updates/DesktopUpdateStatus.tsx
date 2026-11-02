@@ -128,12 +128,12 @@ export function DesktopUpdateStatus({
       <div className="flex flex-wrap gap-2">
         {failure && (
           <a
-            href="https://github.com/coldmint9/Synax/releases/latest"
+            href="https://github.com/coldmint9/Synax"
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs text-accent underline self-center"
           >
-            {zh ? "打开发布页手动下载" : "Download from releases"}
+            {zh ? "打开 Synax 产品仓库" : "Open the Synax repository"}
           </a>
         )}
         {phase === "ready" ? (
@@ -224,7 +224,7 @@ export function DesktopUpdatePanel() {
           <div className="flex min-h-0 flex-col items-center overflow-y-auto px-6 pb-12 pt-8 text-center sm:px-16 sm:pb-16 sm:pt-14">
             <div aria-hidden="true" className="relative mb-9 flex h-20 w-20 shrink-0 items-center justify-center">
               <div className={busy ? "absolute inset-0 rounded-full border-2 border-white/15 border-t-white motion-safe:animate-spin" : "absolute inset-0 rounded-full border border-white/20"} />
-              <span className="text-3xl font-semibold">S</span>
+              <img src="/synax-icon.svg" alt="" className="h-10 w-10" />
             </div>
             <DialogTitle className="!text-xl">{title}</DialogTitle>
             <DialogDescription className="mt-3 !text-white/55">
@@ -252,8 +252,8 @@ export function DesktopUpdatePanel() {
               disabled={requesting} onClick={() => void install()}>{zh ? "更新并重启" : "Update and restart"}</Button>}
             {failure && <Button className="mt-8" disabled={requesting} onClick={() => void check()}>{zh ? "重试" : "Retry"}</Button>}
             {!installing && <a className="mt-7 text-sm text-white/50 underline underline-offset-4 hover:text-white focus-visible:outline focus-visible:outline-2"
-              href="https://github.com/coldmint9/Synax/releases/latest" target="_blank" rel="noopener noreferrer">
-              {zh ? "下载最新版本" : "Download latest version"}
+              href="https://github.com/coldmint9/Synax" target="_blank" rel="noopener noreferrer">
+              {zh ? "打开 Synax 产品仓库" : "Open the Synax repository"}
             </a>}
           </div>
         </DialogPanel>

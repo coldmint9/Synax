@@ -1,9 +1,10 @@
 export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
-export const DEFAULT_ACCENT = "#66806c";
+export const DEFAULT_ACCENT = "#296fcb";
 export const ACCENT_PRESETS = [
-  { color: DEFAULT_ACCENT, zh: "鼠尾草", en: "Sage" },
+  { color: DEFAULT_ACCENT, zh: "钴蓝", en: "Cobalt" },
+  { color: "#66806c", zh: "鼠尾草", en: "Sage" },
   { color: "#94b8b5", zh: "青瓷", en: "Celadon" },
   { color: "#98aecb", zh: "雾蓝", en: "Mist" },
   { color: "#b1a2c9", zh: "鸢尾", en: "Iris" },

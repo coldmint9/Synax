@@ -7,6 +7,9 @@ import {
 
 vi.mock("../../../../adapters/transport/agentRuntime", () => ({
   agentRuntimeApi: {
+    getSessionSummary: vi.fn(async () => ({
+      session: { id: "child-1", parentSessionId: "parent-a" },
+    })),
     listSessions: vi.fn(async () => ({
       items: [],
       totalCount: 0,
@@ -238,5 +241,52 @@ describe("useAgentSessionStore.submitSessionDraft", () => {
         },
       }),
     );
+  });
+});
+
+describe("useAgentSessionStore.fetchChildSessions", () => {
+  const child = (id: string, name: string) =>
+    ({
+      id,
+      parentSessionId: "parent-a",
+      sessionMetadata: { subagentName: name },
+    }) as never;
+
+  it("merges a targeted read with the children already known", async () => {
+    useAgentSessionStore.setState({
+      childSessions: { "parent-a": [child("child-1", "前哨")] },
+    });
+    vi.mocked(agentRuntimeApi.getSessionSummary).mockResolvedValue({
+      session: child("child-2", "审校"),
+    } as never);
+
+    await useAgentSessionStore
+      .getState()
+      .fetchChildSessions("parent-a", ["child-2"]);
+
+    expect(
+      useAgentSessionStore
+        .getState()
+        .childSessions["parent-a"].map((item) => item.id),
+    ).toEqual(["child-1", "child-2"]);
+  });
+
+  it("replaces the set with the authoritative child list", async () => {
+    useAgentSessionStore.setState({
+      childSessions: { "parent-a": [child("child-1", "前哨")] },
+    });
+    vi.mocked(agentRuntimeApi.listSessions).mockResolvedValue({
+      items: [child("child-2", "审校")],
+      totalCount: 1,
+      countByStatus: {},
+    } as never);
+
+    await useAgentSessionStore.getState().fetchChildSessions("parent-a");
+
+    expect(
+      useAgentSessionStore
+        .getState()
+        .childSessions["parent-a"].map((item) => item.id),
+    ).toEqual(["child-2"]);
   });
 });

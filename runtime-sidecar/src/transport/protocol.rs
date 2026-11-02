@@ -54,7 +54,7 @@ pub struct WireEnvelope {
     pub revision: u64,
     #[prost(
         oneof = "wire_envelope::Body",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51"
     )]
     pub body: Option<wire_envelope::Body>,
 }
@@ -66,14 +66,19 @@ pub mod wire_envelope {
         WireHealthResponse, WireHello, WireHistoryCommand, WireHistoryState, WireImportProjection,
         WireImportProjectionResponse, WireImportStream, WireImportStreamResponse, WireIssueTicket,
         WirePing, WirePong, WireQueueMutation, WireQueueRead, WireQueueState, WireReady,
-        WireReplay, WireRunAdmission, WireSeedUi, WireSessionList, WireSessionListResponse,
-        WireShutdown, WireSnapshot, WireSnapshotResponse, WireSubscribe, WireTicket,
-        WireUiSnapshot, WireUiSnapshotResponse, WireWorkspaceIndexCommand, WireWorkspaceIndexState,
+        WireRecordState, WireRecordStateResponse, WireReplay, WireRunAdmission, WireSeedUi,
+        WireSessionList, WireSessionListResponse, WireShutdown, WireSnapshot, WireSnapshotResponse,
+        WireSubscribe, WireTicket, WireUiSnapshot, WireUiSnapshotResponse,
+        WireWorkspaceIndexCommand, WireWorkspaceIndexState,
     };
     use prost::Oneof;
 
     #[derive(Clone, PartialEq, Oneof)]
     pub enum Body {
+        #[prost(message, tag = "50")]
+        RecordState(WireRecordState),
+        #[prost(message, tag = "51")]
+        RecordStateResponse(WireRecordStateResponse),
         #[prost(message, tag = "48")]
         WorkspaceIndexCommand(WireWorkspaceIndexCommand),
         #[prost(message, tag = "49")]
@@ -227,6 +232,8 @@ pub struct WireSessionList {
     pub after: String,
     #[prost(string, tag = "2")]
     pub id: String,
+    #[prost(string, tag = "3")]
+    pub view: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -278,6 +285,14 @@ pub struct WireUiSnapshot {}
 pub struct WireUiSnapshotResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub snapshot_json: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct WireRecordState {}
+#[derive(Clone, PartialEq, Message)]
+pub struct WireRecordStateResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub state_json: Vec<u8>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -502,5 +517,24 @@ mod tests {
         };
         let decoded = decode_wire(&encode_wire(&envelope)).unwrap();
         assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn binary_envelope_round_trips_record_state() {
+        for body in [
+            wire_envelope::Body::RecordState(WireRecordState {}),
+            wire_envelope::Body::RecordStateResponse(WireRecordStateResponse {
+                state_json: vec![0, 128, 255],
+            }),
+        ] {
+            let envelope = WireEnvelope {
+                request_id: "state-1".to_owned(),
+                session_id: "s".to_owned(),
+                epoch: 0,
+                revision: 0,
+                body: Some(body),
+            };
+            assert_eq!(decode_wire(&encode_wire(&envelope)).unwrap(), envelope);
+        }
     }
 }

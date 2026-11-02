@@ -95,6 +95,12 @@ export type AddProjectReferenceRequest =
   | { name?: string; localPath: string; projectId?: never; location?: never }
   | { projectId: string; name?: never; localPath?: never; location?: never };
 
+export interface WorkspaceReferenceChanges {
+  roots: ProjectWorkspaceRoot[];
+  /** Skipped or redirected selections; duplicates keep the requested location. */
+  normalizations?: WorkspacePathResolution[];
+}
+
 export interface GitBranchSummary {
   name: string;
   head: string;
@@ -242,6 +248,36 @@ export const projectApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  },
+
+  /** Adds a multi-selection as one validated change instead of N requests. */
+  addReferences(
+    id: string,
+    roots: AddProjectReferenceRequest[],
+  ): Promise<WorkspaceReferenceChanges> {
+    return projectRequest(
+      `${API_BASE}/${encodeURIComponent(id)}/references/batch`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roots }),
+      },
+    );
+  },
+
+  /** Promotes a workspace member to the default project. */
+  setPrimaryRoot(
+    id: string,
+    rootId: string,
+  ): Promise<{ roots: ProjectWorkspaceRoot[] }> {
+    return projectRequest(
+      `${API_BASE}/${encodeURIComponent(id)}/primary-root`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rootId }),
+      },
+    );
   },
 
   removeReference(id: string, referenceId: string): Promise<ProjectWorkspace> {

@@ -10,6 +10,7 @@ import {
 } from "../../../../shared/state/themeStore";
 import { DEFAULT_ACCENT } from "../../../../shared/lib/appearance";
 import { DEFAULT_THEME } from "../../../../shared/lib/theme/defaults";
+import { DEFAULT_APP_THEME } from "../../../../shared/lib/theme/presets";
 import { useNotificationStore } from "../../../../shared/state/notificationStore";
 
 const storageKey = THEME_STORAGE_KEY;
@@ -198,7 +199,7 @@ describe("AppearanceSection", () => {
     act(() => useThemeStore.getState().setMode("system"));
     expect(useThemeStore.getState().mode).toBe("system");
     expect(useThemeStore.getState().resolvedTheme).toBe("dark");
-    expect(screen.getByText("System is currently dark")).toBeInTheDocument();
+    expect(screen.getByText("System: dark")).toBeInTheDocument();
   });
 
   it("selects a preset and restores the Synax accent without changing mode", () => {
@@ -206,23 +207,25 @@ describe("AppearanceSection", () => {
     const reset = screen.getByRole("button", { name: "Reset accent color" });
     const resetTheme = screen.getByRole("button", { name: "Reset theme" });
     expect(reset).toBeDisabled();
+    // The shipped default theme carries the brand accent, so both resets start idle.
     expect(resetTheme).toBeDisabled();
     // The old option role was invalid inside a radiogroup; test actual radio semantics.
     const swatch = screen.getByRole("radio", { name: "Iris" });
     fireEvent.click(swatch);
     expect(swatch).toBeChecked();
+    expect(reset).toBeEnabled();
     expect(resetTheme).toBeEnabled();
     expect(useThemeStore.getState().activeTheme.colors.light.accent).toBe(
       "#b1a2c9",
     );
     expect(screen.getByText("#B1A2C9")).toBeInTheDocument();
     fireEvent.click(reset);
+    expect(reset).toBeDisabled();
     fireEvent.click(resetTheme);
     expect(useThemeStore.getState()).toMatchObject({
       mode: "system",
-      activeTheme: { colors: { light: { accent: DEFAULT_ACCENT } } },
+      activeTheme: DEFAULT_APP_THEME,
     });
-    expect(reset).toBeDisabled();
     expect(resetTheme).toBeDisabled();
   });
 
@@ -252,7 +255,7 @@ describe("AppearanceSection", () => {
       screen.getByRole("radiogroup", { name: "Accent presets" }),
     );
     expect(presets.queryAllByRole("option")).toHaveLength(0);
-    expect(presets.getAllByRole("radio")).toHaveLength(7);
+    expect(presets.getAllByRole("radio")).toHaveLength(8);
     presets.getByRole("radio", { name: "Sage" }).focus();
     await user.keyboard("{ArrowRight}");
     expect(presets.getByRole("radio", { name: "Celadon" })).toBeChecked();
@@ -493,7 +496,7 @@ describe("AppearanceSection", () => {
     expect(useThemeStore.getState()).toMatchObject({
       mode: "dark",
       source: "builtin",
-      activeTheme: DEFAULT_THEME,
+      activeTheme: DEFAULT_APP_THEME,
     });
     expect(screen.getAllByText("Synax Default").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Built-in").length).toBeGreaterThan(0);
@@ -509,10 +512,15 @@ describe("AppearanceSection", () => {
         preferences: { ...state.preferences, locale: "zh" },
       })),
     );
-    render(<AppearanceSection />);
+    const { container } = render(<AppearanceSection />);
+    const meta = within(
+      container.querySelector(".appearance-card-actions") as HTMLElement,
+    );
 
-    expect(screen.getByText("主题名称")).toBeInTheDocument();
-    expect(screen.getByText("来源")).toBeInTheDocument();
+    expect(
+      meta.getByText(useThemeStore.getState().activeTheme.name),
+    ).toBeInTheDocument();
+    expect(meta.getByText("内置")).toBeInTheDocument();
     await user.upload(
       screen.getByLabelText("导入主题 JSON 文件"),
       new File(["{bad"], "broken.json", { type: "application/json" }),
@@ -536,7 +544,7 @@ describe("AppearanceSection", () => {
     );
     render(<AppearanceSection />);
     expect(screen.getByRole("radio", { name: "跟随系统" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "鼠尾草" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "钴蓝" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "自定义主题色" }));
     expect(
       screen.getByRole("group", { name: "饱和度与亮度" }),

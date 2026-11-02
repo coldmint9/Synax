@@ -108,6 +108,18 @@ async function addReference(body: { localPath: string; name?: string } | { proje
   return (await response.json() as { roots: ProjectWorkspaceRoot[] }).roots;
 }
 
+function postReferences(body: unknown, id = 'main') {
+  return routes.request(`/${id}/references/batch`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+
+function patchPrimary(rootId: string, id = 'main') {
+  return routes.request(`/${id}/primary-root`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rootId }),
+  });
+}
+
 function expectPersistedReferences(roots: ProjectWorkspaceRoot[]) {
   expect(diskProject().references).toEqual(roots.filter(root => root.role === 'reference').map(root => ({
     id: root.id, name: root.name, localPath: root.path,
@@ -611,6 +623,110 @@ describe('project workspace references API', () => {
     vi.resetModules();
     ({ projectRoutes: routes } = await import('./projects.js'));
     expect(await workspace()).toEqual(roots);
+  });
+});
+
+describe('workspace multi-selection and default project API', () => {
+  it('adds a whole selection in one persisted change and skips existing members', async () => {
+    const initial = await addReference({ localPath });
+    const response = await postReferences({
+      roots: [
+        { localPath: secondPath, name: 'Web' },
+        { localPath },
+        { localPath: existingPath },
+        { localPath: secondPath },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json() as {
+      roots: ProjectWorkspaceRoot[];
+      normalizations: { duplicate?: boolean; location: { path: string } }[];
+    };
+    expect(body.roots.map(root => [root.role, root.path])).toEqual([
+      ['primary', mainPath],
+      ['reference', localPath],
+      ['reference', secondPath],
+      ['reference', existingPath],
+    ]);
+    expect(body.roots).toHaveLength(initial.length + 2);
+    expect(body.normalizations.map(item => [item.duplicate === true, item.location.path]))
+      .toEqual([[true, localPath], [true, secondPath]]);
+    expect(diskProject().references).toHaveLength(3);
+    expectPersistedReferences(body.roots);
+    vi.resetModules();
+    ({ projectRoutes: routes } = await import('./projects.js'));
+    expect(await workspace()).toEqual(body.roots);
+  });
+
+  it('rejects an oversized selection without writing any member', async () => {
+    const items = JSON.parse(fs.readFileSync(projectsFile, 'utf8')).items as ProjectRecord[];
+    items.find(item => item.id === 'main')!.references = Array.from({ length: 48 }, (_, index) => ({
+      id: `ref-${index}`, name: `Member ${index}`, localPath: directory(`batch-member-${index}`),
+    }));
+    fs.writeFileSync(projectsFile, JSON.stringify({ items }));
+    vi.resetModules();
+    ({ projectRoutes: routes } = await import('./projects.js'));
+    const before = fs.readFileSync(projectsFile, 'utf8');
+    const response = await postReferences({
+      roots: [{ localPath }, { localPath: secondPath }, { localPath: existingPath }],
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'A workspace supports up to 50 projects.' });
+    expect(fs.readFileSync(projectsFile, 'utf8')).toBe(before);
+    expect(await workspace()).toHaveLength(49);
+  });
+
+  it('validates the batch payload and reports unknown workspaces', async () => {
+    const bodies = [
+      {},
+      { roots: [] },
+      { roots: [{ localPath }, ...Array.from({ length: 50 }, () => ({ localPath }))] },
+      { roots: [{ localPath }, { unknown: true }] },
+    ];
+    for (const body of bodies) expect((await postReferences(body)).status).toBe(400);
+    expect((await routes.request('/main/references/batch', { method: 'POST', body: '{' })).status).toBe(400);
+    expect((await postReferences({ roots: [{ localPath }] }, 'unknown')).status).toBe(404);
+    expect(diskProject().references).toBeUndefined();
+  });
+
+  it('promotes a member to the default project and keeps the previous default in place', async () => {
+    const roots = await addReference({ localPath });
+    const promoted = roots.find(root => root.role === 'reference')!;
+    await addReference({ localPath: secondPath, name: 'Web' });
+    const response = await patchPrimary(promoted.id);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { roots: ProjectWorkspaceRoot[] };
+    expect(body.roots.map(root => [root.role, root.name, root.path])).toEqual([
+      ['primary', 'local', localPath],
+      ['reference', 'Project main', mainPath],
+      ['reference', 'Web', secondPath],
+    ]);
+    expect(body.roots[0].id).toBe('main');
+    const record = diskProject();
+    expect(record.source?.localPath).toBe(localPath);
+    expect(record.primaryName).toBe('local');
+    expect(record.references).toEqual([
+      { id: expect.any(String), name: 'Project main', localPath: mainPath },
+      { id: expect.any(String), name: 'Web', localPath: secondPath },
+    ]);
+    expect(record.references![0].id).toMatch(/^ref_/);
+    expect(record.references![0].id).not.toBe(promoted.id);
+    expect(isolation.workspaceIndexProject).toHaveBeenCalledWith('main', expect.any(Array));
+  });
+
+  it('is idempotent for the current default and rejects unknown members', async () => {
+    await addReference({ localPath });
+    const before = fs.readFileSync(projectsFile, 'utf8');
+    const response = await patchPrimary('main');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ roots: expect.any(Array) });
+    expect(fs.readFileSync(projectsFile, 'utf8')).toBe(before);
+    expect((await patchPrimary('ref-unknown')).status).toBe(404);
+    expect((await patchPrimary('main', 'unknown')).status).toBe(404);
+    expect((await routes.request('/main/primary-root', { method: 'PATCH', body: '{' })).status).toBe(400);
+    expect((await routes.request('/main/primary-root', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    })).status).toBe(400);
   });
 });
 

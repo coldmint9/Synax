@@ -1,5 +1,5 @@
-import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from "@headlessui/react";
 import { useState } from "react";
+import { ImageViewer } from "../image-viewer/ImageViewer";
 
 interface Props {
   src?: string;
@@ -35,27 +35,14 @@ export function MarkdownImage({ src, alt = "", title }: Props) {
         />
         {failed && <span className="markdown-image-error" role="status">图片加载失败{alt ? `：${alt}` : ""}</span>}
       </button>
-      <Dialog open={open} onClose={() => setOpen(false)} className="relative z-[1000]">
-        <DialogBackdrop className="fixed inset-0 bg-black/80" />
-        <div className="markdown-image-lightbox">
-          <DialogPanel className="markdown-image-lightbox-frame">
-            <DialogTitle className="sr-only">{alt || "图片预览"}</DialogTitle>
-            <img
-              src={src}
-              alt={alt}
-              className="markdown-image-lightbox-image"
-            />
-            <button
-              type="button"
-              className="markdown-image-lightbox-close"
-              aria-label="关闭图片预览"
-              onClick={() => setOpen(false)}
-            >
-              ×
-            </button>
-          </DialogPanel>
-        </div>
-      </Dialog>
+      {open && (
+        <ImageViewer
+          src={src}
+          alt={alt}
+          title={title}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }

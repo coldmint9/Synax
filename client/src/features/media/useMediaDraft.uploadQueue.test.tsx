@@ -139,3 +139,45 @@ describe("background attachment uploads", () => {
     await waitFor(() => expect(started).toEqual(["a.txt", "b.txt", "d.txt"]));
   });
 });
+
+describe("large pasted text", () => {
+  it("uploads the paste as a text file instead of an inline text part", async () => {
+    let finish!: (asset: RuntimeAsset) => void;
+    const upload = vi.spyOn(runtimeMedia, "upload").mockImplementation(
+      () =>
+        new Promise<RuntimeAsset>((resolve) => {
+          finish = (asset) => resolve(asset);
+        }),
+    );
+    const text = "Caused by: example failure\n".repeat(400);
+
+    const view = renderHook(() => useMediaDraft("p1"));
+    act(() => view.result.current.addText(text));
+
+    expect(upload).toHaveBeenCalledTimes(1);
+    const pasted = upload.mock.calls[0]![1];
+    expect(pasted).toBeInstanceOf(File);
+    expect(pasted.name).toMatch(/\.txt$/);
+    expect(pasted.type).toBe("text/plain");
+    expect(await pasted.text()).toBe(text);
+
+    await act(async () => finish(makeAsset("pasted.txt")));
+    await waitFor(() => expect(view.result.current.ready).toBe(true));
+    // A file part keeps the pasted bytes out of the message content, so the
+    // transcript never shows the paste as something the user typed.
+    expect(view.result.current.parts).toEqual([
+      { type: "file", assetId: "asset-pasted.txt" },
+    ]);
+  });
+
+  it("keeps the paste in the composer when its upload fails", async () => {
+    vi.spyOn(runtimeMedia, "upload").mockRejectedValue(new Error("boom"));
+
+    const view = renderHook(() => useMediaDraft("p1"));
+    act(() => view.result.current.addText("a long paste"));
+
+    await waitFor(() => expect(view.result.current.items[0]?.error).toBe("boom"));
+    expect(view.result.current.blocked).toBe(true);
+    expect(view.result.current.items[0]?.file.name).toMatch(/\.txt$/);
+  });
+});

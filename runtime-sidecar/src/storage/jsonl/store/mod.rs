@@ -2,7 +2,9 @@
 //! root-level session-list index.
 
 pub mod list_index;
+pub(crate) mod list_projection;
 mod summary_cache;
+mod summary_refresh;
 mod summary_replay;
 #[cfg(test)]
 mod tests;
@@ -30,8 +32,9 @@ pub use list_index::{ListIndex, ListKey};
 /// The store root: created once, shared by every session handle.
 pub struct Root {
     pub path: PathBuf,
-    pub lock: crate::storage::jsonl::lock::StoreLock,
+    pub lock: Arc<crate::storage::jsonl::lock::StoreLock>,
     pub(crate) sessions: SessionCache<SessionHandle>,
+    summary_cache: summary_refresh::Coordinator,
     pub list: RwLock<ListIndex>,
     index_state: AtomicU8,
     index_error: Mutex<Option<String>>,
@@ -45,13 +48,15 @@ pub struct JsonlStore {
 impl JsonlStore {
     pub fn open(path: impl AsRef<Path>) -> JsonlResult<Self> {
         let path = path.as_ref().to_path_buf();
-        let lock = crate::storage::jsonl::lock::StoreLock::acquire(&path)?;
+        let lock = Arc::new(crate::storage::jsonl::lock::StoreLock::acquire(&path)?);
+        let summary_cache = summary_refresh::Coordinator::new(path.clone(), lock.clone())?;
         tracing::info!(event = "storage.opened", "Runtime store opened");
         Ok(Self {
             root: Arc::new(Root {
                 path,
                 lock,
                 sessions: SessionCache::default(),
+                summary_cache,
                 list: RwLock::new(ListIndex::default()),
                 index_state: AtomicU8::new(0),
                 index_error: Mutex::new(None),
@@ -194,10 +199,11 @@ impl JsonlStore {
     }
 
     fn load_list_entry(&self, id: &str) -> JsonlResult<bool> {
+        let _lifecycle = self.root.summary_cache.read_lifecycle();
         if super::layout::deletion_marker(self.root(), id).try_exists()? {
             match std::fs::remove_dir_all(super::layout::session_dir(self.root(), id)?) {
-                Ok(()) => {},
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
             return Ok(false);
@@ -205,14 +211,20 @@ impl JsonlStore {
         if self.root.sessions.get(id).is_some() {
             return Ok(false);
         }
-        if let Some(row) = summary_cache::read(&self.root.path, id) {
+        if let Some(row) = summary_cache::read_with(&self.root.path, id, |staged| self.root.summary_cache.publish_rebuilt(staged)) {
             let mut list = self.root.list.write();
-            if !super::layout::deletion_marker(self.root(), id).try_exists()? { list.insert_cached(row); }
+            if !super::layout::deletion_marker(self.root(), id).try_exists()? {
+                list.insert_cached(row);
+            }
             return Ok(false);
         }
-        let row = summary_cache::rebuild(&self.root.path, id)?;
+        let row = summary_cache::rebuild(&self.root.path, id, |staged| {
+            self.root.summary_cache.publish_rebuilt(staged)
+        })?;
         let mut list = self.root.list.write();
-        if !super::layout::deletion_marker(self.root(), id).try_exists()? { list.insert_cached(row); }
+        if !super::layout::deletion_marker(self.root(), id).try_exists()? {
+            list.insert_cached(row);
+        }
         Ok(true)
     }
 
@@ -226,13 +238,11 @@ impl JsonlStore {
         Ok(self.root.list.read().get(id))
     }
 
-    fn cache_summary(&self, actor: &SessionActor) {
-        if super::layout::ensure_not_deleted(self.root(), &actor.id).is_err() { return; }
-        if let Err(error) = summary_cache::write(&self.root.path, actor) {
-            // Cache failures cannot fail an otherwise durable session write.
-            tracing::warn!(event = "storage.summary_cache_failed", session_id = actor.id,
-                error = %error, "Session summary will be rebuilt on next startup");
+    fn mark_summary_dirty(&self, actor: &SessionActor, urgent: bool) {
+        if super::layout::ensure_not_deleted(self.root(), &actor.id).is_err() {
+            return;
         }
+        self.root.summary_cache.mark_dirty(actor, urgent);
     }
 
     fn checkpoint(&self, handle: &SessionHandle, force: bool) {
@@ -249,7 +259,9 @@ impl JsonlStore {
     }
 
     pub fn session_exists(&self, session_id: &str) -> bool {
-        if super::layout::ensure_not_deleted(self.root(), session_id).is_err() { return false; }
+        if super::layout::ensure_not_deleted(self.root(), session_id).is_err() {
+            return false;
+        }
         self.root.sessions.get(session_id).is_some()
             || super::layout::session_dir(&self.root.path, session_id)
                 .map(|dir| dir.is_dir())
@@ -260,13 +272,23 @@ impl JsonlStore {
     pub fn flush(&self) -> JsonlResult<()> {
         let started = std::time::Instant::now();
         let handles = self.root.sessions.values();
-        for handle in handles {
+        let mut targets = Vec::with_capacity(handles.len());
+        for handle in &handles {
             let mut actor = handle.actor.lock();
             actor.sync()?;
-            self.cache_summary(&actor);
+            self.mark_summary_dirty(&actor, true);
+            targets.push((
+                actor.id.clone(),
+                Arc::downgrade(handle.cell()),
+                actor.commit,
+            ));
             drop(actor);
             self.checkpoint(&handle, true);
         }
+        // Shutdown and explicit flushes publish all pending disposable rows.
+        // Cache failures remain non-fatal because committed logs are the source
+        // of truth and rows can always be rebuilt.
+        self.root.summary_cache.wait_for(&targets);
         tracing::info!(
             event = "storage.flushed",
             duration_ms = started.elapsed().as_millis() as u64,
@@ -279,18 +301,39 @@ impl JsonlStore {
         if let Some(handle) = self.root.sessions.get(session_id) {
             let mut actor = handle.actor.lock();
             actor.sync()?;
-            self.cache_summary(&actor);
+            self.mark_summary_dirty(&actor, false);
             drop(actor);
             self.checkpoint(&handle, false);
         }
         Ok(())
     }
 
+    /// A finish has already crossed the durable ACK barrier. Best-effort final
+    /// summary publication waits outside the actor lock and has a finite bound.
+    pub fn flush_session_summary(&self, session_id: &str) {
+        let Some(handle) = self.root.sessions.peek(session_id) else {
+            return;
+        };
+        let target = {
+            let actor = handle.actor.lock();
+            self.mark_summary_dirty(&actor, true);
+            (
+                actor.id.clone(),
+                Arc::downgrade(handle.cell()),
+                actor.commit,
+            )
+        };
+        self.root.summary_cache.wait_for(&[target]);
+    }
+
     /// Process identities must be durable before launch, but they do not
     /// change the list row. Avoid rewriting its potentially large metadata.
     pub fn flush_process_leases(&self, session_id: &str) -> JsonlResult<()> {
         if let Some(handle) = self.root.sessions.get(session_id) {
-            handle.actor.lock().sync()?;
+            let mut actor = handle.actor.lock();
+            actor.sync()?;
+            self.root.summary_cache.wake_synced(&actor);
+            drop(actor);
             self.checkpoint(&handle, false);
         }
         Ok(())
@@ -336,8 +379,16 @@ impl JsonlStore {
                 if actor.sync().is_err() {
                     return false;
                 }
-                self.cache_summary(&actor);
+                self.mark_summary_dirty(&actor, true);
+                let target = (
+                    actor.id.clone(),
+                    Arc::downgrade(handle.cell()),
+                    actor.commit,
+                );
                 drop(actor);
+                if !self.root.summary_cache.wait_for(&[target]) {
+                    return false;
+                }
                 self.checkpoint(handle, true);
                 true
             },
@@ -368,26 +419,51 @@ impl JsonlStore {
 
     pub fn update_list(&self, mut row: ListRecord) -> JsonlResult<()> {
         let mut list = self.root.list.write();
-        if super::layout::deletion_marker(self.root(), &row.s).try_exists()? { row.del = true; }
+        if super::layout::deletion_marker(self.root(), &row.s).try_exists()? {
+            row.del = true;
+        }
         list.upsert(row);
         Ok(())
     }
 
     pub(crate) fn forget_deleted_session(&self, id: &str) -> JsonlResult<()> {
-        self.update_list(ListRecord { s: id.into(), u: String::new(), h: serde_json::Value::Null, del: true })?;
+        self.root.summary_cache.cancel(id);
+        self.update_list(ListRecord {
+            s: id.into(),
+            u: String::new(),
+            h: serde_json::Value::Null,
+            del: true,
+        })?;
         self.root.sessions.remove(id);
         Ok(())
     }
 
+    /// Shared by physical deletion/reset and a summary's final rename.
+    pub(crate) fn summary_lifecycle(&self) -> parking_lot::RwLockWriteGuard<'_, ()> {
+        self.root.summary_cache.lifecycle()
+    }
+
     /// Remove every session directory (test reset).
     pub fn reset_all(&self) -> JsonlResult<()> {
+        let _lifecycle = self.summary_lifecycle();
+        self.root.summary_cache.reset();
+        for handle in self.root.sessions.values() {
+            // A worker may retain the old cell after removal from the map.
+            // Invalidate it before a new session can reuse this directory.
+            let mut actor = handle.actor.lock();
+            actor.header = super::segment::PValue::Null;
+            actor.projection = None;
+            handle.publish(&mut actor);
+        }
         self.root.sessions.clear();
         let sessions = self.root.path.join(super::layout::SESSIONS_DIR);
         if sessions.exists() {
             std::fs::remove_dir_all(&sessions).map_err(JsonlError::io)?;
         }
         let markers = self.root.path.join("deleted-sessions");
-        if markers.exists() { std::fs::remove_dir_all(markers)?; }
+        if markers.exists() {
+            std::fs::remove_dir_all(markers)?;
+        }
         self.root.list.write().clear();
         self.root.index_state.store(2, Ordering::Release);
         *self.root.index_error.lock() = None;
@@ -405,7 +481,7 @@ pub fn build_handle(root: &Path, session_id: &str, loaded: load::Loaded) -> Sess
             retained_from: 1,
             ..Default::default()
         },
-        header: Arc::new(serde_json::Value::Null),
+        header: Arc::new(super::segment::PValue::Null),
         projection: Arc::new(load::empty_projection()),
         projection_ready: false,
         queue: Arc::new(QueueState::default()),

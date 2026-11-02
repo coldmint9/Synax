@@ -54,8 +54,10 @@ export function BuiltinMcpSection({ value, onSave }: {
         {status ? (labels[status.state] ?? (zh ? '未知' : 'Unknown')) : (zh ? '未获取（需要桌面应用）' : 'Not available (desktop app required)')}
         {saving && (zh ? ' · 保存中…' : ' · Saving…')}
       </p>
-      {status?.error && <p role="alert" className="mt-1 text-xs text-destructive">{status.error}</p>}
-      {error && <p className="mt-1 text-xs text-destructive" role="alert">{error}</p>}
+      {(error || status?.error) && <div role="alert" className="mt-1 text-xs text-destructive">
+        {error && <p>{error}</p>}
+        {status?.error && status.error !== error && <p>{status.error}</p>}
+      </div>}
     </div>
   )
 }

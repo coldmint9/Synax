@@ -316,6 +316,50 @@ describe("conversation merge workbench", () => {
     expect(screen.queryByRole("button", { name: "运行检查" })).toBeNull();
     expect(screen.queryByRole("button", { name: /确认更新/ })).toBeNull();
   });
+  it("starts an unstarted draft instead of offering a stopped-worker label", async () => {
+    const draft = {
+      ...snapshot(),
+      execution: undefined,
+      mr: {
+        ...snapshot().mr,
+        status: "draft" as const,
+        currentStep: 0,
+        steps: [{ branch: "feature/session", oid: "source", status: "pending" as const }],
+      },
+    };
+    vi.mocked(conversationGitApi.get).mockResolvedValue(draft);
+    vi.mocked(conversationGitApi.action).mockResolvedValue(draft);
+    mount();
+    const start = await screen.findByRole("button", { name: "开始合并" });
+    expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
+    fireEvent.click(start);
+    await waitFor(() =>
+      expect(conversationGitApi.action).toHaveBeenCalledWith(
+        reference.sessionId,
+        reference.objectId,
+        expect.objectContaining({
+          action: "resume",
+          expectedVersion: 7,
+          expectedTaskRevision: 2,
+        }),
+      ),
+    );
+  });
+  it("explains a session stop fence in the reader's language", async () => {
+    vi.mocked(conversationGitApi.get).mockResolvedValue({
+      ...snapshot(),
+      execution: undefined,
+      mr: {
+        ...snapshot().mr,
+        error:
+          "Continue the parent conversation before starting its merge worker.",
+      },
+    });
+    mount();
+    expect(
+      await screen.findByText("所属会话已停止，请在该会话中继续对话后重试。"),
+    ).toBeVisible();
+  });
   it("requires one explicit cancel decision and sends the terminal cancel command", async () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "取消" }));

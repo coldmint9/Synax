@@ -26,6 +26,29 @@ export function currentRuntimeHostId(): string {
   return process.env.SYNAX_RUNTIME_HOST_ID ?? `local:${process.pid}`;
 }
 
+/**
+ * A question that outlived its run is still the user's to answer. Restart
+ * recovery must park the session on that form instead of discarding it,
+ * otherwise the answer has nowhere to go and the session is continued by
+ * itself before the user ever decides.
+ *
+ * Only clarifications qualify: plan execution needs the run checkpoint the
+ * restart destroyed, so a plan approval keeps the older expire-on-restart
+ * behaviour.
+ */
+function openAnswerForm(sessionId: string, runId: string) {
+  return interactionService
+    .list(sessionId)
+    .find(
+      (item) =>
+        item.runId === runId &&
+        item.kind === "clarification" &&
+        !item.consumedAt &&
+        (item.status === "pending" ||
+          (item.status === "answered" && Boolean(item.response))),
+    );
+}
+
 /** Completed summaries with no live lease/fence can stay cold at startup. */
 export function needsRuntimeRecovery(session: AgentSession): boolean {
   return session.runtimeRecoveryRequired !== false || Boolean(session.activeRunId) || Boolean(session.sessionMetadata?.runtimeControl) ||
@@ -180,6 +203,10 @@ export async function recoverRuntimeSession(
   const unchanged = { reviewed: 0, resumable: [] as string[] };
   if (snapshot.session.sessionMetadata?.forkPreparing) {
     const metadata = snapshot.session.sessionMetadata;
+    // Side-chat preparation owns its readiness commit and snapshot receipt.
+    // Reopening the panel finishes it under the parent workspace lock, so
+    // generic fork recovery must never delete it as an interrupted fork.
+    if (metadata.subagentKind === "side-chat") return unchanged;
     if (!includeCurrentHost && metadata.forkHostId === hostId) return unchanged;
     if (typeof metadata.forkRequestId !== "string")
       throw new Error("Interrupted fork has no recoverable request identity.");
@@ -314,9 +341,28 @@ export async function recoverRuntimeSession(
     if (lease && !lease.closed) await runtimeFacade.controlCommand({ sessionId: session.id,
       requestId: `restart-close:${active.id}:${lease.epoch}`, operation: "execution_close", payload: lease });
     await (await import("./checkpoint-service.js")).recoverCheckpointHead(session.id);
+    // The loop that was waiting for the answer died with the runtime, but the
+    // question is still the user's. Keep the form and park the session on it:
+    // the reply then starts the continuation turn, and nothing auto-continues
+    // the work behind the user's back.
+    const answerForm = local ? openAnswerForm(session.id, active.id) : undefined;
+    const parkedReason = answerForm
+      ? "The app restarted while waiting for your reply."
+      : reason;
+    const parked = answerForm
+      ? {
+          status: "waiting_input" as const,
+          pendingResumeToken: `interaction:${answerForm.id}`,
+          blockedReason: answerForm.request.title,
+        }
+      : {
+          status: "paused" as const,
+          pendingResumeToken: null,
+          blockedReason: reason,
+        };
     if (local) {
       interruptContextCompaction(session.id, "运行进程已重启，上下文压缩已中断。");
-      interactionService.cancel(session.id);
+      if (!answerForm) interactionService.cancel(session.id);
       for (const permission of agentRuntimeStore.listPermissions(session.id)) {
         if (permission.runId !== active.id || permission.action !== "ask" || permission.resolvedAt) continue;
         agentRuntimeStore.updatePermission(session.id, permission.id, {
@@ -330,6 +376,9 @@ export async function recoverRuntimeSession(
           agentRuntimeStore.updateRunStep(step.id, { status: "interrupted", completedAt: nowIso(), finishReason: "runtime_restart" });
       }
       for (const call of agentRuntimeStore.listToolCalls(session.id)) {
+        // The parked form's checkpoint stays pending: its question is still
+        // open, and the reply arrives as the next turn instead of a result.
+        if (answerForm && call.id === answerForm.toolCallId) continue;
         if (call.runId === active.id && ["pending", "running"].includes(call.status))
           agentRuntimeStore.updateToolCall(session.id, call.id, { status: "failed", endedAt: nowIso(), error: "运行进程已重启；未确认工具执行结果，未自动重试。" });
       }
@@ -339,7 +388,7 @@ export async function recoverRuntimeSession(
       ...active,
       status: "interrupted",
       completedAt: nowIso(),
-      stopReason: reason,
+      stopReason: parkedReason,
       metadata: {
         ...active.metadata,
         recovery: { phase: active.status, at: nowIso() },
@@ -352,12 +401,12 @@ export async function recoverRuntimeSession(
     await runtimeFacade.finishExecution(session.id, finalRun);
     // `finish` closes the execution lease but keeps the durable stop fence;
     // without this ack the session could never open a new execution again.
-    await clearControlFence(session.id, finalRun.id, reason, control.runtimeControl);
+    await clearControlFence(session.id, finalRun.id, parkedReason, control.runtimeControl);
     await runtimeFacade.sessionPatch(session.id, `recovery:${session.id}:${finalRun.id}`, {
-      status: "paused",
+      status: parked.status,
       activeRunId: null,
-      pendingResumeToken: null,
-      blockedReason: reason,
+      pendingResumeToken: parked.pendingResumeToken,
+      blockedReason: parked.blockedReason,
       completedAt: null,
       updatedAt: finalRun.completedAt,
       sessionMetadata: { runtimeControl: null },
@@ -366,10 +415,10 @@ export async function recoverRuntimeSession(
       try {
         agentRuntimeStore.updateRun(finalRun.id, finalRun);
         agentRuntimeStore.updateSession(session.id, {
-          status: "paused",
+          status: parked.status,
           activeRunId: null,
-          pendingResumeToken: null,
-          blockedReason: reason,
+          pendingResumeToken: parked.pendingResumeToken,
+          blockedReason: parked.blockedReason,
           updatedAt: finalRun.completedAt!,
           sessionMetadata: { ...(local.sessionMetadata ?? {}), runtimeControl: null },
         });

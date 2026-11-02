@@ -151,6 +151,28 @@ describe("useSessionDetailPolling", () => {
     expect(api.getSessionSummary).toHaveBeenCalledTimes(3);
   });
 
+  it("does not reload transcript detail when switching back to a cached running session", async () => {
+    const cached = {
+      runs: [], steps: [], events: [], messages: [], toolCalls: [], permissions: [],
+      sessionStats: null, sessionTodos: [], sessionInvocationUsage: null,
+      cachedAt: Date.now(), invalidated: false,
+    } as never;
+    store.setState({ sessionDetailCache: { s1: cached } });
+    renderHook(() => useSessionDetailPolling());
+    await flush();
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(1);
+    expect(api.listSessionSteps).not.toHaveBeenCalled();
+    expect(api.listMessages).not.toHaveBeenCalled();
+    expect(api.getSessionStats).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POLL_MS);
+    });
+    await flush();
+    expect(api.getSessionSummary).toHaveBeenCalledTimes(2);
+    expect(api.listMessages).not.toHaveBeenCalled();
+  });
+
   it("does not start a new cycle while the awaited refresh is still in flight", async () => {
     let resolveList!: (value: { session: AgentSession }) => void;
     vi.mocked(api.getSessionSummary).mockReturnValueOnce(

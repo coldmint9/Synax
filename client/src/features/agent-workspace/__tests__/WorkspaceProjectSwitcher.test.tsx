@@ -67,7 +67,15 @@ it('switches the active project main-directory branch through its scoped picker 
   await screen.findByRole('button', { name: 'web · 主目录 · main' });
   await user.click(screen.getByRole('button', { name: '切换 Git 分支: main' }));
   await user.click(await screen.findByRole('option', { name: 'feature/available', exact: true }));
-  await waitFor(() => expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith('session', 'feature/available', 'web'));
+  await waitFor(() =>
+    expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith(
+      'session',
+      'feature/available',
+      'web',
+      false,
+      false,
+    ),
+  );
   expect(agentRuntimeApi.listSessionBranches).toHaveBeenCalledWith('session', 'web');
   await waitFor(() => expect(reload).toHaveBeenCalled());
   expect(screen.getByRole('button', { name: 'web · main' })).toHaveAttribute('aria-expanded', 'true');

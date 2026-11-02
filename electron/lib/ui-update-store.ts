@@ -1,3 +1,4 @@
+import { requireLegacyUpdateSource } from "../updater/update-source.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -130,30 +131,25 @@ export class UiUpdateStore {
   }
 
   async initialize(): Promise<void> {
+    try { requireLegacyUpdateSource(); }
+    catch {
+      // An upstream active/pending snapshot must never replace bundled Synax UI.
+      this.state = initialState();
+      this.currentRoot = this.bundledRoot;
+      return;
+    }
     await fs.mkdir(this.directory, { recursive: true });
     try {
-      const input = (await readJson(
-        path.join(this.directory, "state.json"),
-      )) as UiState;
-      if (
-        !input ||
-        !Array.isArray(input.rejected) ||
-        ![input.active, input.pending, input.previous].every(
-          (v) => v === null || typeof v === "string",
-        ) ||
-        typeof input.awaitingHealth !== "boolean"
-      )
+      const input = (await readJson(path.join(this.directory, "state.json"))) as UiState;
+      if (!input || !Array.isArray(input.rejected) ||
+        ![input.active, input.pending, input.previous].every((v) => v === null || typeof v === "string") ||
+        typeof input.awaitingHealth !== "boolean")
         throw new Error("Invalid UI state");
       this.state = {
         ...input,
-        rejected: input.rejected
-          .filter((v) => /^\d+\.\d+\.\d+$/.test(v))
-          .slice(-20),
+        rejected: input.rejected.filter((v) => /^\d+\.\d+\.\d+$/.test(v)).slice(-20),
       };
-    } catch {
-      this.state = initialState();
-    }
-
+    } catch { this.state = initialState(); }
     if (this.state.awaitingHealth) {
       if (this.state.active) this.state.rejected.push(this.state.active);
       this.state.active = this.state.previous;
@@ -181,9 +177,7 @@ export class UiUpdateStore {
     this.currentRoot = root ?? this.bundledRoot;
     this.state.rejected = [...new Set(this.state.rejected)].slice(-20);
     await this.save();
-    await this.cleanCache().catch((error) =>
-      console.warn("[ui-update] cache cleanup failed", error),
-    );
+    await this.cleanCache().catch((error) => console.warn("[ui-update] cache cleanup failed", error));
   }
 
   async markHealthy(): Promise<void> {
@@ -209,6 +203,7 @@ export class UiUpdateStore {
   }
 
   async prepare(release: UiRelease): Promise<"delta" | "full"> {
+    requireLegacyUpdateSource();
     const manifest = release.manifest;
     if (
       manifest.appVersion !== this.appVersion ||

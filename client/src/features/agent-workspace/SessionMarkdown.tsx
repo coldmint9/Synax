@@ -3,7 +3,7 @@ import { useWorkspaceMarkdownImages } from "./WorkspaceMarkdownImage";
 import { memo, useCallback, useMemo } from "react";
 import { parseFileLink, type FileLinkTarget } from "./fileLink";
 import { FileTypeIcon } from "./FileTypeIcon";
-import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
+import { openFileLinkTarget } from "./fileLinkOpen";
 import { useTranscriptSession } from "./SessionTranscriptContext";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 
@@ -16,7 +16,9 @@ interface Props {
  * Anchors in agent replies point at workspace files far more often than at
  * URLs, and a bare `<a href="src/a.ts">` navigates the whole app away from the
  * session. Recognised file links open the workspace file viewer instead, while
- * real URLs keep the default anchor behaviour.
+ * real URLs keep the default anchor behaviour. A target the workspace cannot
+ * open is reported as a notification instead of a viewer tab that only shows
+ * the read failure.
  */
 function useMarkdownComponents(): Components {
   const { sessionId, workspacePath, roots } = useTranscriptSession();
@@ -25,7 +27,7 @@ function useMarkdownComponents(): Components {
     (event: React.MouseEvent<HTMLAnchorElement>, target: FileLinkTarget) => {
       if (!sessionId || event.defaultPrevented) return;
       event.preventDefault();
-      openWorkspaceFile(sessionId, target.path, target.line, target.rootId, target.rootName);
+      void openFileLinkTarget(sessionId, target);
     },
     [sessionId],
   );

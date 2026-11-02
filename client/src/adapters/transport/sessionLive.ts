@@ -1,4 +1,4 @@
-import { onRunObservation, observeRunRealtime, setRunRealtimeObservation } from "./runRealtime";
+import { onRunObservation, observeRunRealtime, setRunRealtimeObservation, type RunRealtimeCheckpoint } from "./runRealtime";
 import { RustRuntimeConnection, type RuntimeBootstrap } from './rustRuntimeConnection';
 import { useRuntimeConnectionStore } from '../../shared/state/runtimeConnectionStore';
 import type { LlmRetryState } from "../../../../services/local-node/infrastructure/llm-runtime/retry-state";
@@ -19,7 +19,6 @@ import type {
   RuntimeEvent,
   AgentRuntimeMessage,
   ContextCompactionState,
-  ContextUsageSnapshot,
   ToolCallRecord,
   PermissionDecision,
 } from "./agentRuntime";
@@ -76,7 +75,6 @@ export type SessionLiveEvent =
       originalTokens: number;
       compressedTokens: number;
       messageCount: number;
-      contextUsage?: ContextUsageSnapshot;
       event?: RuntimeEvent;
     }
   | { type: "context_compaction_failed"; error: string; event?: RuntimeEvent };
@@ -104,7 +102,9 @@ function isTerminalLifecycleEvent(event: SessionLiveEvent): boolean {
  * On replay expiry, rebuild from one durable snapshot before accepting deltas. */
 export function sessionLiveStream(
   sessionId: string, onEvent: (event: SessionLiveEvent) => void, onError?: (err: Event) => void,
+  resume?: RunRealtimeCheckpoint,
 ): () => void {
+  const observationOwner = {};
   let activeRun: string | null = null;
   let closed = false;
   let stopRun: (() => void) | undefined;
@@ -114,7 +114,7 @@ export function sessionLiveStream(
     if (closed) return;
     if (activeRun) unavailable.add(activeRun);
     activeRun = null;
-    setRunRealtimeObservation(sessionId, null);
+    setRunRealtimeObservation(sessionId, null, observationOwner);
     stopRun?.(); stopRun = undefined;
     stopDurable?.();
     stopDurable = durableSessionLiveStream(sessionId, receive, onError);
@@ -125,7 +125,7 @@ export function sessionLiveStream(
     if (activeRun) unavailable.add(activeRun);
     if (unavailable.size > 64) unavailable.delete(unavailable.values().next().value!);
     stopRun?.(); activeRun = runId;
-    setRunRealtimeObservation(sessionId, runId);
+    setRunRealtimeObservation(sessionId, runId, observationOwner);
     stopRun = observeRunRealtime(
       sessionId,
       runId,
@@ -134,11 +134,13 @@ export function sessionLiveStream(
         onEvent(event);
       },
       recover,
+      resume,
     );
+    resume = undefined;
   };
   const finishActiveRun = () => {
     activeRun = null;
-    setRunRealtimeObservation(sessionId, null);
+    setRunRealtimeObservation(sessionId, null, observationOwner);
     stopRun?.();
     stopRun = undefined;
   };
@@ -159,7 +161,7 @@ export function sessionLiveStream(
   };
   const unsubscribe = onRunObservation(sessionId, start);
   stopDurable = durableSessionLiveStream(sessionId, receive, onError);
-  return () => { closed = true; setRunRealtimeObservation(sessionId, null); unsubscribe(); stopRun?.(); stopDurable?.(); };
+  return () => { closed = true; setRunRealtimeObservation(sessionId, null, observationOwner); unsubscribe(); stopRun?.(); stopDurable?.(); };
 }
 
 function durableSessionLiveStream(

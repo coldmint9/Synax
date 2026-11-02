@@ -106,7 +106,7 @@ export function MergeRequestDetail({
   const locked =
     !!busy || (!!mr && (isTerminal(mr.status) || isRunning(mr.status)));
   const conflictCount = files.filter((item) => item.conflicted).length;
-  const basePath = `/projects/${encodeURIComponent(projectId)}/git?view=requests`;
+  const basePath = `/projects/${encodeURIComponent(projectId)}/git?view=quick`;
   if (loading && !mr)
     return (
       <div

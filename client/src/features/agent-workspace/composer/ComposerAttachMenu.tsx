@@ -11,12 +11,15 @@ import { Checkbox } from "@/shared/ui/ui/Toggle";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
 import { skillsApi, type SkillSummary } from "../../../adapters/transport/skills";
 import { useLocale } from "../../../shared/hooks/useLocale";
+import { quickActionSkills, type QuickAction } from "../../quick-actions/quickActions";
 import { SYNAX_PROFILE_ID } from "./composerTypes";
 
 interface Props {
   projectId: string;
   skillIds: string[];
   onSkillIdsChange: (ids: string[]) => void;
+  quickActions?: readonly QuickAction[];
+  onQuickActionSelect?: (action: QuickAction, availableSkillIds?: readonly string[]) => void;
   disabled?: boolean;
   skillsDisabled?: boolean;
   subagentsEnabled: boolean;
@@ -26,6 +29,8 @@ interface Props {
 
 function AttachPanel(props: Props & { open: boolean; close: () => void }) {
   const { t, locale } = useLocale();
+  const signedIn = false;
+  const quickActions = (props.quickActions ?? []).filter((action) => action.kind === "launch");
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const loaded = useRef(false);
@@ -59,6 +64,7 @@ function AttachPanel(props: Props & { open: boolean; close: () => void }) {
       active = false;
     };
   }, [props.open, props.projectId, props.disabled, props.skillsDisabled]);
+  const availableSkillIds = loading || !loaded.current ? undefined : skills.map((item) => item.id);
   return (
     <PopoverPanel
       focus
@@ -67,6 +73,46 @@ function AttachPanel(props: Props & { open: boolean; close: () => void }) {
       className="w-72 max-h-[min(36rem,calc(100dvh-24px))] overflow-y-auto"
     >
       <div className="pt-1">
+        {!props.skillsDisabled && props.onQuickActionSelect && quickActions.length > 0 && (
+          <div className="mb-1 border-b border-border/60 pb-1">
+            <h3 className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
+              {locale === "zh" ? "快捷操作" : "Quick actions"}
+            </h3>
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              const count = quickActionSkills(action, signedIn)
+                .filter((item) => !availableSkillIds || availableSkillIds.includes(item.id)).length;
+              const needsInput = action.policy === "compose";
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={props.disabled}
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => {
+                    props.onQuickActionSelect?.(action, availableSkillIds);
+                    props.close();
+                  }}
+                >
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                    <Icon size={12} aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{action.title[locale]}</span>
+                  {needsInput && (
+                    <span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                      {locale === "zh" ? "需补充" : "Needs input"}
+                    </span>
+                  )}
+                  {count > 0 && (
+                    <span className="flex shrink-0 items-center gap-0.5 text-[9px] text-muted-foreground">
+                      <Sparkles size={9} aria-hidden="true" />{count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <h3 className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
           {t("agentAttachSkills")}
         </h3>

@@ -6,6 +6,12 @@ import { useLocale } from "../../shared/hooks/useLocale";
 import { SynaxWordmark } from "./SynaxWordmark";
 import { SessionTreeItem } from "./SessionTreeItem";
 import type { TimeGroup } from "./useSessionList";
+import {
+  orderedSessionStatusTones,
+  type SessionStatusCounts,
+  type SessionStatusTone,
+} from "./sessionStatusDot";
+import type { I18nKey } from "../../shared/lib/i18n";
 import type { SessionAction, SessionActionTarget } from "./SessionActionsDialog";
 
 interface Props {
@@ -25,6 +31,47 @@ interface Props {
   onDelete: (id: string) => void;
   onTogglePin?: (id: string) => Promise<void>;
   onSessionAction?: (kind: SessionAction, session: SessionActionTarget) => void;
+}
+
+/** Same colour tokens as the row dots, so both signals read alike. */
+const STATUS_TONE_DOT: Record<SessionStatusTone, string> = {
+  warning: "bg-warning",
+  danger: "bg-destructive",
+  running: "bg-run",
+  success: "bg-success",
+};
+
+const STATUS_TONE_LABEL: Record<SessionStatusTone, I18nKey> = {
+  warning: "sessionGroupStatusWaiting",
+  danger: "activityStatusFailed",
+  running: "activityStatusRunning",
+  success: "activityStatusCompleted",
+};
+
+/** Run-state mix of a group: one dot per state present, most urgent first. */
+function GroupStatusDots({ counts }: { counts?: SessionStatusCounts }) {
+  const { t } = useLocale();
+  const tones = orderedSessionStatusTones(counts ?? {});
+  if (tones.length === 0) return null;
+  const summary = tones
+    .map((tone) => `${t(STATUS_TONE_LABEL[tone])} ${counts?.[tone] ?? 0}`)
+    .join(" · ");
+  return (
+    <span
+      className="session-list-group-status"
+      role="img"
+      aria-label={summary}
+      title={summary}
+    >
+      {tones.map((tone) => (
+        <span
+          key={tone}
+          aria-hidden="true"
+          className={`session-list-group-status-dot ${STATUS_TONE_DOT[tone]}`}
+        />
+      ))}
+    </span>
+  );
 }
 
 /** Initial rows do not animate; a newly mounted page expands only once. */
@@ -84,13 +131,17 @@ export function SessionTimeGroups({
     return () => { mounted.current = false; };
   }, []);
 
-  // One budget across all groups. Only pinned sections can collapse;
-  // keep their rows mounted without hiding ordinary conversations.
+  // One budget across all groups. Only sections that own a toggle can collapse,
+  // and their rows stay mounted so reopening a category never refetches.
   let remaining = visibleCount;
   const visibleGroups = groups.map((group) => {
     const rows = group.sessions.slice(0, remaining);
     remaining -= rows.length;
-    return { ...group, rows, collapsed: group.key.startsWith("pinned:") && group.collapsed };
+    return {
+      ...group,
+      rows,
+      collapsed: group.collapsible === true && group.collapsed,
+    };
   });
   const totalRows = groups.reduce((sum, group) => sum + group.sessions.length, 0);
   const anyExpanded = visibleGroups.some((group) => !group.collapsed);
@@ -164,7 +215,7 @@ export function SessionTimeGroups({
                 : "session-list-section"
             }
           >
-            {!hideGroupHeaders && g.key.startsWith("pinned:") ? (
+            {!hideGroupHeaders && g.collapsible ? (
               <button
                 type="button"
                 className="list-section-label session-list-section-toggle w-full cursor-pointer"
@@ -178,11 +229,13 @@ export function SessionTimeGroups({
                   aria-hidden="true"
                 />
                 {g.label}
+                <GroupStatusDots counts={g.statusCounts} />
                 <span className="text-muted-foreground/60">· {g.count}</span>
               </button>
             ) : !hideGroupHeaders ? (
               <div className="list-section-label session-list-section-label w-full">
                 {g.label}
+                <GroupStatusDots counts={g.statusCounts} />
                 <span className="text-muted-foreground/60">· {g.count}</span>
               </div>
             ) : null}

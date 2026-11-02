@@ -1,3 +1,4 @@
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
 import { useEffect, useState } from "react";
 import { Button } from "@/shared/ui/ui/Button";
 import { Terminal } from "lucide-react";
@@ -69,38 +70,29 @@ export function TerminalSettings({
           void save(draft);
         }}
       >
-        <label className="block text-xs">
-          {zh ? "Shell 可执行文件路径" : "Shell executable path"}
-          <input
-            className="mt-2 w-full rounded-lg border border-border bg-transparent px-3 py-2 font-mono text-xs"
-            value={draft}
-            disabled={saving}
-            spellCheck={false}
-            placeholder={
-              defaultPath ??
-              (zh ? "留空使用系统默认" : "Leave empty for system default")
-            }
-            onChange={(event) => {
-              setDraft(event.target.value);
-              setSaved(false);
-            }}
-          />
-        </label>
-        <p className="text-xs text-muted-foreground">
-          {zh
-            ? "填写可执行文件的绝对路径，不含命令参数；留空使用系统默认。"
-            : "Enter an absolute executable path without arguments, or leave empty for system default."}
-        </p>
+        <div className="flex items-center gap-1">
+          <label htmlFor="terminal-shell-path" className="text-xs">{zh ? "Shell 可执行文件路径" : "Shell executable path"}</label>
+          <InfoTooltip label={zh ? "Shell 路径说明" : "About shell path"}>{zh ? "可执行文件的绝对路径，不含参数；留空使用系统默认。" : "Absolute executable path without arguments. Leave empty for the system default."}</InfoTooltip>
+        </div>
+        <input
+          id="terminal-shell-path"
+          className="mt-2 w-full rounded-lg border border-border bg-transparent px-3 py-2 font-mono text-xs"
+          value={draft}
+          disabled={saving}
+          spellCheck={false}
+          placeholder={
+            defaultPath ??
+            (zh ? "留空使用系统默认" : "Leave empty for system default")
+          }
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setSaved(false);
+          }}
+        />
         <div
           className="space-y-1 text-xs text-muted-foreground"
           aria-live="polite"
         >
-          <p>
-            {zh ? "当前配置：" : "Configured: "}
-            <code className="break-all">
-              {configuredPath || (zh ? "系统默认" : "System default")}
-            </code>
-          </p>
           <p>
             {zh ? "当前生效路径：" : "Effective path: "}
             <code className="break-all">

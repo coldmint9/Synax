@@ -1,15 +1,30 @@
 import { receiveFirstToken } from "./firstTokenTiming";
 import { AuthenticatedEventSource } from './authenticatedEventSource';
-import { RuntimeStreamProjector, type RuntimeStreamRecord } from './runtimeStream';
+import { RuntimeStreamProjector, type RuntimeStreamRecord, type RuntimeProjectionCheckpoint } from './runtimeStream';
 import type { SessionLiveEvent } from './sessionLive';
 
 /** Submission notifications attach the visible session before its first token.
  * Other tabs discover runs through their normal durable snapshot/state feed. */
 const listeners = new Map<string, Set<(runId: string | null) => void>>();
-const activeObservations = new Map<string, string>();
+const activeObservations = new Map<string, Map<object, string>>();
+const defaultObservationOwner = {};
+export interface RunRealtimeCheckpoint {
+  sessionId: string;
+  runId: string;
+  projection: RuntimeProjectionCheckpoint;
+}
+// Only connected readers live here. The session cache owns detached snapshots
+// and their matching cursors, so evicting content also evicts its resume point.
+const checkpoints = new Map<string, { runId: string; projector: RuntimeStreamProjector }>();
+export function captureRunRealtimeCheckpoint(sessionId: string): RunRealtimeCheckpoint | undefined {
+  const current = checkpoints.get(sessionId);
+  return current ? { sessionId, runId: current.runId, projection: current.projector.checkpoint() } : undefined;
+}
 export const hasRunRealtimeObservation = (sessionId: string) => activeObservations.has(sessionId);
-export function setRunRealtimeObservation(sessionId: string, runId: string | null): void {
-  if (runId) activeObservations.set(sessionId, runId); else activeObservations.delete(sessionId);
+export function setRunRealtimeObservation(sessionId: string, runId: string | null, owner = defaultObservationOwner): void {
+  const observations = activeObservations.get(sessionId) ?? new Map<object, string>();
+  if (runId) observations.set(owner, runId); else observations.delete(owner);
+  if (observations.size) activeObservations.set(sessionId, observations); else activeObservations.delete(sessionId);
 }
 export function announceRunObservation(sessionId: string, runId: string | null): void {
   for (const listener of listeners.get(sessionId) ?? []) listener(runId);
@@ -21,12 +36,19 @@ export function onRunObservation(sessionId: string, listener: (runId: string | n
 }
 
 export function observeRunRealtime(sessionId: string, runId: string,
-  onEvent: (event: SessionLiveEvent) => void, recover: () => void): () => void {
-  const source = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/stream?realtime=1`);
+  onEvent: (event: SessionLiveEvent) => void, recover: () => void, resume?: RunRealtimeCheckpoint): () => void {
   const projector = new RuntimeStreamProjector();
-  let cursor = 0;
+  if (resume?.sessionId === sessionId && resume.runId === runId) projector.restore(resume.projection);
+  let cursor = projector.checkpoint().cursor;
+  const source = new AuthenticatedEventSource(`/api/agent-runtime/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/stream?realtime=1`,
+    cursor > 0 ? { cursor: String(cursor) } : undefined);
+  const checkpoint = { runId, projector };
+  checkpoints.set(sessionId, checkpoint);
   let closed = false;
-  const close = () => { closed = true; source.close(); };
+  const close = () => {
+    closed = true; source.close();
+    if (checkpoints.get(sessionId) === checkpoint) checkpoints.delete(sessionId);
+  };
   const reset = () => { if (!closed) { close(); recover(); } };
   source.addEventListener('realtime_reset', reset);
   source.onmessage = event => {

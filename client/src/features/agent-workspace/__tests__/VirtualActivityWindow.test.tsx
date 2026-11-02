@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import { VirtualActivityWindow } from "../VirtualActivityWindow";
 import {
   useActivityRowActive,
@@ -164,6 +164,7 @@ describe("VirtualActivityWindow", () => {
     }));
     const { container } = render(<VirtualActivityWindow rows={probeRows} windowed />);
     const viewport = container.querySelector(".session-process-window-viewport")!;
+    fireEvent.wheel(viewport, { deltaY: -100 });
     viewport.scrollTop = 0;
     fireEvent.scroll(viewport);
 
@@ -180,6 +181,7 @@ describe("VirtualActivityWindow", () => {
   it("reports records below once the reader leaves the newest one", () => {
     const { container } = render(<VirtualActivityWindow rows={rows} windowed />);
     const viewport = container.querySelector(".session-process-window-viewport")!;
+    fireEvent.wheel(viewport, { deltaY: -100 });
     viewport.scrollTop = 0;
     fireEvent.scroll(viewport);
     const frame = container.querySelector(".session-process-window-frame")!;
@@ -196,6 +198,55 @@ describe("VirtualActivityWindow", () => {
     expect(container.querySelector(".session-process-window-viewport"))
       .not.toHaveAttribute("data-windowed");
     expect(container.querySelector("[data-compact]")).toBeNull();
+  });
+
+  it("restores the record window immediately after switching away and back", () => {
+    const first = render(<VirtualActivityWindow rememberKey="session-a:round-1" rows={rows} windowed animate />);
+    const viewport = first.container.querySelector<HTMLElement>(".session-process-window-viewport")!;
+    fireEvent.wheel(viewport, { deltaY: -100 });
+    viewport.scrollTop = 90;
+    fireEvent.scroll(viewport);
+    first.unmount();
+    const other = render(<VirtualActivityWindow rememberKey="session-b:round-1" rows={rows} windowed />);
+    expect(other.container.querySelector(".session-process-window-viewport")!.scrollTop).toBe(390);
+    other.unmount();
+    const restored = render(<VirtualActivityWindow rememberKey="session-a:round-1" rows={rows} windowed animate />);
+    expect(restored.container.querySelector(".session-process-window-viewport")!.scrollTop).toBe(90);
+    expect(restored.container.querySelectorAll("[data-row-appended]")).toHaveLength(0);
+  });
+
+  it("only animates new records and preserves existing row identity on incremental updates", () => {
+    const first = rows.slice(0, 3);
+    const view = render(<VirtualActivityWindow rows={first} animate windowed />);
+    expect(view.container.querySelectorAll("[data-row-appended]")).toHaveLength(0);
+    const old = view.container.querySelector('[data-row-key="row-0"]');
+    view.rerender(<VirtualActivityWindow rows={rows.slice(0, 4)} animate windowed />);
+    expect(view.container.querySelector('[data-row-key="row-0"]')).toBe(old);
+    expect([...view.container.querySelectorAll("[data-row-appended]")].map(row => row.getAttribute("data-row-key"))).toEqual(["row-3"]);
+  });
+
+  it("does not rerender unchanged call bodies when another record is appended", () => {
+    const rendered = vi.fn();
+    const Record = memo(function Record({ id }: { id: string }) {
+      useActivityRowExpansion();
+      rendered(id);
+      return <span>{id}</span>;
+    });
+    const make = (count: number) => rows.slice(0, count).map(row => ({ key: row.key, node: <Record id={row.key} /> }));
+    const view = render(<VirtualActivityWindow rows={make(3)} windowed />);
+    rendered.mockClear();
+    view.rerender(<VirtualActivityWindow rows={make(4)} windowed />);
+    expect(rendered.mock.calls).toEqual([["row-3"]]);
+  });
+
+  it("does not release tail following on a programmatic spacer adjustment", () => {
+    const view = render(<VirtualActivityWindow rows={rows} windowed />);
+    const viewport = view.container.querySelector<HTMLElement>(".session-process-window-viewport")!;
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    view.rerender(<VirtualActivityWindow rows={[...rows, { key: "new", node: <div>new</div> }]} windowed />);
+    expect(viewport.scrollTop).toBe(420);
+    expect(view.container.querySelector('[data-row-key="new"]')).not.toBeNull();
   });
   it("keeps removed rows inert for their exit, then releases them", () => {
     vi.useFakeTimers();

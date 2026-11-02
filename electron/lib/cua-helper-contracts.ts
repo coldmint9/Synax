@@ -6,7 +6,7 @@
  * values stay identical to the canonical definitions.
  */
 
-/** macOS bundle identifier owned by the helper app, not by Synax. */
+/** Compatibility identity owned by the helper app, not the Synax desktop. */
 export const CUA_HELPER_BUNDLE_ID = 'com.Synax.cua';
 
 /** CUA Driver (SDK + binary) version the helper is built against. */

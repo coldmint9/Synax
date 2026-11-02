@@ -20,6 +20,12 @@ function Harness() {
         value={value}
         onChange={(e) => setValue(e.target.value)}
       />
+      <textarea
+        aria-label="suggestion-area"
+        data-composer-suggestion="true"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+      />
       <button type="button">elsewhere</button>
       <div className="xterm">
         <textarea className="xterm-helper-textarea" aria-label="terminal" />
@@ -87,6 +93,21 @@ describe("useTabKeyBehavior", () => {
     });
     expect(event!.defaultPrevented).toBe(true);
     expect(input.value).toBe("");
+  });
+
+  it("leaves Tab to a composer that is showing a next-input suggestion", () => {
+    render(<Harness />);
+    const area = screen.getByLabelText(
+      "suggestion-area",
+    ) as HTMLTextAreaElement;
+    area.focus();
+    let event: KeyboardEvent;
+    act(() => {
+      event = pressTab({}, area);
+    });
+    // No indent and no focus move; the composer's own handler accepts the hint.
+    expect(event!.defaultPrevented).toBe(true);
+    expect(area.value).toBe("");
   });
 
   it("leaves the xterm helper textarea alone for shell completion", () => {

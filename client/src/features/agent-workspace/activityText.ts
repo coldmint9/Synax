@@ -1,3 +1,5 @@
+import type { Locale } from "../../shared/lib/i18n";
+
 export { hasDisplayableReasoning } from "../../../../services/local-node/modules/agent-runtime/reasoning-display";
 
 /**
@@ -26,6 +28,27 @@ export function formatDurationMs(ms: number): string | null {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${Math.round(seconds % 60)}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * Spoken-form duration for the folded run row: `47秒`, `3分47秒`, `1小时7分`.
+ *
+ * The folded row is the only place a reader sees how long a round took, so it
+ * spells the units out instead of reusing the compact tool-call form (`3.2s`),
+ * which is unreadable when it sits alone on a line.
+ */
+export function formatWorkDuration(ms: number, locale: Locale): string | null {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  if (locale !== "zh") return formatDurationMs(ms);
+  if (ms < 1000) return `${Math.round(ms)}毫秒`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return seconds ? `${minutes}分${seconds}秒` : `${minutes}分钟`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}小时${rest}分` : `${hours}小时`;
 }
 
 /**

@@ -32,14 +32,7 @@ export interface OwnedProcessRecord {
   process_identity?: string | null;
   execution_lease?: RuntimeExecutionContext;
 }
-const INTERNAL_ENV = [
-  "AGENT_SESSION_INIT",
-  "SYNAX_AGENT_SESSION_CHILD",
-  "SYNAX_RUNTIME_HOST_ID",
-  "SYNAX_RUNTIME_DATA_ROOT",
-  "SYNAX_RECORDED_START",
-  "SYNAX_TERMINAL_HOST_ORIGIN",
-];
+export { externalCommandEnvironment } from "../../infrastructure/runtime/command-environment.js";
 
 // Authoritative hosts keep the live process identity in Rust control state.
 // This in-memory map only bridges synchronous launcher callbacks to the async
@@ -162,25 +155,6 @@ function mirrorProcessLease(
     if (authoritativeLeaseWrites.get(record.id) === result) authoritativeLeaseWrites.delete(record.id);
   });
   return result;
-}
-
-export function externalCommandEnvironment(
-  overrides?: NodeJS.ProcessEnv,
-  inherit = true,
-): NodeJS.ProcessEnv {
-  const env = { ...(inherit ? process.env : {}), ...overrides };
-  const runtimeRoot = process.env.SYNAX_RUNTIME_DATA_ROOT;
-  const internalWorker =
-    process.env.SYNAX_AGENT_SESSION_CHILD === "1";
-  if (
-    env.DATA_ROOT &&
-    ((runtimeRoot &&
-      path.resolve(env.DATA_ROOT) === path.resolve(runtimeRoot)) ||
-      (internalWorker && env.DATA_ROOT === process.env.DATA_ROOT))
-  )
-    delete env.DATA_ROOT;
-  for (const key of INTERNAL_ENV) delete env[key];
-  return env;
 }
 
 export function prepareOwnedProcess(

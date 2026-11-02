@@ -73,7 +73,7 @@ describe('session workspace roots', () => {
     expect(result.result).toMatchObject({ path: 'entry.ts', content: 'export const value = 42;\n' });
   });
 
-  it('returns close file suggestions for a missing guessed path', () => {
+  it('returns close file suggestions for a missing guessed path', async () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'Synax-project-root-'));
     tempDirs.push(projectDir);
     fs.mkdirSync(path.join(projectDir, 'tests'));
@@ -83,7 +83,7 @@ describe('session workspace roots', () => {
     sessionIds.push(sessionId);
     setSessionWorkspaceRoot(sessionId, projectDir);
 
-    expect(() => fileReadTool.execute({
+    const result = await fileReadTool.execute({
       sessionId,
       runId: null,
       stepId: null,
@@ -92,7 +92,10 @@ describe('session workspace roots', () => {
       category: 'read',
       mutability: 'read',
       args: { path: 'missing/transcript-jsonl.test.ts' },
-    })).toThrow(/File not found:.*tests\/transcript-jsonl\.test\.ts/);
+    });
+    expect(result.result).toMatchObject({
+      status: 'not_found', suggestions: ['tests/transcript-jsonl.test.ts'],
+    });
   });
 
   describe('project work dir resolution', () => {

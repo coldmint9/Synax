@@ -80,6 +80,20 @@ describe("welcome composer visual hint", () => {
     expect(container.querySelector(".welcome-editor-hint")).toBeNull();
   });
 
+  it("enables an empty send only when an attached procedure is ready", () => {
+    const sent = vi.fn();
+    const { container, rerender } = render(
+      <AgentComposer {...props} content="" onSubmit={sent} />,
+    );
+    const send = () => container.querySelector<HTMLButtonElement>(".agent-dock-composer-send")!;
+    expect(send()).toBeDisabled();
+
+    rerender(<AgentComposer {...props} content="" onSubmit={sent} attachedActionReady />);
+    expect(send()).toBeEnabled();
+    fireEvent.click(send());
+    expect(sent).toHaveBeenCalled();
+  });
+
   it("switches mode hints without changing the textarea value", () => {
     const { container, rerender } = render(
       <AgentComposer

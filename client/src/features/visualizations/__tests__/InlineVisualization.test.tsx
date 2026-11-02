@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { InlineVisualization } from "../InlineVisualization";
 import {
@@ -40,8 +40,44 @@ describe("InlineVisualization", () => {
     expect(frame.srcdoc).toContain(visualization.html);
     expect(frame.srcdoc).toContain(".btn-primary");
     expect(config(frame).icons.sparkles).toContain("<svg");
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    // The host adds exactly the two hover controls; everything else in the card
+    // stays product chrome owned by the generated fragment.
+    expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+  it("collapses to a small blurred placeholder card and restores the frame", () => {
+    render(
+      <InlineVisualization
+        visualization={{ ...visualization, title: "智能客服全景" }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "折叠预览" }));
+    expect(screen.queryByTitle("智能客服全景")).toBeNull();
+    const placeholder = screen.getByRole("button", {
+      name: "展开预览：智能客服全景",
+    });
+    expect(placeholder).toHaveTextContent("智能客服全景");
+    expect(placeholder).toHaveTextContent("已折叠");
+    expect(
+      placeholder.querySelector(".inline-visualization__collapsed-art"),
+    ).not.toBeNull();
+    fireEvent.click(placeholder);
+    expect(screen.getByTitle("智能客服全景")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "展开预览：智能客服全景" }),
+    ).toBeNull();
+  });
+  it("opens the full-screen viewer beside the preview and closes with Escape", async () => {
+    render(<InlineVisualization visualization={visualization} />);
+    fireEvent.click(screen.getByRole("button", { name: "在查看器中打开预览" }));
+    const viewer = await screen.findByRole("dialog");
+    expect(viewer).toHaveTextContent("交互预览");
+    expect(screen.getAllByTitle("交互预览")).toHaveLength(2);
+    fireEvent.keyDown(document.activeElement ?? document.body, {
+      key: "Escape",
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getAllByTitle("交互预览")).toHaveLength(1);
   });
   it("only accepts authenticated numeric resize from its own frame", async () => {
     render(<InlineVisualization visualization={visualization} />);

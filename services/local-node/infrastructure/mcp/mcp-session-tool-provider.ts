@@ -13,6 +13,7 @@ import type {
 import { getProjectSettings } from '../runtime/config/project-settings-store.js'
 import { agentRuntimeStore } from '../../modules/agent-runtime/session-store.js'
 import { logger } from '../runtime/logger.js'
+import { outsideExecutionContext } from '../runtime/execution-context.js';
 import { mcpClientManager, sanitizeName, type McpRuntimeToolDef } from './mcp-client-manager.js'
 import { resolveEffectiveComputerUseSettings } from '../../modules/computer-use/effective-settings.js';
 
@@ -260,11 +261,13 @@ export async function warmupMcpForSession(sessionId: string): Promise<void> {
   if (serverIds.length === 0) return
   try {
     const session = agentRuntimeStore.getSession(sessionId)
-    await mcpClientManager.warmup(serverIds, session.projectId, sessionId)
-    for (const serverId of serverIds) {
-      if (mcpClientManager.isReady(serverId, session.projectId, sessionId))
-        persistTools(sessionId, serverId, mcpClientManager.getCachedTools(serverId, session.projectId, sessionId));
-    }
+    // Discovery can outlive the turn that requested it. Keep its result in the
+    // MCP connection cache; getTools persists it when the next context consumes
+    // it, within that turn's normal flush barrier. A late worker metadata write
+    // can race the host's finish epoch and poison the following turn's flush.
+    await outsideExecutionContext(async () => {
+      await mcpClientManager.warmup(serverIds, session.projectId, sessionId)
+    });
   } catch (err) {
     logger.warn({ sessionId, err: err instanceof Error ? err.message : String(err) }, '[mcp] session warm-up failed')
   }

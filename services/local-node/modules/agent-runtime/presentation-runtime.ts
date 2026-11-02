@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
+import { hasReusableLoadedSkill } from "./skill-context.js";
+import { signedInAccountTags } from "./signed-in-accounts.js";
 import { snapshotVisualization, withoutVisualizationDeclarations } from "./visualization-integration.js";
 import { visualizationBlocks } from "./visualization-protocol.js";
 import type { RegisteredTool, StructuredToolCall } from "./contracts.js";
@@ -58,7 +60,8 @@ export const presentationTool: RegisteredTool = {
     if (!current) throw new Error("Presentation requires an active run.");
     const previous = presentationDecision(input.sessionId);
     const skills = selected.mode === "inline_visualization"
-      ? skillAgentBridge.listForPrompt({ profileId: current.session.profileId, projectId: current.session.projectId, activeSkillIds: [] })
+      ? skillAgentBridge.listForPrompt({ profileId: current.session.profileId, projectId: current.session.projectId,
+        activeSkillIds: [], signedInAccounts: signedInAccountTags() })
       : [];
     const skill = skills.find(skill => skill.id === "synax-builtin/visualize") ?? skills.find(skill => skill.name.toLowerCase() === "visualize");
     const decision: Decision = {
@@ -80,13 +83,7 @@ export function pendingPresentationSkillLoads(sessionId: string): StructuredTool
   if (!current || decision?.mode !== "inline_visualization" || !decision.skillId) return [];
   const id = `turn_skill_${createHash("sha256").update(JSON.stringify([current.run.id, current.inputId, decision.skillId])).digest("hex").slice(0, 24)}`;
   if (store.listRunToolCalls(current.run.id).some(call => call.modelToolCallId === id)) return [];
-  // Successful skill bodies are retained by buildLoopMessages, including across
-  // compaction, subject to this same permission/profile check.
-  if (store.listToolCalls(sessionId).some(call => {
-    const result = call.outputRef as { id?: unknown; content?: unknown } | null;
-    return call.toolId === "skill.load" && call.status === "completed" &&
-      result?.id === decision.skillId && typeof result?.content === "string";
-  }) && skillAgentBridge.canRetainForContext(sessionId, decision.skillId)) return [];
+  if (hasReusableLoadedSkill(sessionId, decision.skillId)) return [];
   return [{ id, toolId: "skill.load", args: { skillId: decision.skillId }, reason: "Prepare the selected inline visualization output." }];
 }
 

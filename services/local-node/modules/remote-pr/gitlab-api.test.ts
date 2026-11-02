@@ -136,11 +136,19 @@ it("bounds the response and sanitizes transport, redirect and JSON failures", as
 });
 
 it.each([
-  "http://example.com",
-  "example.com/path",
   "user@example.com",
   "example.com:99999",
   ".example.com",
+  "https://",
 ])("rejects invalid host %s", (host) => {
   expect(() => gitLabHost(host)).toThrow();
+});
+
+it.each([
+  ["https://gitlab.example.com/", "gitlab.example.com"],
+  ["HTTP://GitLab.Example.COM:8443/", "gitlab.example.com:8443"],
+  ["  gitlab.example.com/group/app?tab=1#readme  ", "gitlab.example.com"],
+  ["gitlab.example.com/api/v4", "gitlab.example.com"],
+])("normalizes pasted host %s to %s", (input, expected) => {
+  expect(gitLabHost(input)).toBe(expected);
 });

@@ -12,6 +12,13 @@ import {
 afterEach(() => configureUpdateNetwork(DEFAULT_UPDATE_NETWORK));
 
 describe("update network settings", () => {
+  it("takes enterprise source explicitly without reading Node environment or using a public proxy", () => {
+    const feed = "https://updates.example/synax/";
+    const url = feed + "Synax-0.2.0-darwin-arm64.zip";
+    expect(updateRequestUrl(url, GH_PROXY_URL, feed).href).toBe(url);
+    for (const unsafe of ["https://evil.example/file", "https://updates.example/other/file", "http://updates.example/synax/file"])
+      expect(() => updateRequestUrl(unsafe, GH_PROXY_URL, feed)).toThrow();
+  });
   it("defaults to direct and supports preset and normalized custom prefixes", () => {
     expect(getUpdateProxyUrl()).toBeNull();
     configureUpdateNetwork({ mode: "gh-proxy", customProxyUrl: "" });

@@ -65,12 +65,20 @@ function replacementPatch(
   const current = fs.existsSync(absolutePath)
     ? fs.readFileSync(absolutePath, "utf8")
     : "";
+  // A terminal newline is not an extra blank source line. The matcher must
+  // never discard an explicit deletion/context line to repair this fixture.
+  const patchLines = (text: string): string[] => {
+    if (!text) return [];
+    const lines = text.split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    return lines;
+  };
   return [
     "*** Begin Patch",
     `*** Update File: ${relativePath}`,
     "@@",
-    ...current.split("\n").map((line) => `-${line}`),
-    ...content.split("\n").map((line) => `+${line}`),
+    ...patchLines(current).map((line) => `-${line}`),
+    ...patchLines(content).map((line) => `+${line}`),
     "*** End Patch",
   ].join("\n");
 }
@@ -357,7 +365,7 @@ describe("content snapshot guard and patch precedence", () => {
     }
   });
 
-  async function setup(content = "before\n") {
+  async function setup(content = "before\n", seedSnapshot = false) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "synax-snapshot-"));
     const sessionId = path.basename(dir);
     workspaces.push({ sessionId, dir });
@@ -376,6 +384,7 @@ describe("content snapshot guard and patch precedence", () => {
         args: { path: "file.txt", maxBytes },
       });
     await read();
+    if (seedSnapshot) recordSessionFileRead(sessionId, "file.txt", content, fs.statSync(file));
     const check = () => assertSessionFileReadForWrite(sessionId, "file.txt");
     let lastTouch = fs.statSync(file).mtimeMs;
     const touch = () => {
@@ -388,23 +397,25 @@ describe("content snapshot guard and patch precedence", () => {
 
   it("reuses the original file.read buffer without an extra disk read", async () => {
     const { read } = await setup();
-    const spy = vi.spyOn(fs, "readFileSync");
+    const spy = vi.spyOn(fs, "readSync");
+    const fullRead = vi.spyOn(fs, "readFileSync");
     await read();
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(fullRead).not.toHaveBeenCalled();
   });
 
   it("does not record newer metadata for bytes read before an external change", async () => {
     const { file, read, check, touch } = await setup();
-    const originalRead = fs.readFileSync;
-    vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
-      ...args: Parameters<typeof fs.readFileSync>
+    const originalRead = fs.readSync;
+    vi.spyOn(fs, "readSync").mockImplementationOnce(((
+      ...args: Parameters<typeof fs.readSync>
     ) => {
       const content = originalRead(...args);
       fs.writeFileSync(file, "edited\n");
       touch();
       return content;
-    }) as typeof fs.readFileSync);
-    await read();
+    }) as typeof fs.readSync);
+    await expect(Promise.resolve().then(() => read())).rejects.toThrow(/changed while reading/);
     expect(check).toThrow(/changed on disk/);
   });
 
@@ -447,9 +458,13 @@ describe("content snapshot guard and patch precedence", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("compares the full snapshot even when displayed content was truncated", async () => {
+  it("does not treat a partial page as a full snapshot", async () => {
     const { file, check, read, touch } = await setup("prefix original");
     await read(6);
+    expect(check).not.toThrow();
+    touch();
+    expect(check).toThrow(/changed on disk/);
+    await read();
     touch();
     expect(check).not.toThrow();
     fs.writeFileSync(file, "prefix modified");
@@ -486,11 +501,11 @@ describe("content snapshot guard and patch precedence", () => {
   );
 
   it("uses an LRU cache and fails closed after snapshot eviction", async () => {
-    const oldest = await setup("a".repeat(1024 * 1024));
-    const recent = await setup("b".repeat(1024 * 1024));
-    for (let i = 0; i < 6; i++) await setup("c".repeat(1024 * 1024));
+    const oldest = await setup("a".repeat(1024 * 1024), true);
+    const recent = await setup("b".repeat(1024 * 1024), true);
+    for (let i = 0; i < 6; i++) await setup("c".repeat(1024 * 1024), true);
     oldest.check(); // keep this snapshot hot
-    await setup("d".repeat(1024 * 1024));
+    await setup("d".repeat(1024 * 1024), true);
     oldest.touch();
     expect(oldest.check).not.toThrow();
     recent.touch();
@@ -502,13 +517,13 @@ describe("content snapshot guard and patch precedence", () => {
   it.each(["file", "session", "rebuild"])(
     "releases snapshot budget when clearing %s",
     async (kind) => {
-      const kept = await setup("a".repeat(1024 * 1024));
-      const removed = await setup("b".repeat(1024 * 1024));
-      for (let i = 0; i < 6; i++) await setup("c".repeat(1024 * 1024));
+      const kept = await setup("a".repeat(1024 * 1024), true);
+      const removed = await setup("b".repeat(1024 * 1024), true);
+      for (let i = 0; i < 6; i++) await setup("c".repeat(1024 * 1024), true);
       if (kind === "file") clearSessionFileRead(removed.sessionId, "file.txt");
       else if (kind === "session") clearSessionFileReads(removed.sessionId);
       else rebuildSessionFileReads(removed.sessionId, []);
-      await setup("d".repeat(1024 * 1024));
+      await setup("d".repeat(1024 * 1024), true);
       kept.touch();
       expect(kept.check).not.toThrow();
       // A cleared record no longer blocks: the write-path check reads the file

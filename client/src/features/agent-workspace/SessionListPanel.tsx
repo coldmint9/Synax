@@ -134,7 +134,7 @@ export function SessionListPanel({
             />
             <div className="session-list-session-area min-h-0">
               <SessionTimeGroups
-                key={`${projectId}:${listView}:${list.searchQuery}`}
+                key={`${projectId}:${listView}:${list.groupMode}:${list.searchQuery}`}
                 groups={list.groups}
                 isLoading={list.isLoading}
                 error={list.error}
@@ -145,7 +145,9 @@ export function SessionListPanel({
                 hideGroupHeaders={listView === "sessions" ? false : !list.hasPinned}
                 onTogglePin={list.togglePin}
                 emptyLabel={list.searchQuery.trim()
-                  ? locale === "zh" ? "当前工作区没有匹配的会话" : "No matching sessions in this workspace"
+                  ? list.searchPending > 0
+                    ? locale === "zh" ? "正在索引会话内容…" : "Indexing conversations…"
+                    : locale === "zh" ? "当前工作区没有匹配的会话" : "No matching sessions in this workspace"
                   : listView === "workflow" ? t("sessionWorkflowEmpty") : t("sessionListEmpty")}
                 onSelect={list.select}
                 onToggleGroup={list.toggleGroup}

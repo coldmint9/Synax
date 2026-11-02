@@ -25,19 +25,37 @@ vi.mock("../SessionCommitDialog", () => ({
     </div>
   ),
 }));
+const remote = vi.hoisted(() => ({ discover: vi.fn() }));
+vi.mock("../../../adapters/transport/remotePr", () => ({ remotePrApi: remote }));
 vi.mock("../SessionPushDialog", () => ({
   SessionPushDialog: ({ sessionId, rootId, repositories, onClose }: any) => (
     <div role="dialog" aria-label="push"><span>{sessionId}</span><span>{rootId}</span><span>{repositories?.length} repositories</span><button onClick={onClose}>Done</button></div>
   ),
 }));
-import ComposerGitActions from "./ComposerGitActions";
+import ComposerGitActions, {
+  COMPOSER_MR_ENTRY_VISIBLE,
+} from "./ComposerGitActions";
 import type { AgentSession } from "../../../adapters/transport/agentRuntime";
+// The composer MR entry is hidden for now; its flows stay covered and run again
+// as soon as the entry becomes visible.
+const mrTest = COMPOSER_MR_ENTRY_VISIBLE ? it : it.skip;
 const session = { id: "owner", projectId: "p" } as AgentSession;
 beforeEach(() => {
+  vi.clearAllMocks();
   git.repositories = [{ status: "ready", dirty: true, unpushedCommitCount: 1 }];
+  remote.discover.mockResolvedValue({
+    rootId: "r",
+    branch: "feature",
+    headSha: "a".repeat(40),
+    dirty: false,
+    remotes: [
+      { name: "origin", host: "gitlab.com", path: "group/app", provider: "gitlab" },
+    ],
+    branches: ["main"],
+  });
 });
 describe("explicit composer Git entries", () => {
-  it("renders Commit and PR when both have pending work without creating sessions until clicked", async () => {
+  mrTest("renders Commit and MR when both have pending work without creating sessions until clicked", async () => {
     const ensure = vi.fn().mockResolvedValue(session);
     const open = vi.fn();
     render(
@@ -51,11 +69,11 @@ describe("explicit composer Git entries", () => {
       screen.getByRole("button", { name: "Commit", exact: true }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "PR", exact: true }),
+      screen.getByRole("button", { name: "MR", exact: true }),
     ).toBeVisible();
     expect(ensure).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "PR", exact: true }));
-    expect(await screen.findByRole("dialog", { name: "pr" })).toHaveTextContent(
+    fireEvent.click(screen.getByRole("button", { name: "MR", exact: true }));
+    expect(await screen.findByRole("dialog", { name: "mr" })).toHaveTextContent(
       "owner",
     );
     expect(ensure).toHaveBeenCalledTimes(1);
@@ -68,13 +86,13 @@ describe("explicit composer Git entries", () => {
     [false, 2, false, true],
     [true, 2, true, true],
     [false, undefined, false, false],
-  ])("shows the matching actions for dirty=%s and unpushed=%s", (dirty, unpushedCommitCount, commitVisible, prVisible) => {
+  ])("shows the matching actions for dirty=%s and unpushed=%s", (dirty, unpushedCommitCount, commitVisible, pushVisible) => {
     git.repositories = [{ status: "ready", dirty, unpushedCommitCount }];
     const { container } = render(<ComposerGitActions projectId="p" ensureSession={vi.fn()} onOpenConversation={vi.fn()} />);
     expect(Boolean(screen.queryByRole("button", { name: "Commit", exact: true }))).toBe(commitVisible);
-    expect(Boolean(screen.queryByRole("button", { name: "PR", exact: true }))).toBe(prVisible);
-    expect(Boolean(screen.queryByRole("button", { name: "Push", exact: true }))).toBe(prVisible);
-    if (!commitVisible && !prVisible) expect(container).toBeEmptyDOMElement();
+    expect(Boolean(screen.queryByRole("button", { name: "MR", exact: true }))).toBe(pushVisible && COMPOSER_MR_ENTRY_VISIBLE);
+    expect(Boolean(screen.queryByRole("button", { name: "Push", exact: true }))).toBe(pushVisible);
+    if (!commitVisible && !pushVisible) expect(container).toBeEmptyDOMElement();
   });
   it("hides actions until a usable repository is available", () => {
     git.repositories = [];
@@ -94,7 +112,7 @@ describe("explicit composer Git entries", () => {
     git.repositories = [{ status: "ready", dirty: false, unpushedCommitCount: 1 }];
     rerender(<ComposerGitActions {...props} />);
     expect(screen.queryByRole("button", { name: "Commit", exact: true })).toBeNull();
-    expect(screen.getByRole("button", { name: "PR", exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Push", exact: true })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "commit" })).toBeVisible();
     fireEvent.click(screen.getByText("Done"));
     git.repositories = [{ status: "ready", dirty: false, unpushedCommitCount: 0 }];
@@ -108,7 +126,7 @@ describe("explicit composer Git entries", () => {
     ];
     render(<ComposerGitActions projectId="p" ensureSession={vi.fn()} onOpenConversation={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Commit", exact: true })).toBeVisible();
-    expect(screen.getByRole("button", { name: "PR", exact: true })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Push", exact: true })).toBeVisible();
   });
   it("opens Push review with all pending repositories and prefers the primary root", async () => {
     git.repositories = [
@@ -148,7 +166,7 @@ describe("explicit composer Git entries", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "PR", exact: true }),
+      screen.getByRole("button", { name: "Push", exact: true }),
     ).toBeDisabled();
   });
   it("does not open a stale workspace after async creation", async () => {
@@ -166,7 +184,7 @@ describe("explicit composer Git entries", () => {
         onOpenConversation={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "PR", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Push", exact: true }));
     rerender(
       <ComposerGitActions
         projectId="other"
@@ -176,5 +194,29 @@ describe("explicit composer Git entries", () => {
     );
     await act(async () => resolve(session));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+  mrTest("names the merge request button after the workspace platform", async () => {
+    remote.discover.mockResolvedValue({
+      rootId: "r",
+      branch: "feature",
+      headSha: "a".repeat(40),
+      dirty: false,
+      remotes: [
+        { name: "origin", host: "github.com", path: "acme/app", provider: "github" },
+      ],
+      branches: ["main"],
+    });
+    render(
+      <ComposerGitActions
+        session={session}
+        projectId="p"
+        ensureSession={vi.fn()}
+        onOpenConversation={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "PR", exact: true }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "MR", exact: true })).toBeNull();
   });
 });

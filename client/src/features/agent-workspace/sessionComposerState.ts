@@ -97,12 +97,14 @@ export function canEnqueueSessionInput(
   return false;
 }
 
-/** Statuses where the send key becomes a resume (play) control. A failed Run is
- *  not resumable server-side (it has no pending Run), so it never gets one. */
+/** Statuses where the send key becomes a resume (play) control so the user can
+ *  continue the same work with one click. A failed Run keeps its transcript, so
+ *  a continuation retries it from the failure; a paused session is the resting
+ *  state of a user stop (or a recovered process exit). */
 export function isSessionResumable(session: AgentSession | undefined): boolean {
   return Boolean(
     session &&
-      (session.status === "interrupted" || session.status === "paused"),
+      ["interrupted", "paused", "failed"].includes(session.status),
   );
 }
 

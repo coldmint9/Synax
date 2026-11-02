@@ -40,6 +40,28 @@ describe("commit message SSE client", () => {
       "/sessions/s1/git/commit-message/stream",
     );
   });
+  it("carries the degraded-generation warning with the final message", async () => {
+    fetchMock.mockResolvedValue(
+      response([
+        'data: {"type":"final","message":"chore(repo): update 2 files","warning":"built from the changed file list"}\n\n',
+        "data: [DONE]\n\n",
+      ]),
+    );
+    const events: unknown[] = [];
+    await streamCommitMessage(
+      "s1",
+      { model: "p/m" },
+      (event) => events.push(event),
+      new AbortController().signal,
+    );
+    expect(events).toEqual([
+      {
+        type: "final",
+        message: "chore(repo): update 2 files",
+        warning: "built from the changed file list",
+      },
+    ]);
+  });
   it("handles CRLF frames split between chunks", async () => {
     fetchMock.mockResolvedValue(response([
       'data: {"type":"delta","text":"fix"}\r',

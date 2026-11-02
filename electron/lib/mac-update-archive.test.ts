@@ -44,6 +44,11 @@ describe.skipIf(process.platform === "win32")(
         validateMacUpdateArchive(await archive("outside.txt")),
       ).rejects.toThrow("Unsafe");
     });
+    it("rejects an upstream Synax application archive", async () => {
+      await fs.mkdir(path.join(root, "Synax.app/Contents"), { recursive: true });
+      await fs.writeFile(path.join(root, "Synax.app/Contents/Info.plist"), "upstream");
+      await expect(validateMacUpdateArchive(await archive("Synax.app"))).rejects.toThrow("Unsafe");
+    });
     it("rejects symlinks that escape the app", async () => {
       await fs.mkdir(path.join(root, "Synax.app/Contents"), {
         recursive: true,

@@ -1,5 +1,7 @@
 import { toolEventStream, WORKER_PORTABLE_TOOLS } from "./tool-event-stream.js";
 import { hasBackgroundProcesses } from "../process-ownership.js";
+import { hasInput } from "../content-parts.js";
+import { buildSessionContinuationPrompt } from "../session-continuation.js";
 import { getBrowserSession } from "../tools/browser/browser-manager.js";
 import { resolvePermissionDecision } from "../permission-policy.js";
 import type { RustAgentLoopEvent } from "../rust-agent-loop-client.js";
@@ -12,7 +14,7 @@ import type { BackendAdapter } from "./backend-contracts.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { toolRegistry, type ExecuteToolResult } from "../tool-registry.js";
 import { makeRuntimeId, nowIso } from "../runtime-ids.js";
-import { assertRustAgentLoopAvailable, streamRustAgentLoop, sendRustAgentToolResult, cancelRustAgentLoop, sendRustStepContext } from "../rust-agent-loop-client.js";
+import { assertRustAgentLoopAvailable, streamRustAgentLoop, sendRustAgentToolResult, cancelRustAgentLoop, sendRustStepContext, RustRunInterruptedError } from "../rust-agent-loop-client.js";
 import { interactionService } from "../interaction-service.js";
 import { loopResumeService } from "../loop-resume.js";
 import { emitSessionLive } from "../../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -26,31 +28,69 @@ import { resolveMediaMessages } from "../media-capabilities.js";
 import { countTokens } from "../context-tokenizer.js";
 import { logger } from "../../../infrastructure/runtime/logger.js";
 import { toRuntimeError } from "../runtime-errors.js";
-import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "../analytics-projection.js";
+import { persistMeasuredContextUsage } from "../measured-context-usage.js";
 import { contextInputBudget } from "../context-checkpoint.js";
 import { prepareCheckpointContext } from "../checkpoint-projection.js";
 import { buildNativeStepContext } from "../native-step-context.js";
+import { persistNativeRuntimeReminder } from "../native-runtime-reminder.js";
+import { checkPresentationCompletion } from "../presentation-runtime.js";
 import { persistInlineVisualization } from "../visualization-integration.js";
+import { finishedRunReply } from "../goal-completion-reply.js";
+import { clearSessionWorkspaceRoot, resolveSessionWorkDir, setSessionWorkspaceRoot } from "../tools/workspace.js";
+
+/** The loop this process owns outranks the persisted run document: another
+ * process can replace that document mid-turn and drop the process-scoped
+ * handle while the loop is still waiting. The handle is bound to its run so a
+ * stale document can never point a resume at another run's execution. */
+export function resolveLiveLoop(
+  owned: { loopId: string; runId: string } | undefined,
+  run: Pick<AgentRun, "id" | "metadata">,
+): string | undefined {
+  if (owned?.runId === run.id) return owned.loopId;
+  const persisted = run.metadata.rustLoopId;
+  return typeof persisted === "string" ? persisted : undefined;
+}
 
 /** Translates Rust decisions into host tool execution and public projections.
  * Step progression and model/tool context live in the current Rust process. */
 export class RustNativeBackend implements BackendAdapter {
-  private readonly activeLoops = new Map<string, string>();
+  // The loop handle is execution state of this process. It is bound to a run
+  // so a stale run document cannot point a resume at another run's loop.
+  private readonly activeLoops = new Map<string, { loopId: string; runId: string }>();
   private readonly loopSequences = new Map<string, number>();
-  private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[]; prompt?: unknown[] }>();
+  private readonly preparedContexts = new Map<string, { contextId: string; systemPrompt: string; tools: unknown[]; prompt?: unknown[]; beforeModelTools?: Array<{ id: string; name: string; input: unknown }>; completionCheck?: boolean }>();
 
   async *stream(sessionId: string, mode: string, input: StreamTurnRequest, signal?: AbortSignal): AsyncGenerator<AgentRunStreamChunk> {
     const observation = new AbortController();
     const workSignal = signal ? AbortSignal.any([signal, observation.signal]) : observation.signal;
-    await store.hydrateExecutionSession(sessionId);
-    await businessStore.refresh();
+    // The API host admits a new run while an idle worker retains its own
+    // execution cache. Refresh that cache before every worker turn so the
+    // accepted run is available when the backend binds it below.
+    await Promise.all([
+      store.hydrateExecutionSession(sessionId, process.env.SYNAX_AGENT_SESSION_CHILD === "1"),
+      businessStore.refresh(),
+    ]);
+    if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
+      // A retained worker may have been opened before a checkout was changed
+      // by the API host. Bind this turn to the freshly hydrated workspace.
+      clearSessionWorkspaceRoot(sessionId);
+      setSessionWorkspaceRoot(sessionId, resolveSessionWorkDir(sessionId, store.getSession(sessionId).projectId));
+    }
     const resumed = mode === "resume" || input.resumeExecution === true;
     let completedWorkerStep = false;
     if (resumed) {
       const activeId = store.getSession(sessionId).activeRunId;
-      const loopId = activeId ? store.getRun(activeId).metadata.rustLoopId : undefined;
-      if (typeof loopId !== "string") throw new Error("RUN_INTERRUPTED: previous execution is unavailable.");
+      const activeRun = activeId ? store.getRun(activeId) : undefined;
+      const loopId = activeRun ? resolveLiveLoop(this.activeLoops.get(sessionId), activeRun) : undefined;
+      if (typeof loopId !== "string") throw new RustRunInterruptedError();
       await assertRustAgentLoopAvailable(loopId, input.executionContext, signal);
+      // Another process can publish a whole run document that predates this
+      // process' execution metadata, dropping `rustLoopId` while the loop is
+      // still waiting. Restore the handle we own before binding the turn.
+      if (activeRun && activeRun.metadata.rustLoopId !== loopId) {
+        store.updateRun(activeRun.id, { metadata: { ...activeRun.metadata, rustLoopId: loopId } });
+        await store.flushSession(sessionId);
+      }
     }
     const readyInteraction = resumed && !input.resumeExecution ? interactionService.list(sessionId).find(item =>
       item.runId === store.getSession(sessionId).activeRunId && ["answered", "cancelled"].includes(item.status) && item.response && !item.consumedAt) : undefined;
@@ -58,11 +98,24 @@ export class RustNativeBackend implements BackendAdapter {
     const pending = resumed && !input.resumeExecution && !resolvedInteraction ? await loopResumeService.resolvePendingRun(sessionId) : null;
     const session = store.getSession(sessionId);
     if (resumed && !session.activeRunId) throw new Error("Session has no active Rust run to resume.");
-    const prompt = input.message?.trim() || session.prompt;
+    // A continue Run without input is the composer's play key. It heals the
+    // resting session — reopening its paused checkpoints and telling the model
+    // what is left — instead of replaying the original prompt as a new turn.
+    const healing = !resumed && mode === "continue" && !hasInput(input);
+    if (healing) workRuntime.resumePaused(sessionId);
+    const prompt = input.message?.trim() || (healing
+      ? buildSessionContinuationPrompt(store, sessionId, session.status)
+      : session.prompt);
     const user = resumed ? null : store.appendMessage({
       id: makeRuntimeId("msg"), sessionId, runId: input.acceptedRunId ?? null, stepId: null,
       role: "user", content: prompt, contentParts: input.contentParts,
-      metadata: { source: input.messageSource ?? "rust_loop" }, createdAt: nowIso(),
+      metadata: {
+        source: input.messageSource ?? (healing ? "system_injection" : "rust_loop"),
+        // The transcript shows these beside the bubble; without them the
+        // skill/MCP/file a turn selected would vanish once history reloads.
+        references: input.referenceContext?.references ?? input.references,
+      },
+      createdAt: nowIso(),
     });
     let run: AgentRun = input.acceptedRunId ? store.getRun(input.acceptedRunId)
       : resumed && session.activeRunId ? store.getRun(session.activeRunId)
@@ -80,6 +133,9 @@ export class RustNativeBackend implements BackendAdapter {
       run = store.getRun(run.id);
       await sessionHooks.emit({ type: "run:started", sessionId, runId: run.id });
     }
+    // Turn references are installed before discovery. Cached definitions are
+    // immediately usable; new connections never gate the provider request.
+    void warmupMcpForSession(sessionId);
     if (user) yield { type: "message", message: user };
     yield { type: resumed ? "run_resumed" : "run_started", run };
     let waiting = false;
@@ -91,7 +147,7 @@ export class RustNativeBackend implements BackendAdapter {
     let disposition: import("../rust-agent-loop-client.js").RustAgentLoopEvent["disposition"];
     let assistant: AgentRuntimeMessage | undefined;
     try {
-      if (resumed && typeof run.metadata.rustLoopId !== "string") throw new Error("RUN_INTERRUPTED: the previous execution is no longer available.");
+      if (resumed && typeof run.metadata.rustLoopId !== "string") throw new RustRunInterruptedError();
       const selection = await resolveGatewaySelection({ projectId: session.projectId, purpose: input.purpose ?? "analyze", model: input.model });
       const contextLimit = selection.modelDef.contextLimit ?? 200_000;
       const inputLimit = selection.modelDef.inputLimit;
@@ -104,7 +160,6 @@ export class RustNativeBackend implements BackendAdapter {
       const generationRequest: LlmGatewayRequest = { projectId: session.projectId, purpose: input.purpose ?? "agent", messages: [],
         temperature: input.temperature, reasoningEffort };
       run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, contextLimit, inputLimit, inputBudget, outputReserve } });
-      await warmupMcpForSession(sessionId);
       const prepareContext = (stepIndex: number) => buildNativeStepContext(sessionId, input, prompt, stepIndex);
       const resolvePromptMessage = async (message: AgentRuntimeMessage): Promise<unknown[]> => {
         const canonical = message.metadata?.rustMessage;
@@ -153,7 +208,7 @@ export class RustNativeBackend implements BackendAdapter {
         ...outputProtocolOptions(selection, reasoningEffort),
         cachePolicy: { adapter: selection.provider.npm, mode: selection.config.options?.promptCaching, chatBreakpoints: selection.config.options?.chatCacheBreakpoints, sessionId, projectId: session.projectId },
       }, workSignal, async loopId => {
-        this.activeLoops.set(sessionId, loopId);
+        this.activeLoops.set(sessionId, { loopId, runId: run.id });
         run = store.updateRun(run.id, { metadata: { ...store.getRun(run.id).metadata, rustLoopId: loopId } });
         await store.flushSession(sessionId);
       }, () => delivery.through);
@@ -283,9 +338,11 @@ export class RustNativeBackend implements BackendAdapter {
           if (!context) {
             await store.hydrateExecutionSession(sessionId, true);
             for (let repair = 0; ; repair++) {
-              const prepared = prepareContext(event.step);
-              if (event.contextCorrection)
-                prepared.systemPrompt += `\n\nRuntime continuation requirement:\n${event.contextCorrection}`;
+              const { runtimeSections, ...prepared } = await prepareContext(event.step);
+              persistNativeRuntimeReminder(step, [
+                ...runtimeSections,
+                ...(event.contextCorrection ? [`Runtime continuation requirement:\n${event.contextCorrection}`] : []),
+              ]);
               await store.flushSession(sessionId);
               try {
                 const projection = await prepareCheckpointContext({ sessionId, projectId: session.projectId, model: selection.modelId,
@@ -300,7 +357,33 @@ export class RustNativeBackend implements BackendAdapter {
             }
             this.preparedContexts.set(run.id, context);
           }
+          if (store.getSession(sessionId).sessionMetadata?.latestSystemPrompt !== context.systemPrompt)
+            store.updateSessionMetadata(sessionId, { latestSystemPrompt: context.systemPrompt });
+          await store.flushSession(sessionId);
           await sendRustStepContext({ loopId: event.loopId, ...context, executionContext: input.executionContext }, signal);
+        } else if (event.type === "completion-request") {
+          if (!event.loopId || !event.contextId || !step) throw new Error("Invalid Rust completion review.");
+          const metadata = store.getRunStep(step.id).metadata;
+          const saved = metadata.presentationReview as { contextId: string; content: string; retry?: string } | undefined;
+          const review = saved?.contextId === event.contextId ? saved : {
+            contextId: event.contextId,
+            ...checkPresentationCompletion(sessionId, event.summary ?? text),
+          };
+          if (!saved || saved.contextId !== event.contextId)
+            store.updateRunStep(step.id, { metadata: { ...metadata, presentationReview: review } });
+          text = review.content;
+          assistant ??= store.listMessages(sessionId).find(message => message.stepId === step!.id && message.role === "assistant");
+          if (assistant && assistant.content !== review.content) {
+            const canonical = assistant.metadata.rustMessage as Record<string, unknown> | undefined;
+            const parts = Array.isArray(canonical?.content) ? canonical.content as Array<{ type: string }> : [];
+            assistant = store.appendMessage({ ...assistant, content: review.content,
+              metadata: { ...assistant.metadata, rustMessage: { role: "assistant", content: [
+                ...parts.filter(part => part.type !== "text"), { type: "text", text: review.content },
+              ] } } });
+            yield { type: "message", message: assistant };
+          }
+          await store.flushSession(sessionId);
+          await sendRustStepContext({ loopId: event.loopId, contextId: event.contextId, systemPrompt: "", tools: [], completion: { content: review.content, ...(review.retry ? { retry: review.retry } : {}) }, executionContext: input.executionContext }, signal);
         } else if (event.type === "context-compaction-started") {
           compacting = true;
           emitSessionLive(sessionId, { type: "context_compaction_started" });
@@ -321,29 +404,17 @@ export class RustNativeBackend implements BackendAdapter {
               [String(event.chunk)]: event.usage } } });
         } else if (event.type === "context-compacted") {
           compacting = false;
-          const priorUsage = readContextUsage(store.getSession(sessionId).sessionMetadata?.contextUsage);
-          const contextUsage = compactedContextUsageSnapshot(
-            priorUsage,
-            event.compressedTokens ?? 0,
-            step?.id ?? run.id,
-            selection.modelDef.contextLimit ?? null,
-          );
-          if (contextUsage) store.updateSessionMetadata(sessionId, { contextUsage });
           const recordId = `cmp_${event.loopId}_${event.step}`;
           store.saveCompactionRecord({ id: recordId, sessionId, runId: run.id,
             summaryText: event.summary ?? "", compressedMessageCount: event.messageCount ?? 0,
             originalTokenCount: event.originalTokens ?? 0, compressedTokenCount: event.compressedTokens ?? 0, createdAt: nowIso() });
           emitSessionLive(sessionId, { type: "context_compacted", stepId: step?.id ?? "",
             originalTokens: event.originalTokens ?? 0, compressedTokens: event.compressedTokens ?? 0, messageCount: event.messageCount ?? 0,
-            ...(contextUsage ? { contextUsage } : {}) });
+          });
         } else if (event.type === "context-composition") {
           if (step && event.composition) {
             store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata,
               contextComposition: event.composition } });
-            // Incremental, persisted context usage for the composer ring and
-            // analytics; the request composition is measured only once here.
-            const usageSnapshot = contextUsageSnapshot(event.composition, step.id, contextLimit);
-            if (usageSnapshot) store.updateSessionMetadata(sessionId, { contextUsage: usageSnapshot });
           }
         } else if (event.type === "step-started") {
           const existing = store.listRunSteps(run.id).find(item => item.index === event.step);
@@ -388,6 +459,8 @@ export class RustNativeBackend implements BackendAdapter {
         } else if (event.type === "usage") {
           if (!step) throw new Error("Rust usage has no step.");
           store.updateRunStep(step.id, { metadata: { ...store.getRunStep(step.id).metadata, usage: event.usage } });
+          // Only the provider's own usage becomes displayed context occupancy.
+          persistMeasuredContextUsage(store, sessionId, step.id, event.usage, contextLimit);
         } else if (event.type === "assistant-message") {
           if (!step || !event.message) throw new Error("Rust assistant output has no step or content.");
           const parts = event.message.content as Array<Record<string, unknown>>;
@@ -439,10 +512,16 @@ export class RustNativeBackend implements BackendAdapter {
       if (step) store.updateRunStep(step.id, { status: "completed", completedAt: nowIso(), finishReason: lastFinish,
         metadata: { ...store.getRunStep(step.id).metadata, thought } });
       const finalStatus = disposition?.status ?? "completed";
-      const summary = disposition?.summary || text;
-      if (summary && summary !== assistant?.content) {
+      // An accepted goal answers with its acceptance report, not with the loop's
+      // terse disposition: the report is projected from the persisted goal and
+      // Work facts the runtime already validated.
+      const reply = finishedRunReply({ sessionId, status: finalStatus,
+        summary: disposition?.summary, text });
+      const summary = reply.content;
+      if (summary && (reply.metadata.purpose || summary !== assistant?.content)) {
         assistant = store.appendMessage({ id: makeRuntimeId("msg"), sessionId, runId: run.id, stepId: step?.id ?? null,
-          role: "assistant", content: summary, metadata: { engine: "rust", disposition: disposition?.reason }, createdAt: nowIso() });
+          role: "assistant", content: summary, createdAt: nowIso(),
+          metadata: { engine: "rust", disposition: disposition?.reason, ...reply.metadata } });
         yield { type: "message", message: assistant };
       }
       // Capture the file while the worker still owns the completed reply. The
@@ -451,13 +530,14 @@ export class RustNativeBackend implements BackendAdapter {
       const completed = store.updateRun(run.id, { status: finalStatus, completedAt: nowIso(), stopReason: disposition?.reason ?? "completed", model: selection.modelId });
       store.updateSession(sessionId, { status: finalStatus === "blocked" ? "completed" : finalStatus,
         activeRunId: null, pendingResumeToken: null, completedAt: nowIso(),
-        blockedReason: finalStatus === "blocked" || finalStatus === "failed" ? summary : null, updatedAt: nowIso(), resultSummary: summary });
+        blockedReason: finalStatus === "blocked" || finalStatus === "failed" ? summary : null, updatedAt: nowIso(),
+        resultSummary: reply.resultSummary });
       await sessionHooks.emit({ type: "run:completed", sessionId, runId: run.id, status: finalStatus });
       if (finalStatus === "failed" || finalStatus === "blocked") yield { type: "run_failed", run: completed, error: summary };
       else yield { type: "run_completed", run: completed, ...(assistant ? { message: assistant } : {}) };
       yield { type: "done", sessionId, runId: run.id };
     } catch (error) {
-      const loopId = this.activeLoops.get(sessionId);
+      const loopId = this.activeLoops.get(sessionId)?.loopId;
       if (loopId && !terminal) await cancelRustAgentLoop(loopId).catch(() => undefined);
       const message = error instanceof Error ? error.message : String(error);
       if (compacting) emitSessionLive(sessionId, { type: "context_compaction_failed", error: message });
@@ -484,7 +564,7 @@ export class RustNativeBackend implements BackendAdapter {
   }
 
   async interrupt(sessionId: string, _reason: string): Promise<void> {
-    const loopId = this.activeLoops.get(sessionId) ?? store.listRuns(sessionId).find(run =>
+    const loopId = this.activeLoops.get(sessionId)?.loopId ?? store.listRuns(sessionId).find(run =>
       ["running", "waiting_permission", "waiting_input"].includes(run.status) && typeof run.metadata.rustLoopId === "string")?.metadata.rustLoopId;
     if (typeof loopId === "string") await cancelRustAgentLoop(loopId);
   }

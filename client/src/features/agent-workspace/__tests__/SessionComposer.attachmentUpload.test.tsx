@@ -64,6 +64,9 @@ vi.mock("../composer/AgentComposer", () => ({
       >
         Attach
       </button>
+      <button type="button" onClick={() => props.media.addText("x".repeat(5000))}>
+        Paste
+      </button>
       <output data-testid="parts">{props.media.parts.length}</output>
       <button type="submit">Send</button>
     </form>
@@ -155,4 +158,46 @@ it("sends while an attachment is still uploading and waits for its asset", async
       }),
     ),
   );
+});
+
+it("sends a large paste as a txt file attachment instead of message content", async () => {
+  vi.spyOn(runtimeMedia, "upload").mockResolvedValue({
+    id: "asset-paste",
+    projectId: "p1",
+    filename: "pasted.txt",
+    mediaType: "text/plain",
+    size: 5000,
+    sha256: "hash",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  } as RuntimeAsset);
+  const send = vi.fn(async () => "sent" as const);
+  useAgentSessionStore.setState({ submitOrEnqueueSessionInput: send });
+
+  render(
+    <MemoryRouter>
+      <SessionComposer projectId="p1" session={session} />
+    </MemoryRouter>,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Paste" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), {
+    target: { value: "summarize this" },
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  });
+
+  await waitFor(() => expect(send).toHaveBeenCalled());
+  const body = send.mock.calls[0]![1] as {
+    message: string;
+    contentParts: unknown[];
+  };
+  expect(body.message).toBe("summarize this");
+  expect(body.contentParts).toEqual([
+    { type: "text", text: "summarize this" },
+    { type: "file", assetId: "asset-paste" },
+  ]);
+  // The paste never turns into the prompt text the user is shown to have typed.
+  expect(body.message).not.toContain("xxxx");
 });

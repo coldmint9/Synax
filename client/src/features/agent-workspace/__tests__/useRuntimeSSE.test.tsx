@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useRuntimeSSE } from "../useRuntimeSSE";
 import {
+  clearScheduledSessionRefresh,
   resetWorkspaceSessionCache,
   useAgentSessionStore,
 } from "../state/agentSessionStore";
@@ -10,16 +11,19 @@ import {
   type AgentSession,
 } from "../../../adapters/transport/agentRuntime";
 import { resetSessionListCache } from "../state/sessionListCache";
+import { resetSessionStatusReconcile } from "../sessionStatusReconcile";
 const bus = vi.hoisted(() => ({
   changed: (_event: MessageEvent) => {},
   archived: (_event: MessageEvent) => {},
   created: (_event: MessageEvent) => {},
   deleted: (_event: MessageEvent) => {},
   step: (_event: MessageEvent) => {},
+  connect: () => {},
 }));
 vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
   subscribe: ({
     events,
+    onConnect,
   }: {
     events: {
       session_changed: (event: MessageEvent) => void;
@@ -28,12 +32,14 @@ vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
       session_deleted: (event: MessageEvent) => void;
       session_step_completed: (event: MessageEvent) => void;
     };
+    onConnect?: () => void;
   }) => {
     bus.changed = events.session_changed;
     bus.archived = events.session_archived;
     bus.created = events.session_created;
     bus.deleted = events.session_deleted;
     bus.step = events.session_step_completed;
+    bus.connect = onConnect ?? (() => {});
     return () => {};
   },
 }));
@@ -42,11 +48,31 @@ beforeEach(() => {
   vi.useFakeTimers();
   resetWorkspaceSessionCache();
   resetSessionListCache();
+  clearScheduledSessionRefresh();
+  resetSessionStatusReconcile();
 });
 afterEach(() => {
+  clearScheduledSessionRefresh();
   vi.useRealTimers();
   vi.restoreAllMocks();
   resetWorkspaceSessionCache();
+  resetSessionStatusReconcile();
+});
+
+it('invalidates an off-screen content revision without fetching it, while title changes stay hot', async () => {
+  const refreshDetail = vi.fn(async () => {});
+  const cached = { messages: [], runs: [], steps: [], events: [], toolCalls: [], permissions: [],
+    sessionStats: null, sessionTodos: [], sessionInvocationUsage: null, cachedAt: Date.now() };
+  useAgentSessionStore.setState({ ...useAgentSessionStore.getInitialState(), selectedSessionId: 'open',
+    sessions: [row('open'), row('cached', { status: 'completed', activeRunId: null })],
+    sessionDetailCache: { cached }, refreshDetail });
+  renderHook(useRuntimeSSE);
+  act(() => bus.changed({ data: JSON.stringify({ sessionId: 'cached', patch: { title: 'Renamed', updatedAt: '2026-10-28' } }) } as MessageEvent));
+  expect(useAgentSessionStore.getState().sessionDetailCache.cached).toBe(cached);
+  act(() => bus.changed({ data: JSON.stringify({ sessionId: 'cached', patch: { historyRevision: 2 } }) } as MessageEvent));
+  expect(useAgentSessionStore.getState().sessionDetailCache.cached.invalidated).toBe(true);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
+  expect(refreshDetail).not.toHaveBeenCalled();
 });
 
 const row = (id: string, overrides: Partial<AgentSession> = {}) =>
@@ -202,4 +228,117 @@ it('keeps intermediate lifecycle with realtime but applies the terminal session 
     await act(async () => { await vi.advanceTimersByTimeAsync(1200); });
     expect(refreshDetail).not.toHaveBeenCalled();
   } finally { setRunRealtimeObservation('s1', null); }
+});
+
+it('lets a row outside the open transcript follow the durable lifecycle even while its run stream is attached', async () => {
+  const { setRunRealtimeObservation } = await import('../../../adapters/transport/runRealtime');
+  const refreshDetail = vi.fn(async () => {});
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    projectId: 'one',
+    selectedSessionId: 'open',
+    sessions: [
+      row('open', { status: 'completed', activeRunId: null }),
+      row('dock', { status: 'queued' }),
+    ],
+    refreshDetail,
+  });
+  // The Dock (or a stream that is about to be released) holds the run stream
+  // for a session this page lists but does not render.
+  setRunRealtimeObservation('dock', 'r1');
+  try {
+    renderHook(useRuntimeSSE);
+    act(() =>
+      bus.changed({
+        data: JSON.stringify({
+          sessionId: 'dock',
+          patch: { status: 'running', activeRunId: 'r1' },
+        }),
+      } as MessageEvent),
+    );
+    expect(
+      useAgentSessionStore.getState().sessions.find((s) => s.id === 'dock')
+        ?.status,
+    ).toBe('running');
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200);
+    });
+    // The row converges without hydrating a transcript it does not own.
+    expect(refreshDetail).not.toHaveBeenCalled();
+  } finally {
+    setRunRealtimeObservation('dock', null);
+  }
+});
+
+it("settles a row whose terminal callback was missed while the stream was down", async () => {
+  // The loader is rendered from `status` alone, and a settle is reported once.
+  // A callback that never arrives (reconnect, unmounted workbench, sleeping
+  // window) used to leave the row animating until the user opened it.
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    projectId: "one",
+    sessions: [row("running")],
+  });
+  const summary = vi
+    .spyOn(agentRuntimeApi, "getSessionSummary")
+    .mockResolvedValue({
+      session: row("running", {
+        status: "completed",
+        activeRunId: null,
+        updatedAt: "2026-01-03T00:00:00Z",
+      }),
+    } as never);
+  renderHook(useRuntimeSSE);
+
+  await act(async () => {
+    bus.connect();
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  expect(summary).toHaveBeenCalledWith("running");
+  expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+    status: "completed",
+    activeRunId: null,
+  });
+});
+
+it("settles an animated row when the stream never reported the settle", async () => {
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    projectId: "one",
+    sessions: [row("running")],
+  });
+  const summary = vi
+    .spyOn(agentRuntimeApi, "getSessionSummary")
+    .mockResolvedValue({
+      session: row("running", {
+        status: "completed",
+        activeRunId: null,
+        updatedAt: "2026-01-03T00:00:00Z",
+      }),
+    } as never);
+  renderHook(useRuntimeSSE);
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(30_000);
+  });
+
+  expect(summary).toHaveBeenCalledWith("running");
+  expect(useAgentSessionStore.getState().sessions[0]?.status).toBe("completed");
+});
+
+it("keeps the watchdog silent while every row is settled", async () => {
+  useAgentSessionStore.setState({
+    ...useAgentSessionStore.getInitialState(),
+    projectId: "one",
+    sessions: [row("done", { status: "completed", activeRunId: null })],
+  });
+  const summary = vi.spyOn(agentRuntimeApi, "getSessionSummary");
+  renderHook(useRuntimeSSE);
+
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(90_000);
+  });
+
+  expect(summary).not.toHaveBeenCalled();
 });

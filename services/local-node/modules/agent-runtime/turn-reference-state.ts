@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { StructuredToolCall } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import type { CustomSubagent } from "./subagent-config.js";
+import { hasReusableLoadedSkill } from "./skill-context.js";
 
 export interface TurnReference {
   kind: "skill" | "mcp" | "file" | "subagent";
@@ -41,15 +42,16 @@ export function effectiveTurnMcpIds(sessionId: string): string[] {
     : (agentRuntimeStore.getSession(sessionId).mcpServerIds ?? []);
 }
 
-/** Each selected skill loads once per user input, including forced queue inputs
- * within a Run. Persisted call IDs make permission resume/replay idempotent. */
+/** Reuse valid successful loads across inputs. Skills that still need loading
+ * get per-input call IDs so permission resume/replay remains idempotent. */
 export function pendingTurnReferenceSkillLoads(
   sessionId: string,
 ): StructuredToolCall[] {
   const selected = activeTurnReferences(sessionId);
-  if (!selected?.skillIds.length) return [];
   const session = agentRuntimeStore.getSession(sessionId);
-  const run = agentRuntimeStore.getRun(session.activeRunId!);
+  const skillIds = [...new Set([...session.skillIds, ...selected?.skillIds ?? []])];
+  if (!session.activeRunId || !skillIds.length) return [];
+  const run = agentRuntimeStore.getRun(session.activeRunId);
   const inputId =
     run.metadata.turnReferenceInputId ?? run.triggerMessageId ?? run.id;
   const called = new Set(
@@ -57,7 +59,7 @@ export function pendingTurnReferenceSkillLoads(
       .listRunToolCalls(run.id)
       .map((call) => call.modelToolCallId),
   );
-  return [...new Set(selected.skillIds)]
+  return skillIds
     .map((skillId) => ({
       id: `turn_skill_${createHash("sha256")
         .update(JSON.stringify([run.id, inputId, skillId]))
@@ -67,5 +69,5 @@ export function pendingTurnReferenceSkillLoads(
       args: { skillId },
       reason: "Load the user-selected skill for this turn.",
     }))
-    .filter((call) => !called.has(call.id));
+    .filter((call) => !called.has(call.id) && !hasReusableLoadedSkill(sessionId, call.args.skillId));
 }

@@ -143,6 +143,18 @@ class TerminalManager {
       requestKey: typeof record.requestKey === "string" ? record.requestKey:undefined,
       processIdentity: typeof record.processIdentity === "string" ? record.processIdentity:undefined,
     };
+    // A record read back from history belongs to an earlier host process: its
+    // PTY is gone with it, so it can never accept input again even if it was
+    // persisted while the shell was still running. Keep it non-terminal so its
+    // process group can still be stopped, but never advertise it as live.
+    if (
+      !this.live.has(item.id) &&
+      item.state !== "closed" &&
+      item.state !== "unconfirmed"
+    ) {
+      item.state = "unconfirmed";
+      item.endedAt ??= new Date().toISOString();
+    }
     this.authoritativeHistory.set(item.id, item);
     const outputSequence = record.outputSequence;
     const outputTail = record.outputTail;
@@ -828,6 +840,19 @@ class TerminalManager {
       failure(
         "Unable to confirm terminal shutdown. The record has been kept for retry.",
       );
+    }
+    if (!entry) {
+      // A recovered record has no PTY to wait on; confirmed process termination
+      // is the only evidence left. Close it here, otherwise the record stays
+      // non-terminal forever and can never be deleted.
+      const recovered = this.authoritativeHistory.get(id);
+      if (recovered && recovered.state !== "closed")
+        await this.persistAuthoritative({
+          ...recovered,
+          state: "closed",
+          endedAt: recovered.endedAt ?? new Date().toISOString(),
+        });
+      return;
     }
     if (entry) {
       // stopRecordedProcess may report a recycled PID as already gone. Never

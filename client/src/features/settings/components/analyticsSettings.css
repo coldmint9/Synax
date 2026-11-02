@@ -288,6 +288,21 @@
   padding-right: 0.25rem;
 }
 
+.analytics-bars--groups {
+  max-height: 13rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.analytics-group__facts {
+  display: flex;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted-foreground) / 0.75);
+}
+
 .analytics-bars__label {
   display: flex;
   align-items: baseline;
@@ -339,7 +354,7 @@
 
 .analytics-table__row {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) 6.2rem minmax(8.5rem, 1fr) 3.2rem 3.2rem 3.6rem;
+  grid-template-columns: minmax(0, 1.5fr) 6.2rem minmax(5rem, 0.8fr) minmax(8.5rem, 1fr) 3.2rem 3.2rem 3.6rem 4.4rem 3.2rem;
   align-items: center;
   gap: 0.5rem;
   width: 100%;
@@ -397,6 +412,14 @@ button.analytics-table__row:hover {
   white-space: nowrap;
   font-size: 9px;
   color: hsl(var(--muted-foreground) / 0.7);
+}
+
+.analytics-table__group {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: hsl(var(--foreground) / 0.72);
 }
 
 .analytics-table__number {

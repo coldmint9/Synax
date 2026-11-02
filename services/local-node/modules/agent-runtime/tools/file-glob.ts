@@ -6,6 +6,7 @@ import * as z from 'zod/v4';
 import type { RegisteredTool, ToolExecutionResult } from '../contracts.js';
 import { isWorkspaceRelativePathBlocked, resolveWorkspacePath, toWorkspaceRelative, workspaceRoot } from './workspace.js';
 import { resolveRipgrep } from './ripgrep.js';
+import { probeReadPath, readPathMissResult } from './read-path-probe.js';
 
 export const fileGlobTool: RegisteredTool = {
   id: 'file.glob',
@@ -28,8 +29,9 @@ export const fileGlobTool: RegisteredTool = {
   execute(input) {
     const args = input.args as { pattern?: string; path?: string; limit?: number; timeoutMs?: number; includeIgnored?: boolean };
     const pattern = args?.pattern ?? '**/*';
-    const base = resolveWorkspacePath(args?.path ?? '.', input.sessionId);
-    const baseStat = fs.statSync(base);
+    const probe = probeReadPath(args?.path ?? '.', input.sessionId);
+    if (probe.kind === 'missing') return readPathMissResult(probe);
+    const { absolutePath: base, stat: baseStat } = probe;
     if (!baseStat.isDirectory()) throw new Error('path must point to a directory.');
     const limit = Math.min(Math.max(args?.limit ?? 100, 1), 300);
 

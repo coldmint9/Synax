@@ -150,6 +150,21 @@ it("does not resurrect an evicted message when its old content changes", () => {
   update.historyWindow = { ...update.historyWindow!, incremental: true, syncCursor: "next" };
   const merged = mergeRefreshedHistory(previous, update);
   expect(merged.messages).toEqual(previous.messages);
-  expect(merged.timelineMessages).toHaveLength(100);
+  expect(merged.timelineMessages).toHaveLength(200);
+  expect(merged.timelineMessages?.find(message => message.id === update.messages[0].id)?.content).toBe(update.messages[0].content);
   expect(merged.historyWindow?.syncCursor).toBe("next");
+});
+
+it("retains the measured viewport buffer and all rail nodes when parking the session", () => {
+  const original = entry(500);
+  original.historyViewportRetain = { messages: 240 };
+  const compacted = compactSessionTail(original);
+  expect(compacted.messages).toHaveLength(240);
+  expect(compacted.timelineMessages).toHaveLength(500);
+  expect(compacted.timelineIndexLoaded).toBe(true);
+  const persisted = toPersistedEntry(compacted, "terminal", 1)!;
+  expect(persisted.messages).toHaveLength(240);
+  expect(persisted.historyViewportRetain).toEqual({ messages: 240 });
+  expect(persisted.timelineMessages).toHaveLength(500);
+  expect(persisted.timelineIndexLoaded).toBe(true);
 });

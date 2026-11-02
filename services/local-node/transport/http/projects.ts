@@ -1,5 +1,6 @@
 import { runtimeFacade } from "../../modules/agent-runtime/sidecar/runtime-facade.js";
 import { createGitMrRoutes } from "./git-mr.js";
+import { createQuickMergeRoutes } from "./git-quick-merge.js";
 import { conversationGitSliceSchema } from '../../modules/agent-runtime/conversation-git/schemas.js';
 import { Hono, type Context } from "hono";
 import { randomUUID } from "node:crypto";
@@ -472,6 +473,11 @@ projectRoutes.route('/:projectId/git/mr', createGitMrRoutes((projectId, rootId) 
   if (!project) throw new GitWorkspaceError('Project not found.', 404);
   return projectGitRoot(project, rootId).location;
 }));
+projectRoutes.route('/:projectId/git/quick-merge', createQuickMergeRoutes((projectId, rootId) => {
+  const project = projects.get(projectId);
+  if (!project) throw new GitWorkspaceError('Project not found.', 404);
+  return projectGitRoot(project, rootId).location;
+}));
 
 const workspaceLocationSchema = z.discriminatedUnion("kind", [
   z
@@ -510,6 +516,14 @@ const createWorkspaceSchema = z
     name: z.string().trim().min(1).max(120),
     roots: z.array(workspaceRootInputSchema).min(1).max(50),
   })
+  .strict();
+
+const addReferencesSchema = z
+  .object({ roots: z.array(workspaceRootInputSchema).min(1).max(50) })
+  .strict();
+
+const setPrimaryRootSchema = z
+  .object({ rootId: z.string().trim().min(1).max(256) })
   .strict();
 
 async function withProjectMutation<T>(
@@ -577,6 +591,63 @@ async function resolveRootInput(
       : { kind: "host" as const, path: input.localPath };
   const resolved = await resolveWorkspaceProjectLocation(location);
   return { ...resolved, name: resolved.redirected ? resolved.name : input.name ?? resolved.name };
+}
+
+const WORKSPACE_MEMBER_LIMIT = 50;
+
+/**
+ * Resolves and validates new memberships on top of `project` without writing.
+ *
+ * Callers persist the returned references inside the project mutation queue, so
+ * a multi-selection becomes one validated change and one disk write.
+ * Only an aliased duplicate (a linked worktree pointing at a member) is skipped
+ * silently when `skipExisting` is set; overlapping directories stay an error.
+ */
+async function appendReferences(
+  project: ProjectRecord,
+  inputs: z.infer<typeof workspaceRootInputSchema>[],
+  options: { skipExisting?: boolean } = {},
+): Promise<{
+  references: ProjectReference[];
+  normalizations: WorkspacePathResolution[];
+  added: number;
+}> {
+  const references = [...(project.references ?? [])];
+  const normalizations: WorkspacePathResolution[] = [];
+  const hasPrimary = Boolean(projectSourceLocation(project));
+  let count = (hasPrimary ? 1 : 0) + references.length;
+  let added = 0;
+  const known = new Set(
+    projectWorkspaceRoots(project).map((root) =>
+      physicalLocationKey(workspaceRootLocation(root)),
+    ),
+  );
+  for (const input of inputs) {
+    const { existing: _existing, ...resolved } = await resolveRootInput(input);
+    const key = physicalLocationKey(resolved.location);
+    if (known.has(key) && (options.skipExisting || resolved.redirected)) {
+      normalizations.push({ ...resolved, duplicate: true });
+      continue;
+    }
+    if (count >= WORKSPACE_MEMBER_LIMIT)
+      throw new Error("A workspace supports up to 50 projects.");
+    const location = await validateProjectReferenceLocation(
+      { ...project, references },
+      resolved.location,
+    );
+    references.push(
+      referenceFromLocation(
+        `ref_${randomUUID()}`,
+        resolved.name ?? locationName(location),
+        location,
+      ),
+    );
+    known.add(physicalLocationKey(location));
+    count += 1;
+    added += 1;
+    if (resolved.redirected) normalizations.push(resolved);
+  }
+  return { references, normalizations, added };
 }
 
 projectRoutes.post("/workspace-path", async (c) => {
@@ -658,6 +729,75 @@ projectRoutes.post("/workspaces", async (c) => {
   return c.json({ project, roots: projectWorkspaceRoots(project), normalizations }, 201);
 });
 
+/**
+ * Creates a workspace from directories that already exist on this machine.
+ *
+ * Used by the requirement → workspace flow after its clone step, which cannot
+ * validate a directory the same way the HTTP route does. Same rules as
+ * `POST /workspaces`: the first directory becomes the primary root, the rest
+ * become references, and a workspace that already contains every directory is
+ * returned instead of duplicated.
+ */
+export async function createWorkspaceFromDirectories(input: {
+  name: string;
+  roots: string[];
+}): Promise<{ project: ProjectRecord; roots: ReturnType<typeof projectWorkspaceRoots>; created: boolean }> {
+  const resolvedRoots: WorkspacePathResolution[] = [];
+  for (const root of input.roots) {
+    resolvedRoots.push(await resolveWorkspaceProjectLocation({ kind: "host", path: root }));
+  }
+  const wanted = new Set(
+    await Promise.all(resolvedRoots.map(async item => physicalLocationKey(item.location))),
+  );
+  for (const existing of projects.values()) {
+    const keys = new Set(
+      await Promise.all(projectWorkspaceRoots(existing).map(async root => physicalLocationKey(workspaceRootLocation(root)))),
+    );
+    if (wanted.size && [...wanted].every(key => keys.has(key))) {
+      return { project: existing, roots: projectWorkspaceRoots(existing), created: false };
+    }
+  }
+  const now = new Date().toISOString();
+  const project: ProjectRecord = {
+    id: `ws_${randomUUID()}`,
+    name: input.name.trim().slice(0, 120) || "工作区",
+    references: [],
+    status: "healthy",
+    environment: "development",
+    healthScore: 0,
+    activeAgents: 0,
+    activeHumans: 1,
+    openRisks: 0,
+    updatedAt: now,
+    createdAt: now,
+    createdBy: "current-user",
+    importState: "ready",
+  };
+  for (const resolved of resolvedRoots) {
+    const location = project.source
+      ? await validateProjectReferenceLocation(project, resolved.location)
+      : await canonicalizeWorkspaceLocation(resolved.location);
+    const name = resolved.name ?? locationName(location);
+    if (!project.source) {
+      project.source = sourceFromLocation(location);
+      project.primaryName = name;
+    } else {
+      project.references!.push(referenceFromLocation(`ref_${randomUUID()}`, name, location));
+    }
+  }
+  projects.set(project.id, project);
+  try {
+    initializeProjectSettings(project.id);
+    saveProjectsToDisk();
+  } catch (error) {
+    projects.delete(project.id);
+    throw error;
+  }
+  workspaceIndexService.indexProject(project.id, projectWorkspaceRoots(project));
+  return { project, roots: projectWorkspaceRoots(project), created: true };
+}
+
+
 /** The explorer and file viewer must resolve the same session worktree. */
 async function treeRoots(project: ProjectRecord, sessionId?: string) {
   if (!sessionId) return projectWorkspaceRoots(project);
@@ -710,28 +850,17 @@ projectRoutes.post("/:id/references", async (c) => {
   const projectId = c.req.param("id");
   try {
     const result = await withProjectMutation(projectId, async () => {
-      const project = projects.get(projectId);
-      if (!project)
+      const latest = projects.get(projectId);
+      if (!latest)
         throw Object.assign(new Error("Project not found"), { status: 404 });
-      const resolved = await resolveRootInput(parsed.data);
       // Validation occurs inside the project queue so concurrent writes see every prior membership.
-      const latest = projects.get(projectId)!;
-      const currentRoots = projectWorkspaceRoots(latest);
-      if (resolved.redirected && currentRoots.some(root => physicalLocationKey(workspaceRootLocation(root)) === physicalLocationKey(resolved.location)))
-        return { roots: currentRoots, normalization: { ...resolved, duplicate: true } };
-      if (projectWorkspaceRoots(latest).length >= 50)
-        throw new Error("A workspace supports up to 50 projects.");
-      const location = await validateProjectReferenceLocation(
-        latest,
-        resolved.location,
-      );
-      const name = resolved.name ?? locationName(location);
+      const addition = await appendReferences(latest, [parsed.data]);
+      const normalization = addition.normalizations[0];
+      if (!addition.added)
+        return { roots: projectWorkspaceRoots(latest), normalization };
       const updated = {
         ...latest,
-        references: [
-          ...(latest.references ?? []),
-          referenceFromLocation(`ref_${randomUUID()}`, name, location),
-        ],
+        references: addition.references,
         updatedAt: new Date().toISOString(),
       };
       atomicWriteJson(PROJECTS_FILE, {
@@ -740,7 +869,7 @@ projectRoutes.post("/:id/references", async (c) => {
         ),
       });
       projects.set(latest.id, updated);
-      return { roots: projectWorkspaceRoots(updated), normalization: resolved.redirected ? resolved : undefined };
+      return { roots: projectWorkspaceRoots(updated), normalization };
     });
     workspaceIndexService.indexProject(projectId, result.roots);
     invalidateWorkspaceSessionEnvironments(projectId);
@@ -748,6 +877,145 @@ projectRoutes.post("/:id/references", async (c) => {
   } catch (error) {
     const status = (error as { status?: number }).status === 404 ? 404 : 400;
     return c.json({ error: (error as Error).message }, status);
+  }
+});
+
+/**
+ * Adds several directories in one validated change: a single JSON write, one
+ * index pass and one session-environment invalidation for the whole selection.
+ * Members that are already present (or resolve to one, as a linked worktree
+ * does) are reported as duplicates instead of failing the whole selection.
+ */
+projectRoutes.post("/:id/references/batch", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const parsed = addReferencesSchema.safeParse(body);
+  if (!parsed.success)
+    return c.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      400,
+    );
+  const projectId = c.req.param("id");
+  try {
+    const result = await withProjectMutation(projectId, async () => {
+      const latest = projects.get(projectId);
+      if (!latest)
+        throw Object.assign(new Error("Project not found"), { status: 404 });
+      const addition = await appendReferences(latest, parsed.data.roots, {
+        skipExisting: true,
+      });
+      if (!addition.added)
+        return {
+          roots: projectWorkspaceRoots(latest),
+          normalizations: addition.normalizations,
+        };
+      const updated = {
+        ...latest,
+        references: addition.references,
+        updatedAt: new Date().toISOString(),
+      };
+      atomicWriteJson(PROJECTS_FILE, {
+        items: [...projects.values()].map((item) =>
+          item.id === latest.id ? updated : item,
+        ),
+      });
+      projects.set(latest.id, updated);
+      return {
+        roots: projectWorkspaceRoots(updated),
+        normalizations: addition.normalizations,
+      };
+    });
+    workspaceIndexService.indexProject(projectId, result.roots);
+    invalidateWorkspaceSessionEnvironments(projectId);
+    return c.json(result, 201);
+  } catch (error) {
+    const status = (error as { status?: number }).status === 404 ? 404 : 400;
+    return c.json({ error: (error as Error).message }, status);
+  }
+});
+
+/**
+ * Promotes a workspace member to the default project.
+ *
+ * The promoted root takes over `source`/`primaryName`, so it becomes the root
+ * that sessions start in and the one that owns the workspace-level Git scope.
+ * The previous default keeps its place in the list as a reference.
+ */
+projectRoutes.patch("/:id/primary-root", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const parsed = setPrimaryRootSchema.safeParse(body);
+  if (!parsed.success)
+    return c.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      400,
+    );
+  const projectId = c.req.param("id");
+  try {
+    const roots = await withProjectMutation(projectId, async () => {
+      const latest = projects.get(projectId);
+      if (!latest)
+        throw Object.assign(new Error("Project not found"), { status: 404 });
+      const current = projectWorkspaceRoots(latest);
+      const target = current.find((root) => root.id === parsed.data.rootId);
+      if (!target)
+        throw Object.assign(new Error("Workspace project not found."), {
+          status: 404,
+        });
+      if (target.role === "primary") return current;
+      if (target.status !== "available")
+        throw Object.assign(
+          new Error("Workspace directory is unavailable."),
+          { status: 409 },
+        );
+      const previousLocation = projectSourceLocation(latest);
+      if (!previousLocation)
+        throw Object.assign(
+          new Error(
+            "The main project must have a local workspace before switching the default.",
+          ),
+          { status: 400 },
+        );
+      // Replacing the promoted slot keeps the user's member order intact.
+      const demoted = referenceFromLocation(
+        `ref_${randomUUID()}`,
+        latest.primaryName ?? latest.name,
+        previousLocation,
+      );
+      const updated: ProjectRecord = {
+        ...latest,
+        source: sourceFromLocation(workspaceRootLocation(target)),
+        primaryName: target.name,
+        references: (latest.references ?? []).map((reference) =>
+          reference.id === target.id ? demoted : reference,
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      atomicWriteJson(PROJECTS_FILE, {
+        items: [...projects.values()].map((item) =>
+          item.id === latest.id ? updated : item,
+        ),
+      });
+      projects.set(latest.id, updated);
+      return projectWorkspaceRoots(updated);
+    });
+    workspaceIndexService.indexProject(projectId, roots);
+    invalidateWorkspaceSessionEnvironments(projectId);
+    return c.json({ roots });
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    return c.json(
+      { error: (error as Error).message },
+      status === 404 || status === 409 ? status : 400,
+    );
   }
 });
 

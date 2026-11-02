@@ -1,6 +1,7 @@
 import nodeFs, { constants } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import os from "node:os";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -88,6 +89,10 @@ export async function checkMacInstallLocation(
   executable: string,
 ): Promise<string> {
   const target = macApplicationPath(executable);
+  if (path.basename(executable) !== "Synax" ||
+    (await plist(target, "CFBundleIdentifier")) !== "com.Synax.desktop" ||
+    (await plist(target, "CFBundleExecutable")) !== "Synax")
+    throw new Error("当前应用不是 Synax，已停止更新。");
   const real = await fs.realpath(target);
   if (
     real !== target ||
@@ -127,7 +132,8 @@ export async function verifyMacBundle(
     (await plist(bundle, "CFBundleIdentifier")) !== "com.Synax.desktop" ||
     (await plist(current, "CFBundleIdentifier")) !== "com.Synax.desktop" ||
     (await plist(bundle, "CFBundleShortVersionString")) !== version ||
-    (await plist(bundle, "CFBundleExecutable")) !== "Synax"
+    (await plist(bundle, "CFBundleExecutable")) !== "Synax" ||
+    (await plist(current, "CFBundleExecutable")) !== "Synax"
   )
     throw new Error(
       "The downloaded app identity or version does not match the release",
@@ -142,13 +148,12 @@ export async function verifyMacBundle(
   let signature = "";
   try {
     signature = (await run("/usr/bin/codesign", ["-dv", current])).stderr;
-  } catch {
-    /* Unsigned build. */
+  } catch (error) {
+    if (!/code object is not signed at all/.test(String((error as { stderr?: string }).stderr))) throw error;
   }
   if (/^TeamIdentifier=(?!not set).+/m.test(signature) || /^Authority=/m.test(signature)) {
-    const requirement = (
-      await run("/usr/bin/codesign", ["-d", "-r-", current])
-    ).stdout.match(/^designated => (.+)$/m)?.[1];
+    const inspection = await run("/usr/bin/codesign", ["-d", "-r-", current]);
+    const requirement = `${inspection.stdout}\n${inspection.stderr}`.match(/^designated => (.+)$/m)?.[1];
     if (!requirement)
       throw new Error("Cannot determine the installed app signing identity");
     await run("/usr/bin/codesign", [
@@ -171,6 +176,43 @@ export interface MacInstallation {
   workspace: string;
 }
 
+/** Read a DMG or legacy ZIP, and never remove a mount point still in use. */
+async function withMacUpdateContents<T>(
+  archive: string, zip: boolean, directory: string, inspect: (bundle: string) => Promise<T>,
+): Promise<T> {
+  const mount = await fs.mkdtemp(path.join(directory, 'mount-'));
+  let mounted = false;
+  try {
+    if (zip) {
+      await validateMacUpdateArchive(archive);
+      await run('/usr/bin/ditto', ['-x', '-k', archive, mount], { timeout: 10 * 60_000 });
+    } else {
+      await run('/usr/bin/hdiutil', ['attach', '-readonly', '-nobrowse', '-noautoopen', '-mountpoint', mount, archive], { timeout: 120_000 });
+      mounted = true;
+    }
+    return await inspect(path.join(mount, 'Synax.app'));
+  } finally {
+    let detached = !mounted;
+    if (mounted) {
+      try {
+        await run('/usr/bin/hdiutil', ['detach', mount]);
+        detached = true;
+      } catch (error) { console.error('[desktop-update] detach failed', error); }
+    }
+    if (detached) await removeTemporaryDirectory(mount, true);
+  }
+}
+
+/** Downloads and cached installers share the same identity/signature checks. */
+export async function verifyMacFrameworkArchive(
+  archive: string, executable: string, version: string, arch: string,
+): Promise<void> {
+  const extension = path.extname(archive).toLowerCase();
+  if (extension !== '.dmg' && extension !== '.zip') throw new Error('Unsupported macOS update archive');
+  await withMacUpdateContents(archive, extension === '.zip', os.tmpdir(), bundle =>
+    verifyMacBundle(bundle, macApplicationPath(executable), version, arch));
+}
+
 export async function prepareMacInstallation(
   archive: string,
   manifest: DesktopManifest,
@@ -186,66 +228,30 @@ export async function prepareMacInstallation(
   const workspace = await fs.mkdtemp(
     path.join(path.dirname(target), ".synax-update-"),
   );
-  const mount = await fs.mkdtemp(path.join(directory, "mount-"));
-  let mounted = false;
   try {
-    if (manifest.updateArchive) {
-      await validateMacUpdateArchive(archive);
-      await run("/usr/bin/ditto", ["-x", "-k", archive, mount], {
+    return await withMacUpdateContents(archive, Boolean(manifest.updateArchive), directory, async source => {
+      if (!(await fs.lstat(source)).isDirectory())
+        throw new Error(
+          "Update archive does not contain an application directory",
+        );
+      await verifyMacBundle(source, target, manifest.version, manifest.arch);
+      await run("/usr/bin/ditto", [source, path.join(workspace, "next.app")], {
         timeout: 10 * 60_000,
       });
-    } else {
-      await run(
-        "/usr/bin/hdiutil",
-        [
-          "attach",
-          "-readonly",
-          "-nobrowse",
-          "-noautoopen",
-          "-mountpoint",
-          mount,
-          archive,
-        ],
-        { timeout: 120_000 },
+      await verifyMacBundle(
+        path.join(workspace, "next.app"),
+        target,
+        manifest.version,
+        manifest.arch,
       );
-      mounted = true;
-    }
-    const source = path.join(mount, "Synax.app");
-    if (!(await fs.lstat(source)).isDirectory())
-      throw new Error(
-        "Update archive does not contain an application directory",
-      );
-    await verifyMacBundle(source, target, manifest.version, manifest.arch);
-    await run("/usr/bin/ditto", [source, path.join(workspace, "next.app")], {
-      timeout: 10 * 60_000,
+      await fs.writeFile(path.join(workspace, "install.sh"), MAC_INSTALL_SCRIPT, {
+        mode: 0o700,
+      });
+      return { version: manifest.version, target, workspace };
     });
-    await verifyMacBundle(
-      path.join(workspace, "next.app"),
-      target,
-      manifest.version,
-      manifest.arch,
-    );
-    await fs.writeFile(path.join(workspace, "install.sh"), MAC_INSTALL_SCRIPT, {
-      mode: 0o700,
-    });
-    return { version: manifest.version, target, workspace };
   } catch (error) {
     await removeTemporaryDirectory(workspace, true);
     throw error;
-  } finally {
-    let detached = !mounted;
-    if (mounted) {
-      try {
-        await run("/usr/bin/hdiutil", ["detach", mount]);
-        detached = true;
-      } catch (error) {
-        console.error("[desktop-update] detach failed", error);
-      }
-    }
-    // Do not recursively remove a mount point if detach failed. For extracted
-    // ZIPs, cleanup is best-effort: a transient macOS ENOTEMPTY must not turn a
-    // fully prepared update into a failed installation.
-    if (detached) await removeTemporaryDirectory(mount, true);
   }
 }
 

@@ -2,19 +2,28 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import { ActivityRowScope } from "./ActivityRowScope";
+import { useAppendedEntryIds } from "./useAppendedEntryIds";
 
 export interface ActivityWindowRow {
   key: string;
   node: ReactNode;
+  /**
+   * Fixed height for a collapsed row that paints inline media below its one
+   * line. Omitted rows keep the window's uniform `rowHeight`.
+   */
+  height?: number;
 }
 
 interface Props {
+  /** Session/round/epoch identity; retain reading position across virtual unmounts. */
+  rememberKey?: string;
   rows: readonly ActivityWindowRow[];
   /**
    * A live turn keeps a fixed window over its records and follows the newest
@@ -32,6 +41,32 @@ interface Props {
 const OVERSCAN_ROWS = 3;
 /** How close to an edge still counts as being at that edge, in px. */
 const EDGE_SLOP = 2;
+type ActivityWindowPosition = { top: number; following: boolean; expandedKey: string | null; expandedHeight: number };
+const positions = new Map<string, ActivityWindowPosition>();
+
+function ActivityWindowRecord({ row, compact, expanded, appended, claimRow, measure }: {
+  row: ActivityWindowRow & { departing: boolean };
+  compact: boolean;
+  expanded: boolean;
+  appended: boolean;
+  claimRow: (key: string) => void;
+  measure: (node: HTMLDivElement | null) => void;
+}) {
+  // A new call must not change every existing row's context callback and
+  // defeat the call-summary memoization.
+  const expand = useCallback(() => claimRow(row.key), [claimRow, row.key]);
+  return (
+    <div ref={expanded ? measure : undefined} data-row-key={row.key}
+      style={compact && !expanded && row.height ? { height: row.height } : undefined}
+      data-row-appended={appended || undefined} data-row-expanded={expanded || undefined}
+      data-departing={row.departing || undefined} aria-hidden={row.departing || undefined}
+      inert={row.departing || undefined} className="session-process-window-row">
+      <ActivityRowScope compact={compact} active={!compact || expanded} onExpand={compact ? expand : undefined}>
+        {row.node}
+      </ActivityRowScope>
+    </div>
+  );
+}
 
 /**
  * Fixed-height window over one-line activity records.
@@ -40,21 +75,24 @@ const EDGE_SLOP = 2;
  *
  *   frame      visual layer — the edge fades that report content off-screen
  *   viewport   scroll layer — a height budget of `visibleRows * rowHeight`
- *   row        a block box of exactly `rowHeight` while collapsed
+ *   row        a block box of exactly `rowHeight`, or its own height when it
+ *              paints an inline media strip, while collapsed
  *
- * Collapsed rows never measure themselves, so offsets are `index * rowHeight`
- * and only the rows near the window mount. Opening one record is the single
- * exception: that row reports its natural height, the window keeps every other
- * row on the fixed budget, and virtualization stays on. Opening one record
- * must never unfold the whole list.
+ * Collapsed rows never measure themselves, so offsets come from each row's
+ * declared height and only the rows near the window mount. Opening one record
+ * is the single exception: that row reports its natural height, the window
+ * keeps every other row on its fixed budget, and virtualization stays on.
+ * Opening one record must never unfold the whole list.
  */
 export function VirtualActivityWindow({
+  rememberKey,
   rows,
   windowed = false,
   animate = false,
   visibleRows = 7,
   rowHeight = 30,
 }: Props) {
+  const [saved] = useState(() => rememberKey ? positions.get(rememberKey) : undefined);
   const viewport = useRef<HTMLDivElement | null>(null);
   const previousRows = useRef(rows);
   const [knownKeys, setKnownKeys] = useState(() => rows.map((row) => row.key));
@@ -87,10 +125,12 @@ export function VirtualActivityWindow({
     return () => window.clearTimeout(timer);
   }, [departing, animate]);
   /** False once the reader opens a record or scrolls away from the newest one. */
-  const following = useRef(true);
+  const following = useRef(saved?.following ?? true);
+  const manualUntil = useRef(0);
+  const markManualScroll = () => { manualUntil.current = performance.now() + 1000; };
   /** The one record the reader opened; every other row stays one line. */
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [expandedHeight, setExpandedHeight] = useState(rowHeight);
+  const [expandedKey, setExpandedKey] = useState<string | null>(saved?.expandedKey ?? null);
+  const [expandedHeight, setExpandedHeight] = useState(saved?.expandedHeight ?? rowHeight);
   const observer = useRef<ResizeObserver | null>(null);
 
   const claimRow = useCallback(
@@ -136,14 +176,29 @@ export function VirtualActivityWindow({
   offsets[0] = 0;
   for (let index = 0; index < renderedRows.length; index += 1) {
     offsets[index + 1] =
-      offsets[index] + (index === expandedIndex ? expandedHeight : rowHeight);
+      offsets[index] +
+      (index === expandedIndex
+        ? expandedHeight
+        : renderedRows[index].height ?? rowHeight);
   }
   const totalHeight = offsets[renderedRows.length];
   const budget = visibleRows * rowHeight;
   const scrollable = windowed && totalHeight > budget;
   const [scrollTop, setScrollTop] = useState(() =>
+    saved && !saved.following ? Math.min(saved.top, Math.max(0, totalHeight - budget)) :
     windowed ? Math.max(0, totalHeight - budget) : 0,
   );
+  useLayoutEffect(() => {
+    if (viewport.current) viewport.current.scrollTop = scrollTop;
+  }, []);
+  useLayoutEffect(() => {
+    if (!rememberKey) return;
+    positions.delete(rememberKey);
+    positions.set(rememberKey, { top: scrollTop, following: following.current, expandedKey, expandedHeight });
+    if (positions.size > 500) positions.delete(positions.keys().next().value!);
+  }, [rememberKey, scrollTop, expandedKey, expandedHeight]);
+  const rowIds = useMemo(() => rows.map(row => ({ id: row.key })), [rows]);
+  const appended = useAppendedEntryIds(rowIds, rememberKey);
 
   // Every commit changes either the row count, the opened row or the reader's
   // position: keep the newest record in view unless the reader took over.
@@ -160,7 +215,7 @@ export function VirtualActivityWindow({
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element || !scrollable || expandedIndex < 0) return;
-    const top = expandedIndex * rowHeight;
+    const top = offsets[expandedIndex];
     const bottom = top + expandedHeight;
     if (bottom <= element.scrollTop + budget) return;
     const target = expandedHeight >= budget ? top : bottom - budget;
@@ -195,6 +250,12 @@ export function VirtualActivityWindow({
         ref={viewport}
         className="session-process-window-viewport"
         data-windowed={windowed || undefined}
+        onWheel={markManualScroll}
+        onTouchMove={markManualScroll}
+        onPointerDown={markManualScroll}
+        onKeyDown={event => {
+          if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markManualScroll();
+        }}
         style={
           windowed
             ? ({
@@ -208,6 +269,9 @@ export function VirtualActivityWindow({
           scrollable
             ? (event) => {
                 const element = event.currentTarget;
+                // Spacer commits can clamp a programmatic tail scroll. They
+                // must not be mistaken for the reader leaving the live edge.
+                if (following.current && performance.now() > manualUntil.current) return;
                 following.current =
                   element.scrollHeight - element.scrollTop - element.clientHeight <= EDGE_SLOP;
                 setScrollTop(element.scrollTop);
@@ -222,29 +286,11 @@ export function VirtualActivityWindow({
             style={{ height: offsets[start] }}
           />
         )}
-        {renderedRows.slice(start, end).map((row) => {
-          const rowExpanded = !row.departing && row.key === expandedKey;
-          return (
-            <div
-              key={row.key}
-              ref={rowExpanded ? measureExpandedRow : undefined}
-              data-row-key={row.key}
-              data-row-expanded={rowExpanded || undefined}
-              data-departing={row.departing || undefined}
-              aria-hidden={row.departing || undefined}
-              inert={row.departing || undefined}
-              className="session-process-window-row"
-            >
-              <ActivityRowScope
-                compact={windowed}
-                active={!windowed || rowExpanded}
-                onExpand={windowed ? () => claimRow(row.key) : undefined}
-              >
-                {row.node}
-              </ActivityRowScope>
-            </div>
-          );
-        })}
+        {renderedRows.slice(start, end).map(row => (
+          <ActivityWindowRecord key={row.key} row={row} compact={windowed}
+            expanded={!row.departing && row.key === expandedKey}
+            appended={animate && appended.has(row.key)} claimRow={claimRow} measure={measureExpandedRow} />
+        ))}
         {end < renderedRows.length && (
           <div
             aria-hidden="true"

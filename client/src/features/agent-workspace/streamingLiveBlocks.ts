@@ -122,13 +122,24 @@ export function applyToolResult(
   state: StreamingLiveBuffers,
   toolCall: ToolCallRecord,
 ): StreamingLiveBuffers {
-  if (state.pendingToolCalls.length === 0) return state;
-  return {
-    ...state,
-    pendingToolCalls: state.pendingToolCalls.map((tc) =>
-      tc.id === toolCall.id ? toolCall : tc,
-    ),
-  };
+  if (state.pendingToolCalls.some(call => call.id === toolCall.id)) {
+    return { ...state, pendingToolCalls: state.pendingToolCalls.map(call => call.id === toolCall.id ? toolCall : call) };
+  }
+  // A thought/text boundary may already have parked this call in blocks.
+  // Resumed results update that one record without replaying the whole group.
+  let changed = false;
+  const blocks = state.blocks.map(block => {
+    if (block.type === "tool_call" && block.call.id === toolCall.id) {
+      changed = true;
+      return { ...block, call: toolCallRecordToView(toolCall) };
+    }
+    if (block.type === "tool_call_group" && block.calls.some(call => call.id === toolCall.id)) {
+      changed = true;
+      return { ...block, calls: block.calls.map(call => call.id === toolCall.id ? toolCallRecordToView(toolCall) : call) };
+    }
+    return block;
+  });
+  return changed ? { ...state, blocks } : state;
 }
 
 export function snapshotStreamingBuffers(

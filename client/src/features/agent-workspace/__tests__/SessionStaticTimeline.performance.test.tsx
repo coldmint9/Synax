@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { SessionStaticTimeline } from "../SessionStaticTimeline";
 import { useAgentSessionStore as store } from "../state/agentSessionStore";
 import { EMPTY_STREAMING_BUFFERS } from "../streamingLiveBlocks";
+import type { TurnContentBlock } from "../buildInterleavedTurns";
 import type {
   AgentInteraction,
   AgentRuntimeMessage,
@@ -268,6 +269,84 @@ it("preserves reply DOM nodes when live content settles and another step starts"
   act(() => store.setState({ streamingStepId: "second" }));
   rerender(<SessionStaticTimeline {...props} excludeStepId="second" />);
   expect(findReply()).toBe(original);
+});
+
+it("retains a long activity row while live steps extend and settle the group", () => {
+  const completedBlocks: TurnContentBlock[] = Array.from(
+    { length: 1024 },
+    (_, index) => Object.freeze({
+      type: "thinking" as const,
+      content: `Completed activity ${index}`,
+    }),
+  );
+  Object.freeze(completedBlocks);
+  const completedStep = Object.freeze({
+    stepId: "first",
+    stepIndex: 1,
+    blocks: completedBlocks,
+  });
+  const liveBlocks: TurnContentBlock[] = [Object.freeze({
+    type: "thinking" as const,
+    content: "Next activity",
+  })];
+  Object.freeze(liveBlocks);
+  store.setState({
+    ...store.getInitialState(),
+    streamingStepId: "second",
+    streamingCompletedSteps: [completedStep],
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, blocks: liveBlocks },
+  });
+  const props = {
+    unifiedLive: true,
+    runs: [],
+    steps: [],
+    messages: [],
+    toolCalls: [],
+    isRunning: true,
+  };
+  const { container, rerender } = render(
+    <SessionStaticTimeline {...props} excludeStepId="second" />,
+  );
+  const findActivity = () =>
+    Array.from(container.querySelectorAll("div")).find(
+      (element) =>
+        element.textContent === "first:activity:0" &&
+        element.children.length === 0,
+    );
+  const original = findActivity();
+  expect(original).toBeDefined();
+  expect(original).toHaveAttribute("data-working", "true");
+
+  act(() => store.setState({
+    streamingLive: {
+      ...EMPTY_STREAMING_BUFFERS,
+      blocks: liveBlocks,
+      pendingThinking: "More activity",
+    },
+  }));
+  expect(findActivity()).toBe(original);
+  expect(completedBlocks).toHaveLength(1024);
+  expect(liveBlocks).toHaveLength(1);
+
+  act(() => store.setState({
+    streamingStepId: "third",
+    streamingCompletedSteps: [
+      completedStep,
+      { stepId: "second", stepIndex: 2, blocks: liveBlocks },
+    ],
+    streamingLive: {
+      ...EMPTY_STREAMING_BUFFERS,
+      pendingThinking: "Third step activity",
+    },
+  }));
+  rerender(<SessionStaticTimeline {...props} excludeStepId="third" />);
+  expect(findActivity()).toBe(original);
+
+  act(() => store.setState({
+    streamingLive: { ...EMPTY_STREAMING_BUFFERS, pendingText: "Final reply" },
+  }));
+  expect(findActivity()).toBe(original);
+  expect(original).not.toHaveAttribute("data-working");
 });
 
 it.each(["live", "snapshot"])(

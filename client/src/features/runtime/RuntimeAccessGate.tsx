@@ -1,7 +1,6 @@
 import { RuntimeSkeleton } from "./RuntimeSkeleton";
 import { initApiOrigin } from "../../adapters/transport/originConfig";
 import { startApiConnectivityMonitor } from "../../shared/lib/apiConnectivity";
-import { startProjectRecovery } from "../../shared/state/shellStore";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   enableRuntimeAuth,
@@ -60,10 +59,8 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
   }, [connect]);
   useEffect(() => {
     if (!ready) return;
-    const stopRecovery = startProjectRecovery();
     const stopMonitor = startApiConnectivityMonitor();
     return () => {
-      stopRecovery();
       stopMonitor();
     };
   }, [ready]);
@@ -79,7 +76,7 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
           void connect();
         }}
       >
-        <h1 className="text-lg font-semibold">Synax Runtime</h1>
+        <h1 className="text-lg font-semibold">{zh ? "连接运行服务" : "Connect to runtime"}</h1>
         <p role="status" className="text-sm text-muted-foreground">
           {needsToken
             ? zh
@@ -115,7 +112,7 @@ export function RuntimeAccessGate({ children }: { children: ReactNode }) {
               type="submit"
               className="rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground"
             >
-              {zh ? "连接 / 重试" : "Connect / retry"}
+              {needsToken ? (zh ? "连接" : "Connect") : (zh ? "重新连接" : "Reconnect")}
             </button>
           </>
         )}

@@ -50,7 +50,9 @@ function reply(type, pid) {
   if (process.connected) process.send({ type, pid }, (error) => { if (error) shutdown(); });
 }
 
-function schedule(delayMs = 0) {
+// Short command bursts share one process-table snapshot. Signals are sent by
+// stop() immediately; only confirmation is coalesced, never ownership release.
+function schedule(delayMs = 25) {
   if (timer || scanning || ![...groups.values()].some((group) => group.stopping)) return;
   timer = setTimeout(() => { timer = undefined; void sweep(); }, delayMs);
 }

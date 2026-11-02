@@ -92,14 +92,6 @@ export function useInputOptimization(options: Options) {
       // Clear the in-flight request before updating the draft: our own edit is not cancellation.
       request.current = null;
       setPending(false);
-      if (result.status === "preserved") {
-        setNotice(
-          zh
-            ? "优化结果未能保留原意，已保留原文。可重试或更换输入优化模型。"
-            : "The rewrite did not preserve your draft. The original was kept. Retry or choose another input optimization model.",
-        );
-        return;
-      }
       if (result.status === "unchanged" || result.text === initial.content) {
         setNotice(zh ? "输入已清晰，无需修改。" : "Your draft is already clear; no changes needed.");
         return;

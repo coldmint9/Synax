@@ -1,3 +1,5 @@
+import { ONLINE_UPDATES_DISABLED_MESSAGE } from "./update-policy.js";
+
 /** Keep framework stacks, HTTP headers and request credentials in main-process
  * logs, never in renderer state or native dialogs. */
 export function updateFailureMessage(error: unknown): string {
@@ -5,6 +7,11 @@ export function updateFailureMessage(error: unknown): string {
   const message = typeof value?.message === "string" ? value.message : typeof error === "string" ? error : "";
   const code = typeof value?.code === "string" ? value.code : "";
   const text = `${code} ${message}`;
+  if (message === ONLINE_UPDATES_DISABLED_MESSAGE) return ONLINE_UPDATES_DISABLED_MESSAGE;
+  if (message.startsWith("Synax 自动更新不可用"))
+    return "Synax 自动更新不可用：企业更新源未配置或已变更（SYNAX_FRAMEWORK_UPDATE_URL）。请联系管理员。";
+  if (message.startsWith("Synax 企业更新源"))
+    return "Synax 企业更新源配置无效。必须使用 HTTPS，且不能指向 Synax 上游发布源。";
   if (/ENOSPC|disk.*full|no space left/i.test(text))
     return "磁盘空间不足，更新未完成。请释放空间后重试。";
   if (/EACCES|EPERM|permission denied/i.test(text))

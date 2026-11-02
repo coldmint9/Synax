@@ -1,125 +1,44 @@
-import { memo, useCallback, useEffect, useState } from "react";
-import {
-  agentRuntimeApi,
-  type AgentRun,
-  type AgentRunStep,
-  type AgentRuntimeMessage,
-  type AgentSession,
-  type ToolCallRecord,
-} from "../../adapters/transport/agentRuntime";
-import { AgentConversationView } from "./AgentConversationView";
-import { TranscriptSessionProvider } from "./SessionTranscriptContext";
+import { memo, useState } from "react";
 import { SubagentControls } from "./SubagentControls";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { SubagentIdentity } from "./SubagentIdentity";
+import { InteractiveSubagentView } from "./InteractiveSubagentView";
+import { getConversationController } from "./state/conversationController";
+import { useConversationState } from "./state/useConversationState";
 
-const REFRESH_MS = 4000;
-
-interface Detail {
-  session: AgentSession;
-  runs: AgentRun[];
-  steps: AgentRunStep[];
-  messages: AgentRuntimeMessage[];
-  toolCalls: ToolCallRecord[];
+function SubagentConversation({ sessionId, showHeader, onDestroyed }: {
+  sessionId: string;
+  showHeader: boolean;
+  onDestroyed: () => void;
+}) {
+  const session = useConversationState(sessionId, state => state.session);
+  const { locale } = useLocale();
+  const header = showHeader && session ? <div className="subagent-detail-header">
+    <SubagentIdentity session={session} />
+    <span className="subagent-detail-id" title={session.id}>{session.id.slice(0, 8)}</span>
+    <span className="ml-auto rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">{locale === "zh" ? "只读" : "Read only"}</span>
+    <SubagentControls
+      sessionId={sessionId}
+      parentSessionId={session.parentSessionId}
+      status={session.status}
+      title={session.title || session.prompt}
+      onStopped={() => void getConversationController(sessionId).refresh()}
+      onDestroyed={onDestroyed}
+    />
+  </div> : undefined;
+  return <InteractiveSubagentView sessionId={sessionId} header={header} />;
 }
 
 export const SubagentReadonlyView = memo(function SubagentReadonlyView({
   sessionId,
   showHeader = true,
-  onSessionChange,
 }: {
   sessionId: string;
   showHeader?: boolean;
-  onSessionChange?: (session: AgentSession) => void;
 }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
   const { t } = useLocale();
-  const [destroyed, setDestroyed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const [{ session }, runs, steps, messages, toolCalls] = await Promise.all(
-        [
-          agentRuntimeApi.getSession(sessionId),
-          agentRuntimeApi.listRuns(sessionId),
-          agentRuntimeApi.listSessionSteps(sessionId),
-          agentRuntimeApi.listMessages(sessionId),
-          agentRuntimeApi.listToolCalls(sessionId),
-        ],
-      );
-      setDetail({
-        session,
-        runs: runs.items,
-        steps: steps.items,
-        messages: messages.items,
-        toolCalls: toolCalls.items,
-      });
-      onSessionChange?.(session);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "无法加载子会话");
-    }
-  }, [sessionId, onSessionChange]);
-
-  useEffect(() => {
-    if (destroyed) return;
-    void load();
-    const timer = window.setInterval(() => void load(), REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [load, destroyed]);
-
-  if (destroyed)
-    return (
-      <div className="p-4 text-xs text-muted-foreground">
-        {t("subSessionDestroyed")}
-      </div>
-    );
-
-  if (error) {
-    return (
-      <div data-error-toast="off" role="alert" className="flex h-full items-center justify-center p-4 text-[11px] text-destructive">
-        {error}
-      </div>
-    );
-  }
-  if (!detail) {
-    return (
-      <div className="flex h-full items-center justify-center p-4 text-[11px] text-muted-foreground">
-        加载子会话…
-      </div>
-    );
-  }
-
-  return (
-    <div className="session-workspace-scroll min-h-0 flex-1 overflow-auto">
-      {showHeader && <div className="subagent-detail-header">
-        <SubagentIdentity session={detail.session} />
-        <span className="subagent-detail-id" title={detail.session.id}>
-          {detail.session.id.slice(0, 8)}
-        </span>
-        <span className="ml-auto rounded bg-secondary/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-          只读
-        </span>
-        <SubagentControls
-          sessionId={sessionId}
-          parentSessionId={detail.session.parentSessionId}
-          status={detail.session.status}
-          title={detail.session.title || detail.session.prompt}
-          onStopped={() => void load()}
-          onDestroyed={() => setDestroyed(true)}
-        />
-      </div>}
-      <TranscriptSessionProvider sessionId={sessionId}>
-        <AgentConversationView
-          session={detail.session}
-          runs={detail.runs}
-          steps={detail.steps}
-          toolCalls={detail.toolCalls}
-          messages={detail.messages}
-          childSessions={[]}
-        />
-      </TranscriptSessionProvider>
-    </div>
-  );
+  const [destroyedId, setDestroyedId] = useState<string | null>(null);
+  return destroyedId === sessionId
+    ? <div className="p-4 text-xs text-muted-foreground">{t("subSessionDestroyed")}</div>
+    : <SubagentConversation sessionId={sessionId} showHeader={showHeader} onDestroyed={() => setDestroyedId(sessionId)} />;
 });

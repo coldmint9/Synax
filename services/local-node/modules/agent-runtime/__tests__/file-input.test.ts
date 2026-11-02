@@ -201,6 +201,67 @@ describe("file input parsers", () => {
         }),
       ).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
   });
+  it("reads text files written by Windows editors and captures", async () => {
+    // GBK/GB2312 bytes for "用户反馈"; Windows tools still export this way.
+    const gb18030 = Buffer.from([0xd3, 0xc3, 0xbb, 0xa7, 0xb7, 0xb4, 0xc0, 0xa1]);
+    expect(
+      (
+        await parseFileInput({
+          filename: "long_text_7535f480.txt",
+          mediaType: "text/plain",
+          bytes: gb18030,
+        })
+      ).text,
+    ).toContain("用户反馈");
+    // A file cut inside a GBK character keeps its readable prefix.
+    expect(
+      (
+        await parseFileInput({
+          filename: "cut.txt",
+          mediaType: "text/plain",
+          bytes: gb18030.subarray(0, 7),
+        })
+      ).text,
+    ).toContain("用户反");
+    const terminal = await parseFileInput({
+      filename: "capture.log",
+      mediaType: "text/plain",
+      bytes: Buffer.from("\u001b[31merror\u001b[0m: 构建失败\n", "utf8"),
+    });
+    expect(terminal.text).toContain("error: 构建失败");
+    expect(terminal.text).not.toContain("\u001b");
+  });
+  it("keeps the readable prefix of a file cut inside a UTF-8 character", async () => {
+    const result = await parseFileInput({
+      filename: "long_text_cut.txt",
+      mediaType: "text/plain",
+      bytes: Buffer.from("中文内容", "utf8").subarray(0, 4),
+    });
+    expect(result.text).toBe("文件：long_text_cut.txt\n中");
+    expect(result.parserId).toBe("character-text");
+  });
+  it("does not reinterpret binary payloads as legacy text", async () => {
+    const gb18030 = Buffer.from([0xd3, 0xc3, 0xbb, 0xa7, 0xb7, 0xb4, 0xc0, 0xa1]);
+    // Without a text hint an ambiguous payload stays unsupported.
+    await expect(
+      parseFileInput({
+        filename: "payload.bin",
+        mediaType: "application/octet-stream",
+        bytes: gb18030,
+      }),
+    ).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
+    for (const bytes of [
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]),
+      Buffer.from([0, 255, 1, 2, 0xfe, 0x80]),
+    ])
+      await expect(
+        parseFileInput({
+          filename: "binary.txt",
+          mediaType: "text/plain",
+          bytes,
+        }),
+      ).rejects.toMatchObject({ code: "UNSUPPORTED_FILE" });
+  });
   it("extracts PDF text with page markers", async () => {
     const result = await parseFileInput({
       filename: "paper.pdf",

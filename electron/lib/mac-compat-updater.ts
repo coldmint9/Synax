@@ -10,12 +10,14 @@ import { findFile } from "electron-updater/out/providers/Provider.js";
 import { ElectronHttpExecutor } from "electron-updater/out/electronHttpExecutor.js";
 import type { UpdateInfo } from "electron-updater";
 import { macApplicationPath, prepareMacInstallation, launchMacInstaller } from "./mac-desktop-update.js";
+import { assertProductIdentity } from "../updater/update-source.js";
+import { effectiveUpdateSource } from "../updater/effective-update-source.js";
 
 const run = promisify(execFile);
 const { app } = electron;
 
-/** Only known unsigned/ad-hoc/self-signed apps use the compatibility installer.
- * Unexpected inspection errors must not silently downgrade a signed app. */
+/** Identify the installed signing mode; unexpected inspection errors must fail
+ * before either signed or ad-hoc apps enter the shared DMG update path. */
 export async function needsMacCompatibilityUpdater(executable: string): Promise<boolean> {
   let signature: string;
   try {
@@ -29,24 +31,26 @@ export async function needsMacCompatibilityUpdater(executable: string): Promise<
 
 /** Keep electron-updater's feed, cache, progress and SHA-512 validation, but
  * install through our bundle replacement helper instead of Squirrel.Mac. */
-export class AdHocMacUpdater extends AppUpdater {
+export class DmgMacUpdater extends AppUpdater {
   private readonly transfer = new ElectronHttpExecutor((info, callback) => this.emit("login", info, callback));
   private downloaded: { file: string; info: UpdateInfo } | null = null;
   private installTask: Promise<void> | null = null;
 
-  constructor() { super(undefined); }
+  constructor(private readonly resolveSource: () => string = effectiveUpdateSource) { super(undefined); }
 
   protected async doDownloadUpdate(options: DownloadUpdateOptions): Promise<string[]> {
     this.downloaded = null;
+    this.resolveSource();
     const { provider, info } = options.updateInfoAndProvider;
-    const fileInfo = findFile(provider.resolveFiles(info), "zip");
-    if (!fileInfo || !fileInfo.url.pathname.endsWith(".zip")) throw new Error("macOS update requires an application ZIP");
+    assertProductIdentity(info);
+    const fileInfo = findFile(provider.resolveFiles(info), "dmg");
+    if (!fileInfo || !fileInfo.url.pathname.endsWith(".dmg")) throw new Error("macOS update requires a DMG");
     const files = await this.executeDownload({
-      fileExtension: "zip", downloadUpdateOptions: options, fileInfo,
+      fileExtension: "dmg", downloadUpdateOptions: options, fileInfo,
       task: (destination, downloadOptions) => this.transfer.download(fileInfo.url, destination, downloadOptions),
       done: async (event) => { this.dispatchUpdateDownloaded(event); },
     });
-    if (files.length !== 1) throw new Error("macOS update requires exactly one application ZIP");
+    if (files.length !== 1) throw new Error("macOS update requires exactly one DMG");
     this.downloaded = { file: files[0], info };
     return files;
   }
@@ -63,6 +67,8 @@ export class AdHocMacUpdater extends AppUpdater {
   private async installDownloaded(): Promise<void> {
     if (!this.downloaded) throw new Error("请先下载更新安装包。");
     const { file, info } = this.downloaded;
+    this.resolveSource();
+    assertProductIdentity(info);
     const expected = info.files[0];
     const stat = await fs.lstat(file);
     if (!stat.isFile() || stat.size !== expected?.size) throw new Error("Desktop update checksum mismatch");
@@ -75,7 +81,7 @@ export class AdHocMacUpdater extends AppUpdater {
     await fs.mkdir(directory, { recursive: true });
     const installation = await prepareMacInstallation(file, {
       format: 1, version: info.version, platform: "darwin", arch: process.arch,
-      artifact: archive, updateArchive: archive,
+      artifact: archive,
     }, process.execPath, directory);
     await launchMacInstaller(installation, directory, process.pid, [
       `--user-data-dir=${app.getPath("userData")}`,

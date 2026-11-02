@@ -14,6 +14,7 @@ import { grantProjectTool, grantedToolId } from "./project-tool-grants.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { agentRuntimeStore, type AgentRuntimeStore } from "./session-store.js";
 import { matchWildcard } from "./wildcard.js";
+import { classifyArgv } from "./script-execution/argv-policy.js";
 import {
   parseBashInvocations,
   type BashInvocation,
@@ -157,12 +158,18 @@ export function isProjectToolGrantDenied(
   input: PermissionRequestInput,
   shellCommand?: string,
 ): boolean {
-  const shell = shellCommand !== undefined;
+  const run = input.metadata?.toolId === "run";
+  const runArgs = input.metadata?.args as { argv?: string[]; language?: string } | undefined;
+  const shell = shellCommand !== undefined || run;
   const checked = shell
     ? { ...input, category: "shell" as const, internalGate: "shell" as const }
     : input;
   if (defaultDecision(checked).action === "deny") return true;
-  const patterns = shell
+  const patterns = run
+    ? (Array.isArray(runArgs?.argv)
+      ? [classifyArgv(runArgs.argv)].flatMap(invocation => [invocation.pattern, invocation.risk, "*"])
+      : [input.pattern ?? `run:${runArgs?.language ?? "*"}`, "write", "*"])
+    : shellCommand !== undefined
     ? parseBashInvocations(shellCommand).flatMap((invocation) =>
         [invocation.pattern, invocation.risk, "*"])
     : [input.pattern ?? "*"];
@@ -174,6 +181,8 @@ export function resolvePermissionDecision(
   input: PermissionRequestInput,
   review: OperationReview | null = reviewOperation(input),
 ): { action: PermissionAction; reason: string } {
+  if (input.metadata?.toolId === "run" && isProjectToolGrantDenied(input))
+    return { action: "deny", reason: "An explicit permission restriction denies this tool." };
   const matching = (input.rules ?? []).filter((candidate) => matches(candidate, input));
   const rule = matching.at(-1);
   const fallback = defaultDecision(input);
@@ -237,7 +246,26 @@ export class PermissionPolicy {
   resolveShellCommand(
     input: Omit<PermissionRequestInput, "pattern"> & { command: string },
   ) {
-    const invocations = parseBashInvocations(input.command);
+    return this.resolveCommandInvocations(input, parseBashInvocations(input.command), input.command);
+  }
+
+  resolveArgvCommand(
+    input: Omit<PermissionRequestInput, "pattern"> & { argv: string[] },
+  ) {
+    const args = (input.metadata?.args ?? {}) as Record<string, unknown>;
+    return this.resolveCommandInvocations({
+      ...input,
+      category: "shell",
+      internalGate: "shell",
+      metadata: { ...input.metadata, toolId: "run", args: { ...args, argv: input.argv } },
+    }, [classifyArgv(input.argv)]);
+  }
+
+  private resolveCommandInvocations(
+    input: Omit<PermissionRequestInput, "pattern">,
+    invocations: BashInvocation[],
+    shellCommand?: string,
+  ) {
     const evaluated = (
       invocations.length > 0
         ? invocations
@@ -258,10 +286,10 @@ export class PermissionPolicy {
       evaluated.find((item) => item.action === baseAction) ?? evaluated[0]!;
     const review = reviewOperation({
       ...input,
-      metadata: { ...input.metadata, command: input.command },
+      metadata: { ...input.metadata, ...(shellCommand !== undefined ? { command: shellCommand } : {}) },
     });
     const granted = grantedToolId(input);
-    const explicitDenial = granted && isProjectToolGrantDenied(input, input.command);
+    const explicitDenial = (granted || input.metadata?.toolId === "run") && isProjectToolGrantDenied(input, shellCommand);
     const action = explicitDenial ? "deny" : granted ? "allow" :
       baseAction === "deny" ? baseAction : (review?.action ?? baseAction);
     const reason =
@@ -276,7 +304,23 @@ export class PermissionPolicy {
   evaluateShellCommand(
     input: Omit<PermissionRequestInput, "pattern"> & { command: string },
   ): PermissionDecision {
-    const { action, reason, review, granted, invocations } = this.resolveShellCommand(input);
+    return this.recordCommandDecision(input, this.resolveShellCommand(input), { command: input.command });
+  }
+
+  evaluateArgvCommand(
+    input: Omit<PermissionRequestInput, "pattern"> & { argv: string[] },
+  ): PermissionDecision {
+    const args = (input.metadata?.args ?? {}) as Record<string, unknown>;
+    const checked = { ...input, metadata: { ...input.metadata, toolId: "run", args: { ...args, argv: input.argv } } };
+    return this.recordCommandDecision(checked, this.resolveArgvCommand(checked), { argv: input.argv });
+  }
+
+  private recordCommandDecision(
+    input: Omit<PermissionRequestInput, "pattern">,
+    resolved: ReturnType<PermissionPolicy["resolveShellCommand"]>,
+    execution: { command: string } | { argv: string[] },
+  ): PermissionDecision {
+    const { action, reason, review, granted, invocations } = resolved;
     const patterns = invocations.map((invocation) => invocation.pattern);
     const now = nowIso();
 
@@ -298,7 +342,7 @@ export class PermissionPolicy {
       resumeToken: input.resumeToken ?? null,
       metadata: {
         ...(input.metadata ?? {}),
-        command: input.command,
+        ...execution,
         invocations,
         ...(review
           ? { approvalPaths: review.paths, allowedReplies: reviewReplies(input.metadata, input.toolCallId) }

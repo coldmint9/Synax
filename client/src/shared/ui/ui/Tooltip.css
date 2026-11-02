@@ -1,3 +1,20 @@
+.ui-info-tooltip {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ui-subtle);
+  vertical-align: middle;
+  cursor: help;
+}
+.ui-info-tooltip:hover { color: var(--ui-text); background: var(--ui-panel-soft); }
+.ui-info-tooltip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ui-tooltip {
   z-index: 1500;
   max-width: min(280px, calc(100vw - 16px));

@@ -1,11 +1,10 @@
 import type { UpdateInfo } from "electron-updater";
 import { updateRequestUrl } from "../lib/update-network.js";
 import { compareVersions } from "../lib/ui-update-format.js";
+import { assertProductIdentity, PRODUCT_URL } from "./update-source.js";
+import { effectiveUpdateSource } from "./effective-update-source.js";
 
-export const FRAMEWORK_FEED_URL =
-  "https://github.com/coldmint9/Synax/releases/latest/download/";
-export const DESKTOP_RELEASE_URL =
-  "https://github.com/coldmint9/Synax/releases/latest";
+export const DESKTOP_RELEASE_URL = PRODUCT_URL;
 
 /** A missing channel is normal for releases published before the migration,
  * but only verified stable release metadata can establish that no upgrade exists. */
@@ -34,15 +33,18 @@ export function frameworkUpdateInfo(
   platform: string,
   arch: string,
   proxy: string | null,
+  resolveSource: () => string = effectiveUpdateSource,
 ): UpdateInfo {
+  const base = resolveSource();
+  assertProductIdentity(info);
   frameworkChannel(platform, arch);
   if (!/^\d+\.\d+\.\d+$/.test(info.version) || "packages" in info || info.files?.length !== 1)
     throw new Error("更新清单格式错误或包含不支持的安装包。");
   const file = info.files[0];
   const name = platform === "darwin"
-    ? `Synax-${info.version}-darwin-${arch}.zip`
+    ? `Synax-${info.version}-darwin-${arch}.dmg`
     : `Synax-${info.version}-win32-${arch}-NSIS.exe`;
-  const source = `https://github.com/coldmint9/Synax/releases/download/v${info.version}/${name}`;
+  const source = new URL(name, base).href;
   if (
     file.url !== source ||
     !Number.isSafeInteger(file.size) || file.size! <= 0 ||
@@ -52,6 +54,6 @@ export function frameworkUpdateInfo(
     throw new Error("更新安装包与版本、平台、架构或校验信息不匹配。");
   return {
     ...info,
-    files: [{ ...file, url: updateRequestUrl(source, proxy).href }],
+    files: [{ ...file, url: updateRequestUrl(source, proxy, base).href }],
   };
 }

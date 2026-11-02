@@ -7,6 +7,7 @@ import { skillAgentBridge, resolveActiveSkillSummaries } from '../skills/index.j
 import { toolRegistry } from './tool-registry.js';
 import { profileCanUseTool } from './tool-mount-policy.js';
 import { getProjectSettings } from '../../infrastructure/runtime/config/project-settings-store.js';
+import { signedInAccountTags } from './signed-in-accounts.js';
 import type { SkillSummary } from '../skills/types.js';
 
 export type ToolSummary = Omit<RegisteredTool, 'execute'>;
@@ -108,6 +109,7 @@ export function resolveSessionCapabilities(sessionId: string): SessionCapabiliti
         profileId: profile.id,
         projectId: session.projectId,
         activeSkillIds: session.skillIds,
+        signedInAccounts: signedInAccountTags(),
       }),
     },
     mcp: { servers: resolveMcpServers(session, available) },

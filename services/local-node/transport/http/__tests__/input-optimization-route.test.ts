@@ -100,7 +100,7 @@ it("exposes actionable model errors instead of an empty success", async () => {
   });
 });
 
-it.each(["optimized", "unchanged", "preserved"])(
+it.each(["optimized", "unchanged"])(
   "forwards %s status without changing draft whitespace",
   async (status) => {
     const result = { text: "  原文\n\n", status };

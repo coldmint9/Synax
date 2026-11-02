@@ -754,28 +754,39 @@ textarea.agent-request-input {
 .agent-session-controls {
   container-type: inline-size;
 }
-/* The solid input surface clips its contents, not its shadow. The island
-   frame is the only shadow owner, including focus and dark mode. */
+/* All modes share a neutral writing surface; only the small mode mark changes. */
 .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
   border: 1px solid hsl(var(--border-hsl) / 0.65);
-  border-radius: calc(1rem + 6px);
+  border-radius: 14px;
   min-height: 0;
-  background: hsl(0deg 0% 100% / 60%);
+  background: hsl(var(--card));
   -webkit-backdrop-filter: none;
-  box-shadow: 0 2px 5px hsl(2 0% 0% / 0.08);
-  backdrop-filter: blur(5px);
+  box-shadow: none;
+  backdrop-filter: none;
 }
-.agent-session-controls .agent-session-composer-shell:focus-within {
+.agent-session-controls .agent-session-composer-shell.agent-dock-shell:focus-within {
   border-color: hsl(var(--muted-foreground) / 0.45);
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 .dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
-  border-color: hsl(0deg 0% 100% / 0%);
-  background: hsl(0 0% 17% / 0.17);
-  box-shadow: 0 2px 5px hsl(2 0% 0% / 0.08);
-  backdrop-filter: blur(5px);
+  border-color: hsl(var(--muted-foreground) / 0.3);
+  background: hsl(var(--card));
 }
-.dark .agent-session-controls .agent-session-composer-shell:focus-within {
-  border-color: hsl(0 0% 100% / 0.2);
+.dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell:focus-within {
+  border-color: hsl(var(--muted-foreground) / 0.6);
+}
+@media (forced-colors: active) {
+  .agent-session-controls .agent-session-composer-shell.agent-dock-shell,
+  .dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+  .agent-session-controls .agent-session-composer-shell.agent-dock-shell:focus-within,
+  .dark .agent-session-controls .agent-session-composer-shell.agent-dock-shell:focus-within {
+    border-color: Highlight;
+    outline-color: Highlight;
+  }
 }
 .agent-session-controls .agent-dock-composer[data-session-controls] {
   gap: 0.75rem;
@@ -1014,13 +1025,16 @@ textarea.agent-request-input {
 .agent-session-controls {
   position: relative;
 }
-.session-composer-reference-tags {
+.session-reference-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
   min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.session-composer-reference-tag {
+.session-reference-tag {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -1034,32 +1048,32 @@ textarea.agent-request-input {
   font-size: 11px;
   line-height: 1rem;
 }
-.session-composer-reference-tag[data-kind="mode"] {
+.session-reference-tag[data-kind="mode"] {
   background: hsl(var(--primary) / 0.24);
 }
-.session-composer-reference-tag > span {
+.session-reference-tag > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.session-composer-reference-tag > svg,
-.session-composer-reference-tag > button {
+.session-reference-tag > svg,
+.session-reference-tag > button {
   flex-shrink: 0;
 }
-.session-composer-reference-tag > button {
+.session-reference-tag > button {
   display: inline-flex;
   padding: 0.125rem;
   border-radius: 0.25rem;
 }
-.session-composer-reference-tag > button:hover {
+.session-reference-tag > button:hover {
   background: hsl(var(--foreground-hsl) / 0.08);
 }
-.session-composer-reference-tag > button:disabled {
+.session-reference-tag > button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
-.session-composer-reference-tag > button:focus-visible {
+.session-reference-tag > button:focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }

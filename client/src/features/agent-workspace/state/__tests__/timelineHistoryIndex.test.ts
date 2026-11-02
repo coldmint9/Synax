@@ -113,3 +113,29 @@ it("preserves the completed flat navigation index across ordinary appends", () =
   expect(merged.timelineMessages?.map(message => message.id)).toEqual(["m1","m2","m3","m4","m5"]);
   expect(mergeRefreshedHistory(previous, { ...latest, historyWindow: { ...latest.historyWindow, epoch: 2, generation: 2 } }).timelineIndexLoaded).not.toBe(true);
 });
+
+it("updates and removes evicted rail nodes through the incremental feed", () => {
+  const previous = { ...current(), ...seedTimelineIndex(page(["m1", "m2", "m3", "m4"])), timelineIndexLoaded: true };
+  previous.historyWindow = { ...previous.historyWindow!, generation: 1 };
+  previous.messages = previous.messages.map(message => ({ ...message, createdAt: "2026-10-20T00:00:00Z" }));
+  const update = { ...current(), messages: [{ ...page(["m1"]).messages[0], content: "Edited older question", createdAt: "2026-10-01T00:00:00Z" }],
+    removed: [{ collection: "messages", id: "m2" }],
+    historyWindow: { ...previous.historyWindow, incremental: true, revision: 2 } };
+  const merged = mergeRefreshedHistory(previous, update);
+  expect(merged.messages.map(message => message.id)).toEqual(["m3", "m4"]);
+  expect(merged.timelineMessages?.map(message => message.id)).toEqual(["m1", "m3", "m4"]);
+  expect(merged.timelineMessages?.[0].content).toBe("Edited older question");
+  expect(merged.timelineIndexLoaded).toBe(true);
+});
+
+it("does not rebuild the complete rail for an unchanged sync watermark", () => {
+  const previous = { ...current(), ...seedTimelineIndex(page(["m1", "m2", "m3", "m4"])), timelineIndexLoaded: true };
+  previous.historyWindow = { ...previous.historyWindow!, generation: 1 };
+  const update = { ...current(), messages: [],
+    historyWindow: { ...previous.historyWindow, incremental: true, revision: 2, syncCursor: "next" } };
+  const merged = mergeRefreshedHistory(previous, update);
+  expect(merged.timelineMessages).toBe(previous.timelineMessages);
+  expect(merged.timelineRuns).toBe(previous.timelineRuns);
+  expect(merged.timelineSteps).toBe(previous.timelineSteps);
+  expect(merged.timelineToolCalls).toBe(previous.timelineToolCalls);
+});

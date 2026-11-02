@@ -24,9 +24,20 @@ export function GlobalSessionSearch() {
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const close = useCallback(() => setOpen(false), []);
+  const openSearch = useCallback(() => {
+    setOpen(true);
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
   useEffect(() => {
     setOpen(false);
   }, [location.key]);
+  // The native menu owns Command/Control F, so it forwards the command here.
+  useEffect(() => {
+    document.addEventListener("menu:search-sessions", openSearch);
+    return () =>
+      document.removeEventListener("menu:search-sessions", openSearch);
+  }, [openSearch]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -40,13 +51,11 @@ export function GlobalSessionSearch() {
       event.preventDefault();
       // Capture before editors/terminal consume the application shortcut.
       event.stopPropagation();
-      setOpen(true);
-      inputRef.current?.focus();
-      inputRef.current?.select();
+      openSearch();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+  }, [openSearch]);
   return open ? (
     <SearchDialog
       key={projectId}
@@ -201,10 +210,15 @@ function SearchDialog({
                     <SearchHighlight
                       text={getSessionDisplayTitle(item.session, "", locale)}
                       query={search.query}
+                      terms={search.terms}
                     />
                   </div>
                   <p>
-                    <SearchHighlight text={item.snippet} query={search.query} />
+                    <SearchHighlight
+                      text={item.snippet}
+                      query={search.query}
+                      terms={search.terms}
+                    />
                   </p>
                 </div>
               </div>

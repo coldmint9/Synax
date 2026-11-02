@@ -80,7 +80,10 @@ describe("desktop session lifecycle notifications", () => {
   it("uses native delivery with the real title/summary and opens the event's project", async () => {
     const open = vi.fn();
     renderHook(() => useDesktopNotification(open));
-    expect(native.setDesktopNotificationsEnabled).toHaveBeenCalledWith(true);
+    expect(native.setDesktopNotificationsEnabled).toHaveBeenCalledWith(
+      true,
+      "zh",
+    );
     changed({ status: "completed", completedAt: session().completedAt });
     await waitFor(() =>
       expect(native.showDesktopNotification).toHaveBeenCalledOnce(),
@@ -170,6 +173,7 @@ describe("desktop session lifecycle notifications", () => {
     await act(async () => finish({ session: session() }));
     expect(native.setDesktopNotificationsEnabled).toHaveBeenLastCalledWith(
       false,
+      "zh",
     );
     expect(native.showDesktopNotification).not.toHaveBeenCalled();
     expect(requestPermission).not.toHaveBeenCalled();
@@ -224,6 +228,32 @@ describe("desktop session lifecycle notifications", () => {
     hook.unmount();
     expect(bus.unsubscribe).toHaveBeenCalledOnce();
   });
+  it.each([
+    ["paused", "会话已暂停", "User stopped run."],
+    ["interrupted", "会话已中断", "The runtime exited."],
+    ["cancelled", "会话已取消", "The run was cancelled."],
+  ] as const)(
+    "notifies the %s state as soon as the session settles",
+    async (status, label, reason) => {
+      resolveSession({
+        status,
+        pendingResumeToken: null,
+        completedAt: "2026-10-27T00:00:00Z",
+        resultSummary: reason,
+      });
+      renderHook(() => useDesktopNotification(vi.fn()));
+      changed({ status, completedAt: "2026-10-27T00:00:00Z" });
+      await waitFor(() =>
+        expect(native.showDesktopNotification).toHaveBeenCalledOnce(),
+      );
+      expect(native.showDesktopNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: status,
+          body: expect.stringContaining(label),
+        }),
+      );
+    },
+  );
   it("suppresses background child completion noise but not pending questions", async () => {
     resolveSession({ parentSessionId: "parent" });
     renderHook(() => useDesktopNotification(vi.fn()));
@@ -291,5 +321,30 @@ describe("desktop session lifecycle notifications", () => {
     expect(open).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: "other-project", sessionId: id }),
     );
+  });
+  it("keeps the browser fallback un-muted and delivers while the window has focus", async () => {
+    delete (window as any).electronAPI;
+    const notices: any[] = [];
+    class BrowserNotice {
+      static permission = "granted";
+      close = vi.fn();
+      constructor(
+        public title: string,
+        public options: any,
+      ) {
+        notices.push(this);
+      }
+    }
+    vi.stubGlobal("Notification", BrowserNotice);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    resolveSession({
+      status: "waiting_input",
+      pendingResumeToken: "request-9",
+      completedAt: null,
+    });
+    renderHook(() => useDesktopNotification(vi.fn()));
+    changed({ status: "waiting_input", pendingResumeToken: "request-9" });
+    await waitFor(() => expect(notices).toHaveLength(1));
+    expect(notices[0].options).toMatchObject({ silent: false });
   });
 });

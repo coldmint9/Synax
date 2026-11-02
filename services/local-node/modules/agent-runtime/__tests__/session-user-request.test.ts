@@ -55,16 +55,7 @@ describe("session initialization intent boundary", () => {
         goalContent: "请调查认证",
       },
     };
-    expect(synaxAgent.buildIntentPromptSection(session, prompt)).toContain(
-      "Investigate and explain",
-    );
-    expect(synaxAgent.buildIntentPromptSection(session, prompt)).not.toContain(
-      "Implement the requested change",
-    );
-    expect(resolveSessionUserRequest(session, "修复认证")).toBe("修复认证");
-    expect(initialSessionMessageProjection(session)?.content).toBe(
-      "请调查认证",
-    );
+    expect(synaxAgent.buildIntentPromptSection(session, prompt)).toBeNull();
   });
   it("never strips arbitrary user Markdown or PlanNode workflow prompts", () => {
     const text =

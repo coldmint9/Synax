@@ -16,7 +16,8 @@ import { WorkspaceManagementContent } from "./WorkspaceManagementPage";
 vi.mock("../../adapters/transport/project", () => ({
   projectApi: {
     getWorkspace: vi.fn(),
-    addReference: vi.fn(),
+    addReferences: vi.fn(),
+    setPrimaryRoot: vi.fn(),
     removeReference: vi.fn(),
   },
 }));
@@ -73,14 +74,20 @@ beforeEach(() => {
     currentProjectId: "other",
   });
   vi.mocked(projectApi.getWorkspace).mockResolvedValue(initial);
-  vi.mocked(projectApi.addReference).mockResolvedValue({
+  vi.mocked(projectApi.addReferences).mockResolvedValue({
     roots: [...initial.roots, added],
+    normalizations: [],
   });
   vi.mocked(projectApi.removeReference).mockResolvedValue({ roots: [primary] });
-  vi.mocked(openDirectoryPicker).mockResolvedValue({
-    name: "shared",
-    path: "/repos/shared",
+  vi.mocked(projectApi.setPrimaryRoot).mockResolvedValue({
+    roots: [
+      { ...reference, id: "p", role: "primary" as const },
+      { ...primary, id: "ref-frontend", role: "reference" as const },
+    ],
   });
+  vi.mocked(openDirectoryPicker).mockResolvedValue([
+    { name: "shared", path: "/repos/shared" },
+  ]);
 });
 
 describe("workspace management", () => {
@@ -122,7 +129,7 @@ describe("workspace management", () => {
       "picker unavailable",
     );
     await user.click(screen.getByRole("button", { name: "添加项目" }));
-    await waitFor(() => expect(projectApi.addReference).toHaveBeenCalledOnce());
+    await waitFor(() => expect(projectApi.addReferences).toHaveBeenCalledOnce());
   });
 
   it("cancels project removal with Escape and restores focus", async () => {
@@ -149,18 +156,78 @@ describe("workspace management", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens the folder picker directly and adds the selected folder immediately", async () => {
+  it("adds every folder chosen in one picker session with a single request", async () => {
     const user = userEvent.setup();
+    vi.mocked(openDirectoryPicker).mockResolvedValue([
+      { name: "shared", path: "/repos/shared" },
+      { name: "docs", path: "/repos/docs" },
+    ]);
+    vi.mocked(projectApi.addReferences).mockResolvedValue({
+      roots: [
+        ...initial.roots,
+        added,
+        {
+          id: "ref-docs",
+          name: "docs",
+          path: "/repos/docs",
+          role: "reference",
+          status: "available",
+        },
+      ],
+      normalizations: [],
+    });
     view();
     await ready();
     await user.click(screen.getByRole("button", { name: "添加项目" }));
-    expect(openDirectoryPicker).toHaveBeenCalledOnce();
+    expect(openDirectoryPicker).toHaveBeenCalledExactlyOnceWith({
+      multiple: true,
+    });
     await waitFor(() =>
-      expect(projectApi.addReference).toHaveBeenCalledExactlyOnceWith("p", {
-        location: { kind: "host", path: "/repos/shared" },
-        name: "shared",
-      }),
+      expect(projectApi.addReferences).toHaveBeenCalledExactlyOnceWith("p", [
+        { location: { kind: "host", path: "/repos/shared" }, name: "shared" },
+        { location: { kind: "host", path: "/repos/docs" }, name: "docs" },
+      ]),
     );
+    expect(await screen.findByText("已加入 2 个项目。")).toBeInTheDocument();
+    expect(screen.getByText("/repos/docs")).toBeInTheDocument();
+  });
+
+  it("reports folders that are already members instead of failing the selection", async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectApi.addReferences).mockResolvedValue({
+      roots: initial.roots,
+      normalizations: [
+        {
+          inputLocation: { kind: "host", path: "/repos/shared" },
+          location: { kind: "host", path: "/repos/shared" },
+          name: "shared",
+          redirected: false,
+          duplicate: true,
+        },
+      ],
+    });
+    view();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "添加项目" }));
+    expect(
+      await screen.findByText("已跳过 1 个已在工作区中的目录。"),
+    ).toBeInTheDocument();
+  });
+
+  it("switches the default project from the member row", async () => {
+    const user = userEvent.setup();
+    view();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "设为默认: api" }));
+    expect(projectApi.setPrimaryRoot).toHaveBeenCalledExactlyOnceWith(
+      "p",
+      "ref-api",
+    );
+    expect(await screen.findByText("默认项目已切换。")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "设为默认: api" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除: frontend" })).toBeEnabled();
   });
 
   it("confirms removal in a dialog and preserves the project after a failed request", async () => {

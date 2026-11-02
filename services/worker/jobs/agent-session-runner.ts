@@ -1,5 +1,6 @@
 import { WorkerStreamCredits } from "../../local-node/infrastructure/runtime/ipc/stream-credit.js";
 import { createWorkerShutdown, startExitWatchdog } from "./worker-shutdown.js";
+import { codeWorkerPool } from "../../local-node/modules/agent-runtime/code-mode/worker-pool.js";
 import { withinExecutionContext } from "../../local-node/infrastructure/runtime/execution-context.js";
 import { terminateOwnedCommands } from "../../local-node/modules/agent-runtime/tools/exec-async.js";
 import { closeAllBrowserSessions } from "../../local-node/modules/agent-runtime/tools/browser/browser-manager.js";
@@ -18,11 +19,18 @@ import { bootstrapAgentChildForSession } from "../../local-node/modules/agent-ru
 import { setSessionWorkspaceRoot } from "../../local-node/modules/agent-runtime/tools/workspace.js";
 import { compactSessionContextWithLlm } from "../../local-node/modules/agent-runtime/manual-context-compaction.js";
 import { businessStore } from "../../local-node/infrastructure/persistence/business-store.js";
+import { warmupRuntimeCatalog } from "../../local-node/infrastructure/llm-runtime/catalog.js";
+import { warmupMcpForSession } from "../../local-node/infrastructure/mcp/mcp-session-tool-provider.js";
+import { warmupNativeStepContext } from "../../local-node/modules/agent-runtime/native-step-context.js";
 import { hydrateSessionAssets } from "../../local-node/modules/agent-runtime/media-assets.js";
 import { AgentNotFoundError } from "../../local-node/modules/agent-runtime/runtime-errors.js";
 import { RuntimeSidecarError } from "../../local-node/modules/agent-runtime/sidecar/sidecar-client.js";
 
 import { runtimeBus } from "../../local-node/modules/agent-runtime/runtime-bus.js";
+import { registerSuperCoding } from "../../local-node/composition/super-coding.js";
+
+// The worker process owns runs; register super mode here as well as in the API.
+registerSuperCoding();
 
 const activeStreams = new Map<string, AbortController>();
 const activeCompactions = new Map<string, AbortController>();
@@ -73,9 +81,8 @@ async function runStream(
   const abortController = new AbortController();
   activeStreams.set(streamId, abortController);
   try {
-    await agentRuntimeStore.hydrateExecutionSession(sessionId, true);
-    // The native backend refreshes policy metadata before execution. Only
-    // this conversation's asset bindings are needed, not the global catalog.
+    // The native backend owns execution/policy refresh. Asset bindings can
+    // load independently without repeating the same execution hydration.
     await hydrateSessionAssets(sessionId);
     for await (const chunk of withinExecutionContext(
       input.executionContext,
@@ -144,6 +151,10 @@ function main(): void {
   const initialize = async () => {
     if (initialized || !process.connected) return;
     initialized = true;
+    warmupRuntimeCatalog();
+    // Independent policy and media I/O overlaps session family hydration.
+    const metadataReady = Promise.all([businessStore.refresh(), hydrateSessionAssets(init.sessionId)]);
+    void metadataReady.catch(() => undefined);
     try {
       await agentRuntimeStore.hydrateSessionFamily(init.sessionId);
     } catch (error) {
@@ -165,11 +176,14 @@ function main(): void {
         throw error;
       logger.info({ sessionId: init.sessionId }, "[agent-session-runner] session missing during bootstrap");
     }
-    await businessStore.refresh();
-    await hydrateSessionAssets(init.sessionId);
+    await metadataReady;
     initialized = true;
     setSessionWorkspaceRoot(init.sessionId, init.workDir);
     bootstrapAgentChildForSession(init.sessionId);
+    void warmupMcpForSession(init.sessionId);
+    void warmupNativeStepContext(init.sessionId).catch(error => {
+      logger.debug({ sessionId: init.sessionId, error: String(error) }, "[agent-session-runner] context warm-up skipped");
+    });
     sendAgentSessionToParent({
       type: "session:ready",
       sessionId: init.sessionId,
@@ -191,6 +205,7 @@ function main(): void {
         if (!controller.signal.aborted) controller.abort(new Error(reason));
     },
     cleanup: (reason) => [
+      Promise.resolve().then(() => codeWorkerPool.close()),
       Promise.resolve().then(() => terminateOwnedCommands()),
       Promise.resolve().then(() => closeAllBrowserSessions(reason)),
       Promise.allSettled([...runningTasks]),

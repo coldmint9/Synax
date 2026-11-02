@@ -1,12 +1,25 @@
 import type { ToolCallRecord } from "../../adapters/transport/agentRuntime";
 import type { ToolCallView, TurnContentBlock } from "./buildInterleavedTurns";
+import { isSubagentDelegationCall, subagentChildIdOf } from "./subagentCallMatch";
 
+const callViews = new WeakMap<ToolCallRecord, ToolCallView>();
 export function toolCallRecordToView(tc: ToolCallRecord): ToolCallView {
-  return {
+  const cached = callViews.get(tc);
+  if (cached) return cached;
+  // A delegation row resolves its card from the call itself, so the child id
+  // and the start time survive the conversion to a view.
+  const delegation = isSubagentDelegationCall(tc);
+  const view: ToolCallView = {
     id: tc.id,
     execution: tc.execution,
     contentParts: tc.contentParts,
-    ...(tc.toolId === "webSearch" ? { outputRef: tc.outputRef } : {}),
+    ...(["webSearch", "subagent.lifecycle"].includes(tc.toolId) ? { outputRef: tc.outputRef } : {}),
+    ...(delegation
+      ? {
+          childSessionId: subagentChildIdOf(tc) ?? undefined,
+          startedAt: tc.startedAt,
+        }
+      : {}),
     toolId: tc.toolId,
     inputSummary: tc.inputSummary ?? "",
     outputSummary: tc.outputSummary ?? tc.error ?? "",
@@ -15,6 +28,8 @@ export function toolCallRecordToView(tc: ToolCallRecord): ToolCallView {
     duration: tc.endedAt ? formatToolDuration(tc.execution?.startedAt ?? tc.startedAt, tc.endedAt) : null,
     mutability: tc.mutability,
   };
+  callViews.set(tc, view);
+  return view;
 }
 
 /** Short calls have no duration label in either live or historical views. */

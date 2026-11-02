@@ -3,6 +3,9 @@ const state = vi.hoisted(() => ({
   session: { activeRunId: "run", profileId: "synax", projectId: "project" },
   run: { id: "run", triggerMessageId: "user1", metadata: {} as Record<string, unknown> },
   calls: [] as { modelToolCallId: string; toolId?: string; status?: string; outputRef?: unknown }[],
+  contexts: [] as { skillId: string; content: string }[],
+  canRetain: true,
+  skillContent: "retained instructions",
   skills: [{ id: "synax-builtin/visualize", name: "visualize" }],
 }));
 vi.mock("../session-store.js", () => ({ agentRuntimeStore: {
@@ -11,8 +14,12 @@ vi.mock("../session-store.js", () => ({ agentRuntimeStore: {
   updateRun: (_id: string, update: { metadata: Record<string, unknown> }) => Object.assign(state.run, update),
   listRunToolCalls: () => state.calls,
   listToolCalls: () => state.calls,
+  listRecords: () => state.contexts,
 } }));
-vi.mock("../../skills/agent-bridge.js", () => ({ skillAgentBridge: { listForPrompt: () => state.skills, canRetainForContext: () => true } }));
+vi.mock("../../skills/agent-bridge.js", () => ({ skillAgentBridge: {
+  listForPrompt: () => state.skills,
+  canRetainForContext: (_session: string, _skill: string, content?: string) => state.canRetain && content === state.skillContent,
+} }));
 vi.mock("../visualization-integration.js", async () => {
   const { parseVisualization } = await import("../visualization-manifest.js");
   const { visualizationBlocks } = await import("../visualization-protocol.js");
@@ -32,6 +39,9 @@ const select = (args: Record<string, unknown> = {}) => presentationTool.execute(
 beforeEach(() => {
   state.run.metadata = {};
   state.calls = [];
+  state.contexts = [];
+  state.canRetain = true;
+  state.skillContent = "retained instructions";
   state.skills = [{ id: "synax-builtin/visualize", name: "visualize" }];
 });
 describe("presentation lifecycle", () => {
@@ -41,8 +51,25 @@ describe("presentation lifecycle", () => {
   });
   it("reuses a successful manual skill load instead of loading again", async () => {
     state.calls.push({ modelToolCallId: "model-call", toolId: "skill.load", status: "completed", outputRef: { id: "synax-builtin/visualize", content: "retained instructions" } });
+    state.contexts.push({ skillId: "synax-builtin/visualize", content: state.skillContent });
     await select();
     expect(pendingPresentationSkillLoads("session")).toEqual([]);
+  });
+  it("reuses durable instructions on a new input without depending on tool history", async () => {
+    state.contexts.push({ skillId: "synax-builtin/visualize", content: state.skillContent });
+    await select();
+    expect(pendingPresentationSkillLoads("session")).toEqual([]);
+    state.run.metadata.turnReferenceInputId = "user2";
+    await select({ source: "continuation" });
+    expect(pendingPresentationSkillLoads("session")).toEqual([]);
+  });
+  it.each(["changed", "permission", "missing"])("does not reuse %s skill context", async (reason) => {
+    state.calls.push({ modelToolCallId: "old-call", toolId: "skill.load", status: "completed", outputRef: { id: "synax-builtin/visualize", content: state.skillContent } });
+    if (reason !== "missing") state.contexts.push({ skillId: "synax-builtin/visualize", content: state.skillContent });
+    if (reason === "changed") state.skillContent = "Updated instructions";
+    if (reason === "permission") state.canRetain = false;
+    await select();
+    expect(pendingPresentationSkillLoads("session")).toHaveLength(1);
   });
   it.each(["", "   "])("does not accept an empty required result: %j", async content => {
     await select();

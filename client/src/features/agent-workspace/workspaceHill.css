@@ -44,12 +44,23 @@
   text-overflow: ellipsis;
 }
 
+.workspace-hill > .git-workspace-trigger-branch {
+  flex: 0 1 auto;
+  color: var(--theme-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.workspace-hill > .git-workspace-trigger-branch::before {
+  content: "·";
+  margin-inline-end: 6px;
+}
+
 .workspace-hill:focus-visible {
   outline: none;
 }
 
-.workspace-hill:not(:disabled):hover > span,
-.workspace-hill:focus-visible > span {
+.workspace-hill:not(:disabled):hover > .git-workspace-trigger-label,
+.workspace-hill:focus-visible > .git-workspace-trigger-label {
   text-decoration: underline;
   text-underline-offset: 4px;
 }

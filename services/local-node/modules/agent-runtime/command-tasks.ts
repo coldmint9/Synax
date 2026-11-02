@@ -67,8 +67,8 @@ export class CommandTasks {
     progress?: (record: ToolCallRecord) => void,
   ): Promise<ExecuteToolResult> {
     const input = (args ?? {}) as { command?: string; background?: boolean; async?: boolean; timeoutMs?: number };
-    const asynchronous = record.toolId === "bash" && input.async === true;
-    if (!record.runId || !["bash", "verification.run"].includes(record.toolId) || input.background ||
+    const asynchronous = (record.toolId === "bash" || record.toolId === "run") && input.async === true;
+    if (!record.runId || !["bash", "verification.run", "run"].includes(record.toolId) || input.background ||
         hasBackgroundBashOperator(input.command ?? "") || (!asynchronous && input.timeoutMs !== undefined && input.timeoutMs <= COMMAND_MONITOR_MS))
       return execute(signal);
     const runId = record.runId;
@@ -81,16 +81,16 @@ export class CommandTasks {
     let notify!: (result: ExecuteToolResult) => void;
     const handoffReady = new Promise<ExecuteToolResult>(resolve => { notify = resolve; });
     const handoff = () => {
-      if (combined.aborted) return;
+      if (combined.aborted || handedOff) return;
       try {
         const state = asynchronous ? "background" : "assessment_required";
         const output = { commandTaskId: record.id, state, elapsedMs: Date.now() - Date.parse(startedAt),
-          completionHook: "next_step", async: asynchronous,
+          completionHook: "next_step", async: asynchronous, phase: started ? "executing" : "queued",
           message: asynchronous
-            ? "Command is running asynchronously; this is not a completion result. Continue independent work. Use command.manage wait before work that depends on its result or effects, or cancel to stop it. Completion will be queued into the next step automatically. Do not rerun the command."
+            ? "Command accepted asynchronously and may still be queued or preparing; this is not a completion result. Continue independent work. Use command.manage status to inspect progress, wait before dependent work, or cancel to stop it. Completion will be queued into the next step automatically. Do not rerun the command."
             : "Command is still running; this is not a completion result. Assess dependencies with command.manage. Choose wait when subsequent work depends on its result or effects; choose background only with a concrete independent next step. Completion will be queued into the next step automatically. Do not rerun the command." };
         const toolResult: ToolExecutionResult = { result: output,
-          displaySummary: asynchronous ? "Command started asynchronously; completion queued for next step"
+          displaySummary: asynchronous ? "Command accepted asynchronously; completion queued for next step"
             : "Command monitoring: dependency assessment required after 120s", artifacts: [] };
         this.save(runId, { id: record.id, command: input.command ?? "", state, startedAt, handoff: toolResult });
         handedOff = true;
@@ -109,7 +109,7 @@ export class CommandTasks {
       if (started) return;
       started = true;
       startedAt = new Date().toISOString();
-      if (asynchronous) { handoff(); return; }
+      if (asynchronous) return;
       timer = setTimeout(handoff, COMMAND_MONITOR_MS);
       timer.unref?.();
     });
@@ -133,6 +133,9 @@ export class CommandTasks {
       this.live.delete(record.id);
     });
     this.live.set(record.id, { runId, controller, result: settled });
+    // Permissions have already been checked by the registry. Setup and resource
+    // admission remain part of this owned task, not the caller's critical path.
+    if (asynchronous) handoff();
     // Promise.race observes both rejections even after the monitoring handoff.
     return Promise.race([settled, handoffReady]);
   }
@@ -183,9 +186,9 @@ export class CommandTasks {
     return {
       id: "command.manage", label: "Manage command task", category: "context", internalGate: "none",
       mutability: "read", resumeBehavior: "auto",
-      description: "Control a task returned by bash async:true or the 120s command monitor. Use wait to block until completion and retrieve its result, cancel to stop it, or background after a dependency assessment with an independent nextStep. Completion is automatically queued at the next model step. Wait before dependent work and final aggregation; never relaunch the same command. Call this tool separately from other tools.",
+      description: "Control a task returned by bash/run async:true or the 120s command monitor. Use status to inspect queued/running/completed state without waiting, wait to await completion, cancel to stop it, or background after a dependency assessment with an independent nextStep. Completion is automatically queued at the next model step. Wait before dependent work and final aggregation; never relaunch the same command. Call this tool separately from other tools.",
       inputSchema: z.object({
-        commandTaskId: z.string().min(1), action: z.enum(["wait", "background", "cancel"]),
+        commandTaskId: z.string().min(1), action: z.enum(["status", "wait", "background", "cancel"]),
         reason: z.string().trim().min(1).max(2000), nextStep: z.string().trim().min(1).max(2000).optional(),
       }),
       execute: input => this.manage(input),
@@ -193,11 +196,17 @@ export class CommandTasks {
   }
 
   private async manage(input: ToolExecutionInput): Promise<ToolExecutionResult> {
-    const args = input.args as { commandTaskId: string; action: "wait" | "background" | "cancel"; reason: string; nextStep?: string };
+    const args = input.args as { commandTaskId: string; action: "status" | "wait" | "background" | "cancel"; reason: string; nextStep?: string };
     const task = input.runId && tasks(this.store.getRun(input.runId)).find(item => item.id === args.commandTaskId);
     if (!task) throw new Error("Monitored command does not belong to this run.");
     const live = this.live.get(task.id);
     if (task.state !== "settled" && !live) throw new Error("Command execution is unavailable. Inspect the interrupted receipt at the next step.");
+    if (args.action === "status") {
+      const record = this.store.getToolCall(input.sessionId, task.id);
+      return { result: { commandTaskId: task.id, state: task.state, status: record.status,
+        execution: record.execution, result: task.state === "settled" ? record.outputRef : undefined, error: record.error },
+        displaySummary: record.outputSummary ?? "Command is queued or executing", artifacts: [] };
+    }
     if (args.action === "background" && task.state !== "settled") {
       if (!args.nextStep?.trim()) throw new Error("Backgrounding requires a concrete independent nextStep and a dependency assessment in reason.");
       this.save(input.runId!, { ...task, state: "background", reason: args.reason, nextStep: args.nextStep });

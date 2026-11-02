@@ -13,9 +13,10 @@ import { interruptAgentSessionsAndWait } from "./agent-stream-proxy.js";
 import { createConfiguredSubagent } from "./subagent-delegation.js";
 import { subagentStartFields } from "./subagent-config.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
-import { subagentCompletionBroker, readSubagentControl } from "./subagent-control-broker.js";
+import { subagentCompletionBroker, readSubagentControl, subagentHoldsSlot } from "./subagent-control-broker.js";
+import { isInteractiveSideChat } from "./side-chat-contract.js";
+import { readSubagentProgressFacts } from "./subagent-progress-facts.js";
 
-const activeRuns = new Set<string>();
 const terminalStatuses = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
 const lifecycleActions = [
@@ -114,14 +115,18 @@ function requiredChildSessionId(args: LifecycleArgs): string {
 
 function assertOwnedChild(parentSessionId: string, childSessionId: string) {
   const child = agentRuntimeStore.tryGetSession(childSessionId);
-  if (!child || child.parentSessionId !== parentSessionId)
+  if (!child || child.parentSessionId !== parentSessionId || isInteractiveSideChat(child))
     throw new AgentValidationError(
       "The requested subagent is not a child of the current session.",
     );
   return child;
 }
 
-function childView(childSessionId: string, parentSessionId: string) {
+function childView(
+  childSessionId: string,
+  parentSessionId: string,
+  options: { facts?: boolean } = {},
+) {
   const child = assertOwnedChild(parentSessionId, childSessionId);
   const metadata = child.sessionMetadata?.subagentTask as
     | Record<string, unknown>
@@ -138,6 +143,11 @@ function childView(childSessionId: string, parentSessionId: string) {
     metadata: metadata ?? null,
     control: readSubagentControl(child),
     activeRunId: child.activeRunId,
+    // Only an explicit inspect/wait asks what the child already did; listing
+    // every owned child stays cheap.
+    ...(options.facts
+      ? { facts: readSubagentProgressFacts(child.id, agentRuntimeStore) }
+      : {}),
   };
 }
 
@@ -154,15 +164,14 @@ async function waitForChild(
   assertOwnedChild(parentSessionId, childSessionId);
   await subagentCompletionBroker.wait({ parentSessionId, childSessionIds: [childSessionId], timeoutMs, signal });
   signal?.throwIfAborted();
-  return childView(childSessionId, parentSessionId);
+  return childView(childSessionId, parentSessionId, { facts: true });
 }
 
 async function startChild(input: ToolExecutionInput, args: LifecycleArgs) {
   const { action: _action, childSessionId: _child, timeoutMs: _timeout, message: _message, reason: _reason, ...start } = args;
   if (!start.prompt) throw new AgentValidationError("prompt is required to start a subagent.");
   const { child, spec } = await createConfiguredSubagent(input, { ...start, prompt: start.prompt });
-  activeRuns.add(child.id);
-  void runChildToCompletion(child.id, spec).catch(() => undefined).finally(() => activeRuns.delete(child.id));
+  void runChildToCompletion(child.id, spec).catch(() => undefined);
   return childView(child.id, input.sessionId);
 }
 
@@ -172,7 +181,7 @@ export const subagentLifecycleTool: RegisteredTool = {
   description:
     "Control the full lifecycle of a subagent owned by the current primary agent: start, list, inspect, wait, message, pause, resume, cancel, close, or terminate. Lifecycle actions are limited to direct child sessions. start requires prompt; every action except start and list requires childSessionId; message requires message.",
   progressiveDetails:
-    "Use start for asynchronous work when the parent should continue; profile, templateId, name, deliverable and acceptanceCriteria apply to start only; profile configures the same general-purpose subagent as subagent.delegate. Use the childSessionId returned by start or list for every later action, and pass timeoutMs only for wait. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input.",
+    "Use start for asynchronous work when the parent should continue; profile, templateId, name, deliverable and acceptanceCriteria apply to start only; profile configures the same general-purpose subagent as subagent.delegate, where profile.model must be an exact configured ref listed below. Use the childSessionId returned by start or list for every later action, and pass timeoutMs only for wait. pause is resumable, cancel is terminal, close and terminate are hard stops, and message continues a stopped or completed child with new input.",
   category: "task",
   internalGate: "task",
   mutability: "task",
@@ -187,14 +196,17 @@ export const subagentLifecycleTool: RegisteredTool = {
       if (parent.parentSessionId)
         throw new AgentValidationError("Only a primary agent can list subagents.");
       return result(
-        (parent.childSessionIds ?? []).map((id) => childView(id, parent.id)),
+        (parent.childSessionIds ?? []).filter((id) => {
+          const child = agentRuntimeStore.tryGetSession(id);
+          return child && !isInteractiveSideChat(child);
+        }).map((id) => childView(id, parent.id)),
         "Listed owned subagents.",
       );
     }
 
     const child = assertOwnedChild(input.sessionId, requiredChildSessionId(args));
     if (args.action === "inspect")
-      return result(childView(child.id, input.sessionId), "Inspected subagent.");
+      return result(childView(child.id, input.sessionId, { facts: true }), "Inspected subagent.");
     if (args.action === "wait")
       return result(
         await waitForChild(input.sessionId, child.id, args.timeoutMs ?? 5_000, input.abortSignal),
@@ -202,13 +214,31 @@ export const subagentLifecycleTool: RegisteredTool = {
       );
     if (args.action === "message") {
       if (!args.message) throw new AgentValidationError("message is required.");
-      if (activeRuns.has(child.id) && !terminalStatuses.has(child.status))
-        throw new AgentValidationError("The subagent is already running; wait or pause it before messaging it.");
+      // A settled child is free to be messaged even when its row still trails an
+      // unconfirmed stop; only a child that still holds its slot is running.
+      // Use persisted state: the child may be driven by another worker process.
+      if (subagentHoldsSlot(child)) {
+        const message = "The subagent is already running; the message was not sent. Wait or pause it before messaging it.";
+        return {
+          outcome: "blocked",
+          result: {
+            childSessionId: child.id,
+            status: "not_executed",
+            code: "SUBAGENT_BUSY",
+            reason: "subagent_running",
+            accepted: false,
+            queued: false,
+            message,
+            nextActions: ["wait", "pause"],
+          },
+          displaySummary: message,
+          artifacts: [],
+        };
+      }
       agentRuntimeStore.updateSessionMetadata(child.id, { manualStop: null });
       agentRuntimeStore.updateSession(child.id, { prompt: args.message, status: "queued", updatedAt: nowIso(), completedAt: null });
       const spec: SubagentSpec = { profileId: child.profileId, prompt: args.message, nodeId: child.nodeId };
-      activeRuns.add(child.id);
-      void runChildToCompletion(child.id, spec, { input: { message: args.message } }).catch(() => undefined).finally(() => activeRuns.delete(child.id));
+      void runChildToCompletion(child.id, spec, { input: { message: args.message } }).catch(() => undefined);
       return result(childView(child.id, input.sessionId), "Sent a new instruction to subagent.");
     }
     if (args.action === "resume") {
@@ -217,15 +247,13 @@ export const subagentLifecycleTool: RegisteredTool = {
       agentRuntimeStore.updateSessionMetadata(child.id, { manualStop: null });
       agentRuntimeStore.updateSession(child.id, { status: "queued", updatedAt: nowIso(), completedAt: null });
       const spec: SubagentSpec = { profileId: child.profileId, prompt: child.prompt, nodeId: child.nodeId };
-      activeRuns.add(child.id);
-      void runChildToCompletion(child.id, spec, { resume: true }).catch(() => undefined).finally(() => activeRuns.delete(child.id));
+      void runChildToCompletion(child.id, spec, { resume: true }).catch(() => undefined);
       return result(childView(child.id, input.sessionId), "Resumed subagent.");
     }
     const reason = args.reason ?? `Subagent ${args.action} by parent agent.`;
     if (args.action === "pause") {
       if (terminalStatuses.has(child.status)) throw new AgentValidationError("A terminal subagent cannot be paused.");
       await interruptAgentSessionsAndWait([child.id], reason);
-      activeRuns.delete(child.id);
       if (runtimeFacade.streamMode() === "authoritative") {
         await runtimeFacade.stopSessionAuthoritative(child.id, "paused", reason);
         return result(childView(child.id, input.sessionId), "Paused subagent.");
@@ -235,7 +263,6 @@ export const subagentLifecycleTool: RegisteredTool = {
     if (args.action === "cancel") {
       if (terminalStatuses.has(child.status)) return result(childView(child.id, input.sessionId), "Subagent already stopped.");
       await interruptAgentSessionsAndWait([child.id], reason);
-      activeRuns.delete(child.id);
       if (runtimeFacade.streamMode() === "authoritative") {
         await runtimeFacade.stopSessionAuthoritative(child.id, "cancelled", reason);
       } else agentSessionRuntime.interrupt(child.id);
@@ -244,7 +271,6 @@ export const subagentLifecycleTool: RegisteredTool = {
       return result(childView(child.id, input.sessionId), "Cancelled subagent.");
     }
     await interruptAgentSessionsAndWait([child.id], reason);
-    activeRuns.delete(child.id);
     if (runtimeFacade.streamMode() === "authoritative") {
       await runtimeFacade.stopSessionAuthoritative(child.id, "interrupted", reason);
     } else agentSessionRuntime.interrupt(child.id);

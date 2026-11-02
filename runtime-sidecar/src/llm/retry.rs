@@ -1,8 +1,8 @@
 //! Retry upstream HTTP failures before any response content is delivered.
 use futures_util::{StreamExt, stream::BoxStream};
-use rig_core::error::ProviderError;
+use rig_core::{ProviderResponseError, error::ProviderError};
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{io::ErrorKind, time::Duration};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 pub(crate) const MAX_RETRIES: usize = 10;
@@ -15,15 +15,46 @@ pub(crate) struct RetriesExhausted {
     source: Error,
 }
 
+fn response_code(response: &ProviderResponseError) -> Option<String> {
+    response.machine_code().or_else(|| {
+        let body = serde_json::from_str::<Value>(&response.body).ok()?;
+        body.get("code")?.as_str().map(str::to_owned)
+    })
+}
+
+fn status_from_code(code: &str) -> Option<u16> {
+    let suffix = code
+        .strip_prefix("http_")
+        .or_else(|| code.strip_prefix("HTTP_"))?;
+    if suffix.len() != 3 || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    suffix
+        .parse()
+        .ok()
+        .filter(|status| (100..=599).contains(status))
+}
+
+fn provider_response_status(response: &ProviderResponseError) -> Option<u16> {
+    response.status.map(|status| status.as_u16()).or_else(|| {
+        response_code(response)
+            .as_deref()
+            .and_then(status_from_code)
+    })
+}
+
 pub(crate) fn http_status(error: &(dyn std::error::Error + 'static)) -> Option<u16> {
     if let Some(error) = error.downcast_ref::<ProviderError>() {
-        return error.report().http_status;
+        return error
+            .provider_response()
+            .and_then(provider_response_status)
+            .or_else(|| error.report().http_status);
     }
     error.source().and_then(http_status)
 }
 
 fn retryable_status(status: u16) -> bool {
-    status == 429 || (500..600).contains(&status)
+    matches!(status, 408 | 425 | 429) || (500..600).contains(&status)
 }
 
 fn network_error(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -35,47 +66,92 @@ fn network_error(error: &(dyn std::error::Error + 'static)) -> bool {
         return report.kind == rig_core::error::ErrorKind::Http && report.retryable;
     }
     if let Some(error) = error.downcast_ref::<reqwest::Error>() {
-        return error.is_connect() || error.is_timeout() || error.is_body();
+        return error.is_connect() || error.is_timeout() || error.is_body() || error.is_decode();
+    }
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return matches!(
+            error.kind(),
+            ErrorKind::AddrInUse
+                | ErrorKind::AddrNotAvailable
+                | ErrorKind::BrokenPipe
+                | ErrorKind::ConnectionAborted
+                | ErrorKind::ConnectionRefused
+                | ErrorKind::ConnectionReset
+                | ErrorKind::HostUnreachable
+                | ErrorKind::NetworkDown
+                | ErrorKind::NetworkUnreachable
+                | ErrorKind::NotConnected
+                | ErrorKind::TimedOut
+                | ErrorKind::UnexpectedEof
+                | ErrorKind::WriteZero
+        );
     }
     error.source().is_some_and(network_error)
 }
 
 /// Whether the same request may reasonably be attempted again.
 ///
-/// A status decides every reply that carried one (429/5xx). A failure
+/// A status decides every reply that carried one (408/425/429/5xx). A failure
 /// with no status is classified by what it is: a transport fault, an idle
-/// stream, or a reply the provider never finished. `ProviderError::is_retryable`
-/// owns that judgement, so an `HttpError` / truncated `ResponseError` that
-/// arrives without a status is retried instead of failing the session.
+/// stream, or a reply the provider never finished. Compatible gateways may
+/// also encode a status as a body code such as `http_503`; those codes are
+/// treated exactly like their HTTP counterparts. `ProviderError::is_retryable`
+/// owns the transport judgement, so an `HttpError` / truncated `ResponseError`
+/// that arrives without a status is retried instead of failing the session.
 pub(crate) fn retryable_failure(error: &(dyn std::error::Error + 'static)) -> bool {
-    if let Some(status) = http_status(error) {
-        return retryable_status(status);
-    }
     if error.is::<super::deadline::IdleTimeout>() {
         return true;
     }
     if let Some(error) = error.downcast_ref::<ProviderError>() {
+        if let Some(response) = error.provider_response() {
+            // A refusal or an explicit permanent verdict must win over a
+            // body code such as http_503. This prevents a provider from
+            // turning an intentional refusal into an infinite retry loop.
+            if response.refusal || response.transient == Some(false) {
+                return false;
+            }
+            if let Some(status) = provider_response_status(response) {
+                return retryable_status(status);
+            }
+        }
         if error.is_retryable() {
             return true;
         }
         // Some compatible gateways report this SSE error without an HTTP
         // status or transport retry verdict, before producing any content.
         return error.provider_response().is_some_and(|response| {
-            if response.refusal || response.transient == Some(false) {
-                return false;
-            }
-            let code = response.machine_code().or_else(|| {
-                serde_json::from_str::<Value>(&response.body)
-                    .ok()?
-                    .get("code")?
-                    .as_str()
-                    .map(str::to_owned)
-            });
-            code.as_deref() == Some("stream_first_token_timeout")
+            matches!(
+                response_code(response).as_deref(),
+                Some(
+                    "stream_first_token_timeout"
+                        | "connection_error"
+                        | "connection_reset"
+                        | "connection_closed"
+                        | "network_error"
+                        | "network_unavailable"
+                        | "network_timeout"
+                        | "connection_timeout"
+                        | "timeout"
+                        | "request_timeout"
+                        | "gateway_timeout"
+                        | "upstream_timeout"
+                        | "service_unavailable"
+                        | "temporarily_unavailable"
+                        | "overloaded"
+                        | "rate_limit"
+                        | "too_many_requests"
+                )
+            )
         });
     }
+    if let Some(status) = http_status(error) {
+        return retryable_status(status);
+    }
     if let Some(error) = error.downcast_ref::<reqwest::Error>() {
-        return error.is_connect() || error.is_timeout() || error.is_body();
+        return error.is_connect() || error.is_timeout() || error.is_body() || error.is_decode();
+    }
+    if network_error(error) {
+        return true;
     }
     error.source().is_some_and(retryable_failure)
 }
@@ -213,10 +289,24 @@ mod tests {
         .into()
     }
 
+    fn statusless_failure(code: &str) -> Error {
+        ProviderError::from_provider_body(
+            json!({"type":"error","code":code,"message":"upstream failure"}).to_string(),
+        )
+        .into()
+    }
+
+    fn network_failure() -> Error {
+        ProviderError::from_transport_error(rig_core::http_client::Error::StreamEnded).into()
+    }
+
     #[test]
-    fn retries_all_server_statuses_and_rate_limits_only() {
+    fn retries_transient_http_statuses_only() {
         for status in 100..=599 {
-            assert_eq!(retryable_status(status), status == 429 || status >= 500);
+            assert_eq!(
+                retryable_status(status),
+                matches!(status, 408 | 425 | 429) || status >= 500
+            );
             assert_eq!(http_status(failure(status).as_ref()), Some(status));
         }
     }
@@ -404,6 +494,59 @@ mod tests {
         }
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn retries_statusless_http_503_before_first_content() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let mut stream = with_retry(
+            move || {
+                let call = count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(futures_util::stream::iter(if call == 0 {
+                    vec![Err(statusless_failure("http_503"))]
+                } else {
+                    vec![
+                        Ok(json!({"type":"text-delta","delta":"recovered"})),
+                        Ok(json!({"type":"finish"})),
+                    ]
+                }))
+            },
+            1,
+        );
+        let mut phases = Vec::new();
+        let mut text = String::new();
+        while let Some(event) = stream.next().await {
+            let event = event.unwrap();
+            if let Some(phase) = event["retry"]["phase"].as_str() {
+                phases.push(phase.to_owned());
+            }
+            if let Some(delta) = event["delta"].as_str() {
+                text.push_str(delta);
+            }
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(phases, ["waiting", "retrying", "recovered"]);
+        assert_eq!(text, "recovered");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn retries_network_unavailable_before_first_content() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let mut stream = with_retry(
+            move || {
+                let call = count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(futures_util::stream::iter(if call == 0 {
+                    vec![Err(network_failure())]
+                } else {
+                    vec![Ok(json!({"type":"text-delta","delta":"recovered"}))]
+                }))
+            },
+            1,
+        );
+        while stream.next().await.is_some() {}
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn first_token_timeout_does_not_override_a_permanent_verdict() {
         let body = r#"{"type":"error","code":"stream_first_token_timeout"}"#;
@@ -430,6 +573,51 @@ mod tests {
         }
         assert_eq!(failure_reason(failure(429).as_ref()), "rate_limit");
         assert_eq!(failure_reason(failure(503).as_ref()), "upstream");
+    }
+
+    #[test]
+    fn statusless_http_codes_decide_retryability() {
+        for code in ["http_429", "http_500", "http_503", "HTTP_599"] {
+            let error = statusless_failure(code);
+            assert!(retryable_failure(error.as_ref()), "{code} should retry");
+            assert_eq!(
+                http_status(error.as_ref()),
+                Some(code[5..].parse().unwrap())
+            );
+            assert_eq!(
+                failure_reason(error.as_ref()),
+                if code.ends_with("429") {
+                    "rate_limit"
+                } else {
+                    "upstream"
+                }
+            );
+        }
+        for code in ["http_400", "http_401", "http_422"] {
+            let error = statusless_failure(code);
+            assert!(!retryable_failure(error.as_ref()), "{code} must not retry");
+        }
+    }
+
+    #[test]
+    fn permanent_provider_verdict_wins_over_statusless_http_code() {
+        let error: Error = ProviderError::from_provider_body(
+            json!({"type":"error","code":"http_503"}).to_string(),
+        )
+        .with_transient(Some(false))
+        .into();
+        assert!(!retryable_failure(error.as_ref()));
+    }
+
+    #[test]
+    fn network_transport_failures_are_retryable() {
+        let error = network_failure();
+        assert!(retryable_failure(error.as_ref()));
+        assert_eq!(http_status(error.as_ref()), None);
+        assert_eq!(failure_reason(error.as_ref()), "network");
+
+        let reset: Error = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset").into();
+        assert!(retryable_failure(reset.as_ref()));
     }
 
     #[test]

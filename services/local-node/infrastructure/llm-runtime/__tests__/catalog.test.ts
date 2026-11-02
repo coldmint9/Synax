@@ -2,10 +2,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('../../runtime/logger.js', () => ({ logger: { warn: vi.fn() } }))
 
 const originalEnv = {
   DATA_ROOT: process.env.DATA_ROOT,
 }
+const originalFetch = globalThis.fetch
 
 let tempDir = ''
 
@@ -17,6 +19,8 @@ beforeEach(() => {
 })
 
 afterEach(async () => {
+  globalThis.fetch = originalFetch
+  vi.unstubAllEnvs()
   vi.restoreAllMocks()
   vi.resetModules()
   if (tempDir) {
@@ -26,6 +30,49 @@ afterEach(async () => {
 })
 
 describe('llm catalog cache', () => {
+  it('lets warm workers adopt the host cache without making remote requests', async () => {
+    vi.stubEnv('SYNAX_AGENT_SESSION_CHILD', '1')
+    globalThis.fetch = vi.fn(async () => { throw new Error('workers must not refresh remotely') })
+    const { getRuntimeCatalog } = await import('../catalog.js')
+    expect((await getRuntimeCatalog()).source).toBe('snapshot')
+    fs.mkdirSync(path.join(tempDir, 'llm-runtime'), { recursive: true })
+    fs.writeFileSync(path.join(tempDir, 'llm-runtime/models-dev-catalog.json'), JSON.stringify({
+      savedAt: new Date().toISOString(), catalog: { providers: [{ id: 'host-provider', models: [] }], source: 'remote' },
+    }))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 2000)
+    await vi.waitFor(async () => expect((await getRuntimeCatalog()).providers[0].id).toBe('host-provider'))
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+  })
+  it('serves the bundled catalog while one cold refresh is still pending', async () => {
+    let complete!: (response: Response) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>(resolve => { complete = resolve }))
+    const { getRuntimeCatalog } = await import('../catalog.js')
+    const catalogs = await Promise.all(Array.from({ length: 5 }, () => getRuntimeCatalog()))
+    expect(catalogs.every(catalog => catalog.source === 'snapshot' && catalog.providers.length > 0)).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    const refreshed = getRuntimeCatalog(true)
+    complete({ ok: true, json: async () => ({}) } as Response)
+    expect((await refreshed).source).toBe('remote')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    expect((await getRuntimeCatalog()).source).toBe('remote')
+  })
+
+  it('keeps a stale disk catalog usable while refreshing and coalesces failures', async () => {
+    fs.mkdirSync(path.join(tempDir, 'llm-runtime'))
+    fs.writeFileSync(path.join(tempDir, 'llm-runtime/models-dev-catalog.json'), JSON.stringify({
+      savedAt: '2000-01-01T00:00:00Z', catalog: { providers: [{ id: 'cached-provider', models: [] }], source: 'remote' },
+    }))
+    let fail!: (error: Error) => void
+    globalThis.fetch = vi.fn(() => new Promise<Response>((_resolve, reject) => { fail = reject }))
+    const { getRuntimeCatalog } = await import('../catalog.js')
+    expect((await getRuntimeCatalog()).providers[0].id).toBe('cached-provider')
+    const refresh = getRuntimeCatalog(true)
+    fail(new Error('offline'))
+    expect((await refresh).source).toBe('cache')
+    await getRuntimeCatalog()
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('persists remote catalog and marks disk reloads as cache', async () => {
     const remotePayload = {
       openai: {

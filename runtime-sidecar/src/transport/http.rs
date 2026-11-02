@@ -257,7 +257,7 @@ async fn handle_connection(
         let input: ToolResultRequest = serde_json::from_slice(&request.body)?;
         match loops.send_tool_result(input).await {
             Ok(()) => write_json(&mut stream, 200, &json!({"ok":true})).await?,
-            Err(error) => write_json(&mut stream, 409, &json!({"error":error.to_string()})).await?,
+            Err(error) => write_json_error(&mut stream, 409, &error.to_string()).await?,
         }
         return Ok(());
     }

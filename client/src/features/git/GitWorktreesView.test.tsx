@@ -109,6 +109,25 @@ describe("Git worktree management", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(projectApi.cleanupGitWorktrees).not.toHaveBeenCalled();
   });
+  it("closes the cleanup window after the deletion even when the list refresh never settles", async () => {
+    const user = userEvent.setup();
+    const busyStates: boolean[] = [];
+    vi.mocked(projectApi.listGitWorkspaces).mockImplementation(() => new Promise(() => {}));
+    function Tracked() {
+      const [data, setData] = useState(workspace);
+      return <MemoryRouter><GitWorktreesView projectId="p" rootId="reference" repositoryName="示例仓库" workspace={data} onUpdate={setData} onBusy={value => busyStates.push(value)} onHistory={onHistory} /></MemoryRouter>;
+    }
+    render(<Tracked />);
+    fireEvent.click(screen.getByRole("button", { name: /一键清理/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认清理 1 个" }));
+    const done = await within(dialog).findByRole("button", { name: "完成" });
+    await waitFor(() => expect(done).toBeEnabled());
+    await user.click(done);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(busyStates.at(-1)).toBe(false);
+    expect(screen.getByRole("button", { name: /一键清理/ })).toBeEnabled();
+  });
   it("explains why an empty candidate list cannot be confirmed", async () => {
     vi.mocked(projectApi.previewGitWorktreeCleanup).mockResolvedValue({ candidates: [], retained: [{ worktree: main, reasons: ["主工作树不可删除"] }] });
     render(<Harness />);

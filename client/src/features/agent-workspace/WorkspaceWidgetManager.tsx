@@ -1,3 +1,4 @@
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
 import { Checkbox, Field, Label } from "@headlessui/react";
 import { ArrowDown, ArrowUp, Check } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -29,9 +30,9 @@ export function WorkspaceWidgetManager({ open, onClose, scope }: {
             <DialogTitle>{zh ? "重新布局" : "Rearrange widgets"}</DialogTitle>
           </DialogHeader>
           <DialogBody>
-            <p className="mb-4 text-xs text-muted-foreground">
-              {zh ? "勾选添加组件，取消勾选移除。调整顺序后自动保存到当前项目；右侧卡片支持拖动和调整尺寸。" : "Select widgets to add them; deselect to remove. Changes are saved for this project. Drag and resize cards in the work area."}
-            </p>
+            <div className="flex justify-end"><InfoTooltip label={zh ? "组件布局说明" : "About widget layout"}>
+              {zh ? "勾选显示组件，使用箭头调整顺序。布局自动保存。" : "Select widgets to show them and use the arrows to reorder. Layout saves automatically."}
+            </InfoTooltip></div>
             {order.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
                 {zh ? "打开此项目的会话后即可管理工作组件。" : "Open a session in this project to manage widgets."}

@@ -20,6 +20,15 @@ import {
 const measuredEntryHeights = new Map<string, number>();
 
 /**
+ * Heights of the rows currently on screen, keyed by `scope` + entry id.
+ *
+ * Separate from the height cache above because a fold needs the size of rows it
+ * is about to remove, and those rows may have been measured under a different
+ * cache key (a live row and its persisted counterpart share one id).
+ */
+const measuredRowsByScope = new Map<string, number>();
+
+/**
  * How far outside the scrollport an entry is still mounted. Roughly one screen
  * of slack, so flick-scrolling does not run into empty reservations.
  */
@@ -34,27 +43,45 @@ const viewportObservers = new Map<
 
 const FALLBACK_ENTRY_HEIGHT = 180;
 
+/** Bubbles from an entry once its deferred body is mounted and laid out. */
+export const TRANSCRIPT_ENTRY_READY_EVENT = "transcript-entry-ready";
+
 /**
  * Total height actually measured for the rows a finished round folded away.
  *
  * Used to animate the collapse into the `工作用时` row instead of snapping:
  * the caller plays a height transition from this size down to the folded row.
- * A prefix only matches at a key boundary, so `-answer` rows stay excluded.
+ * A step's rows keep the step id as a prefix (`<stepId>:content:1`), so a match
+ * covers every row that step was split into, and a plain id never swallows the
+ * neighbouring `<stepId>-answer` reply.
  */
 export function getMeasuredFoldHeight(
-  prefixes: readonly string[],
-): { height: number; rows: number } | null {
+  scope: string | undefined,
+  stepIds: readonly string[],
+  /**
+   * Steps whose commentary stays outside the fold. Their reply row is rendered
+   * anyway, so counting it would start the collapse too tall and shove the
+   * answer down for the length of the transition.
+   */
+  keepsContent?: ReadonlySet<string>,
+): number {
+  if (!scope || stepIds.length === 0) return 0;
+  const prefix = `${scope}\u0000`;
   let height = 0;
-  let rows = 0;
-  for (const [key, value] of measuredEntryHeights) {
+  for (const [key, value] of measuredRowsByScope) {
+    if (!key.startsWith(prefix)) continue;
+    const id = key.slice(prefix.length);
     if (
-      !prefixes.some((prefix) => key === prefix || key.startsWith(`${prefix}:`))
+      !stepIds.some((stepId) => {
+        if (id === stepId) return true;
+        if (!id.startsWith(`${stepId}:`)) return false;
+        return !(keepsContent?.has(stepId) && id.startsWith(`${stepId}:content:`));
+      })
     )
       continue;
     height += value;
-    rows += 1;
   }
-  return rows > 0 ? { height, rows } : null;
+  return Math.round(height);
 }
 
 /**
@@ -113,6 +140,8 @@ interface Props {
   entryId: string;
   cacheKey: string;
   estimate: number;
+  /** Session scope for the fold measurement; rows never share heights across it. */
+  measureScope?: string;
   scrollRootRef?: RefObject<HTMLElement | null>;
   /** Live output must appear in the same paint, without an estimated-height placeholder. */
   eager?: boolean;
@@ -138,6 +167,7 @@ export function TimelineLazyEntry({
   entryId,
   cacheKey,
   estimate,
+  measureScope,
   scrollRootRef,
   eager = false,
   appended = false,
@@ -209,10 +239,49 @@ export function TimelineLazyEntry({
           measuredEntryHeights.delete(
             measuredEntryHeights.keys().next().value!,
           );
+        if (measureScope) {
+          const rowKey = `${measureScope}\u0000${entryId}`;
+          measuredRowsByScope.delete(rowKey);
+          measuredRowsByScope.set(rowKey, height);
+          if (measuredRowsByScope.size > 2000)
+            measuredRowsByScope.delete(
+              measuredRowsByScope.keys().next().value!,
+            );
+        }
       }
     });
     observer.observe(element);
     return () => observer.disconnect();
+  }, [visible, cacheKey, entryId, measureScope]);
+
+  // The switch transition resolves only when every entry in the rendered
+  // window has a real body. Two frames let the fresh subtree lay out and the
+  // browser commit it before readiness is reported.
+  useEffect(() => {
+    if (!visible) return;
+    const element = ref.current;
+    if (!element) return;
+    const schedule =
+      typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (callback: FrameRequestCallback) =>
+            window.setTimeout(() => callback(performance.now()), 16);
+    const cancel =
+      typeof cancelAnimationFrame === "function"
+        ? cancelAnimationFrame
+        : (handle: number) => window.clearTimeout(handle);
+    let inner = 0;
+    const outer = schedule(() => {
+      inner = schedule(() => {
+        element.dispatchEvent(
+          new CustomEvent(TRANSCRIPT_ENTRY_READY_EVENT, { bubbles: true }),
+        );
+      });
+    });
+    return () => {
+      cancel(outer);
+      cancel(inner);
+    };
   }, [visible, cacheKey]);
 
   return (
@@ -220,6 +289,7 @@ export function TimelineLazyEntry({
       ref={ref}
       id={sessionEntryDomId(entryId)}
       data-session-entry={entryId}
+      data-entry-pending={visible ? undefined : "true"}
       className={revealOnAppend ? "session-entry-appended scroll-mt-4" : "scroll-mt-4"}
       style={visible ? undefined : { minHeight: Math.round(reservedHeight) }}
     >

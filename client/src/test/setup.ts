@@ -22,7 +22,7 @@ for (const method of ['focus', 'blur', 'scrollIntoView'] as const) {
 const browserStorageInstances: Storage[] = []
 for (const key of ['localStorage', 'sessionStorage'] as const) {
   const storage = window[key]
-  browserStorageInstances.push(storage)
+  if (storage) browserStorageInstances.push(storage)
   Object.defineProperty(globalThis, key, { configurable: true, value: storage })
   Object.defineProperty(window, key, { configurable: true, value: storage })
 }

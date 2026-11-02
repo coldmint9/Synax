@@ -11,7 +11,7 @@ export const remotePrTools: RegisteredTool[] = [
     mutability: "read",
     resumeBehavior: "auto",
     description:
-      "Read a GitHub PR or GitLab MR already attached to this conversation by the PR button. Returns live branch SHAs, checks, merge state and linked local conflict task. Does not push, create requests or merge. Use the card for user-confirmed remote writes; use git.merge.read/propose on the linked local resolution task.",
+      "Read the GitLab MR or GitHub PR already attached to this conversation by the MR button. Returns live branch SHAs, pipeline stages with jobs, approvals, commits, diff totals, merge state and any linked local conflict task. Does not push, create requests or merge. Use the card for user-confirmed remote writes; use git.merge.read/propose on a linked conflict-resolution task.",
     inputSchema: schema,
     async execute(input) {
       const { objectId } = schema.parse(input.args);

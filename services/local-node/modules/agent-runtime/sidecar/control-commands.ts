@@ -31,6 +31,10 @@ export async function withSessionRevision<T>(
     for (let attempt = 0; ; attempt++) {
       try { return await apply(fence); }
       catch (error) {
+        if (error instanceof RuntimeSidecarError && error.code === 'STALE_EPOCH')
+          logger.warn({ sessionId, operation, epoch: fence.epoch, revision: fence.revision,
+            expected: error.expected, actual: error.actual, worker: process.env.SYNAX_AGENT_SESSION_CHILD === '1' },
+          'Session control owner changed during a fenced write');
         if (!(error instanceof RuntimeSidecarError) || error.code !== 'REVISION_CONFLICT') throw error;
         // An interaction/document CAS has its own revision and must be
         // returned to its caller, not confused with the session fence.

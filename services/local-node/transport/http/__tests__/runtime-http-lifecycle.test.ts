@@ -14,6 +14,7 @@ import { agentRuntimeRoutes } from '../agent-runtime.js';
 import { sessionLiveBus } from '../../../modules/agent-runtime/session-live-bus.js';
 import { interactionService } from '../../../modules/agent-runtime/interaction-service.js';
 import { runtimeFacade } from '../../../modules/agent-runtime/sidecar/runtime-facade.js';
+import { recoverRuntimeSession } from '../../../modules/agent-runtime/runtime-recovery.js';
 const mock = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../../modules/agent-runtime/backend-execution.js', () => ({ executeBackendSession: mock.execute }));
 vi.mock('../../../infrastructure/llm-runtime/provider-check.js', () => ({ assertLlmProviderConfigured: vi.fn() }));
@@ -115,8 +116,10 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
     const results = await Promise.all([request('POST', path, body), request('POST', path, body)]);
     for (const response of results) {
       expect(response.status, response.body).toBe(200);
-      expect(JSON.parse(response.body).interaction).toMatchObject({ status: action === 'cancel' ? 'cancelled' : 'answered',
-        response: body, restartRequestId: `interaction-restart:${form.id}`, consumedAt: expect.any(String) });
+      expect(JSON.parse(response.body).interaction).toMatchObject(action === 'cancel'
+        // Declining the question ends the park; it does not restart the work.
+        ? { status: 'cancelled', response: body }
+        : { status: 'answered', response: body, restartRequestId: `interaction-restart:${form.id}`, consumedAt: expect.any(String) });
     }
     await runCoordinator.waitForIdle();
     expect((await request('POST', path, body)).status).toBe(200);
@@ -126,12 +129,49 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
     expect(agentRuntimeStore.getRun(run.id).status).toBe('interrupted');
     expect(agentRuntimeStore.getSession(id).activeRunId).toBeNull();
     const saved = JSON.parse((await request('GET', `/sessions/${id}/interactions`)).body).interactions;
-    expect(saved).toEqual([expect.objectContaining({ id: form.id, consumedAt: expect.any(String), response: expect.objectContaining(body) })]);
+    expect(saved).toEqual([expect.objectContaining({ id: form.id, response: expect.objectContaining(body),
+      ...(action === 'cancel' ? { status: 'cancelled' } : { consumedAt: expect.any(String) }) })]);
+    if (action === 'cancel')
+      // A cancelled form must leave a resumable session, not a locked row.
+      expect(JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body).session)
+        .toMatchObject({ status: 'paused', activeRunId: null, pendingResumeToken: null });
     if (action !== 'cancel') {
       const input = mock.execute.mock.calls[0][2] as StreamTurnRequest;
       expect(input.message).toContain('Which file?');
       expect(input.message).toContain(action === 'submit' ? 'README.md' : 'Do not treat it as a refusal');
     }
+  });
+
+  it('answers a question the restart interrupted instead of healing the session', async () => {
+    const id = await createSession('synax');
+    const run = await admitActiveFixtureRun(id, 'Ask which file');
+    const now = new Date().toISOString();
+    const step = agentRuntimeStore.appendRunStep({ id: `step-${run.id}`, runId: run.id, sessionId: id,
+      index: 1, status: 'running', model: null, startedAt: now, completedAt: null, finishReason: null, metadata: {} });
+    const call = agentRuntimeStore.appendToolCall({ id: `call-${run.id}`, sessionId: id, runId: run.id, stepId: step.id,
+      modelToolCallId: 'provider-question', toolId: 'human.ask', category: 'task', mutability: 'task', argsHash: '',
+      inputSummary: 'Which file?', inputRef: {}, outputSummary: null, outputRef: null, status: 'running',
+      permissionDecisionId: null, startedAt: now, endedAt: null, error: null });
+    const form = await interactionService.requestAuthoritative({ sessionId: id, runId: run.id, stepId: step.id,
+      toolCallId: call.id, kind: 'clarification', request: { title: 'Pick a file',
+        questions: [{ id: 'file', type: 'text', label: 'Which file?' }] } });
+
+    // The next launch recovers the session before the user has answered.
+    await recoverRuntimeSession('next-launch-host', id);
+    const parked = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
+    expect(parked.session).toMatchObject({ status: 'waiting_input', activeRunId: null,
+      pendingResumeToken: `interaction:${form.id}`, blockedReason: 'Pick a file' });
+    expect(parked.run.status).toBe('interrupted');
+
+    const reply = await request('POST', `/sessions/${id}/interactions/${form.id}/reply`,
+      { revision: form.revision, action: 'submit', answers: { file: 'README.md' } });
+    expect(reply.status, reply.body).toBe(200);
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledTimes(1));
+    // A real user turn carrying the answer, not an input-less self-heal turn.
+    expect(mock.execute.mock.calls[0][1]).toBe('turn');
+    const input = mock.execute.mock.calls[0][2] as StreamTurnRequest;
+    expect(input.message).toContain('README.md');
+    expect(input.message).toContain('Pick a file');
   });
 
   it('delivers manual compaction progress, completion and failure on the unified session stream', async () => {
@@ -199,10 +239,46 @@ describe('actual HTTP observation lifecycle with an isolated controlled backend'
       expect((await request('POST', `/sessions/${id}/interactions/pending/reply`, { revision: 1, action: 'submit', answers: {} })).status).toBe(409);
     } finally { confirm(); release(); await stopping; interrupt.mockRestore(); }
     const stopped = JSON.parse((await request('GET', `/sessions/${id}/snapshot`)).body);
-    expect(stopped.session.status).toBe('completed');
+    // A user stop parks the session on a resumable pause so the composer keeps
+    // its play (one-click resume) key instead of falling back to a send arrow.
+    expect(stopped.session.status).toBe('paused');
     expect(stopped.run.status).toBe('interrupted');
     expect(stopped.session.activeRunId).toBeNull();
     expect(stopped.session.sessionMetadata.runtimeControl).toBeNull();
+  });
+
+  it('resumes a user-stopped session with the no-message continue the play key sends', async () => {
+    const id = await createSession('synax');
+    await request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'stop-then-resume' });
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledTimes(1));
+    const stop = await request('POST', `/sessions/${id}/cancel`);
+    expect(stop.status, stop.body).toBe(200);
+    expect(JSON.parse(stop.body).status).toBe('paused');
+    await runCoordinator.waitForIdle();
+    // Exact payload of the composer's play key: continue without a message.
+    const resume = await request('POST', `/sessions/${id}/runs`, {
+      requestId: 'one-click-resume',
+      mode: 'continue',
+    });
+    expect(resume.status, resume.body).toBe(202);
+    await vi.waitFor(() => expect(mock.execute).toHaveBeenCalledTimes(2));
+    expect(mock.execute.mock.calls[1]?.[1]).toBe('continue');
+    release(); await runCoordinator.waitForIdle();
+  });
+
+  it('accepts the same no-message continue after a run failed', async () => {
+    const id = await createSession('synax');
+    mock.execute.mockImplementation(async function* () {
+      throw new Error('provider disconnected');
+    });
+    const failed = await request('POST', `/sessions/${id}/runs`, { message: 'Run', requestId: 'failing-run' });
+    expect(failed.status, failed.body).toBe(202);
+    await vi.waitFor(() => expect(agentRuntimeStore.getSession(id).status).toBe('failed'));
+    expect(agentRuntimeStore.getSession(id).blockedReason).toContain('provider disconnected');
+    // The play key retries the failed work instead of demanding new input.
+    const resume = await request('POST', `/sessions/${id}/runs`, { requestId: 'failed-resume', mode: 'continue' });
+    expect(resume.status, resume.body).toBe(202);
+    await runCoordinator.waitForIdle();
   });
 
   it('continues work after the TCP observer disconnects and replays output on reconnect', async () => {

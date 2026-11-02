@@ -2,10 +2,11 @@ use crate::runtime::actor::{Durability, PendingEvent, RuntimeError, SessionShard
 use crate::transport::flow::CreditWindow;
 use crate::transport::protocol::{
     ClientMessage, PROTOCOL_VERSION, ServerMessage, WireAck, WireAdmitRun, WireAppendStream,
-    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse, WireHistoryState,
-    WirePong, WireQueueState, WireReady, WireRunAdmission, WireSessionListResponse,
-    WireSnapshotResponse, WireStreamEvent, WireTicket, WireUiSnapshotResponse, decode_client_message,
-    decode_wire, encode_server_message, encode_wire, wire_envelope,
+    WireControlState, WireEnvelope, WireError, WireEventBatch, WireHealthResponse,
+    WireHistoryState, WirePong, WireQueueState, WireReady, WireRecordStateResponse,
+    WireRunAdmission, WireSessionListResponse, WireSnapshotResponse, WireStreamEvent, WireTicket,
+    WireUiSnapshotResponse, decode_client_message, decode_wire, encode_server_message, encode_wire,
+    wire_envelope,
 };
 use crate::transport::tickets::{TicketStore, UiScope};
 use futures_util::{SinkExt, StreamExt};
@@ -42,6 +43,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "execution_lease",
     "history_command",
     "session_list",
+    "session_badges_v1",
     "import_projection",
     "append_stream",
     "append_receipts",
@@ -53,6 +55,7 @@ pub const HANDSHAKE_CAPABILITIES: &[&str] = &[
     "subscribe",
     "ui_ticket",
     "ui_projection",
+    "record_state_v1",
     "credit_window",
     "history_outbox_maintenance",
     "provider_bridge",
@@ -229,6 +232,7 @@ async fn handle_websocket(
                         "subscribe",
                         "credit_window",
                         "ui_projection",
+                        "record_state_v1",
                         "queue_read",
                         "control_state",
                         "history_command",
@@ -332,6 +336,7 @@ fn ui_command_allowed(request: &WireEnvelope, scope: &UiScope) -> bool {
         Some(wire_envelope::Body::Health(_)) | Some(wire_envelope::Body::Ping(_)) => true,
         Some(wire_envelope::Body::QueueRead(_))
         | Some(wire_envelope::Body::UiSnapshot(_))
+        | Some(wire_envelope::Body::RecordState(_))
         | Some(wire_envelope::Body::Snapshot(_))
         | Some(wire_envelope::Body::Replay(_))
         | Some(wire_envelope::Body::Subscribe(_)) => request.session_id == scope.session_id,
@@ -601,6 +606,7 @@ fn wire_operation(body: Option<&wire_envelope::Body>) -> &'static str {
         Some(Body::ActivateRun(_)) => "activate_run",
         Some(Body::SeedUi(_)) => "seed_ui",
         Some(Body::UiSnapshot(_)) => "ui_snapshot",
+        Some(Body::RecordState(_)) => "record_state",
         Some(Body::IssueTicket(_)) => "issue_ticket",
         Some(Body::FinishRun(_)) => "finish_run",
         Some(Body::Health(_)) => "health",
@@ -694,6 +700,17 @@ async fn execute_wire_inner(
                 Ok(snapshot_json) => (
                     envelope(wire_envelope::Body::UiSnapshotResponse(
                         WireUiSnapshotResponse { snapshot_json },
+                    )),
+                    false,
+                ),
+                Err(error) => (envelope(error_to_wire(error)), false),
+            }
+        }
+        Some(wire_envelope::Body::RecordState(_)) => {
+            match context.router.record_state(session_id.clone()).await {
+                Ok(state_json) => (
+                    envelope(wire_envelope::Body::RecordStateResponse(
+                        WireRecordStateResponse { state_json },
                     )),
                     false,
                 ),
@@ -1212,16 +1229,14 @@ async fn execute_wire_inner(
             };
             let cursor = crate::storage::jsonl::store::ListIndex::decode_cursor(&request.after);
             // Do not expose a partial list as a completed empty result.
-            let (items, next) = if ready {
-                store.store().list().read().page(cursor.as_ref(), 64)
+            if !matches!(request.view.as_str(), "" | "badges") {
+                return (envelope(wire_error("INVALID_COMMAND", "Unknown session list view")), false);
+            }
+            let sessions_json = if ready {
+                store.store().list().read().page_json(cursor.as_ref(), request.view == "badges")
             } else {
-                (Vec::new(), None)
+                b"{\"items\":[],\"next\":null,\"loading\":true}".to_vec()
             };
-            let sessions_json = serde_json::to_vec(&serde_json::json!({
-                "items": items,
-                "next": next.map(|key| crate::storage::jsonl::store::ListIndex::encode_cursor(&key)),
-                "loading": !ready,
-            })).unwrap_or_default();
             (
                 WireEnvelope {
                     request_id,
@@ -1419,6 +1434,7 @@ async fn execute_wire_inner(
         | Some(wire_envelope::Body::ImportProjectionResponse(_))
         | Some(wire_envelope::Body::ImportStreamResponse(_))
         | Some(wire_envelope::Body::UiSnapshotResponse(_))
+        | Some(wire_envelope::Body::RecordStateResponse(_))
         | Some(wire_envelope::Body::Ticket(_))
         | Some(wire_envelope::Body::Credit(_))
         | None => (
@@ -1472,7 +1488,12 @@ fn storage_error_to_wire(error: crate::storage::jsonl::hot::StorageError) -> wir
 
 fn error_to_wire(error: RuntimeError) -> wire_envelope::Body {
     let (code, message, expected, actual) = match error {
-        RuntimeError::SessionDeleted => ("NOT_FOUND", "session has been permanently deleted".into(), None, None),
+        RuntimeError::SessionDeleted => (
+            "NOT_FOUND",
+            "session has been permanently deleted".into(),
+            None,
+            None,
+        ),
         RuntimeError::ProjectionMissing => (
             "PROJECTION_MISSING",
             "session UI projection requires initialization".into(),

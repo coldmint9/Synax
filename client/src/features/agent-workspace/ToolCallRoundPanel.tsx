@@ -7,10 +7,13 @@ import { hasDisplayableReasoning } from "./activityText";
 import { ToolCallSummaryLine } from "./ToolCallSummaryLine";
 import { ToolCallBatchSummaryLine } from "./ToolCallBatchSummaryLine";
 import type { ToolFileLinks } from "./fileLink";
+import { TOOL_CALL_MEDIA_STRIP_HEIGHT, toolCallImageParts } from "./toolCallMedia";
 
 export interface ToolRoundRow {
   key: string;
   node: ReactNode;
+  /** Extra height a collapsed row spends painting inline image thumbnails. */
+  mediaHeight?: number;
 }
 
 interface Props {
@@ -64,6 +67,7 @@ export function toolRoundRows(
       for (const call of calls) rows.push({
         key: `call:${call.id}`,
         node: <ToolCallSummaryLine key={call.id} call={call} rememberKey={rememberKey} fileLinks={fileLinks} />,
+        mediaHeight: toolCallImageParts([call]).length ? TOOL_CALL_MEDIA_STRIP_HEIGHT : undefined,
       });
       return;
     }
@@ -74,6 +78,7 @@ export function toolRoundRows(
         node: (
           <ToolCallBatchSummaryLine key={key} batch={batch} rememberKey={rememberKey} />
         ),
+        mediaHeight: toolCallImageParts(batch.calls).length ? TOOL_CALL_MEDIA_STRIP_HEIGHT : undefined,
       });
     });
   });

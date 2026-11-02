@@ -1,10 +1,11 @@
 import { randomUUID, createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { listOwnedProcesses } from "../agent-runtime/process-ownership.js";
 import { DATA_ROOT } from "../../infrastructure/runtime/env.js";
 import { GitMrError } from "./errors.js";
-import type { MergeRequest, MergePreset, MergeProposal } from "./contracts.js";
+import type { MergeRequest, MergeProposal } from "./contracts.js";
 
 export class GitMrStore {
   constructor(readonly directory = path.join(DATA_ROOT, "git-mr")) {}
@@ -63,10 +64,14 @@ export class GitMrStore {
     return record;
   }
   async deletePreset(projectId: string, id: string) {
-    const record = await this.read<MergePreset>("presets", id);
+    await this.remove("presets", projectId, id);
+  }
+  /** Remove one record owned by the project; other projects never match. */
+  async remove(kind: string, projectId: string, id: string) {
+    const record = await this.read<{ projectId: string }>(kind, id);
     if (record.projectId !== projectId)
-      throw new GitMrError("Preset not found.", "NOT_FOUND", 404);
-    await fs.unlink(this.filename("presets", id));
+      throw new GitMrError("Record not found.", "NOT_FOUND", 404);
+    await fs.unlink(this.filename(kind, id));
   }
   async proposals(projectId: string, mrId: string) {
     return (
@@ -147,22 +152,35 @@ export class GitMrStore {
       await fs.rm(guard, { recursive: true, force: true });
     }
   }
-  async exclusive<T>(identity: string, action: () => Promise<T>): Promise<T> {
+  async exclusive<T>(identity: string, action: () => Promise<T>, options: { waitMs?: number } = {}): Promise<T> {
     const dir = path.join(
       this.directory,
       "locks",
       createHash("sha256").update(identity).digest("hex"),
     );
     await fs.mkdir(path.dirname(dir), { recursive: true });
-    try {
-      await fs.mkdir(dir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      await this.reclaimStoppedOwner(dir);
+    const deadline = performance.now() + Math.max(0, options.waitMs ?? 0);
+    for (;;) {
       try {
         await fs.mkdir(dir);
-      } catch {
-        throw new GitMrError("Repository is busy.", "REPOSITORY_BUSY");
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+      try {
+        await this.reclaimStoppedOwner(dir);
+      } catch (error) {
+        if (!(error instanceof GitMrError) || error.code !== "REPOSITORY_BUSY" || performance.now() >= deadline) throw error;
+        await delay(Math.min(25, Math.max(1, deadline - performance.now())));
+        continue;
+      }
+      try {
+        await fs.mkdir(dir);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        if (performance.now() >= deadline)
+          throw new GitMrError("Repository is busy.", "REPOSITORY_BUSY");
       }
     }
     try {

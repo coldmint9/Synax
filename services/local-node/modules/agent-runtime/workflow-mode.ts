@@ -1,12 +1,13 @@
 import type { AgentSession } from './contracts.js';
 import { agentRuntimeStore as store } from './session-store.js';
 import { inferSynaxSessionMode } from './synax/synax-session-mode.js';
+import { isInteractiveSideChat } from './side-chat-contract.js';
 
 /** The root's selected workflow is authoritative, including for delegated work. */
 export function controlRoot(session: AgentSession): AgentSession {
   const seen = new Set<string>();
   let root = session;
-  while (root.parentSessionId) {
+  while (root.parentSessionId && !isInteractiveSideChat(root)) {
     if (seen.has(root.id)) throw new Error('Cyclic session parent.');
     seen.add(root.id);
     root = store.getSession(root.parentSessionId);

@@ -3,9 +3,8 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
+import { getConversationController } from "../state/conversationController";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
-import { useSideChatStore } from "../state/sideChatStore";
-import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
 import { useShellStore } from "../../../shared/state/shellStore";
 import {
   SessionToolbarProvider,
@@ -60,9 +59,10 @@ vi.mock("../AgentCommandRail", () => ({
   ),
 }));
 vi.mock("../SideChatPanel", () => ({
-  SideChatPanel: () => (
+  SideChatPanel: ({ onCollapse }: { onCollapse: () => void }) => (
     <div>
       <span>Side chat content</span>
+      <button onClick={onCollapse}>Close side chat</button>
     </div>
   ),
 }));
@@ -73,10 +73,9 @@ vi.mock("../SubagentReadonlyView", () => ({
 let availableWidth = 1500;
 let narrow = false;
 beforeEach(() => {
-  useSideChatStore.setState({ chats: {} });
-  vi.spyOn(agentRuntimeApi, "createSideChat").mockReturnValue(new Promise(() => {}));
   availableWidth = 1500;
   narrow = false;
+  vi.spyOn(getConversationController("child"), "retain").mockReturnValue(() => {});
   localStorage.removeItem("synax-sessions-right-panel");
   useAgentSessionStore.setState({
     selectedSessionId: "parent",
@@ -341,11 +340,14 @@ describe("Subagent conversation layout", () => {
     );
     expect(pane).toHaveAttribute("data-view", "subagent");
     expect(pane.style.width).toBe("600px");
-    expect(screen.getByText("Side chat content")).not.toBeVisible();
+    expect(screen.queryByText("Side chat content")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "关闭子代理对话" }));
-    expect(pane).toHaveAttribute("data-view", "side-chat");
+    expect(pane).toHaveAttribute("data-view", "widgets");
+    expect(pane.style.width).toBe("300px");
+    fireEvent.click(screen.getByRole("button", { name: "Open side chat" }));
     expect(pane.style.width).toBe("450px");
-    expect(screen.getByText("Side chat content")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close side chat" }));
+    expect(pane).toHaveAttribute("data-view", "widgets");
   });
 
   it("supports keyboard resizing with the same limits and saves only the active layout", () => {

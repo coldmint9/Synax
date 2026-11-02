@@ -81,7 +81,18 @@ function githubUrl(value: string): URL {
   return url;
 }
 
-export function updateRequestUrl(value: string, proxy: string | null): URL {
+export function updateRequestUrl(value: string, proxy: string | null, enterpriseFeed?: string): URL {
+  // Enterprise feeds go directly to their configured origin, never through a
+  // persisted public GitHub proxy. The host supplies the validated feed;
+  // this shared module must remain browser-safe and independent of Node env.
+  if (enterpriseFeed) {
+    const feed = new URL(enterpriseFeed);
+    const source = new URL(value);
+    if (source.origin !== feed.origin || !source.pathname.startsWith(feed.pathname) ||
+      source.username || source.password || source.hash)
+      throw new Error("Update URL must stay within the configured enterprise feed");
+    return source;
+  }
   const source = githubUrl(value);
   return new URL(proxy ? proxy + source.href : source.href);
 }

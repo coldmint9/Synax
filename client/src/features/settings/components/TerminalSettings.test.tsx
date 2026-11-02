@@ -30,7 +30,7 @@ it("displays the system path, saves an override and restores the default", async
   expect(await screen.findByText("/bin/zsh")).toBeVisible();
   const input = screen.getByRole("textbox", { name: "Shell 可执行文件路径" });
   await userEvent.type(input, "/opt/custom shell");
-  expect(screen.getByText("系统默认")).toBeVisible();
+  expect(screen.getByText("当前生效路径：")).toHaveTextContent("/bin/zsh");
   await userEvent.click(
     screen.getByRole("button", { name: "保存终端路径", exact: true }),
   );

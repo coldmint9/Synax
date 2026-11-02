@@ -27,6 +27,7 @@ import { resolveInitialSessionTitle } from "./session-title-service.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
 import { resolveWorkspaceRoot } from "./tools/workspace.js";
 import { markSessionCreated } from './session-recovery.js';
+import { isInteractiveSideChat } from './side-chat-contract.js';
 
 export class AgentSessionRuntime {
   constructor(
@@ -61,7 +62,7 @@ export class AgentSessionRuntime {
       seenAncestors.add(ancestor.id);
       if (
         ancestor.sessionMetadata?.runtimeControl ||
-        ["interrupted", "cancelled", "paused"].includes(ancestor.status)
+        (!isInteractiveSideChat(input) && ["interrupted", "cancelled", "paused"].includes(ancestor.status))
       )
         throw new AgentValidationError(
           "Cannot create a subagent while its ancestor is stopped or stopping.",
@@ -212,7 +213,7 @@ export class AgentSessionRuntime {
         contextSnapshotId: bundle.id,
       },
     });
-    if (parent) {
+    if (parent && !isInteractiveSideChat(saved)) {
       this.events.append({
         sessionId: parent.id,
         type: "subsession_started",

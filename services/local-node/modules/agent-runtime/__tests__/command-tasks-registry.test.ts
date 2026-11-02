@@ -34,7 +34,10 @@ it.each([false, true])("keeps the original execution alive through independent w
   const monitored = await registry.execute(session.id, "bash", { command: "echo fixture", async: asynchronous,
     ...(asynchronous ? { timeoutMs: 1_000 } : {}) }, options);
   expect(monitored.record.status).toBe("running");
-  expect(commandSignal?.aborted).toBe(false);
+  // Explicit async returns before setup/admission. The command signal becomes
+  // available once the owned execution reaches the registered tool.
+  if (asynchronous) expect(commandSignal).toBeUndefined();
+  else expect(commandSignal?.aborted).toBe(false);
   if (!asynchronous) {
     const blocked = await registry.execute(session.id, "task.list", {}, options);
     expect(blocked.record.status).toBe("denied");

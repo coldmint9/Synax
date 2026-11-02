@@ -213,6 +213,12 @@ export class RuntimeSidecarClient {
       .then(envelope => this.expect(envelope, 'ui_snapshot_response').snapshotJson);
   }
 
+  async recordState(sessionId: string): Promise<Uint8Array> {
+    return this.request({ type: "record_state" }, sessionId, 0, 0).then(
+      (envelope) => this.expect(envelope, "record_state_response").stateJson,
+    );
+  }
+
   /** Compact actor-serialized authority read; UI state may already be terminal. */
   async assertExecutionLease(context: ExecutionLeaseIdentity): Promise<void> {
     // Called once per stream chunk. The lease can only be revoked by a state
@@ -315,8 +321,8 @@ export class RuntimeSidecarClient {
     return this.expect(envelope, 'history_state').stateJson;
   }
 
-  async sessionList(after?: string): Promise<Uint8Array> {
-    const envelope = await this.request({ type: 'session_list', after }, '', 0, 0);
+  async sessionList(after?: string, view?: 'badges'): Promise<Uint8Array> {
+    const envelope = await this.request({ type: 'session_list', after, ...(view ? { view } : {}) }, '', 0, 0);
     return this.expect(envelope, 'session_list_response').sessionsJson;
   }
 

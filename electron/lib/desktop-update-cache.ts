@@ -1,3 +1,5 @@
+import { requireLegacyUpdateSource } from "../updater/update-source.js";
+import { effectiveUpdateSource } from "../updater/effective-update-source.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -26,7 +28,8 @@ function validateCachedRelease(value: unknown): DesktopRelease {
   const data = value as DesktopRelease;
   const manifest = validateDesktopManifest(data?.manifest);
   verifyDesktopManifestSignature(manifest);
-  const url = `https://github.com/coldmint9/Synax/releases/download/v${manifest.version}/${desktopUpdateArtifact(manifest).name}`;
+  requireLegacyUpdateSource();
+  const url = new URL(`v${manifest.version}/${desktopUpdateArtifact(manifest).name}`, effectiveUpdateSource()).href;
   if (data.url !== url) throw new Error("Invalid cached desktop release URL");
   return {
     manifest,

@@ -1,5 +1,6 @@
 import type { TurnReference } from "../../../adapters/transport/agentRuntime";
 import type { RuntimeContentPart } from "../../../adapters/transport/runtimeMedia";
+import type { QuickActionAttachment } from "../../quick-actions/quickActions";
 
 const STORAGE_KEY = "synax.draftComposer";
 const CONTEXT_KEY = "synax.draftComposerContext";
@@ -45,6 +46,8 @@ export function saveDraftComposer(projectId: string, content: string): void {
 export interface DraftComposerContext {
   parts: RuntimeContentPart[];
   references: TurnReference[];
+  /** A quick-action procedure attached to the draft, restored across reloads. */
+  quickAction: QuickActionAttachment | null;
 }
 
 function sanitizeParts(value: unknown): RuntimeContentPart[] {
@@ -61,6 +64,25 @@ function sanitizeParts(value: unknown): RuntimeContentPart[] {
   });
 }
 
+function sanitizeQuickAction(value: unknown): QuickActionAttachment | null {
+  if (typeof value !== "object" || value === null) return null;
+  const record = value as Partial<QuickActionAttachment>;
+  if (typeof record.actionId !== "string" || typeof record.text !== "string" || !record.actionId || !record.text)
+    return null;
+  return {
+    actionId: record.actionId,
+    title: typeof record.title === "string" && record.title ? record.title : record.actionId,
+    text: record.text,
+    skillIds: Array.isArray(record.skillIds)
+      ? record.skillIds.filter((id): id is string => typeof id === "string")
+      : [],
+    mode: record.mode === "goal" || record.mode === "plan" ? record.mode : "chat",
+    requiresInput: Boolean(record.requiresInput),
+    hint: typeof record.hint === "string" ? record.hint : undefined,
+    placeholder: typeof record.placeholder === "string" ? record.placeholder : undefined,
+  };
+}
+
 function sanitizeReferences(value: unknown): TurnReference[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
@@ -75,7 +97,7 @@ function sanitizeReferences(value: unknown): TurnReference[] {
 export function loadDraftComposerContext(
   projectId: string,
 ): DraftComposerContext {
-  const empty: DraftComposerContext = { parts: [], references: [] };
+  const empty: DraftComposerContext = { parts: [], references: [], quickAction: null };
   if (!projectId || typeof localStorage === "undefined") return empty;
   try {
     const raw = localStorage.getItem(contextStorageKey(projectId));
@@ -86,6 +108,7 @@ export function loadDraftComposerContext(
     return {
       parts: sanitizeParts(record.parts),
       references: sanitizeReferences(record.references),
+      quickAction: sanitizeQuickAction(record.quickAction),
     };
   } catch {
     return empty;
@@ -98,7 +121,7 @@ export function saveDraftComposerContext(
 ): void {
   if (!projectId || typeof localStorage === "undefined") return;
   try {
-    if (context.parts.length || context.references.length)
+    if (context.parts.length || context.references.length || context.quickAction)
       localStorage.setItem(
         contextStorageKey(projectId),
         JSON.stringify(context),

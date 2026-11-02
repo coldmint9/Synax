@@ -8,8 +8,9 @@ import { OverlayStateObserver } from "@/shared/ui/ui/OverlayStateObserver";
 import {
   Check,
   ChevronDown,
+  Goal,
   MessageCircle,
-  Target,
+  Zap,
 } from "lucide-react";
 import type { AgentSessionMode } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -44,10 +45,18 @@ export function SessionModePicker({
     {
       id: "goal",
       label: zh ? "目标" : "Goal",
-      Icon: Target,
+      Icon: Goal,
       detail: zh
         ? "持续推进，直到目标验收完成"
         : "Keep working toward an accepted goal",
+    },
+    {
+      id: "super",
+      label: zh ? "Super 编码" : "Super",
+      Icon: Zap,
+      detail: zh
+        ? "主代理编排子代理，直到交付"
+        : "Orchestrate subagents until delivery",
     },
   ] as const;
   const visibleMode = mode === "plan" ? "chat" : mode;

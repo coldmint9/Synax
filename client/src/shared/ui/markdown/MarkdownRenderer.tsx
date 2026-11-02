@@ -11,6 +11,13 @@ export const sharedMarkdownComponents: Components = {
   pre({ children }) {
     return renderMarkdownPre(children);
   },
+  table({ children, node: _node, ...props }) {
+    return (
+      <div className="markdown-table-scroll" role="region" aria-label="表格" tabIndex={0}>
+        <table {...props}>{children}</table>
+      </div>
+    );
+  },
   code({ className, children, node: _node, ...props }) {
     return (
       <code className={className} {...props}>

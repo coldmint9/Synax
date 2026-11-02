@@ -1,0 +1,573 @@
+/* Quick merge board: one line per instruction, grouped in cards. */
+.qm-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.qm-toolrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qm-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--theme-text-subtle);
+}
+.qm-ghostbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.qm-ghostbtn:hover {
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+}
+.qm-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--theme-danger) 30%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--theme-danger) 8%, transparent);
+  color: var(--theme-danger);
+  font-size: 12px;
+}
+.qm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 40px 20px;
+  border: 1px dashed var(--theme-border-strong);
+  border-radius: 14px;
+  color: var(--theme-text-muted);
+  font-size: 12px;
+}
+.qm-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.qm-group {
+  border: 1px solid var(--theme-border);
+  border-radius: 14px;
+  background: var(--theme-surface);
+  box-shadow: 0 1px 2px rgb(26 34 48 / 3%);
+}
+.dark .qm-group { box-shadow: 0 1px 2px rgb(0 0 0 / 25%); }
+
+.qm-ghead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px 8px 14px;
+}
+.qm-ghead h3 {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.qm-chip {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+.qm-gtools {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+.qm-gconfirm {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--theme-danger);
+  font-size: 11px;
+}
+.qm-nameedit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.qm-iconbtn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+  font-size: 14px;
+  line-height: 1;
+}
+.qm-iconbtn:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+}
+.qm-menu {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 20;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-surface);
+  box-shadow: var(--theme-floating-shadow);
+}
+.qm-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text);
+  text-align: left;
+  font-size: 12px;
+}
+.qm-menu button:hover { background: var(--theme-surface-secondary); }
+.qm-menu button.qm-danger { color: var(--theme-danger); }
+
+.qm-rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--theme-border);
+}
+.qm-rules:empty { display: none; }
+.qm-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px 7px 14px;
+  border-top: 1px solid var(--theme-border);
+}
+.qm-rule:first-child { border-top: 0; }
+.qm-rule:hover { background: color-mix(in srgb, var(--theme-surface-secondary) 55%, transparent); }
+.qm-rule--confirm { background: color-mix(in srgb, var(--theme-danger) 8%, transparent); }
+.qm-rule--conflict { background: color-mix(in srgb, var(--theme-danger) 5%, transparent); }
+
+.qm-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+}
+.qm-ref {
+  min-width: 0;
+  max-width: 40%;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.qm-ref--dst {
+  border-color: var(--theme-border-strong);
+  background: var(--theme-surface);
+  font-weight: 500;
+}
+.qm-swap {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+}
+.qm-swap:hover:not(:disabled) {
+  border-color: var(--theme-border);
+  background: var(--theme-surface);
+  color: var(--theme-accent);
+}
+.qm-swap:disabled { opacity: .4; }
+
+.qm-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.qm-actions .qm-btn { width: 64px; justify-content: center; }
+.qm-actions .qm-btn:nth-child(2) { width: 72px; position: relative; }
+
+.qm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.qm-btn:hover:not(:disabled) { background: var(--theme-surface-secondary); }
+.qm-btn:disabled { opacity: .45; }
+.qm-btn--lead {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent);
+  color: var(--theme-accent-foreground);
+}
+.qm-btn--lead:hover:not(:disabled) { filter: brightness(1.06); }
+.qm-btn--danger {
+  border-color: var(--theme-danger);
+  background: var(--theme-danger);
+  color: #fff;
+}
+.qm-ahead {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+.qm-btn--lead .qm-ahead {
+  background: color-mix(in srgb, var(--theme-accent-foreground) 16%, transparent);
+  color: var(--theme-accent-foreground);
+}
+.qm-delicon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+}
+.qm-delicon:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--theme-danger) 22%, transparent);
+  background: color-mix(in srgb, var(--theme-danger) 10%, transparent);
+  color: var(--theme-danger);
+}
+
+.qm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 11.5px;
+}
+.qm-status--clickable:hover { background: var(--theme-surface-secondary); }
+.qm-status--ok { color: var(--theme-success); }
+.qm-status--fail { color: var(--theme-danger); }
+.qm-status--warn { color: var(--theme-danger); }
+.qm-status time {
+  color: var(--theme-text-subtle);
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+}
+.qm-status time::before { content: "·"; margin-right: 4px; }
+
+.qm-steps {
+  margin: 2px 0 3px;
+  padding: 8px 10px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+  background: var(--theme-canvas);
+}
+.qm-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+.qm-step svg { color: var(--theme-success); }
+.qm-step--failed svg, .qm-step--skipped svg { color: var(--theme-text-subtle); }
+.qm-step code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qm-step span {
+  color: var(--theme-text-muted);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.qm-step--failed span { color: var(--theme-danger); }
+
+.qm-gfoot {
+  padding: 7px 12px 7px 14px;
+  border-top: 1px solid var(--theme-border);
+}
+.qm-rules:empty + .qm-gfoot { border-top: 0; }
+.qm-addrule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed var(--theme-border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 11.5px;
+}
+.qm-addrule:hover {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent-soft);
+  color: var(--theme-text);
+}
+.qm-editor { display: flex; flex-direction: column; gap: 6px; }
+.qm-editor-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.qm-input {
+  height: 28px;
+  min-width: 0;
+  width: 168px;
+  padding: 0 9px;
+  border: 1px solid var(--theme-border-strong);
+  border-radius: 8px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+}
+.qm-input:focus-visible {
+  outline: 2px solid var(--theme-focus);
+  outline-offset: 0;
+}
+.qm-arrow { color: var(--theme-text-subtle); flex: none; }
+.qm-formerror { margin: 0; color: var(--theme-danger); font-size: 11px; }
+
+@media (max-width: 760px) {
+  .qm-ref { max-width: 34%; }
+  .qm-actions .qm-btn { width: 58px; padding: 0 7px; }
+  .qm-actions .qm-btn:nth-child(2) { width: 66px; }
+}
+
+/* ---------------------------------------------------------------------------
+   The workbench owns a generic `button` chrome rule (padding 7/11, inline flex).
+   These controls carry their own geometry, so they win at higher specificity.
+   --------------------------------------------------------------------------- */
+.git-workbench .qm-board button { line-height: 1; }
+.git-workbench .qm-board .qm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  background: var(--theme-surface);
+  color: var(--theme-text);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.git-workbench .qm-board .qm-btn:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+}
+.git-workbench .qm-board .qm-btn:disabled { opacity: .45; cursor: not-allowed; }
+.git-workbench .qm-board .qm-btn--lead,
+.git-workbench .qm-board .qm-btn--lead:hover:not(:disabled) {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent);
+  color: var(--theme-accent-foreground);
+}
+.git-workbench .qm-board .qm-btn--lead:hover:not(:disabled) { filter: brightness(1.06); }
+.git-workbench .qm-board .qm-btn--danger,
+.git-workbench .qm-board .qm-btn--danger:hover:not(:disabled) {
+  border-color: var(--theme-danger);
+  background: var(--theme-danger);
+  color: #fff;
+}
+.git-workbench .qm-board .qm-iconbtn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+  font-size: 14px;
+}
+.git-workbench .qm-board .qm-iconbtn:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+}
+.git-workbench .qm-board .qm-swap {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+}
+.git-workbench .qm-board .qm-swap:hover:not(:disabled) {
+  border-color: var(--theme-border);
+  background: var(--theme-surface);
+  color: var(--theme-accent);
+}
+.git-workbench .qm-board .qm-swap:disabled { opacity: .4; cursor: not-allowed; }
+.git-workbench .qm-board .qm-delicon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-subtle);
+}
+.git-workbench .qm-board .qm-delicon:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--theme-danger) 22%, transparent);
+  background: color-mix(in srgb, var(--theme-danger) 10%, transparent);
+  color: var(--theme-danger);
+}
+.git-workbench .qm-board .qm-iconbtn svg,
+.git-workbench .qm-board .qm-swap svg,
+.git-workbench .qm-board .qm-delicon svg,
+.git-workbench .qm-board .qm-status svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.git-workbench .qm-board .qm-addrule {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed var(--theme-border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 11.5px;
+}
+.git-workbench .qm-board .qm-addrule:hover:not(:disabled) {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent-soft);
+  color: var(--theme-text);
+}
+.git-workbench .qm-board .qm-ghostbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.git-workbench .qm-board .qm-ghostbtn:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+  color: var(--theme-text);
+}
+.git-workbench .qm-board .qm-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+.git-workbench .qm-board .qm-status:disabled { opacity: 1; cursor: default; }
+.git-workbench .qm-board .qm-status--clickable:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+}
+.git-workbench .qm-board .qm-menu button {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--theme-text);
+  font-size: 12px;
+  text-align: left;
+}
+.git-workbench .qm-board .qm-menu button:hover:not(:disabled) {
+  background: var(--theme-surface-secondary);
+}
+.git-workbench .qm-board .qm-menu button.qm-danger { color: var(--theme-danger); }
+.qm-gicon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--theme-text-subtle);
+}

@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   serverId: 'fixture',
   toolName: 'echo',
   callTool: vi.fn(async () => ({ ok: true, text: 'echoed' })),
+  warmup: vi.fn(async () => {}),
+  metadataWrites: vi.fn(),
   sessions: new Map<string, { projectId: string; sessionMetadata: Record<string, unknown> | null }>(),
 }));
 
@@ -12,6 +14,7 @@ vi.mock('../../../modules/agent-runtime/turn-reference-state.js', () => ({ effec
 vi.mock('../../../modules/agent-runtime/session-store.js', () => ({ agentRuntimeStore: {
   getSession: (id: string) => mocks.sessions.get(id) ?? { projectId: 'project-a', sessionMetadata: null },
   updateSessionMetadata: (id: string, patch: Record<string, unknown>) => {
+    mocks.metadataWrites(id, patch);
     const session = mocks.sessions.get(id) ?? { projectId: 'project-a', sessionMetadata: null };
     session.sessionMetadata = { ...(session.sessionMetadata ?? {}), ...patch };
     mocks.sessions.set(id, session);
@@ -26,17 +29,33 @@ vi.mock('../mcp-client-manager.js', async (importOriginal) => ({
     getCachedTools: () => [{ name: mocks.toolName, inputSchema: { type: 'object' } }],
     isReady: () => true,
     callTool: mocks.callTool,
+    warmup: mocks.warmup,
   },
 }));
 
 import { mcpClientManager } from '../mcp-client-manager.js';
-import { mcpSessionToolProvider } from '../mcp-session-tool-provider.js';
+import { mcpSessionToolProvider, warmupMcpForSession } from '../mcp-session-tool-provider.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.sessions.clear();
   mocks.sessions.set('session-a', { projectId: 'project-a', sessionMetadata: null });
   mocks.sessions.set('session-b', { projectId: 'project-a', sessionMetadata: null });
+});
+
+it('defers discovery finishing after a turn to the next context instead of queueing a stale worker write', async () => {
+  let release!: () => void;
+  mocks.warmup.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  const warming = warmupMcpForSession('session-a');
+  // The host may finish and advance the execution epoch while discovery waits.
+  expect(mocks.metadataWrites).not.toHaveBeenCalled();
+  release();
+  await warming;
+  expect(mocks.metadataWrites).not.toHaveBeenCalled();
+  // A subsequent context can consume and persist the cached result normally.
+  expect(mcpSessionToolProvider.getTools('session-a')).toHaveLength(1);
+  expect(mocks.metadataWrites).toHaveBeenCalledExactlyOnceWith('session-a',
+    expect.objectContaining({ mcpToolDefinitions: expect.objectContaining({ version: 1 }) }));
 });
 
 it.each([

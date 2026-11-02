@@ -811,7 +811,7 @@ export default function GitHistoryTree({
             </div>
           )}
           <footer className="flex min-h-12 shrink-0 flex-wrap items-center gap-3 border-t border-[var(--ui-line)] px-5 py-2 text-[11px] text-[var(--ui-subtle)]">
-            <span id="history-search-scope">
+            <span id="history-search-scope" className={hasFilter ? undefined : "sr-only"}>
               {hasFilter
                 ? "正在筛选已加载的提交"
                 : "点击查看详情 · 右键更多操作"}

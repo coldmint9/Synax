@@ -4,10 +4,12 @@ import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import {
   clearSessionFileRead,
+  compareSessionFileRead,
   recordSessionFileDiscovery,
   recordSessionFileMutation,
 } from "../read-tracker.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
+import { invalidPatchDiagnostic, PatchApplyError } from "./patch-diagnostics.js";
 import {
   deriveNewContentsFromChunks,
   parseApplyPatchEnvelope,
@@ -32,16 +34,19 @@ interface PlannedChange {
 function planChanges(sessionId: string, hunks: PatchHunk[]): PlannedChange[] {
   const claimed = new Set<string>();
   const changes: PlannedChange[] = [];
-  const claim = (filePath: string): void => {
-    const key = path.normalize(filePath.replace(/\\/g, "/"));
+  const claim = (filePath: string, resolvedPath: string): void => {
+    const key = path.normalize(resolvedPath);
     if (claimed.has(key))
-      throw new Error(`Patch touches ${filePath} more than once.`);
+      throw new PatchApplyError({
+        ...invalidPatchDiagnostic(`Patch touches ${filePath} more than once.`, "Use one Update File header per path with ordered, non-overlapping hunks; do not retry unchanged."),
+        path: filePath,
+      });
     claimed.add(key);
   };
 
   for (const hunk of hunks) {
-    claim(hunk.path);
     const source = resolveWorkspacePath(hunk.path, sessionId);
+    claim(hunk.path, source);
 
     if (hunk.type === "add") {
       if (fs.existsSync(source))
@@ -78,22 +83,32 @@ function planChanges(sessionId: string, hunks: PatchHunk[]): PlannedChange[] {
       throw new Error(`Update File has no hunks: ${hunk.path}`);
     let target = source;
     if (movePath) {
-      claim(movePath);
       target = resolveWorkspacePath(movePath, sessionId);
+      claim(movePath, target);
       if (fs.existsSync(target))
         throw new Error(`Move target already exists: ${movePath}`);
     }
-    const current = fs.readFileSync(source, "utf8");
+    const current = fs.readFileSync(source);
+    let contents = current.toString("utf8");
+    try {
+      if (hunk.chunks.length > 0)
+        contents = deriveNewContentsFromChunks(hunk.path, hunk.chunks, contents);
+    } catch (error) {
+      if (error instanceof PatchApplyError) {
+        throw new PatchApplyError({
+          ...error.diagnostic,
+          readBaseline: compareSessionFileRead(sessionId, hunk.path, current),
+        });
+      }
+      throw error;
+    }
     changes.push({
       action: "update",
       sourcePath: hunk.path,
       targetPath: movePath ?? hunk.path,
       source,
       target,
-      contents:
-        hunk.chunks.length > 0
-          ? deriveNewContentsFromChunks(hunk.path, hunk.chunks, current)
-          : current,
+      contents,
     });
   }
   return changes;
@@ -109,12 +124,12 @@ export const patchTool: RegisteredTool = {
   mutability: "write",
   resumeBehavior: "wait_permission",
   progressiveDetails:
-    "Accepts { patch: string }. Supports *** Add File, *** Update File (with @@ hunks and optional *** Move to) and *** Delete File. Every hunk is matched against current content before anything is written; a mismatch aborts the whole patch. Use concrete file paths in the envelope, relative to the session working directory or absolute paths permitted by the sandbox. Use exact current hunk text; read again if the file changed since your last read. Include a final *** End Patch marker, prefix added lines with +, and place *** Move to immediately after *** Update File when moving a file.",
+    "Accepts { patch: string }. Supports *** Add File, *** Update File (with @@ hunks and optional *** Move to) and *** Delete File. Every hunk is matched against current content before anything is written; a mismatch aborts the whole patch. Use concrete file paths in the envelope, relative to the session working directory or absolute paths permitted by the sandbox. All hunks use the pre-edit file, not earlier hunk results. Order hunks by original position with non-overlapping context; merge adjacent edits. Use one Update File header per path. Bare @@ starts a hunk; @@ exact source line anchors it and the search starts AFTER that line, so do not repeat it in the hunk; if that line repeats, the hunk body decides which occurrence applies. Unified-diff line-number headers are not supported. Prefix context/deleted/added lines with space/-/+ (including blank lines). Addition-only hunks append unless anchored; anchored additions insert immediately after the anchor. *** End of File requires the hunk to end at EOF. Use enough exact current context to uniquely locate the edit; do not copy truncated search previews. On failure nothing was applied: read the suggested range with file.read, rebuild from current text, and do not retry the same patch unchanged or fall back to whole-file overwrite. Include a final *** End Patch marker and place *** Move to immediately after *** Update File when moving a file.",
   inputSchema: z.object({
     patch: z
       .string()
       .min(1)
-      .describe("Full *** Begin Patch / *** End Patch envelope."),
+      .describe("Full *** Begin Patch / *** End Patch envelope. Ordered, non-overlapping hunks against the pre-edit file; use @@ or @@ exact source anchor, not unified-diff line numbers."),
   }),
   execute(input) {
     const args = input.args as { patch?: string };

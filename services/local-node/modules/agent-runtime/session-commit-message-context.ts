@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import {
   canonicalWorkspaceDirectory,
@@ -13,28 +14,52 @@ import {
 } from "./runtime-errors.js";
 
 const MAX_BUFFER = 8 * 1024 * 1024;
-const MAX_DIFF_CHARS = 8_000;
-const MAX_STATUS_CHARS = 6_000;
 const MAX_HISTORY_SUBJECT_CHARS = 160;
+/** One file never needs its whole patch for a changelog line. */
+const MAX_FILE_PATCH_CHARS = 1_200;
+/** Paths per `git diff` call, so one call never buffers a whole commit. */
+const PATCH_CHUNK_FILES = 48;
+const MAX_PATCH_BUFFER = 4 * 1024 * 1024;
+const MAX_UNTRACKED_BYTES = 64 * 1024;
+
+/** One changed path with the facts a changelog entry can be built from. */
+export interface CommitMessageFile {
+  path: string;
+  /** Porcelain status prefix: `M`, `A`, `D`, `R`, `??`, … */
+  status: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  /** Bounded diff for this path; empty for a binary or unreadable file. */
+  patch: string;
+}
 
 export interface CommitMessageContext {
   projectId: string;
   branch: string;
-  changedFiles: string;
   stagedSummary: string;
   unstagedSummary: string;
-  diffExcerpt: string;
   subjects: string[];
+  /** Every changed path, so no changelog line can be silently dropped. */
+  files: CommitMessageFile[];
+  totals: { files: number; additions: number; deletions: number };
+}
+
+interface StatusEntry {
+  status: string;
+  path: string;
+  previousPath?: string;
 }
 
 async function readGit(
   cwd: string,
   args: string[],
   allowFailure = false,
+  maxBufferBytes = MAX_BUFFER,
 ): Promise<string> {
   const result = await runCommand("git", args, {
     cwd,
-    maxBufferBytes: MAX_BUFFER,
+    maxBufferBytes,
     timeoutMs: 30_000,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
   });
@@ -49,82 +74,167 @@ async function readGit(
   return result.stdout;
 }
 
-async function readUntrackedDiff(cwd: string, files: string[]): Promise<string> {
-  const patches = await Promise.all(
-    files.map(async (file) => {
-      const result = await runCommand(
-        "git",
-        ["diff", "--no-index", "--no-ext-diff", "--", "/dev/null", file],
-        {
-          cwd,
-          maxBufferBytes: MAX_BUFFER,
-          timeoutMs: 30_000,
-          env: {
-            ...process.env,
-            GIT_TERMINAL_PROMPT: "0",
-            GIT_OPTIONAL_LOCKS: "0",
-          },
-        },
-      );
-      // git diff --no-index returns 1 when the files differ, which is
-      // expected for an untracked file.
-      if (
-        result.error ||
-        result.timedOut ||
-        (result.status !== 0 && result.status !== 1)
-      ) {
-        throw new AgentRuntimeError(
-          `git diff failed: ${(result.stderr || result.error?.message || "Command timed out.").trim().slice(0, 400)}`,
-          "GIT_COMMAND_FAILED",
-          502,
-        );
-      }
-      return result.stdout;
-    }),
-  );
-  return patches.join("\n");
+/** NUL-delimited output keeps spaces, quotes and unicode paths verbatim. */
+function nulFields(output: string): string[] {
+  return output.split("\0").filter(Boolean);
 }
 
-function statusPath(line: string): string {
-  if (line.startsWith("?? ")) return line.slice(3);
-  const value = line.slice(3);
-  const renamed = value.split(" -> ");
-  return renamed[renamed.length - 1] ?? value;
+function parseStatus(output: string): StatusEntry[] {
+  const fields = nulFields(output);
+  const entries: StatusEntry[] = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!field) continue;
+    const status = field.slice(0, 2);
+    const filePath = field.slice(3);
+    if (!filePath) continue;
+    if (status.startsWith("R") || status.startsWith("C")) {
+      // `XY new\0old\0`: the visible path is the destination.
+      entries.push({ status, path: filePath, previousPath: fields[index + 1] });
+      index += 1;
+      continue;
+    }
+    entries.push({ status, path: filePath });
+  }
+  return entries;
+}
+
+interface DiffStat {
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+function parseNumstat(output: string): Map<string, DiffStat> {
+  const fields = nulFields(output);
+  const stats = new Map<string, DiffStat>();
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index];
+    if (!field) continue;
+    const match = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(field);
+    if (!match) continue;
+    let filePath = match[3];
+    if (!filePath) {
+      // `A\tD\t\0old\0new\0` — a rename reports both sides.
+      index += 1;
+      filePath = fields[index + 1] ?? "";
+      index += 1;
+    }
+    if (!filePath) continue;
+    stats.set(filePath, {
+      additions: match[1] === "-" ? 0 : Number(match[1]),
+      deletions: match[2] === "-" ? 0 : Number(match[2]),
+      binary: match[1] === "-" || match[2] === "-",
+    });
+  }
+  return stats;
+}
+
+/** Find which of the requested paths a `diff --git` block belongs to. */
+function blockPath(block: string, known: ReadonlySet<string>): string | null {
+  for (const candidate of known) {
+    if (
+      block.startsWith(`diff --git a/${candidate} b/${candidate}`) ||
+      block.includes(`\nrename to ${candidate}\n`) ||
+      block.includes(`\ncopy to ${candidate}\n`)
+    )
+      return candidate;
+  }
+  const added = /^\+\+\+ b\/(.+)$/m.exec(block)?.[1];
+  if (added && known.has(added)) return added;
+  const removed = /^--- a\/(.+)$/m.exec(block)?.[1];
+  if (removed && known.has(removed)) return removed;
+  return null;
+}
+
+function splitDiffBlocks(output: string): string[] {
+  if (!output.trim()) return [];
+  return output
+    .split(/(?=^diff --git )/m)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+async function readTrackedPatches(
+  cwd: string,
+  paths: string[],
+): Promise<Map<string, string>> {
+  const patches = new Map<string, string>();
+  for (let start = 0; start < paths.length; start += PATCH_CHUNK_FILES) {
+    const chunk = paths.slice(start, start + PATCH_CHUNK_FILES);
+    const known = new Set(chunk);
+    const output = await readGit(
+      cwd,
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "HEAD",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--unified=1",
+        "--",
+        ...chunk,
+      ],
+      // An unborn branch has no HEAD to diff against; the inventory remains.
+      true,
+      MAX_PATCH_BUFFER,
+    );
+    for (const block of splitDiffBlocks(output)) {
+      const filePath = blockPath(block, known);
+      if (!filePath) continue;
+      if (/^Binary files .* differ$/m.test(block) || /^GIT binary patch$/m.test(block))
+        continue;
+      const patch = block.slice(0, MAX_FILE_PATCH_CHARS);
+      if (!patch || patches.has(filePath)) continue;
+      patches.set(filePath, patch);
+    }
+  }
+  return patches;
+}
+
+function readUntrackedPatches(
+  cwd: string,
+  paths: string[],
+): Map<string, string> {
+  const patches = new Map<string, string>();
+  for (const file of paths) {
+    const absolute = path.join(cwd, file);
+    let bytes: Buffer;
+    try {
+      const stat = fs.statSync(absolute);
+      if (!stat.isFile()) continue;
+      const fd = fs.openSync(absolute, "r");
+      try {
+        const length = Math.min(stat.size, MAX_UNTRACKED_BYTES);
+        bytes = Buffer.alloc(length);
+        fs.readSync(fd, bytes, 0, length, 0);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      continue;
+    }
+    if (bytes.includes(0)) continue;
+    const header = [
+      `diff --git a/${file} b/${file}`,
+      "new file mode 100644",
+      "--- /dev/null",
+      `+++ b/${file}`,
+    ].join("\n");
+    const body = `${header}\n${bytes
+      .toString("utf8")
+      .split(/\r?\n/)
+      .map((line) => `+${line}`)
+      .join("\n")}`;
+    patches.set(file, body.slice(0, MAX_FILE_PATCH_CHARS));
+  }
+  return patches;
 }
 
 function isCommitEligiblePath(file: string): boolean {
   return file.split(/[\\/]/).at(-1) !== ".DS_Store";
-}
-
-async function readDiffExcerpt(
-  cwd: string,
-  files: string[],
-  includeUntracked: boolean,
-  untrackedFiles: ReadonlySet<string>,
-): Promise<string> {
-  const eligibleFiles = files.filter(isCommitEligiblePath);
-  if (!eligibleFiles.length) return "(none)";
-  const trackedFiles = eligibleFiles.filter((file) => !untrackedFiles.has(file));
-  const untracked = eligibleFiles.filter((file) => untrackedFiles.has(file));
-  const [trackedPatch, untrackedPatch] = await Promise.all([
-    trackedFiles.length
-      ? readGit(cwd, ["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--", ...trackedFiles], true)
-      : Promise.resolve(""),
-    includeUntracked && untracked.length
-      ? readUntrackedDiff(cwd, untracked)
-      : Promise.resolve(""),
-  ]);
-  const fileList = eligibleFiles.map((file) => `File: ${file}`).join("\n");
-  const content = [
-    "Pending files:",
-    fileList,
-    "",
-    trackedPatch.trim(),
-    untrackedPatch.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  return content.slice(0, MAX_DIFF_CHARS);
 }
 
 /** The collector never mutates the index or worktree. */
@@ -178,35 +288,73 @@ export async function collectCommitMessageContext(
     if (!target.trim())
       throw new AgentValidationError("The selected target branch does not exist locally.");
   }
-  const status = (
-    await readGit(root.path, ["status", "--porcelain=v1", "-uall"])
-  ).trim();
-  if (!status)
+  const statusEntries = parseStatus(
+    await readGit(root.path, ["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "-uall"]),
+  ).filter(
+    (entry) =>
+      isCommitEligiblePath(entry.path) &&
+      (includeUntracked || !entry.status.startsWith("??")),
+  );
+  if (!statusEntries.length)
     throw new AgentRuntimeError(
       "There is nothing to commit.",
       "GIT_NOTHING_TO_COMMIT",
       409,
     );
-  const changedFileLines = status
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        line &&
-        isCommitEligiblePath(statusPath(line)) &&
-        (includeUntracked || !line.startsWith("?? ")),
-    );
-  const changedPaths = changedFileLines.map(statusPath);
-  const untrackedFiles = new Set(
-    changedFileLines
-      .filter((line) => line.startsWith("?? "))
-      .map(statusPath),
+
+  const untracked = new Set(
+    statusEntries
+      .filter((entry) => entry.status.startsWith("??"))
+      .map((entry) => entry.path),
   );
-  const [stagedSummary, unstagedSummary, diffExcerpt] =
-    await Promise.all([
-      readGit(root.path, ["diff", "--cached", "--stat"]),
-      readGit(root.path, ["diff", "--stat"]),
-      readDiffExcerpt(root.path, changedPaths, includeUntracked, untrackedFiles),
-    ]);
+  const trackedPaths = statusEntries
+    .filter((entry) => !untracked.has(entry.path))
+    .map((entry) => entry.path);
+  const [stagedSummary, unstagedSummary, numstat] = await Promise.all([
+    readGit(root.path, ["diff", "--cached", "--stat"]),
+    readGit(root.path, ["diff", "--stat"]),
+    trackedPaths.length
+      ? readGit(
+          root.path,
+          [
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            "HEAD",
+            "--numstat",
+            "-z",
+            "--",
+            ...trackedPaths,
+          ],
+          true,
+        ).then(parseNumstat)
+      : Promise.resolve(new Map<string, DiffStat>()),
+  ]);
+
+  // Every path carries a bounded diff: the caller splits paths into batches, so
+  // no single prompt has to hold the whole commit.
+  const [trackedPatches, untrackedPatches] = await Promise.all([
+    readTrackedPatches(root.path, trackedPaths),
+    Promise.resolve(readUntrackedPatches(root.path, [...untracked])),
+  ]);
+
+  const files: CommitMessageFile[] = statusEntries.map((entry) => {
+    const stat = numstat.get(entry.path);
+    const patch = trackedPatches.get(entry.path) ?? untrackedPatches.get(entry.path) ?? "";
+    const untrackedAdditions =
+      entry.status.startsWith("??") && patch
+        ? patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length
+        : 0;
+    return {
+      path: entry.path,
+      status: entry.status.trim() || "M",
+      additions: stat?.additions ?? untrackedAdditions,
+      deletions: stat?.deletions ?? 0,
+      binary: stat?.binary === true,
+      patch: stat?.binary ? "" : patch,
+    };
+  });
+
   let history = "";
   try {
     history = await readGit(
@@ -226,14 +374,18 @@ export async function collectCommitMessageContext(
   return {
     projectId: session.projectId,
     branch,
-    changedFiles: changedFileLines.join("\n").slice(0, MAX_STATUS_CHARS),
     stagedSummary: stagedSummary.slice(0, 2_000),
     unstagedSummary: unstagedSummary.slice(0, 2_000),
-    diffExcerpt,
     subjects: history
       .split(/\r?\n/)
       .map((line) => line.trim().slice(0, MAX_HISTORY_SUBJECT_CHARS))
       .filter(Boolean)
       .slice(0, 20),
+    files,
+    totals: {
+      files: files.length,
+      additions: files.reduce((sum, file) => sum + file.additions, 0),
+      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+    },
   };
 }

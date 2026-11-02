@@ -35,62 +35,9 @@ describe('isConversationalMessage', () => {
 });
 
 describe('buildSynaxIntentPromptSection', () => {
-  it('keeps investigation read-only without mandating delegation', () => {
-    const section = buildSynaxIntentPromptSection({
-      message: 'Explore where sessions are stored',
-      mode: 'chat',
-      stepIndex: 1,
-    });
-    expect(section).toContain('Investigate and explain');
-    expect(section).not.toContain('first and only tool');
-    expect(section).not.toContain('subagent.delegate');
-    expect(section).not.toContain('fixed sequence of tools');
-    expect(section).toContain('advisory');
-  });
-
-  it('injects coding discipline hints for coding intent', () => {
-    const section = buildSynaxIntentPromptSection({
-      message: 'Refactor the session store',
-      mode: 'chat',
-      stepIndex: 2,
-    });
-    expect(section).toContain('Implement the requested change within current authorization');
-  });
-
-  it('does not inject coding hints for goal mode without explicit coding verbs', () => {
-    const section = buildSynaxIntentPromptSection({
-      message: 'Improve session title handling',
-      mode: 'goal',
-      stepIndex: 1,
-    });
-    expect(section).toBeNull();
-  });
-
-  it('returns null for conversational goal-mode greetings', () => {
-    expect(buildSynaxIntentPromptSection({
-      message: '你好',
-      mode: 'goal',
-      stepIndex: 1,
-    })).toBeNull();
-  });
-
-  it('injects coding hints for explicit implementation in goal mode', () => {
-    const section = buildSynaxIntentPromptSection({
-      message: 'Implement login endpoint',
-      mode: 'goal',
-      stepIndex: 1,
-    });
-    expect(section).toContain('Implement the requested change within current authorization');
-  });
-
-  it('skips coding hints for pure exploration in goal mode', () => {
-    const section = buildSynaxIntentPromptSection({
-      message: 'Explore how auth works before we change it',
-      mode: 'goal',
-      stepIndex: 1,
-    });
-    expect(section).toContain('Investigate and explain');
-    expect(section).not.toContain('Implement the requested change');
+  it('does not turn keyword matches into system instructions', () => {
+    for (const [message, mode] of [['Explore where sessions are stored', 'chat'], ['Refactor the session store', 'chat'], ['Implement login endpoint', 'goal'], ['Implement a login form', 'plan']] as const)
+      expect(buildSynaxIntentPromptSection({ message, mode, stepIndex: 1 })).toBeNull();
   });
 });
 
@@ -99,9 +46,7 @@ describe('intent is not execution authorization', () => {
   it.each(['plan 模式真的有效吗？', 'How do I fix this bug?', '请调查会话列表的过滤机制'])('keeps %s in investigation', message => {
     expect(classifySynaxIntent(message)).toBe('explore');
   });
-  it('retains read-only planning even when implementation verbs are present', () => {
-    const prompt = buildSynaxIntentPromptSection({ message: 'Implement a login form', mode: 'plan' });
-    expect(prompt).toContain('without implementing');
-    expect(prompt).not.toContain('Implement the requested change');
+  it('retains classification as advisory data only', () => {
+    expect(buildSynaxIntentPromptSection({ message: 'Implement a login form', mode: 'plan' })).toBeNull();
   });
 });

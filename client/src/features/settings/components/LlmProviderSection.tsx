@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertDialog, DialogContainer, DialogPanel, DialogCloseButton, DialogHeader, DialogIcon, DialogTitle, DialogBody, DialogFooter } from "@/shared/ui/ui/Dialog";
 import { Button, CloseButton } from "@/shared/ui/ui/Button";
-import { KeyRound, Plus } from 'lucide-react'
+import { Download, KeyRound, Plus } from 'lucide-react'
 import { SettingsCard } from './SettingsCard'
 import { SaveIndicator } from './SaveIndicator'
 import { LlmProviderCard } from './LlmProviderCard'
 import { LlmProviderModal } from './LlmProviderModal'
+import { CcSwitchImportDialog } from './CcSwitchImportDialog'
 import { useLocale } from '../../../shared/hooks/useLocale'
 import {
   type ApiProviderDraft,
@@ -117,6 +118,7 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
   const [editingDraft, setEditingDraft] = useState<ApiProviderDraft | null>(null)
   const [pendingRemoveDraft, setPendingRemoveDraft] = useState<ApiProviderDraft | null>(null)
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -274,7 +276,11 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
       icon={KeyRound}
       trailing={
         <div className="flex items-center gap-2">
-          <SaveIndicator saving={Boolean(savingId)} saved={saved} error={saveError} />
+          <SaveIndicator saving={Boolean(savingId)} saved={saved} error={editingDraft ? null : saveError} />
+          <Button size="sm" variant="ghost" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm" onClick={() => setImportOpen(true)}>
+            <Download size={12} />
+            {t('llmImportOpen')}
+          </Button>
           <Button size="sm" variant="secondary" className="wh-pill-btn wh-pill-btn--soft wh-pill-btn--sm" onClick={handleAddCustom}>
             <Plus size={12} />
             {t('llmProviderAdd')}
@@ -312,6 +318,15 @@ export function LlmProviderSection({ config, providers, onUpdate, onReload }: Ll
           onDiscoverModels={handleModalDiscover}
         />
       )}
+
+      <CcSwitchImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={async () => {
+          await onReload()
+          markSaved()
+        }}
+      />
 
       <AlertDialog
         open={!!pendingRemoveDraft}

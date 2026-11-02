@@ -255,10 +255,19 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   );
 }
 
+interface MenuBinding {
+  onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  openFromAnchor: (element: HTMLElement) => void;
+  "aria-haspopup": "menu";
+}
+type OptionalMenuBinding = Partial<MenuBinding>;
+
 /** Bind only to explicit business rows. Text and selection keep their system menu. */
-export function useContextMenu(definition: () => ContextMenuDefinition) {
-  const context = useContext(Context);
-  if (!context) throw new Error("ContextMenuProvider is missing");
+function bindMenu(
+  context: MenuContext,
+  definition: () => ContextMenuDefinition,
+): MenuBinding {
   return {
     onContextMenu: (event: ReactMouseEvent<HTMLElement>) => {
       if (preservesNativeMenu(event.target)) return;
@@ -294,4 +303,19 @@ export function useContextMenu(definition: () => ContextMenuDefinition) {
     },
     "aria-haspopup": "menu" as const,
   };
+}
+
+export function useContextMenu(definition: () => ContextMenuDefinition) {
+  const context = useContext(Context);
+  if (!context) throw new Error("ContextMenuProvider is missing");
+  return bindMenu(context, definition);
+}
+
+/** For components that can also render outside the app shell (embedded panels,
+ * tests): without a provider the row simply keeps the platform menu. */
+export function useOptionalContextMenu(
+  definition: () => ContextMenuDefinition,
+): OptionalMenuBinding {
+  const context = useContext(Context);
+  return context ? bindMenu(context, definition) : {};
 }

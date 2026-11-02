@@ -89,7 +89,7 @@ export async function compactSessionContextWithLlm(
   const session = store.getSession(sessionId);
   const model = resolveSessionBackend(sessionId).model ?? undefined;
   const selection = await resolveGatewaySelection({ projectId: session.projectId, purpose: "context-compaction", model });
-  const prepared = buildNativeStepContext(sessionId, { model }, session.prompt, 1);
+  const prepared = await buildNativeStepContext(sessionId, { model }, session.prompt, 1);
   await store.flushSession(sessionId);
   const result = await prepareCheckpointContext({
     sessionId, projectId: session.projectId, model: selection.modelId, ...prepared, force: true, signal, ownerId,

@@ -54,6 +54,73 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === "win32")("shared POSIX command supervision", () => {
+  it("shares one ownership registration for syntax validation and command execution", async () => {
+    const count = leases.wait.mock.calls.length;
+    const result = await runCommand("/bin/bash", ["-o", "pipefail", "-c", "cat; printf done"], {
+      validateBash: true, stdin: "input\n", timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({ status: 0, stdout: "input\ndone", syntaxError: false });
+    expect(leases.wait.mock.calls.length - count).toBe(1);
+    expect(result.timings?.totalMs).toBeGreaterThanOrEqual(result.timings?.processMs ?? 0);
+  });
+
+  it("rejects late syntax errors before any earlier side effect and does not announce startup", async () => {
+    const cwd = directory();
+    const onStarted = vi.fn();
+    const result = await runCommand("/bin/bash", ["-o", "pipefail", "-c", "touch marker\nif then"], {
+      cwd, validateBash: true, onStarted, timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({ status: 2, syntaxError: true });
+    expect(fs.existsSync(path.join(cwd, "marker"))).toBe(false);
+    expect(onStarted).not.toHaveBeenCalled();
+  });
+
+  it("keeps valid-command exit code 2 distinct from a syntax failure", async () => {
+    const onStarted = vi.fn();
+    const result = await runCommand("/bin/bash", ["-o", "pipefail", "-c", "printf ok; exit 2"], {
+      validateBash: true, onStarted, timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({ status: 2, stdout: "ok", syntaxError: false });
+    expect(onStarted).toHaveBeenCalledOnce();
+  });
+
+  it("cancels during registration without validating or executing the command", async () => {
+    let release!: () => void;
+    leases.wait.mockReturnValueOnce(new Promise<void>(resolve => { release = resolve; }));
+    const controller = new AbortController();
+    const cwd = directory();
+    const onStarted = vi.fn();
+    const pending = runCommand("/bin/bash", ["-o", "pipefail", "-c", "touch marker"], {
+      cwd, validateBash: true, onStarted, signal: controller.signal,
+    });
+    controller.abort();
+    release();
+    expect((await pending).error?.code).toBe("ABORT_ERR");
+    expect(onStarted).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(cwd, "marker"))).toBe(false);
+  });
+
+  it.each([false, true])("isolates the actual command from the app runtime (background=%s)", async background => {
+    vi.stubEnv("SYNAX_AGENT_SESSION_CHILD", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("DATA_ROOT", "/app/data");
+    vi.stubEnv("SYNAX_RUNTIME_SIDECAR_SOCKET", "/app/runtime.sock");
+    vi.stubEnv("SYNAX_RUNTIME_SIDECAR_TOKEN", "host-secret");
+    vi.stubEnv("SYNAX_RUNTIME_STORE_PATH", "/app/data/jsonl");
+    try {
+      const child = owned(process.execPath, ["-e", `
+        const keys = ['NODE_ENV', 'DATA_ROOT', 'SYNAX_AGENT_SESSION_CHILD',
+          'SYNAX_RUNTIME_SIDECAR_SOCKET', 'SYNAX_RUNTIME_SIDECAR_TOKEN', 'SYNAX_RUNTIME_STORE_PATH'];
+        console.log(JSON.stringify(Object.fromEntries(keys.filter(k => process.env[k]).map(k => [k, process.env[k]]))));
+      `], { background, env: { ...process.env } });
+      const [output] = await once(child.stdout!, "data");
+      expect(JSON.parse(output.toString())).toEqual({});
+      expect(process.env.SYNAX_RUNTIME_SIDECAR_TOKEN).toBe("host-secret");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("returns output before detached cleanup but keeps shutdown waiting for it", async () => {
     const cwd = directory();
     const worker = path.join(cwd, "worker.cjs");

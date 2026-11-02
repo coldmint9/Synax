@@ -58,9 +58,9 @@
   overflow: hidden;
 }
 .subagent-conversation { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
-.subagent-conversation-header { display: flex; align-items: center; gap: 9px; padding: 12px; border-bottom: 1px solid var(--work-line); }
+.subagent-conversation-header { display: flex; flex-shrink: 0; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--work-line); }
 .subagent-conversation-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
-.subagent-conversation-close { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; }
+.subagent-conversation-close { display: grid; flex-shrink: 0; place-items: center; width: 28px; height: 28px; border-radius: 7px; }
 .subagent-conversation-close:hover { background: var(--ui-panel-soft); }
 .subagent-conversation-close:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .side-chat {
@@ -72,11 +72,12 @@
 }
 .side-chat-header {
   display: flex;
-  min-height: 3.5rem;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.4rem;
   border-bottom: 1px solid var(--work-line);
-  padding: 0.65rem 0.75rem;
+  /* A label strip, not a panel: the row is only as tall as the 24px collapse
+     target it must keep usable, so the transcript gets the rest. */
+  padding: 0.1rem 0.35rem 0.1rem 0.45rem;
   background: color-mix(in srgb, var(--ui-panel-soft) 72%, transparent);
 }
 .side-chat-header-icon,
@@ -90,6 +91,11 @@
   border-radius: 0.65rem;
   background: color-mix(in srgb, var(--accent) 10%, var(--ui-panel-soft));
   color: var(--accent);
+}
+.side-chat-header-icon {
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 0.45rem;
 }
 .side-chat-context-pill {
   max-width: 8rem;
@@ -108,13 +114,24 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.55rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.4rem;
   color: var(--ui-subtle);
 }
 .side-chat-close:hover { background: var(--ui-panel-soft); color: var(--ui-text); }
 .side-chat-close:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.side-chat-delete {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.4rem;
+  color: var(--ui-subtle);
+}
+.side-chat-delete:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.side-chat-delete:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
 .side-chat-body {
   display: flex;
   flex: 1;
@@ -125,6 +142,14 @@
 }
 .side-chat-body > .session-workspace-scroll {
   scrollbar-gutter: stable;
+  scroll-padding-bottom: var(--side-chat-composer-inset, 0px);
+}
+/* The footer composer floats over this transcript, so the scrollport still
+   ends at the panel edge. The inset it publishes keeps the newest entry above
+   the input instead of behind it, matching the command rail's contract on the
+   main conversation. */
+.side-chat-body .session-workspace-scroll-content {
+  padding-bottom: var(--side-chat-composer-inset, 0px);
 }
 .side-chat-empty {
   display: flex;
@@ -157,14 +182,57 @@
   background: color-mix(in srgb, var(--background) 94%, var(--ui-panel-soft));
 }
 .side-chat-composer .agent-session-composer--footer {
-  position: static;
-  inset: auto;
-  pointer-events: auto;
   padding: 0.55rem 0.65rem 0.65rem;
 }
 .side-chat-composer .agent-session-composer-shell {
   border-radius: 0.75rem;
 }
+/* A collapsed side chat keeps a floating tab on the conversation edge. It rests
+   as an icon in the empty top gutter: the turn rail owns the vertical middle of
+   this edge, so centring the tab there hid a tick and swallowed its hover. The
+   label still slides open on hover or keyboard focus. */
+.side-chat-pill {
+  position: absolute;
+  top: 0.5rem;
+  right: 0;
+  z-index: 12;
+  display: inline-flex;
+  height: 2.15rem;
+  align-items: center;
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--ui-line));
+  border-right: 0;
+  border-radius: 999px 0 0 999px;
+  padding: 0 0.5rem;
+  background: color-mix(in srgb, var(--ui-panel-soft) 90%, var(--accent) 6%);
+  color: color-mix(in srgb, var(--accent) 80%, var(--ui-text));
+  box-shadow: -3px 0 12px -6px rgb(20 28 40 / 0.3);
+  transition: gap 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 180ms cubic-bezier(0.22, 1, 0.36, 1), background 160ms ease;
+}
+.side-chat-pill svg { flex: 0 0 auto; }
+.side-chat-pill-label {
+  max-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: max-width 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 140ms ease;
+}
+.side-chat-pill:hover {
+  gap: 0.35rem;
+  padding-right: 0.7rem;
+  background: color-mix(in srgb, var(--ui-panel-soft) 88%, var(--accent) 12%);
+}
+.side-chat-pill:hover .side-chat-pill-label,
+.side-chat-pill:focus-visible .side-chat-pill-label {
+  max-width: 6rem;
+  opacity: 1;
+}
+.side-chat-pill:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; }
 /* Keep the scrollport full-height. These insets belong to its content so
    messages can pass behind the island without hiding the first/last entry. */
 :root .work-page .session-chat {
@@ -354,6 +422,15 @@
 }
 .work-widget-toggle:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 .work-widget-toggle:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.work-widget-entry {
+  width: auto;
+  gap: 6px;
+  padding-inline: 8px;
+  font-size: 12px;
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 12%, transparent);
+}
+.work-widget-entry:hover { background: color-mix(in srgb, hsl(var(--primary)) 20%, transparent); color: hsl(var(--primary)); }
 :is(.work-page, .work-details-dialog) .workspace-dashboard {
   gap: 8px;
   padding: 6px 10px;
@@ -596,6 +673,54 @@
   flex: 1 1 auto;
   min-height: 0;
   /* Override the measured inline row cap only inside height-managed cards. */
+  max-height: none !important;
+}
+/* The standalone Git changes panel has no repository header, so it is not a
+   `.ws-project-card`. Once the user sets its height, that height belongs to the
+   list: it fills the card and scrolls inside it instead of stopping at the
+   measured eight-row budget. */
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel[data-sized="true"]
+  > .dashboard-panel-content
+  > .ws-card
+  > .ws-card-body:has(.ws-changes-viewport) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel[data-sized="true"]
+  .ws-changes-viewport {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel[data-sized="true"]
+  .ws-card-body
+  :is(.ws-project-section, .ws-project-section-body):has(.ws-changes-viewport) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel[data-sized="true"]
+  :is(.ws-project-section-head, .ws-project-section-summary) {
+  flex: 0 0 auto;
+}
+:is(.work-page, .work-details-dialog)
+  .workspace-dashboard--custom
+  .dashboard-panel[data-sized="true"]
+  .ws-changes-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* The row budget only shapes content-sized cards. */
   max-height: none !important;
 }
 :is(.work-page, .work-details-dialog) .ws-changes-scroll:focus-visible {
@@ -1056,32 +1181,49 @@
 .workbench-shell .workspace-viewer-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
   min-width: 0;
-  padding: 5px 6px;
-  border-bottom: 1px solid var(--work-line, hsl(var(--border-hsl) / 0.4));
-  background: hsl(var(--card) / 0.18);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--work-line, hsl(var(--border-hsl) / 0.32));
+  background: hsl(var(--card) / 0.16);
 }
+/* Leaving the viewer is navigation, not a call to action: a quiet ghost
+   control that only gains a surface while hovered or focused. */
 .workbench-shell .workspace-back-conversation {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  justify-content: center;
-  min-height: 30px;
-  width: 28px;
-  padding: 0;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.1);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+.workbench-shell .workspace-back-conversation > svg {
+  flex: 0 0 auto;
 }
 .workbench-shell .workspace-back-conversation:hover {
-  background: hsl(var(--primary) / 0.17);
+  border-color: hsl(var(--border-hsl) / 0.5);
+  background: hsl(var(--secondary) / 0.55);
+  color: hsl(var(--foreground-hsl));
 }
-.workspace-back-conversation > span {
-  display: none;
+.workbench-shell .workspace-back-conversation:active {
+  background: hsl(var(--secondary) / 0.8);
+}
+.workbench-shell .workspace-back-conversation:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .workbench-shell .work-page .session-workspace-panel--content,
 .workbench-shell .session-workspace-panel--content[data-fullscreen="true"] {
@@ -1093,7 +1235,7 @@
   box-shadow: none;
 }
 .workbench-shell .workspace-tab-chrome {
-  min-height: 30px;
+  min-height: 34px;
 }
 .workbench-shell .file-viewer-toolbar {
   flex-wrap: wrap;
@@ -1101,6 +1243,15 @@
 }
 
 /* A narrow viewer gives tabs their own row instead of hiding menu actions. */
+@container (max-width: 700px) {
+  .workspace-back-conversation > span {
+    display: none;
+  }
+  .workspace-back-conversation {
+    padding: 0 7px;
+  }
+}
+
 @container (max-width: 520px) {
   .workspace-viewer-header {
     flex-wrap: wrap;
@@ -1232,6 +1383,8 @@
   font-weight: 600;
   line-height: 20px;
 }
+.ws-branch-group { display: flex; flex-direction: column; }
+.ws-branch-group + .ws-branch-group { margin-top: 6px; }
 .ws-branch-list {
   min-height: 0;
   max-height: min(300px, 49vh);

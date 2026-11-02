@@ -8,6 +8,9 @@ import type {
   AiApiModelsDiscoverResponse,
   AiApiValidateRequest,
   AiApiValidateResponse,
+  CcSwitchImportRequest,
+  CcSwitchImportResponse,
+  CcSwitchPreviewResponse,
   EffectiveConfigResponse,
   GlobalConfigResponse,
   McpServerConfig,
@@ -73,6 +76,19 @@ export const configApi = {
     return request<GlobalConfigResponse>(`${BASE}/global`, {
       method: "PUT",
       body: JSON.stringify(patch),
+    });
+  },
+
+  async previewCcSwitchProviders(): Promise<CcSwitchPreviewResponse> {
+    return request<CcSwitchPreviewResponse>(`${BASE}/providers/cc-switch`);
+  },
+
+  async importCcSwitchProviders(
+    input: CcSwitchImportRequest,
+  ): Promise<CcSwitchImportResponse> {
+    return request<CcSwitchImportResponse>(`${BASE}/providers/cc-switch/import`, {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   },
 

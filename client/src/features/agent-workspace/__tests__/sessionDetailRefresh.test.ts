@@ -1,7 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearScheduledSessionRefresh,
-  SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
   setSessionDetailsVisible,
   scheduleSessionRefresh,
   useAgentSessionStore as store,
@@ -650,7 +649,7 @@ describe("inactive session page cache", () => {
     expect(store.getState().detailLoading).toBe(false);
   });
 
-  it("renders a stale completed page from cache and refreshes it in the background", async () => {
+  it("keeps unchanged completed history hot across repeated visits regardless of its age", async () => {
     const completed = { ...session, status: "completed" } as AgentSession;
     store.setState({
       panelOpen: false,
@@ -659,7 +658,7 @@ describe("inactive session page cache", () => {
       sessionDetailCache: {
         [completed.id]: cachedEntry(
           Date.now(),
-          Date.now() - SESSION_INACTIVE_PAGE_CACHE_TTL_MS - 1,
+          Date.now() - 24 * 60 * 60 * 1000,
         ),
       },
     });
@@ -667,8 +666,65 @@ describe("inactive session page cache", () => {
     store.getState().openPanel(completed.id);
 
     expect(store.getState().detailLoading).toBe(false);
-    expect(store.getState().detailRefreshing).toBe(true);
-    await vi.waitFor(() => expect(api.listMessages).toHaveBeenCalled());
+    expect(store.getState().detailRefreshing).toBe(false);
+    store.getState().resetSessionDetailForDraft();
+    store.getState().openPanel(completed.id);
+    await Promise.resolve();
+    expect(api.listMessages).not.toHaveBeenCalled();
+    expect(api.listToolCalls).not.toHaveBeenCalled();
+    expect(api.getSessionStats).not.toHaveBeenCalled();
+  });
+
+  it("refreshes once after an off-screen run and then reuses its completed page", async () => {
+    const completed = { ...session, status: "completed", activeRunId: null } as AgentSession;
+    store.setState({ selectedSessionId: null, sessions: [completed], sessionDetailCache: { [completed.id]: cachedEntry(Date.now()) } });
+    store.getState().patchSession(completed.id, { status: "running", activeRunId: "next-run" });
+    store.getState().patchSession(completed.id, { status: "completed", activeRunId: null });
+    expect(store.getState().sessionDetailCache[completed.id].invalidated).toBe(true);
+    store.getState().openPanel(completed.id);
+    await vi.waitFor(() => expect(store.getState().detailRefreshing).toBe(false));
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+    expect(store.getState().sessionDetailCache[completed.id].invalidated).toBe(false);
+    store.getState().resetSessionDetailForDraft();
+    store.getState().openPanel(completed.id);
+    await Promise.resolve();
+    expect(api.listMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not invalidate history when only its title or read metadata changes", () => {
+    const completed = { ...session, status: "completed", activeRunId: null } as AgentSession;
+    const cached = cachedEntry(Date.now());
+    store.setState({ selectedSessionId: null, sessions: [completed], sessionDetailCache: { [completed.id]: cached } });
+    store.getState().patchSession(completed.id, { title: "Renamed", updatedAt: new Date().toISOString(), status: "completed", activeRunId: null });
+    store.getState().openPanel(completed.id);
+    expect(store.getState().messages).toBe(cached.messages);
+    expect(store.getState().detailRefreshing).toBe(false);
+    expect(api.listMessages).not.toHaveBeenCalled();
+  });
+
+  it("keeps a loaded running session hot when switching back to it", async () => {
+    const running = { ...session, status: "running", activeRunId: "run-1" } as AgentSession;
+    const cached = {
+      ...cachedEntry(Date.now()),
+      messages: [message("running-cached")],
+      cachedAt: Date.now(),
+    };
+    store.setState({
+      panelOpen: false,
+      selectedSessionId: null,
+      sessions: [running],
+      sessionDetailCache: { [running.id]: cached },
+    });
+    const refresh = vi.spyOn(store.getState(), "refreshDetail");
+    store.getState().openPanel(running.id);
+    await Promise.resolve();
+    expect(store.getState().detailRefreshing).toBe(false);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(store.getState().messages).toBe(cached.messages);
+    store.getState().resetSessionDetailForDraft();
+    store.getState().openPanel(running.id);
+    await Promise.resolve();
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("retains the selected page plus the eight most recently visited inactive pages", async () => {

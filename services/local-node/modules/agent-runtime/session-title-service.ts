@@ -1,11 +1,16 @@
-import { normalizeResultUsage } from "../../infrastructure/llm-runtime/usage.js";
 import { outsideExecutionContext } from "../../infrastructure/runtime/execution-context.js";
-import { startAuxUsage, finishAuxUsage } from "./usage-projection.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { sessionHooks } from "./session-hooks.js";
-import { generateGatewayTextResult } from "../../infrastructure/llm-runtime/gateway.js";
 import { resolveSessionTitleInput } from "./session-title-input.js";
 import { isSessionComposerSource } from "./session-metadata.js";
+import {
+  SESSION_INTENT_CATEGORY_KEY,
+  normalizeIntentCategory,
+} from "./session-classification.js";
+import {
+  generateSessionTitleWithModel,
+  type SessionTitleGeneration,
+} from "./session-title-llm.js";
 import type { AgentRunStreamChunk, AgentSession } from "./contracts.js";
 import { agentRuntimeStore } from "./session-store.js";
 import { nowIso } from "./runtime-ids.js";
@@ -53,8 +58,17 @@ export interface TitleGeneratorContext {
   prompt: string;
 }
 
+/**
+ * A generator answers with a title and, when it can tell, the labels the
+ * session list groups by. Plain strings stay accepted so a profile generator
+ * can keep producing titles without knowing about classification.
+ */
+export type TitleGeneratorAnswer = string | SessionTitleGeneration | null;
+
 export interface TitleGenerator {
-  generate(ctx: TitleGeneratorContext): string | Promise<string | null> | null;
+  generate(
+    ctx: TitleGeneratorContext,
+  ): TitleGeneratorAnswer | Promise<TitleGeneratorAnswer>;
 }
 
 const registry = new Map<string, TitleGenerator>();
@@ -200,12 +214,13 @@ async function applyGeneratedSessionTitle(
   trigger: "first_output" | "stream_done",
   runId?: string,
 ): Promise<void> {
-  const llmTitle = await resolveSessionTitleText(
+  const generation = await resolveSessionTitleGeneration(
     session.id,
     session.projectId,
     session.profileId,
     userInput,
   );
+  const llmTitle = generation?.title ?? null;
   if (llmTitle && !isValidGeneratedSessionTitle(llmTitle.trim())) {
     logger.warn(
       {
@@ -227,6 +242,10 @@ async function applyGeneratedSessionTitle(
     return;
   }
 
+  // The label is an extra: a fallback title keeps whatever the model did manage
+  // to classify, and a rejected label never blocks the title itself.
+  const intentCategory = normalizeIntentCategory(generation?.intentCategory);
+
   const current = agentRuntimeStore.tryGetSession(session.id);
   if (
     !current ||
@@ -235,13 +254,19 @@ async function applyGeneratedSessionTitle(
     resolveUserTitleInput(current.id, current.prompt) !== userInput
   )
     return;
+
+  const sessionMetadata: Record<string, unknown> = {
+    ...(current.sessionMetadata ?? {}),
+    titleSummarized: true,
+  };
+  if (intentCategory)
+    sessionMetadata[SESSION_INTENT_CATEGORY_KEY] = intentCategory;
+  else delete sessionMetadata[SESSION_INTENT_CATEGORY_KEY];
+
   agentRuntimeStore.updateSession(session.id, {
     title: resolved.title,
     updatedAt: nowIso(),
-    sessionMetadata: {
-      ...(current.sessionMetadata ?? {}),
-      titleSummarized: true,
-    },
+    sessionMetadata,
   });
   // Title generation runs outside the request/turn lifecycle. Wait for this
   // session's queued Rust patch so a normal app close cannot discard a title
@@ -252,6 +277,7 @@ async function applyGeneratedSessionTitle(
       sessionId: session.id,
       runId: runId ?? null,
       title: resolved.title,
+      intentCategory,
       trigger,
       fallback: resolved.usedFallback,
     },
@@ -416,12 +442,36 @@ async function runSessionTitleGeneration(
   }
 }
 
-export async function resolveSessionTitleText(
+/** Accept the legacy string answer and the classified object alike. */
+function normalizeGeneratorAnswer(
+  answer: TitleGeneratorAnswer,
+): SessionTitleGeneration | null {
+  if (!answer) return null;
+  if (typeof answer === "string") {
+    const title = answer.trim();
+    return title ? { title, intentCategory: null } : null;
+  }
+  const title = answer.title?.trim();
+  if (!title) return null;
+  return {
+    title,
+    intentCategory: normalizeIntentCategory(answer.intentCategory),
+  };
+}
+
+/**
+ * Title plus optional labels for one session.
+ *
+ * A registered generator answers first; when it declines (returns null) the
+ * built-in model call still runs, which is how sessions outside the profile's
+ * generator keep getting titles.
+ */
+export async function resolveSessionTitleGeneration(
   sessionId: string,
   projectId: string,
   profileId: string,
   userInput: string,
-): Promise<string | null> {
+): Promise<SessionTitleGeneration | null> {
   const ctx: TitleGeneratorContext = {
     sessionId,
     projectId,
@@ -431,31 +481,37 @@ export async function resolveSessionTitleText(
   const custom = registry.get(profileId);
 
   if (custom) {
-    const result = custom.generate(ctx);
-    if (typeof result === "string") {
-      return result.trim() || null;
-    }
-    if (
-      result &&
-      typeof (result as Promise<string | null>).then === "function"
-    ) {
-      try {
-        const title = await (result as Promise<string | null>);
-        return title?.trim() || null;
-      } catch (err) {
-        logger.warn(
-          { sessionId, err },
-          "[session-title] custom generator failed",
-        );
-        return null;
-      }
+    try {
+      const normalized = normalizeGeneratorAnswer(await custom.generate(ctx));
+      if (normalized) return normalized;
+    } catch (err) {
+      logger.warn(
+        { sessionId, err },
+        "[session-title] custom generator failed",
+      );
+      return null;
     }
   }
 
-  return resolveTitleTextWithLlm(ctx);
+  return generateSessionTitleWithModel({ sessionId, projectId, userInput });
 }
 
-/** @deprecated Prefer resolveSessionTitleText + a single updateSession for title persistence. */
+export async function resolveSessionTitleText(
+  sessionId: string,
+  projectId: string,
+  profileId: string,
+  userInput: string,
+): Promise<string | null> {
+  const generation = await resolveSessionTitleGeneration(
+    sessionId,
+    projectId,
+    profileId,
+    userInput,
+  );
+  return generation?.title ?? null;
+}
+
+/** @deprecated Prefer resolveSessionTitleGeneration + a single updateSession for title persistence. */
 export async function generateSessionTitle(
   sessionId: string,
   projectId: string,
@@ -474,44 +530,6 @@ export async function generateSessionTitle(
   if (!title || !current || current.sessionMetadata?.titleSource === "user" || current.title !== before.title) return false;
   agentRuntimeStore.updateSession(sessionId, { title, updatedAt: nowIso() });
   return true;
-}
-
-async function resolveTitleTextWithLlm(
-  ctx: TitleGeneratorContext,
-): Promise<string | null> {
-  const usageId = startAuxUsage(ctx.sessionId, "session-title");
-  try {
-    const truncated = ctx.prompt.slice(0, 600);
-    const result = await generateGatewayTextResult({
-      projectId: ctx.projectId,
-      purpose: "session-title",
-      messages: [
-        {
-          role: "user",
-          content: [
-            "Generate a short title (max 10 Chinese characters or 6 English words) from the user input below.",
-            "Return ONLY the title, no quotes or punctuation.",
-            "",
-            truncated,
-          ].join("\n"),
-        },
-      ],
-      maxTokens: 2048,
-      maxRetries: 0,
-      temperature: 0.3,
-    }, AbortSignal.timeout(22_000));
-
-    finishAuxUsage(usageId, normalizeResultUsage(result));
-    const title = (result.text ?? "").trim().slice(0, 50);
-    return title || null;
-  } catch (err) {
-    finishAuxUsage(usageId);
-    logger.warn(
-      { sessionId: ctx.sessionId, err },
-      "[session-title] LLM title generation failed",
-    );
-    return null;
-  }
 }
 
 /**

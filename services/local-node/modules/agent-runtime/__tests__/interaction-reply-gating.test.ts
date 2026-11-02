@@ -53,8 +53,7 @@ describe("interaction reply gating", () => {
     store.updateSession(sessionId, { status: "running", activeRunId: runId });
   });
 
-  function ask(): { interactionId: string; toolCallId: string } {
-    const toolCallId = makeRuntimeId("tc");
+  function registerAskCall(toolCallId: string): void {
     store.appendToolCall({
       id: toolCallId,
       sessionId,
@@ -75,7 +74,10 @@ describe("interaction reply gating", () => {
       endedAt: null,
       error: null,
     });
-    const interaction = interactionService.request({
+  }
+
+  function requestAsk(toolCallId: string) {
+    return interactionService.request({
       sessionId,
       runId,
       stepId,
@@ -86,7 +88,12 @@ describe("interaction reply gating", () => {
         questions: [{ id: "file", type: "text", label: "Which file?" }],
       },
     });
-    return { interactionId: interaction.id, toolCallId };
+  }
+
+  function ask(): { interactionId: string; toolCallId: string } {
+    const toolCallId = makeRuntimeId("tc");
+    registerAskCall(toolCallId);
+    return { interactionId: requestAsk(toolCallId).id, toolCallId };
   }
 
   /** Mirrors a later permission prompt taking the session status over. */
@@ -181,5 +188,33 @@ describe("interaction reply gating", () => {
       revision: 1, action: "submit", answers: {},
     })).toThrow(/Answer required/);
     expect(interactionService.pending(sessionId)?.id).toBe(interactionId);
+  });
+
+  /** A run parks once per checkpoint. Asking again from the same checkpoint
+   *  used to open a second form, so the reader saw the same question twice and
+   *  answered it twice. */
+  describe("one form per checkpoint", () => {
+    it("reuses the form the checkpoint already opened", () => {
+      const toolCallId = makeRuntimeId("tc");
+      registerAskCall(toolCallId);
+      const first = requestAsk(toolCallId);
+      const replayed = requestAsk(toolCallId);
+      expect(replayed.id).toBe(first.id);
+      expect(interactionService.list(sessionId)).toHaveLength(1);
+      expect(interactionService.pending(sessionId)?.id).toBe(first.id);
+    });
+
+    it("does not reopen a checkpoint the user already answered", () => {
+      const toolCallId = makeRuntimeId("tc");
+      registerAskCall(toolCallId);
+      const first = requestAsk(toolCallId);
+      interactionService.reply(sessionId, first.id, {
+        revision: 1,
+        action: "submit",
+        answers: { file: "README.md" },
+      });
+      expect(() => requestAsk(toolCallId)).toThrow(/already asked the user/);
+      expect(interactionService.list(sessionId)).toHaveLength(1);
+    });
   });
 });

@@ -1,5 +1,6 @@
 import { visualizationReplyParts } from "./visualizationTranscript";
 import { gitMergeReplyParts } from "./gitMergeTranscript";
+import { readTurnReferences } from "./turnReferences";
 import { readSessionUserPrompt } from "./sessionMetadata";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import type {
@@ -10,6 +11,7 @@ import type {
   AgentRuntimeMessage,
   AgentSession,
   ToolCallRecord,
+  TurnReference,
 } from "../../adapters/transport/agentRuntime";
 import {
   buildInterleavedTurns,
@@ -49,16 +51,7 @@ export type ConversationTimelineEntry =
       fromModel: string;
       toModel: string;
     }
-  | {
-      id: string;
-      kind: "user";
-      createdAt: string;
-      label: string;
-      contentParts?: RuntimeContentPart[];
-      content: string;
-      /** App-composed prompt scaffolding rather than something the user typed. */
-      injected?: boolean;
-    }
+  | (UserMessageTimelineEntry & { kind: "user" })
   | {
       id: string;
       kind: "agent";
@@ -84,6 +77,7 @@ export interface WorkLogStats {
   stepCount: number;
   toolCallCount: number;
   thinkingChars: number;
+  /** Time the round ran, without the spans that waited for the reader. */
   elapsedMs: number;
 }
 
@@ -124,11 +118,39 @@ export function extractSessionUserInput(
   return readSessionUserPrompt(session.sessionMetadata);
 }
 
+/**
+ * The goal prompt scaffolding always opens with the language directive, which
+ * makes it recognisable even for messages stored before `messageSource`
+ * existed. A hand-typed prompt would have to start with that exact heading.
+ */
+const INJECTED_PROMPT_MARKER = "## Language Output Directive";
+/**
+ * Super node wake-ups were stored without the marker before it was applied, so
+ * the header is also treated as scaffolding. Same trade-off as above.
+ */
+const SUPER_CONTINUATION_MARKER = "[Super internal continuation]";
+
+export function isSystemInjectedMessage(message: AgentRuntimeMessage): boolean {
+  if (message.role !== "user") return false;
+  if (message.metadata?.source === "system_injection") return true;
+  const content = message.content.trimStart();
+  return (
+    content.startsWith(INJECTED_PROMPT_MARKER) ||
+    content.startsWith(SUPER_CONTINUATION_MARKER)
+  );
+}
+
+/**
+ * Injected prompts are runtime scaffolding (goal continuation, healing, legacy
+ * composed prompts), not conversation. They stay out of the transcript
+ * entirely, so the reader only sees what they typed and what the agent said.
+ */
 function isTimelineUserMessage(message: AgentRuntimeMessage): boolean {
   return (
     message.role === "user" &&
     (message.content.trim() !== "" || Boolean(message.contentParts?.length)) &&
-    !isSessionPromptUserMessage(message)
+    !isSessionPromptUserMessage(message) &&
+    !isSystemInjectedMessage(message)
   );
 }
 
@@ -138,35 +160,21 @@ export type UserMessageTimelineEntry = {
   label: string;
   content: string;
   contentParts?: RuntimeContentPart[];
-  /** True when the app composed this prompt for the model rather than the user
-   *  typing it — the transcript shows those as a compact injection chip. */
-  injected?: boolean;
+  /** Skill/MCP/file selections that framed this turn, shown beside attachments. */
+  references?: TurnReference[];
 };
-
-/**
- * The goal prompt scaffolding always opens with the language directive, which
- * makes it recognisable even for messages stored before `messageSource`
- * existed. A hand-typed prompt would have to start with that exact heading.
- */
-const INJECTED_PROMPT_MARKER = "## Language Output Directive";
-
-export function isSystemInjectedMessage(message: AgentRuntimeMessage): boolean {
-  if (message.role !== "user") return false;
-  if (message.metadata?.source === "system_injection") return true;
-  return message.content.trimStart().startsWith(INJECTED_PROMPT_MARKER);
-}
 
 function userTimelineEntry(
   message: AgentRuntimeMessage,
 ): UserMessageTimelineEntry {
-  const injected = isSystemInjectedMessage(message);
+  const references = readTurnReferences(message.metadata?.references);
   return {
     id: message.id,
     createdAt: message.createdAt,
-    label: injected ? "已注入系统提示" : truncate(message.content),
+    label: truncate(message.content),
     content: message.content,
     contentParts: message.contentParts,
-    ...(injected ? { injected: true } : {}),
+    ...(references.length ? { references } : {}),
   };
 }
 
@@ -349,18 +357,17 @@ function workLogEntry(
   const first = stepById.get(turns[0].stepId);
   let startMs = Infinity;
   let endMs = -Infinity;
+  let waitMs = 0;
   for (const turn of turns) {
     const step = stepById.get(turn.stepId);
     if (!step) continue;
     const startedAt = toTimestamp(step.startedAt);
     if (!Number.isFinite(startedAt)) continue;
     const completedAt = toTimestamp(step.completedAt ?? step.startedAt);
+    const end = Number.isFinite(completedAt) ? completedAt : startedAt;
     startMs = Math.min(startMs, startedAt);
-    endMs = Math.max(
-      endMs,
-      startedAt,
-      Number.isFinite(completedAt) ? completedAt : startedAt,
-    );
+    endMs = Math.max(endMs, startedAt, end);
+    waitMs += recordedUserWaitMs(step, end - startedAt);
   }
 
   return {
@@ -381,9 +388,25 @@ function workLogEntry(
         0,
       ),
       // Missing step timings must never be interpreted as the Unix epoch.
-      elapsedMs: Number.isFinite(startMs) ? Math.max(0, endMs - startMs) : 0,
+      // A form or a permission reply holds the step open for as long as the
+      // reader takes, so the fold reports the time the agent ran without it.
+      elapsedMs: Number.isFinite(startMs)
+        ? Math.max(0, endMs - startMs - waitMs)
+        : 0,
     },
   };
+}
+
+/**
+ * Time a step spent waiting for the user, as recorded by the runtime.
+ *
+ * The counter cannot exceed the step's own span: a stale or foreign value must
+ * never eat into work another step did.
+ */
+function recordedUserWaitMs(step: AgentRunStep, spanMs: number): number {
+  const recorded = step.metadata?.analyticsUserWaitMs;
+  if (typeof recorded !== "number" || !Number.isFinite(recorded) || recorded <= 0) return 0;
+  return Math.min(recorded, Math.max(0, spanMs));
 }
 
 /** Keep the entire completed reply (text → preview → text) outside the work log. */

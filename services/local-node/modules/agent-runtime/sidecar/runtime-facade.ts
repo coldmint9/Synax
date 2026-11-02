@@ -2,6 +2,7 @@ import { appendHistoryPayload } from "./history-upload.js";
 import { boundedStreamChunk } from "../runtime-stream-projection.js";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  decodeRuntimeRecordState,
   decodeUiSnapshot,
   type RuntimeRecordState,
 } from "../../../../../packages/runtime-protocol/stream.js";
@@ -25,6 +26,12 @@ import type {
   RuntimeEvent,
   ToolCallRecord,
 } from "../contracts.js";
+import {
+  coveredDurationMs,
+  openSpan,
+  stepExecutionSpans,
+  type TimeSpan,
+} from "../step-execution-time.js";
 import type { AcceptedRuntimeInput } from "../run-admission.js";
 import { AgentRuntimeError } from "../runtime-errors.js";
 import { agentRuntimeStore } from "../session-store.js";
@@ -737,6 +744,30 @@ export class RuntimeFacade {
   async listMessageHistory(sessionId: string): Promise<unknown[]> {
     return this.listHistoryObjects(sessionId, 'list_messages');
   }
+  /**
+   * Newest messages only, read back-to-front and stopped at `limit`. Keyword
+   * indexing summarizes a bounded window, so it must not pay for the whole
+   * transcript the way an explicit history view does.
+   */
+  async listRecentMessages(sessionId: string, limit: number): Promise<AgentRuntimeMessage[]> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    const wanted = Math.max(1, Math.trunc(limit));
+    const items: AgentRuntimeMessage[] = [];
+    const seen = new Set<string>();
+    for await (const page of historyPages<AgentRuntimeMessage>(client, sessionId, 'list_messages', {
+      reverse: true,
+      limit: Math.min(64, wanted),
+    })) {
+      for (const message of page) {
+        if (seen.has(message.id)) continue;
+        seen.add(message.id);
+        items.push(message);
+        if (items.length >= wanted) return items;
+      }
+    }
+    return items;
+  }
   async messageHistoryBoundsAuthoritative(sessionId: string): Promise<{
     firstMessageId?: string;
     lastMessageId?: string;
@@ -765,6 +796,13 @@ export class RuntimeFacade {
     return this.readOnce('session-list', () => readSessionList(client));
   }
 
+  /** Sparse authoritative read model; no full-list TTL can hide a status change. */
+  async listSessionBadges(): Promise<Array<Pick<AgentSession,
+    'id' | 'projectId' | 'profileId' | 'status' | 'updatedAt' | 'parentSessionId' | 'blockedReason' | 'sessionMetadata'>>> {
+    const client = this.clientFactory();
+    if (!client) throw new Error('Runtime sidecar client is not configured.');
+    return this.readOnce('session-badges', () => readSessionList(client, 'badges'));
+  }
   async sessionSummaryAuthoritative(sessionId: string): Promise<AgentSession> {
     const client = this.clientFactory();
     if (!client) throw new Error("Runtime sidecar client is not configured.");
@@ -867,6 +905,7 @@ export class RuntimeFacade {
       for (const candidate of projections) {
         if (
           candidate.parentSessionId &&
+          candidate.sessionMetadata?.subagentKind !== "side-chat" &&
           tree.has(candidate.parentSessionId) &&
           !tree.has(candidate.id)
         ) {
@@ -877,12 +916,13 @@ export class RuntimeFacade {
     }
     const records = await Promise.all(
       [...tree].map(async (id) => {
-        const [runs, steps, tools, work, auxiliary] = await Promise.all([
+        const [runs, steps, tools, work, auxiliary, messages] = await Promise.all([
           this.listHistoryObjects(id, "list_runs"),
           this.listHistoryObjects(id, "list_steps"),
           this.listHistoryObjects(id, "list_tool_calls"),
           this.listHistoryObjects(id, "list_work"),
           this.listHistoryObjects(id, "list_aux_usage"),
+          this.listHistoryObjects(id, "list_messages"),
         ]);
         return {
           id,
@@ -891,6 +931,7 @@ export class RuntimeFacade {
           tools: tools as ToolCallRecord[],
           work,
           auxiliary,
+          messages: messages as AgentRuntimeMessage[],
         };
       }),
     );
@@ -901,7 +942,43 @@ export class RuntimeFacade {
       tools: [],
       work: [],
       auxiliary: [],
+      messages: [],
     };
+    // Steps written before the store recorded park accounting still contain the
+    // time they spent waiting for a human or a permission reply. Rebuild those
+    // waits from the records that caused them, and bound a forced termination
+    // (quit, restart) by the last activity it produced.
+    const [interactions, permissions] = await Promise.all([
+      this.listHistoryObjects(sessionId, "list_interactions"),
+      this.listHistoryObjects(sessionId, "list_permissions"),
+    ]);
+    const durationWaits = new Map<string, TimeSpan[]>();
+    const rememberWait = (stepId: unknown, startedAt: unknown, endedAt: unknown) => {
+      if (typeof stepId !== "string" || !stepId) return;
+      const span = openSpan(startedAt, endedAt);
+      if (!span) return;
+      const waits = durationWaits.get(stepId) ?? [];
+      waits.push(span);
+      durationWaits.set(stepId, waits);
+    };
+    for (const item of [...interactions, ...permissions] as Array<
+      Record<string, unknown>
+    >)
+      rememberWait(item.stepId, item.createdAt, item.resolvedAt);
+    const lastActivityByStep = new Map<string, number>();
+    const rememberActivity = (stepId: unknown, at: unknown) => {
+      if (typeof stepId !== "string" || typeof at !== "string") return;
+      const measured = Date.parse(at);
+      if (!Number.isFinite(measured)) return;
+      lastActivityByStep.set(
+        stepId,
+        Math.max(lastActivityByStep.get(stepId) ?? 0, measured),
+      );
+    };
+    for (const tool of root.tools)
+      rememberActivity(tool.stepId, tool.endedAt ?? tool.startedAt);
+    for (const message of root.messages)
+      rememberActivity(message.stepId, message.createdAt);
     const zeroTotals = () => ({
       input: 0,
       output: 0,
@@ -940,7 +1017,9 @@ export class RuntimeFacade {
     let contextMeasuredAt: string | null = null;
     let contextRequestId: string | null = null;
     let reportedWindow: number | null = null;
-    let runningDuration = 0;
+    // Step spans are collected and merged: concurrent or overlapping spans are
+    // execution of the same wall time, not extra work.
+    const executionSpans: TimeSpan[] = [];
     const cacheSamples = new CacheUsageAccumulator();
     let pendingCacheSamples = 0;
     let contextComposition: ContextComposition | null = null;
@@ -1058,11 +1137,14 @@ export class RuntimeFacade {
           );
         }
       }
-      const start = Date.parse(step.startedAt);
-      const run = root.runs.find((item) => item.id === step.runId);
-      const end = step.completedAt ?? run?.completedAt;
-      runningDuration +=
-        Math.max(0, (end ? Date.parse(end) : Date.now()) - start) || 0;
+      if (isSelf) {
+        executionSpans.push(
+          ...stepExecutionSpans(step, {
+            waitSpans: durationWaits.get(step.id),
+            lastActivityMs: lastActivityByStep.get(step.id) ?? null,
+          }),
+        );
+      }
       const candidateWindow = metadata.contextLimit;
       if (
         typeof candidateWindow === "number" &&
@@ -1189,11 +1271,16 @@ export class RuntimeFacade {
         100,
       ),
       toolCallCount: root.tools.length,
-      runningDuration,
+      userInputCount: root.messages.filter(
+        (message) =>
+          message.role === "user" &&
+          message.metadata?.source !== "system_injection",
+      ).length,
+      runningDuration: coveredDurationMs(executionSpans),
       status: session.status,
       activeSubAgentCount: projections.filter(
         (item) =>
-          item.parentSessionId === sessionId && item.status === "running",
+          item.parentSessionId === sessionId && item.status === "running" && item.sessionMetadata?.subagentKind !== "side-chat",
       ).length,
     };
   }
@@ -1544,7 +1631,7 @@ export class RuntimeFacade {
     requestId: string;
     allowSourceChanges?: boolean;
     sessionMetadata?: Record<string, unknown>;
-  }): Promise<{ revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> }> {
+  }): Promise<{ revision: number; sourceRevision?: number; objectCount: number; sessionMetadata?: Record<string, unknown> }> {
     // Bind before source bytes are copied. This pins immutable media assets
     // against source deletion while the fork is in flight.
     const attemptId = randomUUID();
@@ -1561,7 +1648,7 @@ export class RuntimeFacade {
         fullHistory: input.fullHistory ?? false,
         expectedRevision: input.revision, allowSourceChanges: input.allowSourceChanges ?? false,
         sessionMetadata: input.sessionMetadata ?? {} },
-    }) as { revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> };
+    }) as { revision: number; sourceRevision?: number; objectCount: number; sessionMetadata?: Record<string, unknown> };
     return result;
     } catch (error) {
       // A receipt for different input is a real conflict, not a lost reply.
@@ -1578,7 +1665,7 @@ export class RuntimeFacade {
   async forkCopyResult(sessionId: string, requestId: string) {
     const status = await this.historyCommand({ sessionId, requestId: historyReadRequest("fork-status", sessionId),
       operation: "fork_status", payload: { requestId: `history-fork-copy:${requestId}` } }) as {
-        result: { revision: number; objectCount: number; sessionMetadata?: Record<string, unknown> } | null };
+        result: { revision: number; sourceRevision?: number; objectCount: number; sessionMetadata?: Record<string, unknown> } | null };
     return status.result;
   }
   async releaseForkAssets(sessionId: string): Promise<void> {
@@ -1912,13 +1999,25 @@ export class RuntimeFacade {
   async authoritativeRecordState(
     sessionId: string,
   ): Promise<RuntimeRecordState> {
-    const snapshot = await this.uiSnapshotAuthoritative(sessionId);
+    const client = this.clientFactory();
+    if (!client) throw new Error("Runtime sidecar client is not configured.");
+    // connect() reuses the current handshake promise. Only an explicitly absent
+    // capability selects the legacy read; ordinary RPC errors must propagate.
+    // A reconnect obtains fresh capabilities, including after a sidecar upgrade.
+    const ready = await client.connect();
+    if (ready.capabilities.includes("record_state_v1")) {
+      return decodeRuntimeRecordState(await client.recordState(sessionId));
+    }
+    const snapshot = decodeUiSnapshot(
+      await client.uiSnapshot(sessionId),
+      sessionId,
+    );
     const session = snapshot.session;
     return {
       status: session.status,
-      activeRunId: session.activeRunId,
-      pendingResumeToken: session.pendingResumeToken,
-      blockedReason: session.blockedReason,
+      activeRunId: session.activeRunId ?? null,
+      pendingResumeToken: session.pendingResumeToken ?? null,
+      blockedReason: session.blockedReason ?? null,
       updatedAt: session.updatedAt,
     };
   }

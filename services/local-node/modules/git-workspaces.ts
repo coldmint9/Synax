@@ -53,6 +53,15 @@ export interface GitWorkspaceSummary {
   worktrees: GitWorktreeSummary[];
 }
 
+export interface GitRemoteBranchSummary {
+  /** Remote-tracking ref, for example origin/feature/login. */
+  name: string;
+  /** Remote that publishes the ref, for example origin. */
+  remote: string;
+  /** Local branch a checkout of this ref would create, for example feature/login. */
+  branch: string;
+}
+
 function parseHistoryRefs(raw: string): GitHistoryRef[] {
   return raw.trim().split("\n").filter(Boolean).map((line) => {
     const [fullName, object, peeled] = line.split("\0");
@@ -696,6 +705,37 @@ export async function listGitWorkspaces(
   };
 }
 
+/** Remote-tracking refs a checkout can turn into a local branch.
+ *
+ * Symbolic aliases such as origin/HEAD point at another ref, so they are not
+ * branches of their own and are skipped.
+ */
+export async function listGitRemoteBranches(
+  repositoryPath: RepositoryInput,
+): Promise<GitRemoteBranchSummary[]> {
+  const context = await assertRepository(repositoryPath);
+  const { stdout } = await git(context.location, context.root, [
+    "for-each-ref",
+    "--format=%(refname:short)%00%(symref)",
+    "refs/remotes",
+  ]);
+  return stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .flatMap((line): GitRemoteBranchSummary[] => {
+      const [name, symref = ""] = line.split("\0");
+      const separator = name.indexOf("/");
+      if (symref || separator <= 0) return [];
+      return [
+        {
+          name,
+          remote: name.slice(0, separator),
+          branch: name.slice(separator + 1),
+        },
+      ];
+    });
+}
+
 export async function createGitWorktree(
   repositoryPath: RepositoryInput,
   projectId: string,
@@ -1134,7 +1174,7 @@ async function assertNoGitOperation(context: RepositoryContext): Promise<void> {
   }
 }
 
-/** Create a branch at this checkout's current HEAD without guessing a base branch. */
+/** Feature/codex branches start from production; other branches use this checkout's HEAD. */
 export async function createAndSwitchGitBranch(
   repositoryPath: RepositoryInput,
   branch: string,
@@ -1144,7 +1184,10 @@ export async function createAndSwitchGitBranch(
     await assertBranchName(context, branch);
     if (await branchExists(context, branch))
       throw new GitWorkspaceError(`Branch "${branch}" already exists.`, 409);
-    await assertCheckoutSafe(context);
+    // Creating a branch keeps the working tree; Git itself refuses a baseline
+    // change that would overwrite local edits. An agent run may still be
+    // editing this checkout, so a dirty tree must not block `switch -c`.
+    await assertNoGitOperation(context);
     const base = /^(feature(?:\/|$)|codex\/)/.test(branch)
       ? await branchExists(context, "master") ? "master" : await branchExists(context, "main") ? "main" : null
       : undefined;
@@ -1177,25 +1220,94 @@ export async function attachDetachedGitBranch(
   });
 }
 
-/** Change this worktree, optionally carrying all local edits to the target branch. */
+const REMOTE_NAME = /^[A-Za-z0-9._-]+$/;
+
+/** Refresh one remote so later decisions use its published refs.
+ *
+ * A stale tracking ref must never become a new local branch or a pull base, so
+ * a failed fetch fails the operation instead of silently using old refs. */
+async function fetchRemoteRefs(
+  context: RepositoryContext,
+  remote: string,
+): Promise<void> {
+  if (!REMOTE_NAME.test(remote))
+    throw new GitWorkspaceError("Remote name is invalid.");
+  try {
+    await git(context.location, context.root, [
+      "fetch",
+      "--prune",
+      "--no-tags",
+      remote,
+    ]);
+  } catch (error) {
+    throw new GitWorkspaceError(
+      `Could not refresh remote "${remote}" before using it. ${error instanceof Error ? error.message : String(error)}`,
+      502,
+    );
+  }
+}
+
+export async function fetchGitRemote(
+  repositoryPath: RepositoryInput,
+  remote: string,
+): Promise<void> {
+  await fetchRemoteRefs(await assertRepository(repositoryPath), remote);
+}
+
+/** The local branch a remote-tracking ref would check out, refusing names that
+ * already exist locally because switching to them hides the checked-out ref. */
+async function remoteCheckoutBranch(
+  context: RepositoryContext,
+  remoteRef: string,
+): Promise<string> {
+  const separator = remoteRef.indexOf("/");
+  if (separator <= 0)
+    throw new GitWorkspaceError("Remote branch name is invalid.");
+  const local = remoteRef.slice(separator + 1);
+  await assertBranchName(context, local);
+  // Check out the published tip, not whatever the last fetch left behind.
+  await fetchRemoteRefs(context, remoteRef.slice(0, separator));
+  try {
+    await git(context.location, context.root, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `refs/remotes/${remoteRef}`,
+    ]);
+  } catch {
+    throw new GitWorkspaceError("Remote branch does not exist.", 404);
+  }
+  if (await branchExists(context, local))
+    throw new GitWorkspaceError(`Local branch "${local}" already exists.`, 409);
+  return local;
+}
+
+/** Change this worktree, optionally carrying all local edits to the target branch.
+ *
+ * With `remote`, the target is a remote-tracking ref such as origin/feature/login;
+ * checking it out creates the local branch it tracks. */
 export async function switchGitBranch(
   repositoryPath: RepositoryInput,
   branch: string,
-  options: { transferChanges?: boolean } = {},
+  options: { transferChanges?: boolean; remote?: boolean } = {},
 ): Promise<string> {
   const context = await assertRepository(repositoryPath);
   return withRepositoryLock(context, async () => {
-    await assertBranchName(context, branch);
-    if (!(await branchExists(context, branch)))
+    const target = options.remote
+      ? await remoteCheckoutBranch(context, branch)
+      : branch;
+    await assertBranchName(context, target);
+    // A remote checkout creates its local branch, so only local targets must exist.
+    if (!options.remote && !(await branchExists(context, target)))
       throw new GitWorkspaceError("Local branch does not exist.", 404);
     const current = (
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();
-    if (current === branch) return current;
+    if (current === target) return current;
     await assertNoGitOperation(context);
     const occupied = (await rawWorktrees(context)).find(
       (item) =>
-        item.branch === branch &&
+        item.branch === target &&
         !samePath(context.location, item.path, context.root),
     );
     if (occupied)
@@ -1231,13 +1343,19 @@ export async function switchGitBranch(
       stashRef = "stash@{0}";
     }
     try {
-      await git(context.location, context.root, ["switch", "--no-guess", branch]);
+      await git(
+        context.location,
+        context.root,
+        options.remote
+          ? ["switch", "--no-guess", "-c", target, "--track", branch]
+          : ["switch", "--no-guess", target],
+      );
       if (stashRef) {
         try {
           await git(context.location, context.root, ["stash", "apply", "--index", stashRef]);
         } catch (error) {
           throw new GitWorkspaceError(
-            `已切换到分支“${branch}”，但未能完整恢复未提交改动或暂存状态。改动备份仍保留在 ${stashRef}。请先检查 git status 并解决已有冲突；确认工作区状态前，请勿重复应用该 stash。 / Switched to branch "${branch}", but restoring local changes or the index failed. The backup remains in ${stashRef}. Inspect git status and resolve any existing conflicts before attempting recovery; do not reapply the stash without checking the working tree. ${error instanceof Error ? error.message : String(error)}`,
+            `已切换到分支“${target}”，但未能完整恢复未提交改动或暂存状态。改动备份仍保留在 ${stashRef}。请先检查 git status 并解决已有冲突；确认工作区状态前，请勿重复应用该 stash。 / Switched to branch "${target}", but restoring local changes or the index failed. The backup remains in ${stashRef}. Inspect git status and resolve any existing conflicts before attempting recovery; do not reapply the stash without checking the working tree. ${error instanceof Error ? error.message : String(error)}`,
             409,
           );
         }
@@ -1258,5 +1376,110 @@ export async function switchGitBranch(
     return (
       await git(context.location, context.root, ["branch", "--show-current"])
     ).stdout.trim();
+  });
+}
+
+export type GitUpstreamSyncResult =
+  | { status: "up-to-date" }
+  | { status: "merged" }
+  | { status: "conflicted"; files: string[] };
+
+async function unmergedFiles(context: RepositoryContext): Promise<string[]> {
+  try {
+    const { stdout } = await git(context.location, context.root, [
+      "diff",
+      "--name-only",
+      "--diff-filter=U",
+      "-z",
+    ]);
+    return stdout.split("\0").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Fast-forward or merge an upstream ref into this checkout before publishing.
+ *
+ * Conflicts are reported rather than discarded: the merge stays in progress with
+ * its markers and index entries so the caller can resolve it safely, exactly as
+ * a manual `git pull` would leave the checkout. An upstream that is not published
+ * yet has nothing to merge and is reported as up to date.
+ */
+async function mergeRef(
+  context: RepositoryContext,
+  ref: string,
+): Promise<GitUpstreamSyncResult> {
+  await assertNoGitOperation(context);
+  const before = (
+    await git(context.location, context.root, ["rev-parse", "HEAD"])
+  ).stdout.trim();
+  try {
+    await git(context.location, context.root, ["merge", "--no-edit", ref]);
+  } catch (error) {
+    const conflicts = await unmergedFiles(context);
+    if (conflicts.length) return { status: "conflicted", files: conflicts };
+    throw error;
+  }
+  const after = (
+    await git(context.location, context.root, ["rev-parse", "HEAD"])
+  ).stdout.trim();
+  return before === after ? { status: "up-to-date" } : { status: "merged" };
+}
+
+export async function mergeGitUpstream(
+  repositoryPath: RepositoryInput,
+  upstream: string,
+): Promise<GitUpstreamSyncResult> {
+  const context = await assertRepository(repositoryPath);
+  return withRepositoryLock(context, async () => {
+    try {
+      await git(context.location, context.root, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `${upstream}^{commit}`,
+      ]);
+    } catch {
+      return { status: "up-to-date" };
+    }
+    return mergeRef(context, upstream);
+  });
+}
+
+/** Merge one local branch into the checked-out one with a plain `git merge`.
+ *
+ * This is the ordinary local merge that used to be an interactive MR task. It
+ * never rewrites history and never leaves the checkout switched: conflicts stay
+ * in place with their markers so they can be resolved in the working tree.
+ */
+export async function mergeGitBranch(
+  repositoryPath: RepositoryInput,
+  source: string,
+): Promise<GitUpstreamSyncResult> {
+  const context = await assertRepository(repositoryPath);
+  return withRepositoryLock(context, async () => {
+    await assertBranchName(context, source);
+    if (!(await branchExists(context, source)))
+      throw new GitWorkspaceError("Local branch does not exist.", 404);
+    const current = (
+      await git(context.location, context.root, ["branch", "--show-current"])
+    ).stdout.trim();
+    if (!current)
+      throw new GitWorkspaceError(
+        "Check out a local branch before merging into it.",
+        409,
+      );
+    if (current === source)
+      throw new GitWorkspaceError(
+        `Already on branch "${source}".`,
+        409,
+      );
+    const dirty = await countGitCheckoutChanges(context.location);
+    if (dirty)
+      throw new GitWorkspaceError(
+        "Commit or stash uncommitted changes before merging branches.",
+        409,
+      );
+    return mergeRef(context, source);
   });
 }

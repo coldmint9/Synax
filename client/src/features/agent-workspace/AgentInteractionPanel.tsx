@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react";
 import "./agentControls.css";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createContext, useContext, useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   type AgentInteraction,
   type AgentInteractionReply,
@@ -32,6 +32,31 @@ import {
 } from "./state/agentSessionStore";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
 import { isUnsupportedSessionBackend } from "./synaxSessionTypes";
+
+import type { ConversationController } from "./state/conversationController";
+import { useScopedConversationValue } from "./state/useConversationState";
+
+const InteractionSessionContext = createContext<ConversationController | undefined>(undefined);
+export function InteractionSessionProvider({ controller, children }: { controller: ConversationController; children: ReactNode }) {
+  return <InteractionSessionContext.Provider value={controller}>{children}</InteractionSessionContext.Provider>;
+}
+
+function useInteractionActions() {
+  const controller = useContext(InteractionSessionContext);
+  const globalReply = useAgentSessionStore(s => s.replyInteraction);
+  const globalRefresh = useAgentSessionStore(s => s.refreshInteractions);
+  return useMemo(() => ({
+    controller,
+    replyInteraction: controller
+      ? async (sessionId: string, id: string, body: AgentInteractionReply) => {
+          if (sessionId !== controller.sessionId) throw new Error("Interaction belongs to another conversation.");
+          await controller.replyInteraction(id, body);
+        } : globalReply,
+    refreshInteractions: controller
+      ? async (sessionId: string) => { if (sessionId === controller.sessionId) await controller.refreshInteractions(); }
+      : globalRefresh,
+  }), [controller, globalReply, globalRefresh]);
+}
 
 const inputClass = "agent-request-input";
 const buttonClass = "agent-request-action";
@@ -147,10 +172,7 @@ function InteractionForm({
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  const replyInteraction = useAgentSessionStore((s) => s.replyInteraction);
-  const refreshInteractions = useAgentSessionStore(
-    (s) => s.refreshInteractions,
-  );
+  const { replyInteraction, refreshInteractions } = useInteractionActions();
   const isPlan = interaction.kind === "plan_approval";
   const questions = interaction.request.questions ?? [];
   const paginated = !isPlan && questions.length > 1;
@@ -912,20 +934,26 @@ export function AgentInteractionPanel({
 }) {
   const { locale } = useLocale();
   const zh = locale === "zh";
-  const state = useAgentSessionStore((s) => s.interactionState);
-  const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
-  const refreshInteractions = useAgentSessionStore(
-    (s) => s.refreshInteractions,
-  );
+  const { controller, refreshInteractions } = useInteractionActions();
+  const globalState = useAgentSessionStore((s) => controller ? null : s.interactionState);
+  const selectedSessionId = useAgentSessionStore((s) => controller ? null : s.selectedSessionId);
+  const items = useScopedConversationValue(controller, s => s.interactions);
+  const loading = useScopedConversationValue(controller, s => s.interactionLoading);
+  const error = useScopedConversationValue(controller, s => s.interactionError);
+  const scopedState = useMemo(() => controller ? {
+    sessionId: controller.sessionId, items: items ?? [], loading: loading ?? false, error: error ?? null,
+  } : null, [controller, items, loading, error]);
+  const state = controller ? scopedState : globalState;
   // Compact hosts render jump pills; the composer dock renders pending
   // interaction cards in place of the free-text composer.
   const [jumpTargetId, setJumpTargetId] = useState<string | null>(null);
   const unsupportedBackend = isUnsupportedSessionBackend(session);
 
   useEffect(() => {
-    if (!unsupportedBackend && selectedSessionId === session.id)
+    if (!controller && !unsupportedBackend && selectedSessionId === session.id)
       void refreshInteractions(session.id);
   }, [
+    controller,
     unsupportedBackend,
     selectedSessionId,
     session.id,
@@ -935,7 +963,7 @@ export function AgentInteractionPanel({
   ]);
 
   useEffect(() => {
-    if (unsupportedBackend) return;
+    if (unsupportedBackend || controller) return;
     // Event-driven refreshes never fetch inline: they join the workspace's
     // single coalescing scheduler, so a burst of runtime events — a running
     // step, or the teardown of this very session — costs one trailing fetch
@@ -956,7 +984,7 @@ export function AgentInteractionPanel({
       onConnect: schedule,
       events: { session_changed: onEvent, session_step_completed: onEvent },
     });
-  }, [unsupportedBackend, session.id]);
+  }, [unsupportedBackend, session.id, controller]);
 
   const findInteractionTarget = useCallback((itemId: string) => {
     const card = document.getElementById(`interaction-${itemId}`);
@@ -1031,14 +1059,18 @@ export function AgentInteractionPanel({
   const current = state?.sessionId === session.id ? state : null;
   const pending =
     current?.items.filter((item) => item.status === "pending") ?? [];
+  // One question at a time. The runtime parks a session on a single form, so a
+  // second pending card can only be a duplicate of the same checkpoint; showing
+  // both invited the reader to answer the same question twice.
+  const answering = pending.slice(0, 1);
   const waiting = session.status === "waiting_input" || pending.length > 0;
-  const items = current?.items ?? [];
+  const visibleItems = current?.items ?? [];
   if (dock && !current?.error && !pending.length) return null;
   if (
     !dock &&
     !waiting &&
     !current?.error &&
-    (compact || !items.length)
+    (compact || !visibleItems.length)
   )
     return null;
   return (
@@ -1064,7 +1096,7 @@ export function AgentInteractionPanel({
         </p>
       )}
       {dock
-        ? pending.map((item) => (
+        ? answering.map((item) => (
             <InteractionCard
               key={`${item.id}:${item.revision}`}
               interaction={item}
@@ -1097,7 +1129,7 @@ export function AgentInteractionPanel({
             </button>
             );
           })
-        : items.map((item) => (
+        : visibleItems.map((item) => (
             <InteractionCard
               key={`${item.id}:${item.revision}`}
               interaction={item}

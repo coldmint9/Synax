@@ -13,6 +13,7 @@ import { maybeScheduleSessionTitleFromStreamChunk, ensureSessionTitleGenerated }
 import type { AgentSessionStreamMode } from '../../infrastructure/runtime/ipc/agent-session-protocol.js';
 import { agentRuntimeStore } from './session-store.js';
 import { recoverAnsweredInteractionsOnce, stopAnsweredInteractionRecovery } from './interaction-recovery.js';
+import { replyAndContinueInteraction } from './interaction-reply.js';
 
 function useInProcessAgentSessions(): boolean {
   return agentSessionsRunInProcess();
@@ -132,7 +133,20 @@ async function* observeBackgroundRun(
 }
 
 export function recoverAnsweredInteractions():void {
-  void recoverAnsweredInteractionsOnce(resumeAgentSessionInBackground).catch(error => logger.warn({error}, 'Interaction recovery failed'));
+  void recoverAnsweredInteractionsOnce({
+    resume: resumeAgentSessionInBackground,
+    continue: continueAnsweredInteraction,
+  }).catch(error => logger.warn({error}, 'Interaction recovery failed'));
+}
+
+/** The app died between saving the answer and starting its continuation.
+ *  Replaying the saved reply keeps the user's decision instead of healing the
+ *  session with a fresh "continue" turn that never saw it. */
+function continueAnsweredInteraction(sessionId: string, interactionId: string): Promise<void> {
+  const interaction = interactionService.list(sessionId).find(item => item.id === interactionId);
+  if (!interaction?.response) return Promise.resolve();
+  return replyAndContinueInteraction(sessionId, interactionId, interaction.response)
+    .then(() => undefined);
 }
 
 export function startInteractionRecovery(): () => Promise<void> {

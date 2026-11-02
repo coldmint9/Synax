@@ -23,6 +23,16 @@ const icon = desktopIcon(process.platform);
 const windowsIcon = desktopIcon("win32");
 const dmgInstallHelp = fileURLToPath(new URL("./scripts/dmg", import.meta.url));
 const updateConfig = path.resolve("dist-electron/app-update.yml");
+
+export const APP_BUNDLE_ID = "com.Synax.desktop";
+// macOS records TCC grants (accessibility, screen recording) against the app's
+// designated requirement. An ad-hoc signature has no certificate chain, so
+// codesign can only derive `cdhash H"…"`, which changes with every build and
+// forces users to re-authorize after each upgrade. State the requirement
+// explicitly so it depends on the bundle identifier alone and therefore stays
+// stable across versions.
+const adHocDesignatedRequirement = `=designated => identifier "${APP_BUNDLE_ID}"`;
+const mainAppBundle = `${desktopProduct.productName}.app`;
 export const adHocMacSigning = {
   identity: "-",
   identityValidation: false,
@@ -31,7 +41,13 @@ export const adHocMacSigning = {
   gatekeeperAssess: false,
   // Ad-hoc code has no Team ID for Hardened Runtime library validation.
   // Reset inherited flags as Electron's upstream binaries may already be signed.
-  optionsForFile: () => ({ hardenedRuntime: false, signatureFlags: "0" }),
+  optionsForFile: (filePath: string) => ({
+    hardenedRuntime: false,
+    signatureFlags: "0",
+    ...(typeof filePath === "string" && path.basename(filePath) === mainAppBundle
+      ? { requirements: adHocDesignatedRequirement }
+      : {}),
+  }),
 };
 
 const config: ForgeConfig = {
@@ -79,7 +95,7 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     win32metadata: windowsMetadata(),
     windowsSign,
-    appBundleId: "com.Synax.desktop",
+    appBundleId: APP_BUNDLE_ID,
     osxSign: process.env.SYNAX_MAC_SIGN_IDENTITY ? {
       identity: process.env.SYNAX_MAC_SIGN_IDENTITY,
     } : adHocMacSigning,

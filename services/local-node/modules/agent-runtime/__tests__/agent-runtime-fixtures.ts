@@ -4,6 +4,7 @@ import path from 'node:path';
 import { DATA_ROOT } from '../../../infrastructure/runtime/env.js';
 import { resetRuntimeIdsForTests } from '../runtime-ids.js';
 import { agentRuntimeStore } from '../session-store.js';
+import { updateProjectSettings } from '../../../infrastructure/runtime/config/project-settings-store.js';
 
 export async function resetAgentRuntimeFixtures(): Promise<void> {
   await ensureTestRuntime();
@@ -11,6 +12,11 @@ export async function resetAgentRuntimeFixtures(): Promise<void> {
   await clearBusinessTestData();
   agentRuntimeStore.reset();
   resetRuntimeIdsForTests();
+  // Runtime fixtures exercise local providers. MCP integration tests explicitly
+  // enable their own servers instead of starting real bundled services here.
+  updateProjectSettings('project-alpha', {
+    mcpServers: [],
+  }, 'runtime-test-fixture');
   // Runtime execution requires an explicit workspace, even in unit tests.
   const file = path.join(DATA_ROOT, 'projects.json');
   fs.mkdirSync(DATA_ROOT, { recursive: true });

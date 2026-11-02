@@ -1,16 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { currentExecutionContext, runWithExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
+import { flushDiagnosticLogs } from '../../../infrastructure/runtime/buffered-log-writer.js';
 import { runCoordinator } from '../run-coordinator.js';
 import { runtimeFacade } from '../sidecar/runtime-facade.js';
 import { runtimeBus } from '../runtime-bus.js';
 import {
   getSubagentLiveness,
+  SUBAGENT_SHUTDOWN_TIMEOUT_MS,
   SUBAGENT_PROGRESS_TIMEOUT_MS,
   waitForChildSessions,
   runBatch,
   runChildToCompletion,
   type SubagentSpec,
 } from '../subagent-orchestrator.js';
+import { subagentBlocksParent } from '../subagent-control-broker.js';
 
 describe('subagent liveness', () => {
   const now = Date.parse('2026-10-05T00:00:00.000Z');
@@ -34,6 +37,20 @@ describe('subagent liveness', () => {
       leaseExpiresAt: new Date(now + 30_000).toISOString(),
       lastProgressAt: new Date(now - SUBAGENT_PROGRESS_TIMEOUT_MS).toISOString(),
     }, now)).toBe('stale');
+  });
+
+  it('treats a supervisor-settled child as finished even while its row still runs', () => {
+    const settled = { state: 'failed', phase: 'failed' };
+    expect(getSubagentLiveness('running', settled, now)).toBe('completed');
+    expect(subagentBlocksParent({
+      status: 'running',
+      sessionMetadata: { subagentTask: settled, runtimeControl: { state: 'unconfirmed' } },
+    } as never)).toBe(false);
+    // A child that is really starting again must block the parent.
+    expect(subagentBlocksParent({
+      status: 'running',
+      sessionMetadata: { subagentTask: { state: 'running' } },
+    } as never)).toBe(true);
   });
 });
 
@@ -75,9 +92,13 @@ function makeDeps(behaviors: Record<string, {
       return { ...s, id, projectId: 'p' } as never;
     },
     listRuns: (id: string) => [{
+      id: `run-${id}`,
+      startedAt: '2026-01-01T00:00:00.000Z',
       status: behaviors[id]?.runStatus ?? 'completed',
       stopReason: behaviors[id]?.runStatus === 'blocked' ? 'Blocked.' : null,
     }],
+    listRunToolCalls: () => [],
+    listMessages: () => [],
   };
 
   const sessionsRuntime = {
@@ -120,6 +141,7 @@ const spec = (label: string): SubagentSpec => ({ profileId: 'explorer', prompt: 
 
 describe('subagent-orchestrator', () => {
   it.each([true, false])('supervises authoritative child progress and releases the actual executor (progress: %s)', async (progress) => {
+    await flushDiagnosticLogs();
     vi.useFakeTimers();
     try {
       const deps = makeDeps({});
@@ -155,8 +177,11 @@ describe('subagent-orchestrator', () => {
         expect(interrupt).toHaveBeenCalledWith('child-1', expect.stringContaining('no progress'));
         expect(interrupt.mock.invocationCallOrder[0]).toBeLessThan(idle.mock.invocationCallOrder[0]);
       }
+      // The timeout warning schedules a diagnostic flush independently of the
+      // child watchdog. Drain it before checking the executor's timer cleanup.
+      await flushDiagnosticLogs();
       expect(vi.getTimerCount()).toBe(0);
-    } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
+    } finally { await flushDiagnosticLogs(); vi.useRealTimers(); vi.restoreAllMocks(); }
   });
 
   it('returns ordered results, one per spec', async () => {
@@ -182,6 +207,9 @@ describe('subagent-orchestrator', () => {
     expect(results[0].status).toBe('completed');
     // child-2 threw but ended 'running' (never completed) → failed, not a rejection.
     expect(results[1].status).toBe('failed');
+    // A failure carries the persisted facts the parent needs to continue.
+    expect(results[1].facts).toMatchObject({ runs: 1, tools: { total: 0 } });
+    expect(results[0].facts).toBeUndefined();
     expect(results[2].status).toBe('blocked');
   });
 
@@ -223,8 +251,9 @@ describe('subagent-orchestrator', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(await pending).toMatchObject({ status: 'timeout' });
       expect(deps.rawStore.tryGetSession('child-1')).toMatchObject({ status: 'failed', activeRunId: null });
+      await flushDiagnosticLogs();
       expect(vi.getTimerCount()).toBe(0);
-    } finally { vi.useRealTimers(); }
+    } finally { await flushDiagnosticLogs(); vi.useRealTimers(); }
   });
 
   it('lets a child with continuous progress exceed the idle budget', async () => {
@@ -295,5 +324,66 @@ describe('subagent-orchestrator', () => {
     expect(await pending).toMatchObject({ status: 'failed' });
     expect(deps.rawStore.tryGetSession('child-1')?.status).toBe('failed');
     await expect(waitForChildSessions('parent', controller.signal, undefined, deps)).rejects.toThrow();
+  });
+
+  it('settles a child whose shutdown cannot be confirmed instead of parking the parent', async () => {
+    await flushDiagnosticLogs();
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({});
+      deps.createSession({ profileId: 'explorer' });
+      vi.spyOn(runtimeFacade, 'enabled').mockReturnValue(true);
+      vi.spyOn(runCoordinator, 'submitAsync').mockResolvedValue({ run: { id: 'child-run' }, reused: false } as never);
+      vi.spyOn(runCoordinator, 'observeRun').mockImplementation(async function* () {
+        deps.rawStore.updateSession('child-1', { status: 'failed' });
+      });
+      // A wedged executor never confirms its stop and never releases idle.
+      vi.spyOn(runCoordinator, 'interrupt').mockImplementation(() => new Promise<void>(() => {}));
+      vi.spyOn(runCoordinator, 'waitForSessionIdle').mockImplementation(() => new Promise<void>(() => {}));
+      const pending = runChildToCompletion('child-1', spec('stuck'), {}, deps);
+      await vi.advanceTimersByTimeAsync(SUBAGENT_SHUTDOWN_TIMEOUT_MS * 3);
+      expect(await pending).toMatchObject({ status: 'failed' });
+      await flushDiagnosticLogs();
+    } finally { await flushDiagnosticLogs(); vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it('bounds an unconfirmed stop after a parent abort', async () => {
+    await flushDiagnosticLogs();
+    vi.useFakeTimers();
+    try {
+      const deps = makeDeps({});
+      deps.createSession({ profileId: 'explorer' });
+      const controller = new AbortController();
+      controller.abort();
+      vi.spyOn(runtimeFacade, 'enabled').mockReturnValue(true);
+      vi.spyOn(runCoordinator, 'interrupt').mockImplementation(() => new Promise<void>(() => {}));
+      vi.spyOn(runCoordinator, 'waitForSessionIdle').mockImplementation(() => new Promise<void>(() => {}));
+      const pending = runChildToCompletion('child-1', spec('aborted'), { abortSignal: controller.signal }, deps);
+      await vi.advanceTimersByTimeAsync(SUBAGENT_SHUTDOWN_TIMEOUT_MS * 3);
+      expect(await pending).toMatchObject({ status: 'failed' });
+      expect(deps.rawStore.tryGetSession('child-1')).toMatchObject({ status: 'failed' });
+      await flushDiagnosticLogs();
+    } finally { await flushDiagnosticLogs(); vi.useRealTimers(); vi.restoreAllMocks(); }
+  });
+
+  it('finalizes a fenced child whose lease expired so it stops blocking the parent', async () => {
+    const deps = makeDeps({});
+    deps.createSession({ profileId: 'explorer' });
+    deps.rawStore.updateSessionMetadata('child-1', {
+      runtimeControl: { state: 'unconfirmed', reason: 'stop not confirmed' },
+      subagentTask: {
+        state: 'running',
+        lastProgressAt: new Date(Date.now() - SUBAGENT_PROGRESS_TIMEOUT_MS * 2).toISOString(),
+      },
+    });
+    expect(await waitForChildSessions('parent', new AbortController().signal, undefined, deps)).toBe(true);
+    const child = deps.rawStore.tryGetSession('child-1') as unknown as {
+      status: string;
+      sessionMetadata: { runtimeControl?: unknown; subagentTask?: { state?: string } };
+    };
+    expect(child.status).toBe('failed');
+    // The fence stays: admission must keep rejecting work while the stop is unconfirmed.
+    expect(child.sessionMetadata.runtimeControl).toBeTruthy();
+    expect(child.sessionMetadata.subagentTask?.state).toBe('failed');
   });
 });

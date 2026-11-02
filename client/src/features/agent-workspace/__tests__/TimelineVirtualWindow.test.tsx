@@ -5,7 +5,7 @@ import { TimelineVirtualWindow, anchorVirtualEntry, scrollToVirtualEntry } from 
 import type { ConversationTimelineEntry } from "../buildConversationTimeline";
 
 const entries: ConversationTimelineEntry[] = Array.from({ length: 1000 }, (_, i) => ({
-  id: `row-${i}`, kind: "user", content: `Message ${i}`, label: "", createdAt: "", injected: false,
+  id: `row-${i}`, kind: "user", content: `Message ${i}`, label: "", createdAt: "",
 }));
 function Harness() {
   const root = useRef<HTMLDivElement>(null);

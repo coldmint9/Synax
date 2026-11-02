@@ -1,6 +1,6 @@
 # 内建工具描述与运行时校验盘点
 
-盘点日期：2026-10-03。共 56 个工具 ID、57 个定义（Git skill.load 覆盖版本单列）。范围以 `ToolRegistry` 的静态注册、Synax 启动追加注册和项目自带的 Git MR / Jev provider 为准。以下逐项记录当前校验、说明处理与源码依据。数值、枚举、正则等可由 JSON Schema 表达的边界继续由 schema 提供；组合约束、执行前置条件和优先级进入工具正文或字段 `describe()`。
+盘点更新：2026-10-29。范围以 `ToolRegistry` 的静态注册、Synax 启动追加注册和项目自带的 Git MR / Jev provider 为准，Git skill.load 覆盖版本单列。以下逐项记录当前校验、说明处理与源码依据。数值、枚举、正则等可由 JSON Schema 表达的边界继续由 schema 提供；组合约束、执行前置条件和优先级进入工具正文或字段 `describe()`。
 
 ## 共享规则与模型可见链路
 
@@ -9,7 +9,8 @@
 - 普通文件、搜索、命令工具相对路径以会话工作目录为基准，绝对路径交给 sandbox 授权，外部路径可能需要批准。specialist 写入的安全相对路径限制更加严格，不能套用到普通工具。
 - 已读文件变化会触发读写追踪校验。文件存在性、权限、网络、模型/provider 配置、窗口和页面状态属于动态条件；说明可以提示前置条件，但不能保证外部调用成功。
 - 模式、挂载、权限、计划批准和 Work 状态由 `control-policy.ts`、`tool-mount-policy.ts`、`permission-policy.ts`、`work-runtime.ts` 和 `specialist-profile.ts` 执行。工具内部的 run/step ID 由运行时传递，不要求 agent 猜测或填写。
-- 未放宽校验、权限和执行策略。除了工具说明和字段元数据，修正了 `file.read` 返回的截断提示：不再建议使用不存在的 `offset` 参数。
+- 权限、写入参数和执行策略保持严格。读取预算（`file.read.maxBytes`、`file.list.limit`、`rg.limit/contextLines`）接受超出有效预算的安全整数，由执行层收敛并披露实际预算，不再将普通预算超额当成参数失败；类型、正负号和安全整数边界仍校验。
+- `ToolRegistry` 仅对输入解析阶段的 Zod 错误生成有界诊断（工具、字段、错误码、数值边界、恢复建议），不回显输入字符串正文，不改写或自动重放失败操作。执行失败与结果分页仍是不同情况。
 
 源码路径以下均相对于 `services/local-node/modules/agent-runtime/`，计算机工具另行标注。
 
@@ -17,17 +18,55 @@
 
 | 工具 | 实际约束/行为 | 处理 | 依据 |
 | --- | --- | --- | --- |
-| `bash` | command 长度 1–4000，拒绝 NUL；workdir 必须可解析；每个管道/链段走权限判断；有限会话限制重定向；timeout 默认 600s、1–600s，120s 未返回时触发依赖评估；显式短超时优先；async=true 在启动后立即返回 commandTaskId，共用完成队列；async=false 正常等待；async 与 background=true / shell & 互斥；background 常驻服务忽略超时 | 补路径基准和 command 的 NUL 限制，保留后台/超时/权限说明 | tools/bash.ts、tools/bash-command-policy.ts、tools/workspace.ts |
-| `command.manage` | 当前 run 内的 commandTaskId；action=wait/background/cancel；reason 必填；background 要求独立 nextStep；单独调用 | 支持 bash async=true 与 120s 监测产生的任务；wait 阻塞到完成、cancel 取消、background 解除等待；后台命令保留资源和取消所有权；完成结果在下一 step 自动注入并持久化，汇总前不允许结束 | command-tasks.ts、tool-registry.ts、native-step-context.ts |
-| `file.read` | 普通文本文件，扩展名/内容识别二进制；maxBytes 默认和上限 64000；没有 offset 参数 | 修正可用搜索工具名、路径说明、默认上限、截断后的读取建议 | tools/file-read.ts |
+| `bash` | command 长度 1–4000，拒绝 NUL；workdir 必须可解析；每个管道/链段走权限判断；有限会话限制重定向；timeout 默认 600s、1–600s，120s 未返回时触发依赖评估；显式短超时优先；async=true 在资源排队和进程启动前返回 commandTaskId，共用完成队列；async=false 正常等待；async 与 background=true / shell & 互斥；background 常驻服务忽略超时；测试/构建进入 CPU 资源池，检查命令进入 search 资源池 | 补路径基准和 command 的 NUL 限制，说明异步排队、资源隔离和启动计时 | tools/bash.ts、tools/bash-command-policy.ts、tools/workspace.ts、resource-admission.ts |
+| `run` | 单次调用二选一：`argv` 为不经过 shell 的可执行文件和字面参数，或 `language/source` 为 sh、Python、Node 的内存源码；source 可为逐行数组；`scriptId` 仅复用当前会话的有界内存源码缓存；stdin 与源码独立；sh 全文预检，Python 使用既有 guard，Node 使用 ESM；源码不写入工作区或临时源文件，超出平台参数上限直接失败；默认 shell gate ask；支持 async 后由 command.manage 管理 | argv 按原始 token 授权和执行，脚本及缓存复用每次重新检查权限；workdir/argv 路径走 sandbox，run 作为可能写入的 opaque command 标脏工作区并进入 mutation lease；Windows sh、cmd/bat 和 WSL 明确拒绝，不静默回退到 shell 或临时文件 | tools/run.ts、script-execution/、permission-policy.ts、tool-registry.ts |
+| `command.manage` | 当前 run 内的 commandTaskId；action=status/wait/background/cancel；reason 必填；background 要求独立 nextStep；单独调用 | 支持 bash async=true 与 120s 监测产生的任务；status 非阻塞返回排队/执行状态，wait 阻塞到完成，cancel 取消，background 解除等待；后台命令保留资源和取消所有权；完成结果在下一 step 自动注入并持久化，汇总前不允许结束 | command-tasks.ts、tool-registry.ts、native-step-context.ts |
+| `file.read` | UTF-8 文本，扩展名/内容识别二进制；maxBytes 默认 64000、有效范围 4–64000，合法超额请求收敛；byteOffset 默认 0，非零必须携带 expectedRevision；另支持 startLine + lineCount（不能与 byteOffset 混用） | content 只含原文；返回 bytesRead、effectiveMaxBytes、revision、nextByteOffset、eof/truncated；UTF-8 边界分页；单描述符有界读取与读取前后版本校验；完整读才缓存全文快照，部分页只记录元数据 | tools/file-read.ts、tools/file-read-page.ts、read-tracker.ts |
 | `file.write` | 非空 path、string content；完整覆盖并创建父目录；自动补读；已读文件变化可能拒绝写入 | 补路径基准、绝对路径授权与文件变化处理 | tools/file-write.ts、read-tracker.ts |
 | `file.generate` | Python 3 script 1–65,536 字符；timeoutMs 默认 30s、钳制 1–120s；synax.write/delete/move 暂存后统一校验和提交；120 文件、64 MiB、单文件 8 MiB、诊断各 8 KiB；仅无 NUL 的 UTF-8 | write 审批；删除/移动要求 file.delete；提交前检查 sandbox、writeScope、文件新鲜度，持有写锁并在失败时回滚；完整恢复才返回 rolledBack，否则报告 residualPaths；缺 Python 不注册；不进入 code mode 允许列表 | tools/file-generate.ts、file-generation/、infrastructure/runtime/python-runtime.ts |
+| `python.run` | Python 3 code 1–100,000 字符且非空白；workdir 相对工作区、必须存在且是目录（WSL 工作区明确拒绝），默认工作区根也是进程 cwd；stdin ≤1 MB；timeoutMs 默认 120s、钳制 1–600s；stdout/stderr 各按字节截到 64,000 并带截断提示；源码通过私有内存 envelope 交给固定 guard，源码不写入 `main.py`；`-I -B -X utf8` 隔离执行，HOME/TMPDIR/SYNAX_SANDBOX 指向持久沙盒，不继承宿主环境；guard.py 把读写限制在工作区与沙盒（带 writeScope 的委派会话只放宽到该范围写入），阻止网络、子进程、ctypes、硬/软链接和非法 fd，unrestricted 会话不设限；被拦截的操作写成 sticky `denied`，即使脚本捕获异常也返回失败；每次调用仅保留 violation 临时目录并清理 | shell 审批（默认 ask，pattern 为 python.run）；超时保留部分输出；退出码非 0 只作为结果证据，沙盒越界单独判失败；写操作标脏工作区并进入 checkpoint；缺 Python 不注册；不进入 code mode 允许列表 | tools/python-run.ts、python-execution/、resource-admission.ts、tool-registry.ts |
 | `file.delete` | 删除单文件，不递归删除目录；路径走 sandbox | 补路径授权说明，保留明确删除请求的使用要求 | tools/file-delete.ts |
-| `file.list` | 目录输入，默认当前工作目录；limit 默认 100、上限 300；仅返回当前层，过滤不可见项 | 补真实默认数量、目录和路径基准 | tools/file-list.ts、tools/workspace.ts |
-| `file.patch` | 单个 Begin/End envelope；Add/Update/Delete/Move 语法；加行用 +；hunk 必须匹配；写入前进行解析、路径和读写校验 | 补具体路径语义、Move 位置、最终 End 标记和文件变化重读提示 | tools/patch.ts、tools/patch-format.ts、read-tracker.ts |
+| `file.list` | 目录输入，默认当前工作目录；limit 默认 100、有效上限 300，合法超额请求收敛；仅返回当前层，过滤不可见项 | 返回 effectiveLimit、truncated/hasMore；不将截断结果当成完整列表 | tools/file-list.ts、tools/workspace.ts |
+| `file.patch` | 单个 Begin/End envelope；每路径一个操作；所有 hunk 基于调用前原文，按原文顺序且上下文不重叠；匹配歧义拒绝；EOF 标记严格定位尾部 | 首次失败返回 `PATCH_*` 分类、hunk/搜索位置、有界原文预览和重读建议；匹配/格式失败前不写入，不自动重试或覆盖全文 | tools/patch.ts、tools/patch-format.ts、tools/patch-diagnostics.ts |
 | `diff.read` | 当前会话 Git 目录内执行 git diff --stat，可选 --cached；不是完整 diff | 补 Git 目录前置条件和输出范围 | tools/diff-read.ts |
-| `rg` | 默认 search 且 query 必填；files 需要 pattern 和目录；regex 默认 false；search 默认 50、截到 200，files 默认 100、上限 300；前导连字符被安全传递 | 修正默认数量和错误的前导连字符禁令；说明 files 忽略文本搜索参数和路径基准 | tools/rg.ts、tools/grep-search.ts、tools/file-glob.ts、tools/ripgrep.ts |
+| `rg` | 默认 search 且 query 必填；files 需要 pattern 和目录；regex 默认 false；search 默认 50、截到 200，files 默认 100、截到 300；contextLines 默认 0、截到 5；合法超额预算收敛，前导连字符被安全传递 | 返回 effectiveLimit/effectiveContextLines；命中与上下文逐行 metadata 标明 truncated/originalLength，预览上限 240 字符不能当作完整原文；files 模式忽略搜索上下文并报告 0；timeout 等非预算参数仍严格校验 | tools/rg.ts、tools/grep-search.ts、tools/file-glob.ts、tools/ripgrep.ts |
 | `webSearch` | query/queries 恰选一；queries 为 1–5 个字符串；公共过滤条件对各查询生效；域名不含协议/路径；limit 默认 5、1–10 | 明确二选一、批量元素类型、共享过滤和每查询数量；保留外部检索/回退边界 | tools/web-search.ts |
+
+### 文件分页读取
+
+首次调用可以省略预算：`file.read({path:"src/large.ts"})`。当 `nextByteOffset` 非 null 时，下一页使用相同 path、`byteOffset=nextByteOffset`、`expectedRevision=revision`。`content` 可以直接拼接，不包含提示文字；`bytesRead` 是实际返回原文的 UTF-8 字节数，可能因字符边界小于有效预算。请求预算 1–3 时按 4 字节执行，保证四字节字符也能前进。
+
+版本标识基于设备、inode、大小、mtime 和 ctime；文件变化或路径替换时拒绝旧版本，必须从 0 重新读取。页首不允许位于 UTF-8 字符内部；无效 UTF-8 拒绝而不是静默替换。EOF 返回空内容与 null 游标；越过 EOF 的偏移拒绝。单页最多读取 64001 字节（含边界探测），续页另有最多 8192 字节头部二进制探测，不为读写追踪额外读取大文件全文。完整小文件读保留完整快照；部分页只保留元数据，元数据变化后须重新读取，不能据此判定全文相同。
+
+### 按行读取目标区域
+
+补丁诊断中的 `suggestedRead` 可直接传给 `file.read`，例如 `file.read({path:"src/large.ts",startLine:120,lineCount:20})`。`startLine` 从 1 开始；`lineCount` 默认 40、有效上限 1000，返回 `effectiveLineCount`。与显式 `byteOffset` 互斥，单独提供 `lineCount` 会拒绝。`maxBytes` 继续约束原文页大小。
+
+行模式返回原文 `content` 及实际 `startLine/endLine/lineCount/lineComplete`；空结果的 `lineCount=0`、`endLine=startLine-1`。`lineComplete=false` 表示末行被字节预算截断，不能直接拿去构造补丁；用 `nextByteOffset` 和 `revision` 续读，不混用行参数。行数已满足不表示文件 EOF，`eof` 和 `nextByteOffset` 仍反映文件剩余内容。扫描定位使用固定小块，前缀扫描最多 16 MiB，超出明确要求改用字节分页，不为行定位缓存整文件。沿用同一描述符、UTF-8 解码、二进制检查及读取前后版本校验。
+
+### 补丁协议与冲突恢复
+
+`file.patch` 的 `@@` 不是标准 unified diff 行号头。裸 `@@` 开始一个片段；`@@ 精确原文行` 指定锚点，从锚点的**下一行**搜索，不能在片段中再次包含锚点本身；锚点行在文件中重复时由片段正文定位——正文紧随其中一个锚点则取该处，正文只在某一处唯一则按该处应用，正文同时匹配多处仍报 `PATCH_AMBIGUOUS_MATCH`，不带正文的纯插入仍需要唯一锚点。上下文、删除、新增行分别以空格、`-`、`+` 开头，空白上下文行也需要空格前缀。`*** Move to:` 紧跟 `*** Update File:`。非法前缀、空 hunk、错误位置的 Move/EOF 等不再静默跳过。带空格前缀的 `*** End Patch` 是正文上下文，不会提前终止 envelope。删除或上下文中的空行必须存在，不再通过丢掉末尾空行约束强行匹配；输出保留实际尾部空行。相对/绝对路径别名以 sandbox 解析后的路径统一检查重复操作。
+
+同一文件所有片段都使用调用前原文，而非前一片段的修改结果。片段须按原文位置排序，上下文不得重叠；相邻修改合并成一个片段。例如原文件为 `first = 1;`、`middle`、`last = 1;` 三行，可使用：
+
+```diff
+*** Begin Patch
+*** Update File: src/example.ts
+@@
+-first = 1;
++first = 2;
+@@
+-last = 1;
++last = 2;
+*** End Patch
+```
+
+无旧文本且无锚点的片段追加到 EOF；有锚点的纯新增片段插入锚点之后。`*** End of File` 必须紧跟片段内容且要求片段匹配到原文件尾部，不能退回到文件中间。保留精确匹配、行尾空白、首尾空白、有限 Unicode 标点归一化的优先级；在命中的匹配级别内出现多处候选就拒绝，不静默选择第一处，不做语义模糊自动替换。
+
+失败返回 `applied:false` 与以下分类：`PATCH_INVALID_FORMAT`、`PATCH_CONTEXT_MISMATCH`、`PATCH_ANCHOR_NOT_FOUND`、`PATCH_HUNK_ORDER_CONFLICT`、`PATCH_AMBIGUOUS_MATCH`。匹配诊断包含 1-based 的 `hunkIndex`、`patchLine`、`searchStartLine`，有限 `expectedExcerpt/actualExcerpt`、候选行和 `suggestedRead`。预览长行/行数被截断时有明确标记，不能当作完整补丁原文。`readBaseline` 只比较已有完整内容缓存，返回 changed/unchanged/unknown；没有全文快照、仅部分页或快照淘汰时为 unknown，不额外读取文件、不推进基线、不作为局部 patch 的拒绝门禁。首次失败即按建议读取当前目标区域、合并或重建片段；不要原样重放，不要转为整文件覆盖绕过冲突。
+
+结构化失败保存在工具记录并完整投影给模型，不被普通输出摘要或旧 receipt 吞掉恢复信息。`tool_result` 分类事件只记录 code、序号、状态与调用关联，不复制源码片段。可通过既有调用记录关联“失败→读取→修正”尝试，不能由此断言线上失败率已下降。保护范围是**格式/匹配预检失败前不触盘**，不是对所有磁盘 I/O 异常提供跨文件事务回滚。
 
 ## Code Mode（1.7.0）
 
@@ -58,7 +97,7 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 | 工具 | 实际约束/行为 | 处理 | 依据 |
 | --- | --- | --- | --- |
 | `media.read` | assetId/path 恰选一个非空值；assetId 必须已附加当前会话；文件为普通文件且最多 50 MiB；path 走 sandbox | 正文和字段明确二选一、归属、文件大小及路径授权 | tools/media-read.ts、content-parts.ts |
-| `media.generate` | 配置 provider；非 OpenAI 适配器须显式 model；images/mask 加载会话资产；预算 100 MiB；Images/Responses 对格式/尺寸/组合执行额外限制，SDK 有不同规则 | 补资产预算、参考图 <50 MB、Responses n=1、SDK 流式限制、Images/Responses 的 size/aspectRatio/seed/压缩/透明组合条件，字段说明注明 GPT Image 2 尺寸规则 | tools/media-generate.ts、tools/media-context.ts、infrastructure/llm-runtime/image-generation.ts、infrastructure/llm-runtime/media-generation.ts |
+| `media.generate` | 配置 provider；非 OpenAI 适配器须显式 model；images/mask 加载会话资产；预算 100 MiB；Images/Responses 对格式/尺寸/组合执行额外限制，native 有不同规则（sdk 为旧别名） | 参考图 <50 MB、Responses n=1；native 拒绝 stream=true 和 partialImages，Images/Responses 的 partialImages 需要流式；size/aspectRatio/seed/压缩/透明组合条件由字段说明和运行时校验 | tools/media-generate.ts、tools/media-context.ts、infrastructure/llm-runtime/image-generation.ts、infrastructure/llm-runtime/media-generation.ts |
 | `media.speak` | 必填精确 model ID；provider 必须有 speechModel；speed 正数；providerOptions 为 provider 命名空间到参数对象的映射 | 补 provider 选择和命名空间对象形状，不添加不存在的 speed 上限 | tools/media-audio-video.ts |
 | `media.transcribe` | 必填 model/audio；audio 是当前会话的 audio/* 资产；provider 有 transcriptionModel | 明确音频类型、归属和 provider 能力 | tools/media-audio-video.ts、tools/media-context.ts |
 | `media.video` | 必填 model/prompt；image/frameImages 为图片；references 为图片或视频；最多 2 frameImages、16 references；引用预算 100 MiB；provider 有 videoModel | 补资产类型、归属、预算与具体模型能力限制；不虚构输入互斥规则 | tools/media-audio-video.ts |
@@ -118,6 +157,16 @@ MCP readOnlyHint 不是安全保证；管理员须逐项验证服务器行为。
 | `verification.run` | goal、active Work；criterion 多个时复制一个，无验收项时显式提供；purpose/scope；宽泛套件需 broader=true 和具体 unresolved risk；禁止 stash/reset/restore/checkout/clean/后台脱离；默认600s、最大600s；120s 未返回时由 command.manage 评估依赖 | 补未批准 criterion、宽泛 suite 与路径范围前置条件，保留已有超时/版本收据语义 | tools/verification.ts、work-runtime.ts |
 | `context.read` | kind 为 step/message/checkpoint；精确 ID 属当前会话或 children；message 只 user，step 取历史文本，checkpoint 取索引；offset 默认0、limit 默认6000 最大12000；不返回 tool results | 补各 ID/kind 与字符分页说明 | context-projection.ts |
 
+## 会话检索
+
+三个工具共用权威运行时读取：会话列表来自 sidecar 会话索引，单会话状态来自 authority summary，transcript 只在 `session.search` 显式读取。工作进程内的 store 只镜像执行工作集，因此跨会话读取不走 `agentRuntimeStore.listSessions`。默认作用域是当前会话所属工作区，跨工作区必须显式 `scope:"all"`；已删除（`deletedAt`）和 fork 准备中的会话始终不可见。
+
+| 工具 | 实际约束/行为 | 处理 | 依据 |
+| --- | --- | --- | --- |
+| `session.list` | scope 默认 project，projectId 仅 project 可用；status 枚举 1–10；默认只列根会话，子会话需 includeChildren；归档需 includeArchived；limit 默认20、最大100；置顶优先，其余按 updatedAt 倒序；countByStatus 统计整个过滤集而不是当前页 | 新建只读工具；不读 transcript，分页继续用 offset，单会话状态和文本检索分别交给 status/search | session-query/service.ts、tools/session.ts |
+| `session.status` | sessionIds 1–20，省略为当前会话，重复 ID 折叠；逐个读取 authority summary；未知 ID 进 missing，全部未知返回 SESSION_NOT_FOUND；includeChildren 额外读取会话索引并附最多20个直接子会话；analytics 来自持久化 runtimeAnalytics 投影 | 补缺省会话、missing 语义与投影来源；不声明读取 run/tool-call 明细 | session-query/query.ts、session-query/service.ts |
+| `session.search` | query 为 2–200 字面量子串，大小写不敏感；sessionIds 覆盖 scope，且不能与 projectId 或 scope all 同用；roles 默认 user/assistant；先匹配标题/first prompt，再按 updatedAt 倒序读取最多 maxSessions（默认20）份 transcript，每会话最多3条消息命中；整体命中上限为 max(limit×3, 30)；truncated 表示旧会话或额外命中未返回；missing 只针对显式 sessionIds | 新建只读工具；明确 transcript 读取成本、扫描边界和截断含义 | session-query/service.ts、tools/session.ts |
+
 ## 项目自带会话 provider
 
 Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止自行传 root/project/MR/path。参数对象 strict。与普通工具同名的 Git `skill.load` 覆盖普通版本，因此单独记录。
@@ -132,6 +181,23 @@ Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止�
 | `git.resolution.propose` | MR 为 conflicted、文件 kind=text、revision 当前；content≤2Mi字符；只是保存 proposal | 补状态、类型、revision 来源与过期重读 | git/provider.ts、modules/git-mr/service.ts |
 | `skill.load`（Git override） | 只接受6个锁定版本 bundled Git skills；不加载 project/local skills | 补共享绑定边界，保留专用技能约束 | git/provider.ts、git/skills.ts |
 | `computer.use` | Jev/Cua 配置可用；goal 非空、pid/windowId 正整数、text≤1000；用具体窗口观察选择最多一个动作；可能 abstain 或切 Direct Cua fallback | 补新鲜窗口 ID、配置前置条件、fallback 后使用下一步挂载工具 | ../computer-use/jev-tool-provider.ts |
+
+## 会话合并、远程 PR 与工作树
+
+| 工具 | 实际约束/行为 | 依据 |
+| --- | --- | --- |
+| `git.merge.create` | 在当前会话创建持久合并任务；源/目标为注册根中的本地分支；委派隔离子任务并等待终态摘要或显式异步移交，不推送远程、不删除源分支 | conversation-git/tools.ts、schemas.ts |
+| `git.merge.analyze` | 已有 objectId；加入活跃 worker 或恢复失败执行，复用同一任务及隔离候选；暂停任务通过 resume 继续 | conversation-git/tools.ts、worker.ts |
+| `git.merge.resume` | 复用任务、子代理与候选；instructions 传递用户决定；尊重显式暂停，完成/取消任务保持原状态 | conversation-git/tools.ts、worker.ts |
+| `git.merge.cancel` | 停止 worker、阻断晚到写入并清理隔离候选；幂等；不撤销已完成合并、不删除源分支或用户工作目录 | conversation-git/tools.ts、worker.ts |
+| `git.merge.configure` | 为停止或等待中的任务设置有依据的验证命令，然后可通过 resume 继续 | conversation-git/tools.ts、schemas.ts |
+| `git.merge.read` | 省略 objectId 列当前会话任务；提供 objectId/fileId 读取状态和文件；部分内容按 side/byteOffset/expectedRevision 分页，预览不能视为全文 | conversation-git/tools.ts、schemas.ts |
+| `git.merge.propose` | 先读取精确文件和 revision，再保存文字解决建议；不应用文件、不执行检查、不合并，由用户决定是否应用 | conversation-git/tools.ts、schemas.ts |
+| `git.pr.read` | objectId 必须为当前会话已附加的 GitHub PR/GitLab MR；返回实时状态及关联本地冲突任务；不推送、不创建或合并远程请求 | modules/remote-pr/tools.ts |
+| `worktree.list` | 读取项目、分支、工作树和当前选择；省略 rootId 列全部项目；不扫描工作区改动 | tools/worktree.ts、session-worktrees.ts |
+| `worktree.select` | path 来自 list；多项目修改需 rootId；先结束子代理和后台命令；单独调用，切换后相对文件及命令使用新目录 | tools/worktree.ts、session-worktrees.ts |
+| `worktree.create` | 使用已有分支，或 createBranch=true 加新分支及可选 startPoint；创建后不自动选择 | tools/worktree.ts、session-worktrees.ts |
+| `worktree.remove` | 保留分支和提交；拒绝主目录、锁定、脏或占用中的工作树；missingOnly=true 仅清理已不存在目录的登记 | tools/worktree.ts、session-worktrees.ts |
 
 ## 注册范围的排除项
 
@@ -165,10 +231,36 @@ Git 工具仅在持久化 MR 绑定有效的 Git manager 会话挂载；禁止�
 {"command":"npm run build","async":true,"timeoutMs":600000}
 ```
 
-权限、资源调度及启动校验完成后返回 `commandTaskId`，主会话可以继续独立工作。进程结束后，stdout、stderr、退出码与失败信息通过同一完成队列注入下一 step，并保留持久化结果。依赖该结果时调用 `command.manage`：
+权限校验完成后，异步调用会在资源排队和进程启动前返回 `commandTaskId`，主会话可以继续独立工作。命令执行仍由受管进程异步完成；进程结束后，stdout、stderr、退出码与失败信息通过同一完成队列注入下一 step，并保留持久化结果。依赖该结果时调用 `command.manage`：
 
 ```json
 {"commandTaskId":"<返回的 ID>","action":"wait","reason":"下一步依赖构建结果"}
 ```
 
+不等待命令时可查询状态：
+
+```json
+{"commandTaskId":"<返回的 ID>","action":"status","reason":"查看是否已获得资源"}
+```
+
 `cancel` 会停止该任务；省略 `async` 或设置 `async:false` 则正常等待，120 秒后沿用依赖评估机制。异步任务仍遵守 `timeoutMs` 和会话取消，最终汇总前必须处理其结果。`background:true` 继续用于常驻服务，不能与 `async:true` 同时传入。
+
+### 命令并发与计时（0.8.0）
+
+根会话与子会话可使用资源池中的空闲名额，不再固定共享一个名额。出现竞争时，下一空闲名额优先分给活跃任务最少的根会话，同等负载轮转分配；已运行任务不被抢占。没有新增工作区全局串行锁。
+
+| 资源池 | 默认并发 | 适用操作 |
+| --- | --- | --- |
+| command | CPU 可用核数，最小 8、最大 32 | 普通命令及未识别的 shell 程序 |
+| cpu | CPU 可用核数的一半，最小 2、最大 8 | 已识别的 Vitest、tsc、构建/测试脚本和 verification.run |
+| search | 8 | 搜索、常见 Git 检查、sed 纯打印行范围 |
+| external | 16 | MCP 与外部执行 |
+| io | 16 | 文件等 I/O 操作 |
+
+各池可用 `SYNAX_RESOURCE_<大写池名>_LIMIT` 显式覆盖，范围 1–128；启动时生效。命令识别只用于调度，不替代权限检查，也不保证识别动态脚本内部启动的构建。普通调用最多排队 60 秒；显式 async 调用可排队 300 秒，等待期间可查询、取消，且不会占用执行名额。
+
+macOS/Linux 前台命令将语法检查放入同一个受管进程组，检查成功才 exec 实际 Bash，省去第二次租约和 guardian 注册。Windows、WSL 和常驻服务保留原有启动路径。guardian 在 25ms 窗口内合并退出确认扫描，停止信号仍立即发出。
+
+`command.completed` 按 toolCallId 记录 gateMs、syntaxMs、processMs、cleanupMs、totalMs；`tool.execution.timing` 记录工具前后指纹、资源等待和整体耗时。数值是所在进程的观测时间，processMs 包括子进程启动及 stdio 关闭，不等于纯 CPU 时间。日志不包含命令正文或环境凭据。前后工作区指纹仍保留，用于变化追踪与验证收据。
+
+启动对照基准：`node --import tsx/esm scripts/command-execution-benchmark.ts .tmp/command-execution-benchmark.json`。它比较单/双受管登记和 8 个并发命令，不包含生产资源准入、持久化租约或工具注册层。上线须同步构建 Node 服务与 Rust sidecar；仅重启旧的已安装应用不会载入源码变更。

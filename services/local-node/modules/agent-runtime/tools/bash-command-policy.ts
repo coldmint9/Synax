@@ -326,6 +326,65 @@ export function parseBashInvocations(command: string): BashInvocation[] {
     .filter((invocation): invocation is BashInvocation => invocation !== null);
 }
 
+/** Conservative scheduling hint, never an authorization decision. Commands
+ * with expansion, redirection, wrappers or embedded programs keep command slots. */
+export function bashUsesInspectionCapacity(command: string): boolean {
+  if (!command.trim() || /[$`\\\n\r<>()[\]{}#]/.test(command) || /(?<!&)&(?!&)/.test(command)) return false;
+  const allowed = new Set(["cd", "rg", "grep", "head", "tail", "cat", "wc", "ls", "pwd", "find", "git", "sed"]);
+  return splitBashCommands(command).every(segment => {
+    const tokens = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+    const executable = tokens[0] ?? "";
+    if (executable.includes("/") && !/^\/(?:usr\/)?bin\/[^/]+$/.test(executable)) return false;
+    const name = normalizeCommandName(executable);
+    if (!allowed.has(name)) return false;
+    const args = tokens.slice(1).map(token => token.replace(/^["']|["']$/g, ""));
+    if (name === "rg" && args.some(arg => /^--(?:pre|hostname-bin)(?:=|$)/.test(arg))) return false;
+    if (name === "find" && args.some(arg => /^-(?:exec|execdir|ok|okdir|delete|fprint|fprint0|fprintf|fls)$/.test(arg))) return false;
+    // Only the common print-range form is recognized; sed scripts can write
+    // files or execute programs even without -i. Permission policy is unchanged.
+    if (name === "sed" && !(args[0] === "-n" && /^\d+(?:,\d+)?p$/.test(args[1] ?? "") &&
+        args.length >= 3 && args.slice(2).every(arg => !arg.startsWith("-")))) return false;
+    if (name === "git") {
+      let index = 0;
+      while (args[index] === "--no-pager" || args[index] === "--no-optional-locks" || args[index] === "-C") {
+        index += args[index] === "-C" ? 2 : 1;
+      }
+      const subcommand = args[index];
+      if (!["status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree"].includes(subcommand)) return false;
+      if (args.slice(index + 1).some(arg => /^--(?:output|ext-diff|textconv|exec-path)(?:=|$)/.test(arg))) return false;
+    }
+    // An unmatched quote is invalid shell, so do not classify it as inspection.
+    return !tokens.some(token => (token.match(/'/g)?.length ?? 0) % 2 || (token.match(/"/g)?.length ?? 0) % 2);
+  });
+}
+
+/** Scheduling only: recognize common build/test runners through npm wrappers.
+ * Unknown or dynamic shell programs retain ordinary command capacity. */
+export function bashUsesCpuCapacity(command: string): boolean {
+  return splitBashCommands(command).some(segment => {
+    const tokens = segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+    let index = 0;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? "")) index++;
+    let name = normalizeCommandName(tokens[index++] ?? "");
+    while (["env", "npx", "cross-env", "cross-env-shell"].includes(name)) {
+      while (/^-|^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[index] ?? "")) index++;
+      name = normalizeCommandName(tokens[index++] ?? "");
+    }
+    if (["vitest", "jest", "tsc", "eslint", "rustc", "make", "cmake", "gradle", "gradlew", "mvn", "mvnw"].includes(name)) return true;
+    if (["cargo", "go"].includes(name)) return ["test", "build", "check", "clippy", "bench"].includes(tokens[index]);
+    if (["npm", "pnpm", "yarn", "bun"].includes(name)) {
+      while (tokens[index]?.startsWith("-")) {
+        const flag = tokens[index++];
+        if (["--prefix", "--cwd", "--workspace", "-w", "-C", "--filter"].includes(flag)) index++;
+      }
+      if (["run", "run-script", "exec"].includes(tokens[index])) index++;
+      return /^(?:test|build|typecheck|lint|check|bench)(?::|$)/.test(tokens[index] ?? "") ||
+        ["vitest", "jest", "tsc", "eslint"].includes(tokens[index]);
+    }
+    return name === "node" && /(?:^|\/)(?:vitest(?:\.mjs)?|tsc(?:\.js)?|eslint(?:\.js)?|runtime-sidecar-cargo\.mjs)$/.test(tokens[index] ?? "");
+  });
+}
+
 /** Git operations that must be represented by the persistent merge task card.
  * Read-only inspection such as status, diff and log remains available through bash. */
 export type GitMergeWorkflowSubcommand = "merge" | "rebase" | "cherry-pick" | "revert" | "am";

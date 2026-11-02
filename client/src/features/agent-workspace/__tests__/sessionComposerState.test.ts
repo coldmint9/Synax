@@ -149,11 +149,16 @@ describe("sessionComposerState", () => {
     expect(patchAgentSession(makeSession(), { status }).status).toBe(expected);
   });
 
-  it("offers the resume control for interrupted and paused sessions", () => {
+  it("offers the one-click resume control for failed, interrupted and paused sessions", () => {
     expect(isSessionResumable(makeSession({ status: "interrupted" }))).toBe(true);
     expect(isSessionResumable(makeSession({ status: "paused" }))).toBe(true);
-    expect(isSessionResumable(makeSession({ status: "failed" }))).toBe(false);
+    // A failed Run ends the session but keeps its context: the send key must
+    // become the play key so the same work can be retried with one click.
+    expect(isSessionResumable(makeSession({ status: "failed" }))).toBe(true);
     expect(isSessionResumable(makeSession({ status: "completed" }))).toBe(false);
+    expect(
+      isSessionResumable(makeSession({ status: "running", activeRunId: "run-1" })),
+    ).toBe(false);
   });
 
   it("keeps a worker interruption visible and resumable after a live patch", () => {

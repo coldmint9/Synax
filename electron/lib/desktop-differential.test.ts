@@ -1,3 +1,10 @@
+// Algorithm-only coverage: production disables this legacy protocol.
+vi.mock("../updater/update-source.js", () => ({
+  requireLegacyUpdateSource: () => {},
+}));
+vi.mock("../updater/effective-update-source.js", () => ({
+  effectiveUpdateSource: () => "https://github.com/test/Synax/releases/download/",
+}));
 import fs from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
@@ -77,7 +84,7 @@ async function fixture(version: string, bytes: Buffer) {
       privateKey,
       publicKey,
     ),
-    url: `https://github.com/coldmint9/Synax/releases/download/v${version}/${name}`,
+    url: `https://github.com/test/Synax/releases/download/v${version}/${name}`,
   };
   maps.set(`${name}.blockmap`, await fs.readFile(`${source}.blockmap`));
   return release;
@@ -402,7 +409,7 @@ it.skipIf(
           privateKey,
           publicKey,
         ),
-        url: `https://github.com/coldmint9/Synax/releases/download/v${version}/${name}`,
+        url: `https://github.com/test/Synax/releases/download/v${version}/${name}`,
       };
     }
     old = await realRelease("0.2.0", oldZip);

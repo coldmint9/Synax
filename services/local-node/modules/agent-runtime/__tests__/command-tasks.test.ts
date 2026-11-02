@@ -158,17 +158,18 @@ it("replaces the monitoring placeholder with a cancellation error in the termina
   expect(f.manager.stepContext("session", "run", 3)).toContain("Command cancelled");
 });
 
-it("hands off explicit async commands at startup, even with a short hard timeout, and reuses the completion queue", async () => {
+it("hands off explicit async commands before admission, even with a short hard timeout, and reuses the completion queue", async () => {
   const f = fixture();
   const running = f.launch({ command: "build", async: true, timeoutMs: 1_000 });
   let returned = false;
   void running.then(() => { returned = true; });
   await vi.advanceTimersByTimeAsync(10);
-  expect(returned).toBe(false); // Validation/admission must finish first.
-  f.start();
+  expect(returned).toBe(true);
   const handoff = await running;
   expect(handoff.record.status).toBe("running");
-  expect(handoff.toolResult?.result).toMatchObject({ commandTaskId: "command", state: "background", elapsedMs: 0, async: true, completionHook: "next_step" });
+  expect(handoff.toolResult?.result).toMatchObject({ commandTaskId: "command", state: "background", phase: "queued", elapsedMs: 0, async: true, completionHook: "next_step" });
+  expect((await f.manage("status")).result).toMatchObject({ state: "background", status: "running" });
+  f.start();
   expect(f.manager.toolError("run", "file.read")).toBeNull();
   expect(f.manager.toolError("run", "goal.finish")).not.toBeNull();
   expect(vi.getTimerCount()).toBe(0);
@@ -205,10 +206,23 @@ it("wait and cancel control an explicitly asynchronous command without relaunchi
   expect(f.execute).toHaveBeenCalledTimes(1);
 });
 
-it("returns a pre-start failure without creating an async task", async () => {
+it("delivers pre-start failure through the async task completion queue", async () => {
   const f = fixture(); const running = f.launch({ command: "invalid", async: true });
+  expect((await running).toolResult?.result).toMatchObject({ phase: "queued" });
   f.fail();
-  expect((await running).record.status).toBe("failed");
-  expect(f.store.getRun().metadata.commandTasks).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(0);
+  expect((await f.manage("status")).result).toMatchObject({ state: "settled", status: "failed" });
+  expect(f.manager.stepContext("session", "run", 2)).toContain("Command cancelled");
+  expect(f.execute).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("cancels a queued async task before startup and waits for its cleanup", async () => {
+  const f = fixture();
+  await f.launch({ command: "build", async: true });
+  const cancellation = f.manage("cancel");
+  expect(f.signal()?.aborted).toBe(true);
+  f.fail();
+  expect((await cancellation).result).toMatchObject({ status: "failed" });
+  expect(f.execute).toHaveBeenCalledTimes(1);
 });

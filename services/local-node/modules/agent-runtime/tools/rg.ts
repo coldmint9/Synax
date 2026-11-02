@@ -36,9 +36,8 @@ const rgArgsSchema = z
       .number()
       .int()
       .positive()
-      .max(300)
       .optional()
-      .describe("Max results (search default 50, capped at 200; files default 100, capped at 300)."),
+      .describe("Requested maximum results (search default 50, effective cap 200; files default 100, effective cap 300)."),
     caseSensitive: z
       .boolean()
       .optional()
@@ -61,9 +60,8 @@ const rgArgsSchema = z
       .number()
       .int()
       .min(0)
-      .max(5)
       .optional()
-      .describe("Context lines around each match (default 0)."),
+      .describe("Requested context lines around each match (default 0, effective cap 5)."),
     wordBoundary: z
       .boolean()
       .optional()
@@ -100,7 +98,7 @@ export const rgTool: RegisteredTool = {
   resumeBehavior: "auto",
   internalGate: "none",
   progressiveDetails:
-    "Accepts { mode?: \"search\" | \"files\", query?: string, pattern?: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Default mode is search; query is required for search and pattern for mode=files, and the two are not interchangeable. path defaults to the workspace root, so narrow it to keep searches fast. limit caps at 200 for search and 300 for files. Examples: { \"query\": \"Dialog\", \"path\": \"client/src/react/components/ui\" } literal search inside one folder; { \"query\": \"(?:--color|--bg|:root)\", \"regex\": true, \"filePattern\": \"*.css\" } regex alternation, which silently returns nothing when regex is omitted; { \"query\": \"resolveWorkspacePath\", \"wordBoundary\": true, \"contextLines\": 2, \"filePattern\": \"*.ts\", \"excludePattern\": \"*.test.ts\" }; { \"mode\": \"files\", \"pattern\": \"client/src/**/*.tsx\" }. Pitfalls: set regex=true for ( ) | [ ] . * ? + alternations or character classes, otherwise the query is matched literally and reports no hits. Search mode requires query; files mode requires pattern. Files mode ignores text-search options, including query. Search limit defaults to 50 and caps at 200; files limit defaults to 100 and caps at 300. Leading hyphens are safely passed as patterns.",
+    "Accepts { mode?: \"search\" | \"files\", query?: string, pattern?: string, path?: string, limit?: number, caseSensitive?: boolean, regex?: boolean, filePattern?: string, excludePattern?: string, contextLines?: number, wordBoundary?: boolean, multiline?: boolean }. Default mode is search; query is required for search and pattern for mode=files, and the two are not interchangeable. path defaults to the workspace root, so narrow it to keep searches fast. limit is a requested maximum with an effective cap of 200 for search and 300 for files; contextLines is a requested value with an effective cap of 5. Examples: { \"query\": \"Dialog\", \"path\": \"client/src/react/components/ui\" } literal search inside one folder; { \"query\": \"(?:--color|--bg|:root)\", \"regex\": true, \"filePattern\": \"*.css\" } regex alternation, which silently returns nothing when regex is omitted; { \"query\": \"resolveWorkspacePath\", \"wordBoundary\": true, \"contextLines\": 2, \"filePattern\": \"*.ts\", \"excludePattern\": \"*.test.ts\" }; { \"mode\": \"files\", \"pattern\": \"client/src/**/*.tsx\" }. Pitfalls: set regex=true for ( ) | [ ] . * ? + alternations or character classes, otherwise the query is matched literally and reports no hits. Search mode requires query; files mode requires pattern. Files mode ignores text-search options, including query. Search limit defaults to 50; files limit defaults to 100; both report effectiveLimit after applying the mode-specific cap. Leading hyphens are safely passed as patterns. Match and context previews are capped at 240 characters; previewMetadata/contextBeforeMetadata/contextAfterMetadata report truncated and originalLength. Use file.read for complete current text before patching a truncated preview.",
   inputSchema: rgArgsSchema,
   getPattern(args) {
     const value = args as { mode?: string; query?: string; pattern?: string };
@@ -114,15 +112,43 @@ export const rgTool: RegisteredTool = {
       [key: string]: unknown;
     };
     const { mode = "search", pattern, ...forwarded } = args;
+    const limitCap = mode === "files" ? 300 : 200;
+    const effectiveLimit = Math.min(
+      (typeof forwarded.limit === "number" ? forwarded.limit : mode === "files" ? 100 : 50),
+      limitCap,
+    );
+    const effectiveContextLines = mode === "files" ? 0 : Math.min(
+      typeof forwarded.contextLines === "number" ? forwarded.contextLines : 0,
+      5,
+    );
+    const boundedArgs = {
+      ...forwarded,
+      limit: effectiveLimit,
+      contextLines: effectiveContextLines,
+    };
     if (mode === "files") {
-      return fileGlobTool.execute({
+      return Promise.resolve(fileGlobTool.execute({
         ...input,
-        args: { ...forwarded, pattern },
-      });
+        args: { ...boundedArgs, pattern },
+      })).then((execution) => ({
+        ...execution,
+        result: {
+          ...(execution.result as Record<string, unknown>),
+          effectiveLimit,
+          effectiveContextLines,
+        },
+      }));
     }
-    return grepSearchTool.execute({
+    return Promise.resolve(grepSearchTool.execute({
       ...input,
-      args: forwarded,
-    });
+      args: boundedArgs,
+    })).then((execution) => ({
+      ...execution,
+      result: {
+        ...(execution.result as Record<string, unknown>),
+        effectiveLimit,
+        effectiveContextLines,
+      },
+    }));
   },
 };

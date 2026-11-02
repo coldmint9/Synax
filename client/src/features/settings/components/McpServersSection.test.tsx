@@ -47,4 +47,17 @@ describe('McpServersSection', () => {
     expect(screen.queryByText('Docs')).not.toBeInTheDocument()
   })
 
+  it('keeps built-in servers switchable but not editable or removable', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
+    render(<McpServersSection servers={[{ id: 'builtin-code-knowledge', name: 'code-knowledge', command: '/opt/python3', builtin: true }]} onSave={onSave} />)
+    expect(screen.getByText('settingsMcpBuiltin')).toBeInTheDocument()
+    await user.click(screen.getByRole('switch'))
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith([expect.objectContaining({ id: 'builtin-code-knowledge', enabled: false })]))
+    await user.click(screen.getByRole('button', { name: 'extensionActions' }))
+    expect(screen.queryByRole('menuitem', { name: 'settingsMcpEdit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'settingsMcpDelete' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'settingsMcpTest' })).toBeInTheDocument()
+  })
+
 })

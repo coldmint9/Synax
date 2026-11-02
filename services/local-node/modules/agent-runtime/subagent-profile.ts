@@ -9,6 +9,7 @@ import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
 import { permissionPolicy, resolvePermissionDecision, type PermissionRequestInput } from "./permission-policy.js";
 import { profileCanUseTool } from "./tool-mount-policy.js";
 import { activeTurnReferences, effectiveTurnMcpIds } from "./turn-reference-state.js";
+import { isInteractiveSideChat } from "./side-chat-contract.js";
 
 export const SUBAGENT_PROFILE_ID = "subagent";
 const controls = new Set(["human.ask", "plan.propose", "plan.execute", "mode.switch", "goal.finish", "work.checkpoint", "agent.adapt"]);
@@ -33,6 +34,11 @@ export const subagentBaseProfile: AgentProfile = {
   toolPolicy: { allowSubtasks: false, allowParallelReadTools: true, maxParallelReadTools: 4 },
 };
 
+export interface BuildSubagentChildOptions {
+  /** Interactive children are user-facing conversations, not delegated jobs. */
+  interactive?: boolean;
+}
+
 function snapshot(session: AgentSession): Snapshot | undefined {
   if (session.profileId !== SUBAGENT_PROFILE_ID) return undefined;
   const value = session.sessionMetadata?.subagentProfile as Snapshot | undefined;
@@ -53,10 +59,13 @@ export function subagentRestrictions(config: SubagentProfileConfig): PermissionR
 export function resolveSubagentProfile(base: AgentProfile, session: AgentSession): AgentProfile {
   const saved = snapshot(session);
   if (!saved) return base;
+  const interactive = isInteractiveSideChat(session);
   return { ...subagentBaseProfile, label: saved.profile.name ?? "Subagent",
     description: saved.profile.description ?? base.description, allowedCapabilities: saved.capabilities,
     defaultThinkingMode: session.thinkingMode, loopHints: [
-      "Complete the delegated task and report the result to the parent. Do not delegate or change the parent's workflow. Other agents share this checkout: respect assigned file ownership and preserve their edits.",
+      interactive
+        ? "Converse directly with the user in an independent, temporary side conversation. Its context starts from a snapshot of the primary conversation taken when it opened, while the user only sees messages exchanged here: never assume they watched you read the snapshot, and restate anything they need. It shares this workspace, tools and the primary session's permissions. The primary conversation may be working in the same files, so keep changes small and never overwrite its work. Do not report task results to the parent or change its workflow."
+        : "Complete the delegated task and report the result to the parent. Do not delegate or change the parent's workflow. Other agents share this checkout: respect assigned file ownership and preserve their edits.",
       saved.profile.instructions ?? "Choose an effective approach for the assigned task.",
       ...(saved.profile.writeScope ? [`Native file writes are limited to: ${saved.profile.writeScope.join(", ")}.`] : []),
       ...(saved.profile.access === "read-only" ? ["Read-only assignment: do not modify the workspace."] : []),
@@ -67,14 +76,15 @@ const contains = (root: string, target: string) => target === root || target.sta
 
 export function buildSubagentChildInput(parent: AgentSession, config: SubagentProfileConfig,
   prompt: string, parentProfile: AgentProfile, tools: Array<Omit<RegisteredTool, "execute">>, templateId?: string,
+  options: BuildSubagentChildOptions = {},
 ): CreateSessionRequest {
-  if (parent.parentSessionId || parentProfile.mode === "subagent" || parentProfile.toolPolicy?.allowSubtasks === false)
+  if (parent.parentSessionId || (!options.interactive && (parentProfile.mode === "subagent" || parentProfile.toolPolicy?.allowSubtasks === false)))
     throw new AgentPermissionError("Only the primary agent can delegate.");
-  if (["stopping", "paused", "interrupted", "cancelled", "failed"].includes(parent.status) || parent.sessionMetadata?.runtimeControl)
+  if ((options.interactive ? parent.status === "stopping" : ["stopping", "paused", "interrupted", "cancelled", "failed"].includes(parent.status)) || parent.sessionMetadata?.runtimeControl)
     throw new AgentValidationError("A stopped primary session cannot delegate.");
   const profile = subagentProfileSchema.parse(config);
   const root = fs.realpathSync(resolveSessionWorkDir(parent.id, parent.projectId));
-  const available = tools.filter(tool => !isSubagentControl(tool.id) &&
+  const available = tools.filter(tool => (!isSubagentControl(tool.id) || (options.interactive && tool.id === "human.ask")) &&
     (profileCanUseTool(parentProfile, tool) || tool.category === "mcp" || tool.category === "skill") &&
     (profile.access !== "read-only" || (tool.mutability !== "write" && !["shell", "mcp", "external_execution"].includes(tool.category))) &&
     (!profile.writeScope || files.has(tool.id) || wrappers.has(tool.id) ||
@@ -99,26 +109,32 @@ export function buildSubagentChildInput(parent: AgentSession, config: SubagentPr
     thinkingMode: profile.thinkingMode ?? parent.thinkingMode, reasoningEffort: parent.reasoningEffort ?? undefined,
     skillIds: profile.skillIds ?? inheritedSkills, mcpServerIds: profile.mcpServerIds ?? inheritedMcp,
     permissionTier: parent.sessionMetadata?.permissionTier as CreateSessionRequest["permissionTier"],
-    sessionMetadata: { mode: parent.sessionMetadata?.mode ?? "chat", subagentProfile: saved,
+    sessionMetadata: { mode: options.interactive ? "chat" : parent.sessionMetadata?.mode ?? "chat", subagentProfile: saved,
+      ...(options.interactive ? { subagentKind: "side-chat" } : {}),
       subagentName: profile.name ?? "Subagent", roleName: profile.description ?? "General-purpose subagent",
       roleDescription: profile.instructions ?? prompt, workspaceRoot: root },
   };
 }
 
-export function assertSubagentToolAllowed(session: AgentSession, tool: RegisteredTool, args: unknown): void {
+export function assertSubagentToolAllowed(session: AgentSession, tool: RegisteredTool, args: unknown, userApproved = false): void {
   const saved = snapshot(session);
   if (!saved) return;
   const parent = agentRuntimeStore.getSession(saved.parentSessionId);
-  if ((!saved.capabilities.includes(tool.id) && !(tool.id === "command.manage" && saved.capabilities.includes("bash"))) || isSubagentControl(tool.id))
+  const interactive = isInteractiveSideChat(session);
+  if ((!saved.capabilities.includes(tool.id) && !(tool.id === "command.manage" && (saved.capabilities.includes("bash") || saved.capabilities.includes("run")))) ||
+      (isSubagentControl(tool.id) && !(interactive && tool.id === "human.ask")))
     throw new AgentPermissionError(`Tool ${tool.id} is outside this subagent's configuration.`);
   setSessionWorkspaceRoot(session.id, saved.workspaceRoot);
   const permissionInput: PermissionRequestInput = { sessionId: parent.id, category: tool.category, internalGate: tool.internalGate,
     pattern: tool.getPattern?.(args) ?? tool.id, rules: parent.permissionRules,
     metadata: { toolId: tool.id, args, mutability: tool.mutability } };
-  const decision = (tool.id === "bash" || tool.id === "verification.run") && typeof (args as { command?: unknown })?.command === "string"
+  const decision = tool.id === "run" && Array.isArray((args as { argv?: unknown })?.argv)
+    ? permissionPolicy.resolveArgvCommand({ ...permissionInput, argv: (args as { argv: string[] }).argv })
+    : (tool.id === "bash" || tool.id === "verification.run") && typeof (args as { command?: unknown })?.command === "string"
     ? permissionPolicy.resolveShellCommand({ ...permissionInput, command: (args as { command: string }).command })
     : resolvePermissionDecision(permissionInput);
-  if (decision.action !== "allow") throw new AgentPermissionError("Parent permissions no longer authorize this operation. Return the blocker to the primary agent.");
+  if (decision.action !== "allow" && !(interactive && decision.action === "ask" && userApproved))
+    throw new AgentPermissionError(interactive ? "Parent permissions do not authorize this operation." : "Parent permissions no longer authorize this operation. Return the blocker to the primary agent.");
   if (tool.id === "skill.load" && (!session.skillIds.includes((args as { skillId: string }).skillId) ||
       ![...parent.skillIds, ...(activeTurnReferences(parent.id)?.skillIds ?? [])].includes((args as { skillId: string }).skillId)))
     throw new AgentPermissionError("Skill is outside the subagent assignment.");

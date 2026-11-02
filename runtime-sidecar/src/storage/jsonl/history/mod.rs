@@ -10,6 +10,7 @@
 //! take the published index from an [`ArcSwap`] and never wait for the writer.
 
 mod checkpoint;
+mod cache;
 mod files;
 mod json;
 mod metadata;
@@ -276,15 +277,29 @@ impl SessionIndex {
                     {
                         if object.kind == "runtime.step"
                             && object.value["metadata"]["kind"] != "context-compaction"
-                            && matches!(object.value["status"].as_str(), Some("completed" | "failed" | "cancelled" | "interrupted"))
+                            && matches!(
+                                object.value["status"].as_str(),
+                                Some("completed" | "failed" | "cancelled" | "interrupted")
+                            )
                         {
                             let id = object.value["id"].as_str().unwrap_or_default();
-                            let born = self.first_revision.get(&identity_key("step", &entities.session_id, id)).copied().unwrap_or(entities.revision);
+                            let born = self
+                                .first_revision
+                                .get(&identity_key("step", &entities.session_id, id))
+                                .copied()
+                                .unwrap_or(entities.revision);
                             let key = "context\0latest-boundary";
                             let boundary = serde_json::json!({"throughStepId":id,
                                 "throughRevision":entities.revision,"rootId":entities.next_root,"firstRevision":born});
-                            self.aux.insert(format!("context\0step-boundary\0{id}"), Some(boundary.clone()));
-                            if self.aux_value(key).and_then(|v| v["firstRevision"].as_u64()).is_none_or(|old| born >= old) {
+                            self.aux.insert(
+                                format!("context\0step-boundary\0{id}"),
+                                Some(boundary.clone()),
+                            );
+                            if self
+                                .aux_value(key)
+                                .and_then(|v| v["firstRevision"].as_u64())
+                                .is_none_or(|old| born >= old)
+                            {
                                 self.aux.insert(key.into(), Some(boundary));
                             }
                         }
@@ -332,15 +347,30 @@ impl SessionIndex {
                         self.rebuild(root, &mut |id| objects.get(id).cloned())?;
                     }
                     self.changes.clear();
-                    let hints: Vec<_> = self.aux_entries("context\0hint\0")
+                    let hints: Vec<_> = self
+                        .aux_entries("context\0hint\0")
                         .map(|(key, value)| {
-                            let retained: Vec<_> = value.as_array().into_iter().flatten()
-                                .filter(|hint| hint["id"].as_str().is_some_and(|id|
-                                    self.identity.contains_key(&identity_key("message", &head.session_id, id))))
-                                .cloned().collect();
+                            let retained: Vec<_> = value
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter(|hint| {
+                                    hint["id"].as_str().is_some_and(|id| {
+                                        self.identity.contains_key(&identity_key(
+                                            "message",
+                                            &head.session_id,
+                                            id,
+                                        ))
+                                    })
+                                })
+                                .cloned()
+                                .collect();
                             (key.clone(), serde_json::json!(retained))
-                        }).collect();
-                    for (key, value) in hints { self.aux.insert(key, Some(value)); }
+                        })
+                        .collect();
+                    for (key, value) in hints {
+                        self.aux.insert(key, Some(value));
+                    }
                     self.current_head_revision = head.revision;
                     self.head = head;
                 }
@@ -348,12 +378,26 @@ impl SessionIndex {
                 AuxRecord::IndexGeneration(generation) => self.index_generation = generation,
                 AuxRecord::Set(key, value) => {
                     if let Some(pin) = key.strip_prefix("pin\0") {
-                        if let Some(old) = self.aux_value(&key).and_then(|v| v["metadata"]["messageId"].as_str()).map(str::to_owned) {
+                        if let Some(old) = self
+                            .aux_value(&key)
+                            .and_then(|v| v["metadata"]["messageId"].as_str())
+                            .map(str::to_owned)
+                        {
                             let query = format!("pin-query\0{old}");
-                            if self.aux_value(&query).and_then(serde_json::Value::as_str) == Some(pin) { self.aux.remove(&query); }
+                            if self.aux_value(&query).and_then(serde_json::Value::as_str)
+                                == Some(pin)
+                            {
+                                self.aux.remove(&query);
+                            }
                         }
-                        if let Some(message) = value.as_ref().and_then(|v| v["metadata"]["messageId"].as_str()) {
-                            self.aux.insert(format!("pin-query\0{message}"), Some(serde_json::json!(pin)));
+                        if let Some(message) = value
+                            .as_ref()
+                            .and_then(|v| v["metadata"]["messageId"].as_str())
+                        {
+                            self.aux.insert(
+                                format!("pin-query\0{message}"),
+                                Some(serde_json::json!(pin)),
+                            );
                         }
                     }
                     self.aux.insert(key, value);
@@ -365,9 +409,12 @@ impl SessionIndex {
                     for object_id in object_ids {
                         self.objects.remove(&object_id);
                     }
-                    self.order = self.order.iter()
+                    self.order = self
+                        .order
+                        .iter()
                         .filter(|(_, object)| self.objects.contains_key(&object.object_id))
-                        .map(|(key, object)| (key.clone(), object.clone())).collect();
+                        .map(|(key, object)| (key.clone(), object.clone()))
+                        .collect();
                     self.identity.retain(|_, key| self.order.contains_key(key));
                 }
                 AuxRecord::Unknown => {}
@@ -423,17 +470,33 @@ impl SessionIndex {
         if kind == "message" {
             if let Some(sequence) = object.value["sequence"].as_u64() {
                 let key = "context\0message-sequence";
-                if sequence > self.aux_value(key).and_then(serde_json::Value::as_u64).unwrap_or(0) {
-                    self.aux.insert(key.into(), Some(serde_json::json!(sequence)));
+                if sequence
+                    > self
+                        .aux_value(key)
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0)
+                {
+                    self.aux
+                        .insert(key.into(), Some(serde_json::json!(sequence)));
                 }
             }
-            if let Some(source) = object.value["metadata"]["source"].as_str().filter(|s|
-                matches!(*s, "git_merge_task" | "git_merge_receipt" | "subagent_summary")) {
+            if let Some(source) = object.value["metadata"]["source"].as_str().filter(|s| {
+                matches!(
+                    *s,
+                    "git_merge_task" | "git_merge_receipt" | "subagent_summary"
+                )
+            }) {
                 let key = format!("context\0hint\0{source}");
-                let mut hints = self.aux_value(&key).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let mut hints = self
+                    .aux_value(&key)
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 hints.retain(|entry| entry["id"] != id);
                 hints.push(serde_json::json!({"id":id,"objectId":object.object_id}));
-                if hints.len() > 16 { hints.remove(0); }
+                if hints.len() > 16 {
+                    hints.remove(0);
+                }
                 self.aux.insert(key, Some(serde_json::json!(hints)));
             }
         }
@@ -441,11 +504,20 @@ impl SessionIndex {
         if !self.first_revision.contains_key(&identity) {
             let revision = self.current_head_revision + 1;
             self.first_revision.insert(identity.clone(), revision);
-            self.birth_order.insert((kind.into(), revision, order_key(kind, &object.value, id, owner)), identity.clone());
+            self.birth_order.insert(
+                (
+                    kind.into(),
+                    revision,
+                    order_key(kind, &object.value, id, owner),
+                ),
+                identity.clone(),
+            );
         }
         if let Some(previous) = self.identity.remove(&identity) {
             if let Some(old) = self.order.remove(&previous) {
-                if let Some(key) = step_text_key(&old) { self.step_text.remove(&key); }
+                if let Some(key) = step_text_key(&old) {
+                    self.step_text.remove(&key);
+                }
             }
         }
         if object.kind == "runtime.tombstone" {
@@ -453,7 +525,9 @@ impl SessionIndex {
         }
         let key = order_key(kind, &object.value, id, owner);
         self.identity.insert(identity, key.clone());
-        if let Some(key) = step_text_key(&object) { self.step_text.insert(key, object.clone()); }
+        if let Some(key) = step_text_key(&object) {
+            self.step_text.insert(key, object.clone());
+        }
         self.order.insert(key, object);
     }
 
@@ -494,18 +568,27 @@ impl SessionIndex {
             }
             let key = order_key(kind, &object.value, entity_id, owner);
             self.identity.insert(identity, key.clone());
-            if let Some(key) = step_text_key(&object) { self.step_text.insert(key, object.clone()); }
+            if let Some(key) = step_text_key(&object) {
+                self.step_text.insert(key, object.clone());
+            }
             self.order.insert(key, object);
         }
         self.index_root = Some(root.to_owned());
         // Explicit head changes already rebuild the visible history. Restore
         // its completed-step boundary once here, not by rescanning on every
         // subsequent model request.
-        let boundary = self.entity_keys_rev("step")
-            .find(|(_, value)| value.value["metadata"]["kind"] != "context-compaction"
-                && matches!(value.value["status"].as_str(), Some("completed" | "failed" | "interrupted" | "cancelled")))
+        let boundary = self
+            .entity_keys_rev("step")
+            .find(|(_, value)| {
+                value.value["metadata"]["kind"] != "context-compaction"
+                    && matches!(
+                        value.value["status"].as_str(),
+                        Some("completed" | "failed" | "interrupted" | "cancelled")
+                    )
+            })
             .and_then(|(_, value)| value.value["id"].as_str())
-            .and_then(|id| self.aux_value(&format!("context\0step-boundary\0{id}"))).cloned();
+            .and_then(|id| self.aux_value(&format!("context\0step-boundary\0{id}")))
+            .cloned();
         self.aux.insert("context\0latest-boundary".into(), boundary);
         Ok(())
     }
@@ -573,8 +656,11 @@ impl HistorySession {
                 let entry = entry?;
                 if entry.file_name().to_string_lossy().starts_with(".fork-") {
                     let kind = entry.file_type()?;
-                    if kind.is_dir() { std::fs::remove_dir_all(entry.path())?; }
-                    else { std::fs::remove_file(entry.path())?; }
+                    if kind.is_dir() {
+                        std::fs::remove_dir_all(entry.path())?;
+                    } else {
+                        std::fs::remove_file(entry.path())?;
+                    }
                 }
             }
         }
@@ -705,10 +791,20 @@ fn identity_key(kind: &str, owner: &str, id: &str) -> String {
 }
 
 fn step_text_key(object: &HistoryObject) -> Option<(String, String)> {
-    if indexed_kind(&object.kind, &object.value) != Some("part") || object.value["kind"] != "text"
-        || object.kind == "runtime.tombstone" { return None; }
-    Some((object.value["stepId"].as_str()?.to_owned(),
-        format!("{:020}/{}", object.value["sequence"].as_u64().unwrap_or(0), object.value["id"].as_str()?)))
+    if indexed_kind(&object.kind, &object.value) != Some("part")
+        || object.value["kind"] != "text"
+        || object.kind == "runtime.tombstone"
+    {
+        return None;
+    }
+    Some((
+        object.value["stepId"].as_str()?.to_owned(),
+        format!(
+            "{:020}/{}",
+            object.value["sequence"].as_u64().unwrap_or(0),
+            object.value["id"].as_str()?
+        ),
+    ))
 }
 
 fn entity_order(kind: &str, value: &serde_json::Value) -> String {
@@ -791,7 +887,12 @@ fn now_iso() -> String {
 }
 
 fn convert_io(error: crate::storage::jsonl::error::JsonlError) -> HistoryError {
-    if matches!(error, crate::storage::jsonl::error::JsonlError::Runtime(crate::runtime::actor::RuntimeError::SessionDeleted)) {
+    if matches!(
+        error,
+        crate::storage::jsonl::error::JsonlError::Runtime(
+            crate::runtime::actor::RuntimeError::SessionDeleted
+        )
+    ) {
         return HistoryError::SessionDeleted;
     }
     HistoryError::InvalidCommand(error.to_string())

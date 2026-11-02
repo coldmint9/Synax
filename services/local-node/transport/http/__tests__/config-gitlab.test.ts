@@ -16,7 +16,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("encrypts tokens across updates, preserves them only on the same host and supports logout", async () => {
   let response = await save([
-    { host: "GITLAB.COM:443", token: "glpat-test-private-secret" },
+    { host: "https://GITLAB.COM:443/", token: "glpat-test-private-secret" },
   ]);
   expect(response.status).toBe(200);
   let body = await response.json();
@@ -64,8 +64,9 @@ it("never reuses a masked secret for a different host", async () => {
 
 it.each(
   [
-    [{ host: "https://gitlab.com", token: "test" }],
+    [{ host: "https://", token: "test" }],
     [{ host: "gitlab.com:99999", token: "test" }],
+    [{ host: "user@gitlab.com", token: "test" }],
     [{ host: "gitlab.com", token: "test\nheader" }],
     [{ host: "gitlab.com", token: "enc:v1:injected" }],
     [{ host: "gitlab.com" }, { host: "GITLAB.COM:443" }],
@@ -100,6 +101,9 @@ it("validates a draft without saving it, and can validate a saved credential", a
     username: "mint",
     name: "Mint",
   });
+  expect(
+    await (await validate({ host: "https://GitLab.com/group/app", token: "draft-token" })).json(),
+  ).toEqual({ host: "gitlab.com", username: "mint", name: "Mint" });
   expect(getGitLabTokenForHost("gitlab.com")).toBeUndefined();
   await save([{ host: "gitlab.com", token: "saved-token" }]);
   expect((await validate({ host: "gitlab.com" })).status).toBe(200);
@@ -107,5 +111,5 @@ it("validates a draft without saving it, and can validate a saved credential", a
     "saved-token",
   );
   expect((await validate({ host: "unconfigured.test" })).status).toBe(403);
-  expect((await validate({ host: "https://bad.test" })).status).toBe(400);
+  expect((await validate({ host: "https://", token: "draft-token" })).status).toBe(400);
 });

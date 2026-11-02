@@ -16,6 +16,7 @@ import type {
 } from "../../../shared/contracts/config";
 import { configApi } from "../../../adapters/transport/config";
 import { useLocale } from "../../../shared/hooks/useLocale";
+import { normalizeGitLabHost } from "../../../../../services/local-node/modules/remote-pr/gitlab-host";
 import "./gitlab-settings.css";
 
 export function GitLabSettings({
@@ -37,7 +38,7 @@ export function GitLabSettings({
   const [verified, setVerified] = useState<Record<string, string>>({});
   const tokenInput = useRef<HTMLInputElement>(null);
   const hostInput = useRef<HTMLInputElement>(null);
-  const normalizedHost = host.trim().toLowerCase();
+  const normalizedHost = normalizeGitLabHost(host);
   const existing = accounts.find((account) => account.host === normalizedHost);
 
   async function perform(operation: () => Promise<void>) {
@@ -57,6 +58,12 @@ export function GitLabSettings({
   }
 
   async function login() {
+    if (!normalizedHost)
+      throw new Error(
+        zh
+          ? "请输入 GitLab 主机，例如 gitlab.com。"
+          : "Enter a GitLab host, for example gitlab.com.",
+      );
     const account = await configApi.validateGitLab({
       host: normalizedHost,
       ...(token.trim() ? { token: token.trim() } : {}),
@@ -93,11 +100,6 @@ export function GitLabSettings({
           <h1>{zh ? "GitLab 登录" : "GitLab sign-in"}</h1>
           <span>{zh ? "内置连接" : "Built in"}</span>
         </div>
-        <p>
-          {zh
-            ? "连接 GitLab，在对话中查看、创建和合并 MR。支持 GitLab.com 与自建实例。"
-            : "Connect GitLab to view, create, and merge requests in your conversations. Supports self-managed instances."}
-        </p>
       </header>
       {accounts.length > 0 && (
         <section aria-labelledby="gitlab-accounts-heading">
@@ -268,6 +270,10 @@ export function GitLabSettings({
                 setError("");
                 setNotice("");
               }}
+              onBlur={() => {
+                if (normalizedHost && normalizedHost !== host)
+                  setHost(normalizedHost);
+              }}
               required
               autoCapitalize="none"
               spellCheck={false}
@@ -275,8 +281,8 @@ export function GitLabSettings({
             />
             <Description>
               {zh
-                ? "填写域名即可；自建实例可附加端口。"
-                : "Enter a hostname, with an optional port for self-managed instances."}
+                ? "域名或完整地址均可；自建实例可附加端口。"
+                : "Hostname or full URL; self-managed instances may add a port."}
             </Description>
           </Field>
           <Field disabled={busy}>
@@ -314,7 +320,7 @@ export function GitLabSettings({
               size="lg"
               pending={busy}
               disabled={
-                !normalizedHost || (!token.trim() && !existing?.tokenMasked)
+                !host.trim() || (!token.trim() && !existing?.tokenMasked)
               }
             >
               {busy

@@ -23,30 +23,10 @@ const STROKE = 2.25;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-const CATEGORIES = [
-  {
-    key: "messages",
-    zh: "消息",
-    en: "Messages",
-    color: "var(--profile-messages)",
-  },
-  { key: "tools", zh: "工具", en: "Tools", color: "var(--profile-tools)" },
-  { key: "mcp", zh: "MCP", en: "MCP", color: "var(--profile-mcp)" },
-  { key: "skills", zh: "技能", en: "Skills", color: "var(--profile-skills)" },
-  {
-    key: "system",
-    zh: "系统提示词",
-    en: "System prompt",
-    color: "var(--profile-system)",
-  },
-] as const;
-
-const percentOf = (value: number, total: number) =>
-  total > 0 ? (value / total) * 100 : 0;
-
 /**
- * Ring beside the model chip. It reads the request-context snapshot persisted
- * on the session, so hovering never triggers a stats request or history scan.
+ * Ring beside the model chip. It reads the provider's own usage for the last
+ * answered request, persisted on the session, so hovering never triggers a
+ * stats request or history scan and the value never drifts from the provider.
  */
 export function ComposerContextRing({
   usage,
@@ -91,20 +71,12 @@ export function ComposerContextRing({
         ? "warning"
         : "normal";
   const dash = windowPercent === null ? 0 : windowPercent / 100;
-  const composition = usage.composition;
-  const values = CATEGORIES.map((category) => ({
-    ...category,
-    value: Math.max(0, Number(composition[category.key] ?? 0) || 0),
-  }));
-  const classified = values.reduce((sum, item) => sum + item.value, 0);
-  const withValues = values.filter((item) => item.value > 0);
-  const remainder = Math.max(0, usage.total - classified);
   const percentLabel =
     windowPercent === null ? "—" : `${Number(windowPercent.toFixed(1))}%`;
   const totalLabel = `${formatTokenCount(usage.total)}${
     limit ? ` / ${formatContextLimit(limit)}` : ""
   }`;
-  const measured = usage.measuredAt
+  const updatedAt = usage.measuredAt
     ? new Date(usage.measuredAt).toLocaleTimeString(
         zh ? "zh-CN" : "en-US",
         { hour: "2-digit", minute: "2-digit" },
@@ -167,73 +139,16 @@ export function ComposerContextRing({
             </div>
             <div className="composer-context-ring__total">
               <span>{totalLabel}</span>
-              {measured && (
+              {updatedAt && (
                 <span className="composer-context-ring__time">
-                  {zh ? `${measured} 更新` : `Updated ${measured}`}
+                  {zh ? `${updatedAt} 更新` : `Updated ${updatedAt}`}
                 </span>
               )}
             </div>
-            <ul className="composer-context-ring__rows">
-              {withValues.map((item) => {
-                const share = percentOf(item.value, usage.total);
-                return (
-                  <li key={item.key}>
-                    <span
-                      className="composer-context-ring__dot"
-                      style={{ background: item.color }}
-                      aria-hidden="true"
-                    />
-                    <span className="composer-context-ring__label">
-                      {zh ? item.zh : item.en}
-                    </span>
-                    <span className="composer-context-ring__count">
-                      {formatTokenCount(item.value)}
-                    </span>
-                    <span className="composer-context-ring__share">
-                      {share.toFixed(1)}%
-                    </span>
-                    <span className="composer-context-ring__bar" aria-hidden="true">
-                      <span
-                        style={{
-                          width: `${Math.min(100, share)}%`,
-                          background: item.color,
-                        }}
-                      />
-                    </span>
-                  </li>
-                );
-              })}
-              {remainder > 0 && (
-                <li>
-                  <span
-                    className="composer-context-ring__dot"
-                    style={{ background: "var(--ui-line)" }}
-                    aria-hidden="true"
-                  />
-                  <span className="composer-context-ring__label">
-                    {zh ? "其他" : "Other"}
-                  </span>
-                  <span className="composer-context-ring__count">
-                    {formatTokenCount(remainder)}
-                  </span>
-                  <span className="composer-context-ring__share">
-                    {percentOf(remainder, usage.total).toFixed(1)}%
-                  </span>
-                  <span className="composer-context-ring__bar" aria-hidden="true">
-                    <span
-                      style={{
-                        width: `${Math.min(100, percentOf(remainder, usage.total))}%`,
-                        background: "var(--ui-line)",
-                      }}
-                    />
-                  </span>
-                </li>
-              )}
-            </ul>
             <p className="composer-context-ring__note">
               {zh
-                ? "本地分类估算，随每次请求增量更新；非账单用量。"
-                : "Local category estimate, updated incrementally per request; not billed usage."}
+                ? "服务商实测输入（含缓存），非账单用量。"
+                : "Provider-reported input including cache. Not billed usage."}
             </p>
           </div>
         </Portal>

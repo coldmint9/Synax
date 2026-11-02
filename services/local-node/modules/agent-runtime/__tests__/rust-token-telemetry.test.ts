@@ -10,6 +10,7 @@ import { agentRuntimeStore as store } from "../session-store.js";
 import { RunCoordinator } from "../run-coordinator.js";
 import { runtimeJournal, type RuntimeStreamRecord } from "../runtime-journal.js";
 import { countTokens } from "../context-tokenizer.js";
+import * as mcpTools from "../../../infrastructure/mcp/mcp-session-tool-provider.js";
 
 type Protocol = "openai" | "openai-responses" | "anthropic";
 let root: string;
@@ -38,10 +39,37 @@ afterEach(async () => {
   await new Promise<void>(resolve => server.close(() => resolve()));
   await rm(root, { recursive: true, force: true });
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
 });
 
 const first = { text: "Hello 世界", thought: "Think carefully." };
 const second = { text: " More output.", thought: " Then verify." };
+
+it('delivers the first text while MCP discovery is still pending', async () => {
+  let finishDiscovery!: () => void;
+  const discovery = new Promise<void>(resolve => { finishDiscovery = resolve; });
+  const warmup = vi.spyOn(mcpTools, 'warmupMcpForSession').mockReturnValue(discovery);
+  updateGlobalConfig({ defaultApiProviderId: 'openai', providerConnections: { openai: {
+    providerId: 'openai', apiKey: 'fixture', baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`,
+    extra: { kind: 'api', apiFormat: 'openai', model: 'fixture' },
+  } } }, 'mcp-nonblocking-test');
+  let upstream: ReturnType<typeof wire> | undefined;
+  onRequest = response => {
+    upstream = wire('openai', response);
+    upstream.delta(first);
+  };
+  try {
+    const accepted = await coordinator.submitAsync(sessionId, { message: 'Answer immediately' }, 'mcp-nonblocking-test');
+    await vi.waitFor(async () => {
+      const snapshot = await runtimeJournal.snapshotDurable(sessionId);
+      expect(snapshot.liveChunks.some(chunk => chunk.type === 'message_delta')).toBe(true);
+    }, { timeout: 5000 });
+    expect(warmup).toHaveBeenCalledWith(sessionId);
+    upstream!.finish();
+    await coordinator.waitForIdle();
+    expect(store.getRun(accepted.run.id).status).toBe('completed');
+  } finally { finishDiscovery(); }
+}, 15000);
 
 function wire(protocol: Protocol, response: ServerResponse) {
   const event = (type: string, payload: object) => response.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...payload })}\n\n`);

@@ -4,6 +4,7 @@ const { contextBridge, ipcRenderer } =
 if (process.isMainFrame)
   contextBridge.exposeInMainWorld("electronAPI", {
     platform: process.platform,
+    openPortalExternal: (url: string) => ipcRenderer.invoke("portal:external", url),
     minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
     toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
     closeWindow: () => ipcRenderer.invoke("window:close"),
@@ -39,19 +40,37 @@ if (process.isMainFrame)
       id: string;
       projectId: string;
       sessionId: string;
-      kind: "completed" | "input" | "approval" | "failed";
+      kind:
+        | "completed"
+        | "input"
+        | "approval"
+        | "failed"
+        | "paused"
+        | "interrupted"
+        | "cancelled";
       title: string;
       body: string;
     }) => ipcRenderer.invoke("notifications:show", payload),
-    setDesktopNotificationsEnabled: (enabled: boolean) =>
-      ipcRenderer.send("notifications:enabled", enabled),
+    setDesktopNotificationsEnabled: (enabled: boolean, locale?: "zh" | "en") =>
+      ipcRenderer.send(
+        "notifications:enabled",
+        enabled,
+        locale === "zh" || locale === "en" ? locale : undefined,
+      ),
     dismissDesktopNotification: (sessionId: string) =>
       ipcRenderer.send("notifications:dismiss", sessionId),
     onDesktopNotificationOpen: (
       callback: (target: {
         projectId: string;
         sessionId: string;
-        kind: "completed" | "input" | "approval" | "failed";
+        kind:
+          | "completed"
+          | "input"
+          | "approval"
+          | "failed"
+          | "paused"
+          | "interrupted"
+          | "cancelled";
       }) => void,
     ) => {
       const listener = (
@@ -72,12 +91,18 @@ if (process.isMainFrame)
       ipcRenderer.invoke("dialog:open", options),
     showSaveDialog: (options: Electron.SaveDialogOptions) =>
       ipcRenderer.invoke("dialog:save", options),
+    /** Native save-as: the main process owns the dialog and the write. */
+    saveTextFile: (request: {
+      suggestedName: string;
+      contents: string;
+      filters?: { name: string; extensions: string[] }[];
+    }) => ipcRenderer.invoke("dialog:save-text", request),
     getAppVersion: () => ipcRenderer.invoke("app:version"),
     getComputerUseStatus: () => ipcRenderer.invoke("app:computer-use-status"),
     getComputerUsePermissions: () => ipcRenderer.invoke("app:computer-use-permissions"),
     openComputerUsePermissions: (kind: 'accessibility' | 'screen-recording') =>
       ipcRenderer.invoke("app:computer-use-open-permissions", kind),
-    getUpdateNetworkSettings: () => ipcRenderer.invoke("updates:get-network"),
+    getUpdateSettings: () => ipcRenderer.invoke("updates:get-settings"),
     getDesktopUpdateState: () => ipcRenderer.invoke("updates:state"),
     checkDesktopUpdate: () => ipcRenderer.invoke("updates:check"),
     installDesktopUpdate: () => ipcRenderer.invoke("updates:install"),
@@ -96,9 +121,9 @@ if (process.isMainFrame)
       ipcRenderer.on("updates:show", listener);
       return () => ipcRenderer.removeListener("updates:show", listener);
     },
-    setUpdateNetworkSettings: (
-      settings: import("./lib/update-network.js").UpdateNetworkSettings,
-    ) => ipcRenderer.invoke("updates:set-network", settings),
+    setUpdateSettings: (
+      settings: import("./updater/update-settings.js").UpdateSettings,
+    ) => ipcRenderer.invoke("updates:set-settings", settings),
     getAccessibilitySupportEnabled: () =>
       ipcRenderer.invoke("app:accessibility-support-enabled"),
     onAccessibilitySupportChanged: (callback: (enabled: boolean) => void) => {
@@ -137,6 +162,7 @@ if (process.isMainFrame)
       hasViewer: boolean;
       inWork: boolean;
       dark: boolean;
+      locale: "zh" | "en";
     }) => ipcRenderer.send("menu:update-state", state),
     updateProjects: (projects: { id: string; name: string }[]) => {
       ipcRenderer.send("menu:update-projects", projects);

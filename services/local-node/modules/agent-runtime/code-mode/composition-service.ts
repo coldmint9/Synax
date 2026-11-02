@@ -8,6 +8,7 @@ import { profileCanUseTool } from "../tool-mount-policy.js";
 import { canComposeTool, codeModeEnabled } from "./policy.js";
 import { nestedModelCallId } from "./history.js";
 import { executeCode } from "./executor.js";
+import { resolveToolName } from "../tool-name-resolution.js";
 
 export function response(
   result: unknown,
@@ -62,12 +63,14 @@ export function createCompositionExecutor(
       durationMs: number;
       error?: string;
     }> = [];
-    let tail: Promise<unknown> = Promise.resolve();
     const result = await executeCode({
       code: (input.args as { code: string }).code,
       signal: input.abortSignal,
-      callTool: (toolId, args, signal) => {
-        const next = tail.then(async () => {
+      // Only already eligible read operations may share a batch. Writes and
+      // unknown contracts remain barriers; execution rechecks current grants.
+      canParallelTool: (toolId) => eligible(input.sessionId)
+        .some(tool => tool.id === toolId && tool.mutability === "read"),
+      callTool: async (toolId, args, signal) => {
         const trace: (typeof nestedCalls)[number] = {
           toolId,
           status: "running",
@@ -78,17 +81,28 @@ export function createCompositionExecutor(
         const sequence = nestedCalls.length;
         try {
           signal.throwIfAborted();
-          if (
-            !eligible(input.sessionId).some((tool) => tool.id === toolId)
-          ) {
+          const tools = eligible(input.sessionId);
+          // Code Mode receives the same name variants as the direct tool path
+          // (`write` for `file.write`); resolve them before granting anything.
+          const resolution = tools.some((tool) => tool.id === toolId)
+            ? null
+            : resolveToolName(toolId, tools.map((tool) => tool.id));
+          const resolvedId = resolution
+            ? (resolution.match?.toolId ?? null)
+            : toolId;
+          if (!resolvedId) {
             trace.status = "denied";
             throw new Error(
-              `Tool is not currently approved for composition. Use ${native ? "agent.discover" : "code.tools"} or direct tools.`,
+              `Tool ${toolId} is not currently approved for composition.` +
+                (resolution?.suggestions.length
+                  ? ` Closest eligible tools: ${resolution.suggestions.join(", ")}.`
+                  : "") +
+                ` Use ${native ? "agent.discover" : "code.tools"} or direct tools.`,
             );
           }
-          validateContract?.(input.sessionId, toolId);
+          validateContract?.(input.sessionId, resolvedId);
           const executed = await withoutSandboxApproval(() =>
-            registry.execute(input.sessionId, toolId, args, {
+            registry.execute(input.sessionId, resolvedId, args, {
               runId: input.runId,
               stepId: input.stepId,
               modelToolCallId: nestedModelCallId(
@@ -130,9 +144,6 @@ export function createCompositionExecutor(
         } finally {
           trace.durationMs = Date.now() - started;
         }
-        });
-        tail = next;
-        return next;
       },
     });
     // Calls that ignored cancellation cannot be allowed to change the returned

@@ -17,6 +17,7 @@ let provider: http.Server;
 let coordinator: RunCoordinator;
 let sessionId: string;
 let requestedTool: string;
+let requestedArgs: Record<string, unknown>;
 let requests: Array<{
   messages?: Array<{ role: string; content: string; tool_call_id?: string }>;
   input?: Array<{ type: string; output?: string; call_id?: string }>;
@@ -29,6 +30,7 @@ beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "synax-tool-resolution-"));
   await writeFile(path.join(root, "fixture.txt"), "RECOVERED_FILE_CONTENT");
   requests = [];
+  requestedArgs = { file: "fixture.txt" };
   coordinator = new RunCoordinator();
   provider = http.createServer(async (request, response) => {
     let body = "";
@@ -40,7 +42,7 @@ beforeEach(async () => {
       if (requests.length <= 2) {
         const call = { type: "function_call", id: `fc_${requests.length}`, call_id: `provider-call-${requests.length}`,
           name: requests.length === 1 ? requestedTool : "file_read" };
-        const args = JSON.stringify(requests.length === 1 ? { file: "fixture.txt" } : { path: "fixture.txt" });
+        const args = JSON.stringify(requests.length === 1 ? requestedArgs : { path: "fixture.txt" });
         event("response.output_item.added", { output_index: 0, item: call });
         event("response.function_call_arguments.delta", { output_index: 0, item_id: call.id, delta: args });
         event("response.output_item.done", { output_index: 0, item: { ...call, arguments: args, status: "completed" } });
@@ -62,7 +64,7 @@ beforeEach(async () => {
     if (requests.length <= 2) {
       chunk({ tool_calls: [{ index: 0, id: `provider-call-${requests.length}`, type: "function", function: {
         name: requests.length === 1 ? requestedTool : "file_read",
-        arguments: JSON.stringify(requests.length === 1 ? { file: "fixture.txt" } : { path: "fixture.txt" }),
+        arguments: JSON.stringify(requests.length === 1 ? requestedArgs : { path: "fixture.txt" }),
       } }] });
       chunk({}, "tool_calls");
     } else {
@@ -91,10 +93,10 @@ afterEach(async () => {
 });
 
 it.each([
-  { name: "read", apiFormat: "openai" },
+  { name: "flie_write", apiFormat: "openai" },
   { name: "file_glob", apiFormat: "openai" },
   { name: "mcp_disconnected_read", apiFormat: "openai" },
-  { name: "read", apiFormat: "openai-responses" },
+  { name: "file_glob", apiFormat: "openai-responses" },
 ] as const)(
   "returns $name failure through $apiFormat and completes the same run after a corrected tool call",
   async ({ name, apiFormat }) => {
@@ -126,6 +128,21 @@ it.each([
     expect(store.getSession(sessionId).blockedReason).toBeNull();
   }, 20_000,
 );
+
+it("resolves the model's short tool name without a corrective turn", async () => {
+  // `write`/`read` arrive from models trained on another harness's vocabulary.
+  requestedTool = "read";
+  requestedArgs = { path: "fixture.txt" };
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Read fixture.txt" }, "resolve-alias");
+  await coordinator.waitForIdle();
+  expect(store.getRun(accepted.run.id).status).toBe("completed");
+  expect(store.listToolCalls(sessionId)[0]).toMatchObject({
+    toolId: "file.read", status: "completed", modelToolCallId: "provider-call-1",
+  });
+  expect(requests[1].messages).toContainEqual(expect.objectContaining({
+    role: "tool", tool_call_id: "provider-call-1", content: expect.stringContaining("RECOVERED_FILE_CONTENT"),
+  }));
+}, 20_000);
 
 it("logs a genuine missing runtime resource with run identity and preserves the failure", async () => {
   requestedTool = "file_read";

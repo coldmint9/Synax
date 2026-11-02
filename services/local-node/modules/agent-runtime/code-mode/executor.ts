@@ -1,5 +1,5 @@
-import { Worker } from "node:worker_threads";
-import { runtimeAsset } from "../../../infrastructure/runtime/runtime-paths.js";
+import { codeWorkerPool, type CodeWorkerPool } from "./worker-pool.js";
+import { AsyncResource } from "node:async_hooks";
 import {
   CODE_LIMITS,
   type CodeLimits,
@@ -7,9 +7,6 @@ import {
   type ExecuteCodeInput,
 } from "./contracts.js";
 
-// Global per agent-process admission limit, in addition to per-execution tool limits.
-let activeWorkers = 0;
-const MAX_WORKERS = 2;
 function limitsFor(overrides: Partial<CodeLimits> = {}): CodeLimits {
   return Object.fromEntries(
     Object.entries(CODE_LIMITS).map(([key, ceiling]) => {
@@ -25,75 +22,75 @@ function limitsFor(overrides: Partial<CodeLimits> = {}): CodeLimits {
 }
 export async function executeCode(
   input: ExecuteCodeInput,
+  pool: CodeWorkerPool = codeWorkerPool,
 ): Promise<CodeResult> {
-  const start = Date.now();
+  const start = performance.now();
   const limits = limitsFor(input.limits);
-  const base = { stdout: "", truncated: false, durationMs: 0 };
+  const base = { stdout: "", truncated: false };
+  let queueWaitMs = 0;
+  const measured = (result: Omit<CodeResult, "durationMs" | "queueWaitMs">): CodeResult => ({
+    ...result, queueWaitMs, durationMs: performance.now() - start,
+  });
   if (input.signal?.aborted)
-    return { ...base, status: "cancelled", error: "Execution cancelled." };
+    return measured({ ...base, status: "cancelled", error: "Execution cancelled." });
   if (Buffer.byteLength(input.code) > limits.maxCodeBytes)
-    return { ...base, status: "failed", error: "Code exceeds the byte limit." };
-  if (activeWorkers >= MAX_WORKERS)
-    return {
-      ...base,
-      status: "unavailable",
-      error: "Code Mode is busy. Use direct tools or retry later.",
-    };
-  let worker: Worker;
-  try {
-    worker = new Worker(
-      runtimeAsset(import.meta.url, "./worker.mjs", "workers/code-mode.cjs"),
-      {
-        workerData: { code: input.code, limits },
-        execArgv: [],
-        env: {},
-        stdout: true,
-        stderr: true,
-        resourceLimits: {
-          maxOldGenerationSizeMb: 96,
-          maxYoungGenerationSizeMb: 16,
-          stackSizeMb: 4,
-        },
-      },
-    );
-  } catch {
-    return {
-      ...base,
-      status: "unavailable",
-      error: "Code Mode worker is unavailable. Use direct tools.",
-    };
+    return measured({ ...base, status: "failed", error: "Code exceeds the byte limit." });
+  const admission = await pool.acquire(limits.queueTimeoutMs, input.signal);
+  queueWaitMs = performance.now() - start;
+  if (admission.status !== "acquired")
+    return measured({ ...base, ...admission });
+  const { lease } = admission;
+  const { worker, runId } = lease;
+  // Cancellation can win after admission resolved but before this continuation.
+  if (input.signal?.aborted || lease.signal.aborted) {
+    await lease.release();
+    return measured({ ...base, status: "cancelled", error: "Execution cancelled before worker startup." });
   }
-  activeWorkers++;
-  // QuickJS diagnostics must not fill an unread worker stream.
-  worker.stdout?.resume();
-  worker.stderr?.resume();
+  if (worker.threadId < 0) {
+    await lease.release();
+    return measured({ ...base, status: "unavailable", error: "Code Mode worker exited before execution." });
+  }
   const controller = new AbortController();
+  // Worker message events retain the thread's creation context. Bind each run
+  // so tool permissions, execution leases and traces follow the current caller.
+  const task = new AsyncResource("SynaxCodeModeRun");
   let done = false;
   let calls = 0;
   let inFlight = 0;
-  const queue: Array<() => void> = [];
+  let exclusive = false;
+  const queue: Array<{ toolId: string; run: (parallel: boolean) => void }> = [];
   const seen = new Set<number>();
   return new Promise<CodeResult>((resolve) => {
     const pump = () => {
-      while (!done && inFlight < limits.maxConcurrentCalls && queue.length) {
-        queue.shift()!();
+      while (!done && !exclusive && inFlight < limits.maxConcurrentCalls && queue.length) {
+        let parallel = false;
+        try { parallel = input.canParallelTool?.(queue[0].toolId) === true; }
+        catch { /* Failed classification stays exclusive; execution reports the error. */ }
+        if (done) return;
+        if (!parallel && inFlight) return;
+        queue.shift()!.run(parallel);
       }
     };
-    const finish = (result: Omit<CodeResult, "durationMs">) => {
+    const finish = (result: Omit<CodeResult, "durationMs" | "queueWaitMs">, reuse?: { wasmBytes: number }) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
       input.signal?.removeEventListener("abort", cancel);
+      lease.signal.removeEventListener("abort", cancel);
+      worker.off("message", onMessage);
+      worker.off("error", onError);
+      worker.off("exit", onExit);
       controller.abort();
-      void worker.terminate().finally(() => {
-        activeWorkers--;
-        resolve({ ...result, durationMs: Date.now() - start });
+      queue.length = 0;
+      void lease.release(reuse).then(() => {
+        task.emitDestroy();
+        resolve(measured(result));
       });
     };
     const fail = (error: string) =>
       finish({ ...base, status: "failed", error });
-    const cancel = () =>
-      finish({ ...base, status: "cancelled", error: "Execution cancelled." });
+    const cancel = task.bind(() =>
+      finish({ ...base, status: "cancelled", error: "Execution cancelled." }));
     const timer = setTimeout(
       () =>
         finish({
@@ -103,20 +100,22 @@ export async function executeCode(
         }),
       limits.timeoutMs,
     );
-    input.signal?.addEventListener("abort", cancel, { once: true });
-    if (input.signal?.aborted) cancel();
-    worker.on("error", () =>
+    const onError = task.bind(() =>
       finish({
         ...base,
         status: "unavailable",
         error: "Code Mode worker failed. Use direct tools.",
-      }),
-    );
-    worker.on("exit", () => {
+      }));
+    const onExit = task.bind(() => {
       if (!done) fail("Code Mode worker exited unexpectedly.");
     });
-    worker.on("message", (message) => {
+    const onMessage = task.bind((message: { type: string; runId: number; id: number; json: string; toolId: string; reusable?: boolean; wasmBytes?: number }) => {
       if (done) return;
+      if (!message || !Number.isSafeInteger(message.runId)) {
+        fail("Code Mode worker protocol mismatch. Rebuild the matching host and worker.");
+        return;
+      }
+      if (message.runId !== runId) return;
       if (message.type === "result") {
         if (
           typeof message.json !== "string" ||
@@ -130,16 +129,17 @@ export async function executeCode(
           );
         try {
           const result = JSON.parse(message.json);
-          if (inFlight || queue.length)
+          if (result.status === "completed" && (inFlight || queue.length))
             return fail(
               "Unawaited tool calls are not supported. Await every tools.call.",
             );
-          if (result.status !== "completed" && result.status !== "failed")
+          if (!["completed", "failed", "timed_out"].includes(result.status))
             return fail("Invalid worker result.");
           if (result.status === "completed" &&
               Buffer.byteLength(JSON.stringify(result.value ?? null)) > limits.maxOutputBytes)
             return fail("Final return exceeds the storage byte limit. Do not replay completed writes.");
-          finish({ ...base, ...result });
+          finish({ ...base, ...result }, result.status === "completed" && message.reusable === true
+            ? { wasmBytes: message.wasmBytes ?? 0 } : undefined);
         } catch {
           fail("Invalid worker result.");
         }
@@ -169,8 +169,9 @@ export async function executeCode(
         return fail("Tool arguments must be a JSON object.");
       }
       seen.add(message.id);
-      queue.push(() => {
+      queue.push({ toolId: message.toolId, run: (parallel) => {
         inFlight++;
+        exclusive = !parallel;
         void Promise.resolve()
           .then(() => {
             controller.signal.throwIfAborted();
@@ -183,12 +184,13 @@ export async function executeCode(
               throw new Error(
                 "Tool result exceeds the Code Mode byte limit. Narrow the query or use direct tools.",
               );
-            worker.postMessage({ type: "reply", id: message.id, json });
+            worker.postMessage({ type: "reply", runId, id: message.id, json });
           })
           .catch((error) => {
             if (!done)
               worker.postMessage({
                 type: "reply",
+                runId,
                 id: message.id,
                 error: String(
                   error instanceof Error ? error.message : error,
@@ -197,10 +199,21 @@ export async function executeCode(
           })
           .finally(() => {
             inFlight--;
+            if (!parallel) exclusive = false;
             pump();
           });
-      });
+      } });
       pump();
     });
+    worker.on("message", onMessage);
+    worker.once("error", onError);
+    worker.once("exit", onExit);
+    input.signal?.addEventListener("abort", cancel, { once: true });
+    lease.signal.addEventListener("abort", cancel, { once: true });
+    if (input.signal?.aborted || lease.signal.aborted) cancel();
+    if (!done) {
+      try { worker.postMessage({ type: "run", runId, code: input.code, limits }); }
+      catch { fail("Could not start Code Mode worker."); }
+    }
   });
 }

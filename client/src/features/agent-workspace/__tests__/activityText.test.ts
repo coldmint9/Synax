@@ -3,6 +3,7 @@ import {
   ACTIVITY_BODY_LIMIT,
   activityPreview,
   formatCharCount,
+  formatWorkDuration,
   latestThinkingIndex,
   tailForDisplay,
   thinkingBannerPhrase,
@@ -26,6 +27,25 @@ describe("activityPreview", () => {
     );
     expect(activityPreview("x".repeat(200))).toHaveLength(90);
     expect(activityPreview("x".repeat(200)).endsWith("…")).toBe(true);
+  });
+});
+
+describe("formatWorkDuration", () => {
+  it("spells the units out for the folded run row", () => {
+    expect(formatWorkDuration(47_000, "zh")).toBe("47秒");
+    expect(formatWorkDuration(227_000, "zh")).toBe("3分47秒");
+    expect(formatWorkDuration(120_000, "zh")).toBe("2分钟");
+    expect(formatWorkDuration(4_020_000, "zh")).toBe("1小时7分");
+  });
+
+  it("keeps the compact form for English readers", () => {
+    expect(formatWorkDuration(227_000, "en")).toBe("3m 47s");
+    expect(formatWorkDuration(12_300, "en")).toBe("12.3s");
+  });
+
+  it("reports nothing when the round has no usable timing", () => {
+    expect(formatWorkDuration(0, "zh")).toBeNull();
+    expect(formatWorkDuration(Number.NaN, "en")).toBeNull();
   });
 });
 

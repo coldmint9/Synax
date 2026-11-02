@@ -124,4 +124,74 @@ describe("useSessionSearch", () => {
     ]);
     expect(hook.result.current.hasMore).toBe(false);
   });
+
+  it("refreshes while the transcript index drains, then stops", async () => {
+    const search = vi
+      .spyOn(agentRuntimeApi, "searchSessions")
+      .mockResolvedValueOnce({
+        items: [{ session: { id: "label" }, snippet: "label" }],
+        hasMore: false,
+        terms: ["搜索"],
+        indexing: { ready: 0, pending: 2, total: 3 },
+      } as SessionSearchResponse)
+      .mockResolvedValue({
+        items: [
+          { session: { id: "label" }, snippet: "label" },
+          { session: { id: "content" }, snippet: "搜索命中" },
+        ],
+        hasMore: false,
+        terms: ["搜索"],
+        indexing: { ready: 3, pending: 0, total: 3 },
+      } as SessionSearchResponse);
+    const hook = renderHook(() => useSessionSearch("alpha", "搜索"));
+
+    await advance();
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.terms).toEqual(["搜索"]);
+    expect(hook.result.current.items).toHaveLength(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.items.map((item) => item.session.id)).toEqual([
+      "label",
+      "content",
+    ]);
+    expect(hook.result.current.indexing).toEqual({
+      ready: 3,
+      pending: 0,
+      total: 3,
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4_000);
+    });
+    expect(search).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops refreshing when the indexed backlog stops shrinking", async () => {
+    const search = vi
+      .spyOn(agentRuntimeApi, "searchSessions")
+      .mockResolvedValue({
+        items: [{ session: { id: "a" }, snippet: "a" }],
+        hasMore: false,
+        indexing: { ready: 1, pending: 2, total: 3 },
+      } as SessionSearchResponse);
+    renderHook(() => useSessionSearch("alpha", "needle"));
+
+    await advance();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    expect(search).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(search).toHaveBeenCalledTimes(3);
+  });
 });

@@ -51,8 +51,13 @@ vi.mock("./mac-desktop-update.js", () => ({
 }));
 
 import { DesktopUpdates } from "./desktop-updates.js";
+import {
+  DEFAULT_UPDATE_SETTINGS,
+  configureUpdateSettings,
+} from "../updater/update-settings.js";
 
 beforeEach(() => {
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS, enabled: true });
   vi.clearAllMocks();
   mocks.controller.state.phase = "current";
   mocks.controller.state.availableVersion = null;
@@ -62,7 +67,10 @@ beforeEach(() => {
   mocks.controller.install.mockImplementation(async () => {});
   mocks.dialog.mockResolvedValue({ response: 0 });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS });
+});
 
 describe("main-process desktop updates", () => {
   it("reveals failures once per failed attempt, including native install errors", () => {
@@ -197,3 +205,4 @@ describe("main-process desktop updates", () => {
     expect(mocks.quit).not.toHaveBeenCalled();
   });
 });
+

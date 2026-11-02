@@ -89,11 +89,11 @@ function isRevisionConflict(error: unknown): error is RuntimeSidecarError {
   return error instanceof RuntimeSidecarError && error.code === 'REVISION_CONFLICT';
 }
 
-export async function* sessionPages<T>(client: RuntimeSidecarClient, signal?: AbortSignal): AsyncGenerator<T[]> {
+export async function* sessionPages<T>(client: RuntimeSidecarClient, signal?: AbortSignal, view?: 'badges'): AsyncGenerator<T[]> {
   let after: string | undefined;
   while (true) {
     signal?.throwIfAborted();
-    const page = JSON.parse(Buffer.from(await client.sessionList(after)).toString('utf8')) as { items: T[]; next?: string; loading?: boolean };
+    const page = JSON.parse(Buffer.from(await (view ? client.sessionList(after, view) : client.sessionList(after))).toString('utf8')) as { items: T[]; next?: string; loading?: boolean };
     if (page.loading) {
       // Each IPC request stays short while Rust builds the index in the background.
       await new Promise<void>(resolve => setTimeout(resolve, 100));
@@ -105,9 +105,9 @@ export async function* sessionPages<T>(client: RuntimeSidecarClient, signal?: Ab
   }
 }
 
-export async function readSessionList<T>(client: RuntimeSidecarClient): Promise<T[]> {
+export async function readSessionList<T>(client: RuntimeSidecarClient, view?: 'badges'): Promise<T[]> {
   const items: T[] = [];
-  for await (const page of sessionPages<T>(client)) items.push(...page);
+  for await (const page of sessionPages<T>(client, undefined, view)) items.push(...page);
   return items;
 }
 

@@ -102,7 +102,7 @@ describe("native session notifications", () => {
       platform.mockRestore();
     }
   });
-  it("respects the preference and native support, and suppresses focused windows", () => {
+  it("respects the preference and native support, and still delivers to a focused window", () => {
     const window = win();
     const service = new SessionNotifications(
       () => window as any,
@@ -116,8 +116,10 @@ describe("native session notifications", () => {
     mocks.supported = true;
     window.isFocused = () => true;
     window.isMinimized = () => false;
-    expect(service.show(payload)).toBe(false);
-    expect(mocks.notices).toHaveLength(0);
+    // Focus says nothing about which session is on screen; the reminder ships.
+    expect(service.show(payload)).toBe(true);
+    expect(mocks.notices).toHaveLength(1);
+    expect(mocks.notices[0].options).toMatchObject({ silent: false });
   });
   it("deduplicates events, restores/focuses the window, and queues navigation until the renderer is ready", async () => {
     const window = win();
@@ -163,6 +165,8 @@ describe("native session notifications", () => {
       expect(service.show(payload)).toBe(true);
       expect(mocks.notices[0].options).toMatchObject({
         actions: [{ type: "button", text: "回复" }],
+        sound: "default",
+        silent: false,
       });
       expect(mocks.notices[0].options).not.toHaveProperty("icon");
       mocks.notices[0].emit("action", {}, 0);
@@ -256,6 +260,37 @@ describe("native session notifications", () => {
     expect(window.webContents.send).not.toHaveBeenCalled();
   });
 
+  it.each(["completed", "failed", "input", "approval", "paused", "interrupted", "cancelled"] as const)(
+    "accepts a %s notice for every suspended or settled state",
+    (kind) => {
+      const window = win();
+      const service = new SessionNotifications(
+        () => window as any,
+        async () => window as any,
+        "/synax-icon.png",
+      );
+      service.setEnabled(true);
+      expect(service.show({ ...payload, id: `event-${kind}`, kind })).toBe(true);
+      expect(mocks.notices).toHaveLength(1);
+    },
+  );
+  it("delivers with no window at all and recreates it when the notice is clicked", async () => {
+    const reopened = win();
+    const ensure = vi.fn(async () => reopened as any);
+    const service = new SessionNotifications(
+      () => null,
+      ensure,
+      "/synax-icon.png",
+    );
+    service.setEnabled(true);
+    expect(service.show(payload)).toBe(true);
+    expect(mocks.notices).toHaveLength(1);
+    mocks.notices[0].emit("click");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ensure).toHaveBeenCalledOnce();
+    expect(reopened.focus).toHaveBeenCalledOnce();
+  });
   it("accepts only the main window's top-level app or exact development origin", () => {
     const window = win();
     const event = {

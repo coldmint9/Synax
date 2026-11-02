@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_THEME } from "../../../shared/lib/theme/defaults";
 import { resolveThemeTokens } from "../../../shared/lib/theme/runtime";
-import { applyTerminalTheme, terminalTheme } from "../TerminalViewport";
+import {
+  applyTerminalTheme,
+  isTerminalCopyShortcut,
+  isTerminalPasteShortcut,
+  terminalAcceptsInput,
+  terminalTheme,
+} from "../TerminalViewport";
 
 describe("terminalTheme", () => {
   it("maps normalized resolved semantic tokens to xterm colors", () => {
@@ -71,4 +77,69 @@ it("updates an open terminal theme in place without reconnecting or changing inp
   expect(connection.reconnect).not.toHaveBeenCalled();
   expect(connection.prepareInput).not.toHaveBeenCalled();
   expect(connection.write).not.toHaveBeenCalled();
+});
+
+describe("terminal clipboard shortcuts", () => {
+  it("copies a selection with the platform shortcut without stealing Ctrl+C", () => {
+    expect(
+      isTerminalCopyShortcut(
+        { key: "c", metaKey: true, ctrlKey: false, shiftKey: false },
+        "MacIntel",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalCopyShortcut(
+        { key: "c", metaKey: false, ctrlKey: true, shiftKey: true },
+        "Win32",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalCopyShortcut(
+        { key: "c", metaKey: false, ctrlKey: true, shiftKey: false },
+        "Linux",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses desktop paste shortcuts while preserving Unix Ctrl+V", () => {
+    expect(
+      isTerminalPasteShortcut(
+        { key: "v", metaKey: true, ctrlKey: false, shiftKey: false },
+        "MacIntel",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalPasteShortcut(
+        { key: "v", metaKey: false, ctrlKey: true, shiftKey: false },
+        "Win32",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalPasteShortcut(
+        { key: "v", metaKey: false, ctrlKey: true, shiftKey: true },
+        "Linux",
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalPasteShortcut(
+        { key: "v", metaKey: false, ctrlKey: true, shiftKey: false },
+        "Linux",
+      ),
+    ).toBe(false);
+    expect(
+      isTerminalPasteShortcut(
+        { key: "Insert", metaKey: false, ctrlKey: false, shiftKey: true },
+        "Linux",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("terminal input availability", () => {
+  it("only accepts input while the PTY is running", () => {
+    expect(terminalAcceptsInput("active")).toBe(true);
+    expect(terminalAcceptsInput("stopping")).toBe(false);
+    expect(terminalAcceptsInput("closed")).toBe(false);
+    expect(terminalAcceptsInput("unconfirmed")).toBe(false);
+  });
 });

@@ -66,6 +66,8 @@ export interface SkillInstallRecord {
   status: SkillInstallStatus;
   installedAt: string;
   updatedAt: string;
+  /** Account scopes the skill needs at prompt time, e.g. `enterprise`. */
+  requiresAccounts?: string[];
 }
 
 export interface SkillSummary {
@@ -83,6 +85,12 @@ export interface SkillSummary {
   injection?: SkillInjectionMode;
   requiredCapabilities: string[];
   permissionHints: InternalGate[];
+  /**
+   * Account scopes the skill instructions depend on, e.g. `enterprise`.
+   * Absent or empty means the skill is always offerable; otherwise the
+   * orchestrator only lists it while one of those accounts is signed in.
+   */
+  requiresAccounts?: string[];
   status: SkillStatus;
   installPath?: string;
   contentDigest?: string;
@@ -109,6 +117,7 @@ export interface ParsedSkillFile {
   injection: SkillInjectionMode;
   requiredCapabilities: string[];
   permissionHints: InternalGate[];
+  requiresAccounts: string[];
   content: string;
   installPath: string;
 }

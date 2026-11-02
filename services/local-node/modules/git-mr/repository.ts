@@ -94,6 +94,7 @@ export async function git(
     allowFailure?: boolean;
     stdin?: string;
     signal?: AbortSignal;
+    timeoutMs?: number;
   } = {},
 ) {
   const result = await command(

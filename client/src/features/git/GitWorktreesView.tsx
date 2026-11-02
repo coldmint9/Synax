@@ -89,6 +89,12 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
     try { await reload(); }
     catch (cause) { if (alive.current) setError(`操作结果已保留，但列表刷新失败：${message(cause)}。请刷新列表。`); }
   }
+  /** A mutation must release the lock before its follow-up refresh runs: a slow
+   * list read would otherwise keep every dialog and toolbar control disabled. */
+  function runAndRefresh(action: () => Promise<void>, onError: (error: string) => void = setError) {
+    if (locked.current) return;
+    void run(action, onError).then(() => refreshAfterMutation());
+  }
   function beginCreate() {
     setMode(0); setBranch(""); setExisting(""); setStartPoint(currentBranch ?? "HEAD");
     setPath(""); setCreateError(""); setCreating(true);
@@ -104,13 +110,36 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
   }
   function submitCreate() {
     if (busy || !path || !chosenBranch || pathError) return;
-        setCreateError(""); void run(async () => {
+        setCreateError(""); runAndRefresh(async () => {
           const result = await projectApi.createGitWorktree(projectId, { rootId, branch: chosenBranch, createBranch: mode === 0, startPoint: mode === 0 ? startPoint : undefined });
           if (!alive.current) return;
           setFresh(result.worktree.path); setCreating(false); setQuery(""); setFilter("all"); setNotice(`工作树已创建：${title(result.worktree)}`);
-          await refreshAfterMutation();
         }, setCreateError);
 
+  }
+  function confirmCleanup() {
+    if (!cleanup || locked.current) return;
+    const snapshot = [...cleanup.candidates];
+    runAndRefresh(async () => {
+      const resultItems: GitWorktreeCleanupResult[] = [];
+      setCleaning(true);
+      try {
+        for (let index = 0; index < snapshot.length; index += MAX_WORKTREE_CLEANUP_PATHS) {
+          const batch = snapshot.slice(index, index + MAX_WORKTREE_CLEANUP_PATHS);
+          try {
+            const response = await projectApi.cleanupGitWorktrees(projectId, batch.map(item => item.path), rootId);
+            resultItems.push(...response.results);
+          } catch (cause) {
+            resultItems.push(...batch.map(item => ({ path: item.path, branch: item.branch, status: "failed" as const, reason: `无法确认处理结果：${message(cause)}。请刷新列表核对。` })));
+          }
+        }
+      } finally {
+        if (alive.current) setCleaning(false);
+      }
+      if (!alive.current) return;
+      setResults(resultItems);
+      setNotice(`清理完成：${resultItems.filter(item => item.status === "removed").length} 个已删除，其他对象已保留。`);
+    });
   }
   const visible = workspace.worktrees.filter(item =>
     `${title(item)} ${item.path}`.toLowerCase().includes(query.trim().toLowerCase()) &&
@@ -179,7 +208,6 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
         <div className="worktree-directory-preview"><span>自动生成的工作目录</span><code>{path || (chosenBranch ? "正在预览目录…" : "填写或选择分支后显示")}</code></div>
         {pathError && <p role="alert" className="worktree-error">{pathError}</p>}
         {createError && <p role="alert" className="worktree-error">{createError}</p>}
-        <p className="worktree-hint">创建后留在列表，可选择新建会话或查看历史。</p>
       </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setCreating(false)}>取消</Button><Button className="git-control" variant="primary" pending={busy} disabled={!path || !chosenBranch || Boolean(pathError)} type="submit">创建工作树</Button></DialogFooter></form></DialogPanel>
     </Dialog>
 
@@ -188,8 +216,8 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
       onBusy={value => { locked.current = value; setBusy(value); onBusy(value); }}
       onDeleted={() => { setTarget(null); setNotice("工作树已删除，分支和提交已保留。"); void refreshAfterMutation(false); }} />}
 
-    <Dialog open={Boolean(cleanup)} onClose={() => setCleanup(null)} dismissible={!busy}>
-      <DialogPanel className="max-w-2xl worktree-dialog"><DialogTitle className="pr-8">清理可删除的工作树</DialogTitle><DialogCloseButton disabled={busy} aria-label="关闭清理窗口" /><DialogBody>
+    <Dialog open={Boolean(cleanup)} onClose={() => setCleanup(null)} dismissible={Boolean(results) || !busy}>
+      <DialogPanel className="max-w-2xl worktree-dialog"><DialogTitle className="pr-8">清理可删除的工作树</DialogTitle><DialogCloseButton disabled={busy && !results} aria-label="关闭清理窗口" /><DialogBody>
         <p>仓库：{repositoryName} · 可删除 {cleanup?.candidates.length ?? 0} 个 · 保留 {cleanup?.retained.length ?? 0} 个</p>
         <p className="worktree-hint">范围为当前仓库全部工作树，不受搜索和筛选影响。已判定可删除的工作树会一次清理完成，不再逐项重复校验。删除目录与登记，保留分支、提交和历史会话。删除无法撤销。</p>
         {results ? <><p role="status">已清理 {results.filter(item => item.status === "removed").length} 个，跳过 / 失败 {results.filter(item => item.status !== "removed").length} 个。</p><ul className="worktree-preview-list">{results.map(item => <li key={item.path}><strong>{item.branch ?? item.path}</strong><code>{item.path}</code><span>{item.status === "removed" ? "已清理" : item.reason ?? "未删除"}</span></li>)}</ul></> : <>
@@ -199,29 +227,8 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
           
         </>}
         {cleaning && <p role="status">正在清理 {cleanup?.candidates.length ?? 0} 个，请稍候…</p>}
-        {error && <p role="alert" className="worktree-error">{error}。请关闭后重新预览。</p>}
-      </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setCleanup(null)}>{results ? "完成" : "取消"}</Button>{!results && Boolean(cleanup?.candidates.length) && <Button className="git-control" variant="danger" pending={busy} onClick={() => void run(async () => {
-        if (!cleanup) return;
-        const snapshot = [...cleanup.candidates];
-        const resultItems: GitWorktreeCleanupResult[] = [];
-        setCleaning(true);
-        try {
-          for (let index = 0; index < snapshot.length; index += MAX_WORKTREE_CLEANUP_PATHS) {
-            const batch = snapshot.slice(index, index + MAX_WORKTREE_CLEANUP_PATHS);
-            try {
-              const response = await projectApi.cleanupGitWorktrees(projectId, batch.map(item => item.path), rootId);
-              resultItems.push(...response.results);
-            } catch (cause) {
-              resultItems.push(...batch.map(item => ({ path: item.path, branch: item.branch, status: "failed" as const, reason: `无法确认处理结果：${message(cause)}。请刷新列表核对。` })));
-            }
-          }
-        } finally {
-          if (alive.current) setCleaning(false);
-        }
-        if (!alive.current) return;
-        setResults(resultItems); setNotice(`清理完成：${resultItems.filter(item => item.status === "removed").length} 个已删除，其他对象已保留。`);
-        await refreshAfterMutation();
-      })}>确认清理 {cleanup?.candidates.length} 个</Button>}</DialogFooter></DialogPanel>
+        {error && <p role="alert" className="worktree-error">{results ? error : `${error}。请关闭后重新预览。`}</p>}
+      </DialogBody><DialogFooter><Button className="git-control" disabled={busy && !results} onClick={() => setCleanup(null)}>{results ? "完成" : "取消"}</Button>{!results && Boolean(cleanup?.candidates.length) && <Button className="git-control" variant="danger" pending={busy} onClick={confirmCleanup}>确认清理 {cleanup?.candidates.length} 个</Button>}</DialogFooter></DialogPanel>
     </Dialog>
 
     <Dialog open={prunePaths !== null} onClose={() => setPrunePaths(null)} dismissible={!busy}>
@@ -229,9 +236,9 @@ export function GitWorktreesView({ projectId, rootId, repositoryName, workspace,
         <p>将清理当前仓库以下全部失效登记。保留分支与历史会话，不删除有效目录。</p>
         <ul className="worktree-preview-list">{prunePaths?.map(item => <li key={item}><code>{item}</code></li>)}</ul>
         {!prunePaths?.length && <p>没有可清理的失效记录。</p>}{error && <p className="worktree-error" role="alert">{error}。请关闭后重新预览。</p>}
-      </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setPrunePaths(null)}>取消</Button>{Boolean(prunePaths?.length) && <Button className="git-control" variant="danger" pending={busy} onClick={() => void run(async () => {
+      </DialogBody><DialogFooter><Button className="git-control" disabled={busy} onClick={() => setPrunePaths(null)}>取消</Button>{Boolean(prunePaths?.length) && <Button className="git-control" variant="danger" pending={busy} onClick={() => runAndRefresh(async () => {
         await projectApi.pruneGitWorktrees(projectId, rootId, prunePaths ?? []);
-        setPrunePaths(null); setNotice("失效工作树登记已清理，分支与历史会话已保留。"); await refreshAfterMutation();
+        setPrunePaths(null); setNotice("失效工作树登记已清理，分支与历史会话已保留。");
       })}>确认清理 {prunePaths?.length} 条记录</Button>}</DialogFooter></DialogPanel>
     </Dialog>
   </>;

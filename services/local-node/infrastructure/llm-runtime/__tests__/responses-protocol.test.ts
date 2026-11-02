@@ -6,6 +6,8 @@ import type { AddressInfo } from 'node:net'
 import { generateText, nativeModel } from '../../../../test-fixtures/native-generation.js'
 import { beforeAll, afterEach, describe, expect, it } from 'vitest'
 import type { ResolvedProviderConfig } from '../types.js'
+import type { ModelMessage, ProviderOptions } from '../contracts.js'
+import { streamRustAgentLoop } from '../../../modules/agent-runtime/rust-agent-loop-client.js'
 
 type CapturedRequest = {
   url: string
@@ -22,17 +24,24 @@ afterEach(async () => {
   })))
 })
 
-async function startStubServer(payload: unknown): Promise<{ baseUrl: string; requests: CapturedRequest[] }> {
+async function startStubServer(payload: unknown, maxStoredInputItems?: number): Promise<{ baseUrl: string; requests: CapturedRequest[] }> {
   const requests: CapturedRequest[] = []
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = []
     req.on('data', chunk => chunks.push(Buffer.from(chunk)))
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8')
+      const body = raw ? JSON.parse(raw) as Record<string, unknown> : {}
       requests.push({
         url: req.url ?? '',
-        body: raw ? JSON.parse(raw) as Record<string, unknown> : {},
+        body,
       })
+      if (maxStoredInputItems !== undefined && body.store !== false
+        && Array.isArray(body.input) && body.input.length > maxStoredInputItems) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { message: `Maximum of ${maxStoredInputItems} items allowed in input.` } }))
+        return
+      }
       res.writeHead(200, { 'Content-Type': 'text/event-stream' })
       const value = payload as any
       if (req.url?.endsWith('/responses')) {
@@ -95,8 +104,71 @@ describe('OpenAI Responses protocol wire format', () => {
     expect(result.text).toBe('pong')
     expect(requests).toHaveLength(1)
     expect(requests[0].url).toBe('/v1/responses')
-    expect(requests[0].body).toMatchObject({ model: 'gpt-5.4-codex', input: expect.anything() })
+    expect(requests[0].body).toMatchObject({ model: 'gpt-5.4-codex', input: expect.anything(), store: false })
     expect(requests[0].body).not.toHaveProperty('messages')
+  })
+
+  it.each(['provider', 'agent-loop'] as const)('%s replays over 1000 input items without losing reasoning and tool exchanges', async entry => {
+    const { baseUrl, requests } = await startStubServer(responsesPayload('continued'), 1000)
+    const messages: ModelMessage[] = [{ role: 'user', content: 'Keep the complete history.' }]
+    const turns = 251
+    for (let index = 0; index < turns; index++) {
+      messages.push(
+        { role: 'assistant', content: [
+          { type: 'reasoning', text: `Thought ${index}`, providerOptions: { openai: {
+            itemId: `rs_${index}`, reasoningEncryptedContent: `encrypted_${index}`,
+          } } },
+          { type: 'tool-call', toolCallId: `call_${index}`, toolName: 'inspect', input: { index } },
+        ] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: `call_${index}`, toolName: 'inspect',
+          output: { type: 'text', value: `Evidence ${index}` } }] },
+        { role: 'user', content: `<system-reminder>Step ${index} complete.</system-reminder>` },
+      )
+    }
+    const config = { apiFormat: 'openai-responses', providerId: 'custom-api:gateway',
+      model: 'deepseek-flash', baseUrl, apiKey: 'fixture', prompt: [] }
+    const providerOptions = { 'custom-api:gateway': { include: ['file_search_call.results'] } }
+    if (entry === 'provider') {
+      const result = await generateText({ model: nativeModel(config), messages, maxRetries: 0, providerOptions })
+      expect(result.text).toBe('continued')
+    } else {
+      const events = []
+      for await (const event of streamRustAgentLoop({ ...config, prompt: messages, providerOptions })) events.push(event)
+      expect(events.filter(event => event.type === 'error')).toEqual([])
+      expect(events.filter(event => event.type === 'text-delta').map(event => event.delta).join('')).toBe('continued')
+      expect(events.at(-1)?.type).toBe('done')
+    }
+
+    expect(requests).toHaveLength(1)
+    const body = requests[0].body
+    expect(body).toMatchObject({ store: false, include: ['file_search_call.results', 'reasoning.encrypted_content'] })
+    const items = body.input as Array<Record<string, unknown>>
+    expect(items).toHaveLength(1 + turns * 4)
+    const calls = items.filter(item => item.type === 'function_call')
+    const results = items.filter(item => item.type === 'function_call_output')
+    expect(calls.map(item => item.call_id)).toEqual(Array.from({ length: turns }, (_, index) => `call_${index}`))
+    expect(results.map(item => [item.call_id, item.output])).toEqual(
+      Array.from({ length: turns }, (_, index) => [`call_${index}`, `Evidence ${index}`]),
+    )
+    expect(items.filter(item => item.type === 'reasoning').map(item => item.encrypted_content))
+      .toEqual(Array.from({ length: turns }, (_, index) => `encrypted_${index}`))
+  })
+
+  it.each<ProviderOptions>([
+    { openai: { store: true } },
+    { 'custom-api:gateway': { store: true } },
+    { 'custom-api:gateway': { extraBody: { store: true } } },
+    { openai: { previousResponseId: 'resp_previous' } },
+    { 'custom-api:gateway': { extraBody: { conversation: 'conv_previous' } } },
+    { openai: { background: true } },
+  ])('preserves explicitly configured upstream storage and stateful requests: %j', async providerOptions => {
+    const { baseUrl, requests } = await startStubServer(responsesPayload('pong'))
+    await generateText({
+      model: nativeModel({ apiFormat: 'openai-responses', providerId: 'custom-api:gateway',
+        model: 'fixture', baseUrl, apiKey: 'fixture', prompt: [] }),
+      messages: [{ role: 'user', content: 'continue' }], providerOptions, maxRetries: 0,
+    })
+    expect(requests[0].body.store).not.toBe(false)
   })
 
   it('passes stored reasoning_text back to DeepSeek Responses', async () => {
@@ -173,6 +245,8 @@ describe('OpenAI Responses protocol wire format', () => {
     expect(requests.map(request => request.url)).toEqual(['/v1/chat/completions'])
     expect(requests[0].body).toMatchObject({ model: 'gpt-4o-mini' })
     expect(requests[0].body).toHaveProperty('messages')
+    expect(requests[0].body).not.toHaveProperty('store')
+    expect(requests[0].body).not.toHaveProperty('include')
   })
 
   it('keeps openai-compatible clients on chat completions for the openai protocol', async () => {

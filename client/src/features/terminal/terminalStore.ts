@@ -159,10 +159,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     for (const item of items)
       if (get().tabs.some((tab) => tab.id === item.id)) get().update(item);
     const known = new Set(get().tabs.map((tab) => tab.id));
+    // Only a running PTY accepts keystrokes. Records left behind by an earlier
+    // host run are ended, so restoring one would only fail on the first key.
     const missing = items.filter(
       (item) =>
         item.kind === "terminal" &&
-        item.state !== "closed" &&
+        item.state === "active" &&
         !known.has(item.id),
     );
     if (missing.length)

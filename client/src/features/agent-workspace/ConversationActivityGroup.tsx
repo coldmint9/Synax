@@ -13,6 +13,11 @@ import { useActivityDisclosure } from "./useActivityDisclosure";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { StreamingActivityLine } from "./StreamingActivityLine";
 import { VirtualActivityWindow } from "./VirtualActivityWindow";
+import { useAgentSessionStore } from "./state/agentSessionStore";
+import { ToolCallMediaStrip } from "./ToolCallMediaStrip";
+
+/** One collapsed activity line; a media row adds its thumbnail strip below it. */
+const ACTIVITY_ROW_HEIGHT = 25;
 
 /**
  * Records own the file links their calls point at: the transcript scope answers
@@ -54,13 +59,14 @@ function ActivityRows({ blocks, working, streaming, rememberKey, fileLinks }: {
   }).map((row) => ({
     key: row.key,
     node: <div className="session-flow-entry" data-process data-activity>{row.node}</div>,
+    height: row.mediaHeight ? ACTIVITY_ROW_HEIGHT + row.mediaHeight : undefined,
   }));
   // Keep large historical call logs virtualized as well. Live rows still
   // follow the newest call, while settled logs get the same bounded viewport
   // when they exceed the visible budget instead of mounting every record.
   const visibleRows = 9;
   const windowed = working || rows.length > visibleRows;
-  return <VirtualActivityWindow rows={rows} windowed={windowed} visibleRows={visibleRows} rowHeight={25} animate={streaming} />;
+  return <VirtualActivityWindow key={rememberKey} rememberKey={rememberKey} rows={rows} windowed={windowed} visibleRows={visibleRows} rowHeight={ACTIVITY_ROW_HEIGHT} animate={streaming} />;
 }
 
 export function ConversationActivityGroup({ blocks, rememberKey, working, streaming, defaultExpanded }: {
@@ -71,9 +77,12 @@ export function ConversationActivityGroup({ blocks, rememberKey, working, stream
   defaultExpanded?: boolean;
 }) {
   const { locale } = useLocale();
+  const { sessionId } = useTranscriptSession();
+  const epoch = useAgentSessionStore(state => sessionId ? state.sessionDetailCache[sessionId]?.historyWindow?.epoch : undefined);
+  const scopedKey = rememberKey ? `${sessionId ?? "standalone"}:${epoch ?? 0}:${rememberKey}` : undefined;
   const calls = flattenToolBlocks(blocks);
   const fileLinks = useToolFileLinks();
-  const [expanded, toggle] = useActivityDisclosure(rememberKey ? `process:${rememberKey}` : undefined, defaultExpanded ?? (working && calls.length > 0));
+  const [expanded, toggle] = useActivityDisclosure(scopedKey ? `process:${scopedKey}` : undefined, defaultExpanded ?? (working && calls.length > 0));
   const id = useId();
   const summary = conversationActivitySummary(calls, locale);
   const label = working
@@ -89,8 +98,11 @@ export function ConversationActivityGroup({ blocks, rememberKey, working, stream
         {working ? <StreamingActivityLine text={label} streaming={streaming} /> : <span className="session-process-summary">{label}</span>}
         <ChevronDown size={14} className="session-process-chevron" aria-hidden="true" />
       </Button>
+      {/* A folded process still shows the pictures it read or produced; the
+          per-call strips take over once the records are expanded. */}
+      {!expanded && <ToolCallMediaStrip calls={calls} className="bui-process-media" />}
       <ActivityDisclosure open={expanded} id={id} className="session-process-window">
-        <ActivityRows blocks={blocks} working={working} streaming={streaming} rememberKey={rememberKey} fileLinks={fileLinks} />
+        <ActivityRows blocks={blocks} working={working} streaming={streaming} rememberKey={scopedKey} fileLinks={fileLinks} />
       </ActivityDisclosure>
     </section>
   );

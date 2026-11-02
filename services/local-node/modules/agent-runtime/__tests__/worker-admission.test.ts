@@ -1,6 +1,27 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { WorkerAdmission } from '../worker-admission.js';
 afterEach(() => vi.unstubAllEnvs());
+it('retains the three newest idle workers and evicts older ones under normal load', () => {
+  vi.stubEnv('SYNAX_IDLE_WORKER_MAX', undefined);
+  const admission = new WorkerAdmission(16);
+  const leases = Array.from({ length: 5 }, (_, index) => {
+    const lease = admission.lifecycle.start(`s-${index}`);
+    admission.lifecycle.running(lease); admission.lifecycle.idle(lease);
+    lease.idleAt = index;
+    return lease;
+  });
+  expect(admission.idleLimit).toBe(3);
+  expect(admission.evictions()).toEqual(leases.slice(0, 2));
+  // Reusing the oldest session makes it the newest idle entry.
+  admission.lifecycle.running(leases[0]); admission.lifecycle.idle(leases[0]);
+  expect(admission.evictions()).toEqual([leases[1], leases[2]]);
+  expect(admission.evictions(true)).toHaveLength(5);
+});
+it.each([['99', 3], ['1', 1], ['0', 0], ['-2', 0], ['bad', 3]])('bounds idle pool setting %s to %i', (setting, expected) => {
+  vi.stubEnv('SYNAX_IDLE_WORKER_MAX', setting);
+  expect(new WorkerAdmission(16).idleLimit).toBe(expected);
+  expect(new WorkerAdmission(2).idleLimit).toBe(Math.min(2, expected));
+});
 it('counts starting/releasing workers and rejects late generations after confirmed exit', () => {
   const admission = new WorkerAdmission(1);
   const lifecycle = admission.lifecycle;

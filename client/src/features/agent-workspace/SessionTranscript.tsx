@@ -2,6 +2,8 @@ import { setSessionHistoryReading } from "./state/sessionTailWindow";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useTranscriptScroll } from "./useTranscriptScroll";
 import { useTranscriptReveal } from "./useTranscriptReveal";
+import { useSwitchTransition } from "./useSwitchTransition";
+import { useTranscriptRenderPending } from "./useTranscriptRenderPending";
 import { useOlderTranscriptHistory } from "./useOlderTranscriptHistory";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
@@ -19,7 +21,14 @@ import { sessionCompaction } from "./sessionCompaction";
 import { SessionNavigationPanel } from "./SessionNavigationPanel";
 import { ScrollToBottomButton } from "./ScrollToBottomButton";
 import { SessionTranscriptTransition } from "./SessionTranscriptTransition";
+import { SelectionCopyPill } from "./SelectionCopyPill";
 import { useSessionWorkspaceEnvironment } from "./SessionEnvironmentContext";
+import {
+  isSubagentDelegationCall,
+  readSubagentSessionId,
+} from "./subagentCallMatch";
+import { getSubagentName, getSubagentNameFromId } from "./SubagentIdentity";
+import { openWorkspaceSubagent } from "./state/sessionWorkspaceStore";
 import type { AgentRunStatus } from "../../adapters/transport/agentRuntime";
 
 const RUN_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
@@ -49,6 +58,9 @@ function useSessionTranscriptStatic() {
         streamingRetry: s.streamingRetry,
         streamingLive: s.streamingLive,
         streamingCompletedSteps: s.streamingCompletedSteps,
+        navigationReady: !id || !s.sessionDetailCache[id]?.historyWindow?.hasEarlier ||
+          Boolean(s.sessionDetailCache[id]?.timelineIndexLoaded || s.sessionDetailCache[id]?.timelineIndexError),
+        historyEpoch: id ? s.sessionDetailCache[id]?.historyWindow?.epoch : undefined,
       };
     }),
   );
@@ -63,6 +75,8 @@ export function SessionTranscript({
 }) {
   const { locale } = useLocale();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const transcriptViewportRef = useRef<HTMLDivElement>(null);
+  const transcriptContentRef = useRef<HTMLDivElement>(null);
 
   const {
     session,
@@ -79,6 +93,8 @@ export function SessionTranscript({
     streamingRetry,
     streamingLive,
     streamingCompletedSteps,
+    navigationReady,
+    historyEpoch,
   } = useSessionTranscriptStatic();
   const { environment } = useSessionWorkspaceEnvironment(sessionId);
   const compactionNotice = useAgentSessionStore(
@@ -237,16 +253,10 @@ export function SessionTranscript({
   }, [sessionId, pending, projected.confirmed, hasAssistantText, runFinished]);
   // Live content bridges the gap until a complete persisted transcript arrives.
   // A step/status response alone does not mean its messages are ready yet.
-  const showLiveBlock = Boolean(streamingStepId) && (detailReady || Boolean(pending));
+  const showLiveBlock = Boolean(streamingStepId) && (!loading || Boolean(pending));
   // Live events can populate messages before the initial history request ends.
   // Keep that partial snapshot behind the loader unless this is a local send.
   const waitingForHistory = loading && !pending;
-  // On entry, reconcile every page and restore the viewport before revealing
-  // it. Once revealed, ordinary background refreshes keep the page readable.
-  const revealed = useTranscriptReveal(
-    scrollRef, sessionId, detailReady || Boolean(pending), active,
-  );
-  const preparing = !revealed && !error;
   const readingChanged = useCallback((reading: boolean) => {
     if (sessionId) setSessionHistoryReading(sessionId, reading);
     onReadingHistoryChange?.(reading);
@@ -257,23 +267,110 @@ export function SessionTranscript({
     readingChanged,
     active && !waitingForHistory,
   );
-  // The workspace cards use the authoritative runtime projection. Hydrate the
-  // transcript's full child-session records after that projection discovers a
-  // child, so the conversation timeline can attach the card to its task call.
+  const olderHistory = useOlderTranscriptHistory(
+    scrollRef, sessionId, active && detailReady && !waitingForHistory,
+  );
   useEffect(() => {
-    if (!sessionId || !environment?.subagents.length) return;
-    void useAgentSessionStore.getState().fetchChildSessions(
-      sessionId,
-      environment.subagents.map((child) => child.id),
+    if (active && detailReady && sessionId && !navigationReady)
+      void useAgentSessionStore.getState().loadTimelineIndex();
+  }, [active, detailReady, sessionId, historyEpoch, navigationReady]);
+  // A complete cached page is already readable. Refreshes, older-page prefetch
+  // and navigation indexing run independently of the transcript's first paint.
+  const revealed = useTranscriptReveal(
+    scrollRef, sessionId,
+    !waitingForHistory, active,
+  );
+  // A cached switch paints the next transcript in the same commit, but its
+  // rows mount lazily. Hold the blur until the history is settled and every
+  // rendered entry — the tool-call records included — has a real body.
+  const renderPending = useTranscriptRenderPending(scrollRef, sessionId, active);
+  const historySettled = !loading && !refreshing;
+  const switching = useSwitchTransition(
+    sessionId,
+    active,
+    !renderPending && historySettled,
+  );
+  const coldLoading = !revealed && !error;
+  const switchingVisible = switching && !coldLoading;
+  const preparing = coldLoading || switching;
+  // A delegation row owns a card, so its child is resolved from the call itself
+  // instead of waiting for the workspace card to refresh. A blocking delegate
+  // completes no parent step while the child runs, which leaves the environment
+  // projection empty for that whole stretch.
+  const delegatedChildIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const toolCall of toolCalls) {
+      if (!isSubagentDelegationCall(toolCall)) continue;
+      const id =
+        readSubagentSessionId(toolCall.outputRef) ??
+        // A failed lifecycle call may contain a mistyped/invented child id.
+        // Its input is not evidence that a child exists; a returned id still is.
+        (toolCall.status === "failed" ? null : readSubagentSessionId(toolCall.inputRef));
+      if (id) ids.add(id);
+    }
+    return [...ids];
+  }, [toolCalls]);
+  // A delegate that is still running reports no child id at all: the live
+  // buffers are the only place that says a child exists.
+  const liveDelegation =
+    streamingLive.pendingToolCalls.some(isSubagentDelegationCall) ||
+    streamingLive.blocks.some((block) =>
+      block.type === "tool_call"
+        ? isSubagentDelegationCall(block.call)
+        : block.type === "tool_call_group"
+          ? block.calls.some(isSubagentDelegationCall)
+          : false,
     );
-  }, [sessionId, environment?.subagents]);
+  const hydratedChildKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sessionId) return;
+    const known = new Set((childSessions ?? []).map((child) => child.id));
+    const missing = [
+      ...new Set([
+        ...(environment?.subagents ?? []).map((child) => child.id),
+        ...delegatedChildIds,
+      ]),
+    ].filter((id) => !known.has(id));
+    // Nothing is known yet, so the only way to find a just-started child is to
+    // list this parent's children. Once per live step is enough.
+    const listing = missing.length === 0 && known.size === 0 && liveDelegation;
+    if (!missing.length && !listing) return;
+    const key = [
+      sessionId,
+      streamingStepId ?? "history",
+      listing ? "list" : "ids",
+      missing.join(","),
+    ].join("|");
+    if (hydratedChildKey.current === key) return;
+    hydratedChildKey.current = key;
+    void useAgentSessionStore
+      .getState()
+      .fetchChildSessions(sessionId, missing.length ? missing : undefined);
+  }, [
+    sessionId,
+    environment?.subagents,
+    childSessions,
+    delegatedChildIds,
+    liveDelegation,
+    streamingStepId,
+  ]);
+  // "详情" opens the child conversation next to the parent, the same target the
+  // subagent island uses.
+  const openChildSession = useCallback(
+    (childId: string) => {
+      if (!sessionId) return;
+      const child = childSessions?.find((item) => item.id === childId);
+      openWorkspaceSubagent(
+        sessionId,
+        childId,
+        child ? getSubagentName(child) : getSubagentNameFromId(childId),
+      );
+    },
+    [sessionId, childSessions],
+  );
   useLayoutEffect(() => {
     if (compacting) scrollToBottom(true);
   }, [compacting, compactionId]);
-
-  const olderHistory = useOlderTranscriptHistory(
-    scrollRef, sessionId, active && revealed && !waitingForHistory,
-  );
 
   // Trigger 1: a new submission lands — jump to the bottom and re-pin.
   useLayoutEffect(() => {
@@ -285,32 +382,34 @@ export function SessionTranscript({
   const firstResponseStepRef = useRef<{
     sessionId: string | null;
     stepId: string | null;
+    detailReady: boolean;
   } | null>(null);
   useLayoutEffect(() => {
     const prev = firstResponseStepRef.current;
-    firstResponseStepRef.current = { sessionId, stepId: streamingStepId };
+    firstResponseStepRef.current = { sessionId, stepId: streamingStepId, detailReady };
     if (
       active &&
-      (!preparing || pending) &&
+      ((!preparing && detailReady && prev?.detailReady) || pending) &&
       prev?.sessionId === sessionId &&
       streamingStepId &&
       !prev.stepId
     )
       scrollToBottom(true);
-  }, [sessionId, streamingStepId, active, preparing, pending, scrollToBottom]);
+  }, [sessionId, streamingStepId, active, preparing, pending, detailReady, scrollToBottom]);
 
   // Trigger 3: the run reaches a terminal state (task finished).
   const runStatusRef = useRef<{
     sessionId: string | null;
     status: AgentRunStatus | undefined;
+    detailReady: boolean;
   } | null>(null);
   useLayoutEffect(() => {
     const status = latestRunStatus;
     const prev = runStatusRef.current;
-    runStatusRef.current = { sessionId, status };
+    runStatusRef.current = { sessionId, status, detailReady };
     if (
       active &&
-      (!preparing || pending) &&
+      ((!preparing && detailReady && prev?.detailReady) || pending) &&
       prev?.sessionId === sessionId &&
       status &&
       RUN_TERMINAL_STATUSES.includes(status) &&
@@ -318,66 +417,34 @@ export function SessionTranscript({
       !RUN_TERMINAL_STATUSES.includes(prev.status)
     )
       scrollToBottom(true);
-  }, [sessionId, latestRunStatus, active, preparing, pending, scrollToBottom]);
+  }, [sessionId, latestRunStatus, active, preparing, pending, detailReady, scrollToBottom]);
 
   return (
     <div className="session-chat flex min-h-0 flex-1 flex-col">
-      <div className="session-transcript-viewport relative min-h-0 flex-1">
+      <div
+        ref={transcriptViewportRef}
+        className="session-transcript-viewport relative min-h-0 flex-1"
+      >
         <SessionTranscriptTransition
           key={sessionId}
-          preparing={preparing}
-          hasCachedContent={!loading}
+          preparing={coldLoading}
         />
         <div
           ref={scrollRef}
           data-preparing={preparing ? "true" : "false"}
+          data-enter={switchingVisible ? "switch" : undefined}
           inert={preparing}
           aria-hidden={preparing}
           tabIndex={0}
           aria-label={locale === "zh" ? "对话记录" : "Conversation history"}
           className="session-chat-scroll scrollbar-none h-full overflow-y-auto"
-          aria-busy={preparing || loading || refreshing || olderHistory.loading}
+          aria-busy={preparing || loading || refreshing || olderHistory.loading || olderHistory.settling}
         >
           <div className="session-transcript-body">
             {error && projected.messages.length > 0 && (
               <div data-error-toast="off" role="alert" className="px-4 py-2 text-[13px] text-muted-foreground">
                 {locale === "zh" ? "历史更新失败，已保留加载的内容。" : "History could not be updated. Loaded content is preserved."}{" "}
                 <button type="button" className="underline" onClick={() => void useAgentSessionStore.getState().refreshDetail({ forceFresh: true })}>
-                  {locale === "zh" ? "重试" : "Retry"}
-                </button>
-              </div>
-            )}
-            {olderHistory.hasEarlier && !waitingForHistory && (
-              <button type="button" disabled={olderHistory.loading}
-                className="mx-auto block py-2 text-xs text-muted-foreground hover:text-foreground"
-                onClick={() => void olderHistory.retry()}>
-                {locale === "zh" ? "加载更早消息" : "Load earlier messages"}
-              </button>
-            )}
-            {olderHistory.loading && (
-              <div
-                role="status"
-                className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background/95 px-3 py-1 text-[11px] text-muted-foreground shadow-sm"
-              >
-                {locale === "zh"
-                  ? "正在加载更早消息…"
-                  : "Loading earlier messages…"}
-              </div>
-            )}
-            {olderHistory.error && (
-              <div
-                data-error-toast="off"
-                role="alert"
-                className="absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-md bg-background px-3 py-1 text-[11px] text-danger shadow-sm"
-              >
-                {locale === "zh"
-                  ? "加载更早消息失败。"
-                  : "Could not load earlier messages."}{" "}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => void olderHistory.retry()}
-                >
                   {locale === "zh" ? "重试" : "Retry"}
                 </button>
               </div>
@@ -406,6 +473,7 @@ export function SessionTranscript({
             ) : (
               <div
                 key={sessionId ?? "empty-session"}
+                ref={transcriptContentRef}
                 className="session-transcript-content"
               >
                 <AgentConversationView
@@ -415,8 +483,9 @@ export function SessionTranscript({
                   toolCalls={toolCalls}
                   messages={projected.messages}
                   childSessions={childSessions}
+                  onExpandChild={openChildSession}
                   excludeStepId={showLiveBlock ? streamingStepId : null}
-                  unifiedLive={active && (detailReady || Boolean(pending))}
+                  unifiedLive={active && (!loading || Boolean(pending))}
                   submitting={Boolean(pending)}
                   scrollRootRef={scrollRef}
                   liveTurn={
@@ -452,6 +521,11 @@ export function SessionTranscript({
           />
         )}
         {active && !preparing && <SessionNavigationPanel scrollRootRef={scrollRef} />}
+        <SelectionCopyPill
+          hostRef={transcriptViewportRef}
+          scopeRef={transcriptContentRef}
+          scrollRef={scrollRef}
+        />
       </div>
     </div>
   );

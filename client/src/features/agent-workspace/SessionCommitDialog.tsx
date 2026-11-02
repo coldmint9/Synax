@@ -19,7 +19,8 @@ import {
   CheckCircle2,
   GitBranch,
   GitCommit,
-  Sparkles,
+  Info,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -141,6 +142,8 @@ export function SessionCommitDialog({
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [submitting, setSubmitting] = useState<"commit" | "push" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A fallback message is still usable: it is an advisory, not a failure.
+  const [notice, setNotice] = useState<string | null>(null);
   const [result, setResult] = useState<SessionGitCommitResult | null>(null);
   const [generating, setGenerating] = useState(false);
   const streamController = useRef<AbortController | null>(null);
@@ -192,6 +195,7 @@ export function SessionCommitDialog({
     setIncludeUntracked(true);
     setGenerating(false);
     setError(null);
+    setNotice(null);
     setResult(null);
     setSubmitting(null);
     return () => {
@@ -213,6 +217,7 @@ export function SessionCommitDialog({
     frame.current = null;
     setMessage(priorMessage.current);
     setGenerating(false);
+    setNotice(null);
   };
 
   const generate = async (): Promise<string | null> => {
@@ -231,6 +236,7 @@ export function SessionCommitDialog({
     priorMessage.current = message;
     setMessage("");
     setError(null);
+    setNotice(null);
     setGenerating(true);
     let accumulated = "";
     let generatedMessage: string | null = null;
@@ -265,6 +271,8 @@ export function SessionCommitDialog({
             frame.current = null;
             generatedMessage = event.message;
             setMessage(event.message);
+            // A degraded answer still produces a message; say why it is plain.
+            setNotice(event.warning ?? null);
           }
         },
         controller.signal,
@@ -272,6 +280,7 @@ export function SessionCommitDialog({
     } catch (err) {
       if (request !== generation.current || controller.signal.aborted) return null;
       setMessage(priorMessage.current);
+      setNotice(null);
       setError(
         err instanceof Error ? err.message : t("workspaceCommitGenerateFailed"),
       );
@@ -574,41 +583,41 @@ export function SessionCommitDialog({
                       disabled={generating || busy}
                       className="pr-12 text-xs"
                     />
-                    <div className="absolute right-2 top-2">
+                    {/* One control: it turns into loading, and hovering reveals the interrupt. */}
+                    <div className="group/generate absolute right-2 top-2">
+                      <Tooltip
+                        delay={300}
+                        content={<>{t("workspaceCommitGenerate")}</>}
+                      >
+                        <Button
+                          iconOnly
+                          variant="ghost"
+                          size="sm"
+                          pending={generating}
+                          onClick={() => void generate()}
+                          disabled={
+                            !selectedModelRef || activeChangedFiles === 0 || busy
+                          }
+                          aria-label={t("workspaceCommitGenerate")}
+                        >
+                          {generating ? null : <WandSparkles size={14} />}
+                        </Button>
+                      </Tooltip>
                       {generating ? (
                         <Tooltip
-                          delay={300}
-                          content={<>{t("workspaceCommitStopGenerating")}</>}
+                          delay={150}
+                          content={<>{t("workspaceCommitAbortGenerating")}</>}
                         >
-                          <Button
-                            iconOnly
-                            variant="ghost"
-                            size="sm"
+                          <button
+                            type="button"
                             onClick={cancelGeneration}
-                            aria-label={t("workspaceCommitStopGenerating")}
+                            aria-label={t("workspaceCommitAbortGenerating")}
+                            className="absolute -bottom-1.5 -right-1.5 flex size-3.5 items-center justify-center rounded-full border border-border/70 bg-card text-muted-foreground opacity-0 shadow-sm transition-opacity duration-150 pointer-events-none hover:text-destructive focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-1 focus-visible:outline-ring group-hover/generate:pointer-events-auto group-hover/generate:opacity-100"
                           >
-                            <X size={14} />
-                          </Button>
+                            <X size={8} strokeWidth={3} />
+                          </button>
                         </Tooltip>
-                      ) : (
-                        <Tooltip
-                          delay={300}
-                          content={<>{t("workspaceCommitGenerate")}</>}
-                        >
-                          <Button
-                            iconOnly
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void generate()}
-                            disabled={
-                              !selectedModelRef || activeChangedFiles === 0 || busy
-                            }
-                            aria-label={t("workspaceCommitGenerate")}
-                          >
-                            <Sparkles size={14} />
-                          </Button>
-                        </Tooltip>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                   <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -619,6 +628,16 @@ export function SessionCommitDialog({
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   {t(detached ? "workspaceCommitDetachedActionHint" : "workspaceCommitActionHint")}
                 </p>
+
+                {notice ? (
+                  <p
+                    role="status"
+                    className="flex items-start gap-2 rounded-md border border-warning/25 bg-warning/[0.05] px-3 py-2 text-[11px] leading-relaxed text-foreground/80"
+                  >
+                    <Info size={12} className="mt-[2px] shrink-0 text-warning" />
+                    <span className="min-w-0 break-words">{notice}</span>
+                  </p>
+                ) : null}
 
                 {error ? (
                   <p

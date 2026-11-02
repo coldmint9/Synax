@@ -89,7 +89,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("retires the hidden-reasoning placeholder as soon as the same step has reply text", () => {
+it("keeps one hidden-reasoning placeholder under the reply while the live step runs", () => {
   vi.useFakeTimers();
   useShellStore.setState(s => ({ preferences: { ...s.preferences, sessionShowThinking: false } }));
   store.setState({ ...store.getInitialState(), selectedSessionId: session.id, sessions: [session],
@@ -104,7 +104,9 @@ it("retires the hidden-reasoning placeholder as soon as the same step has reply 
   ] } }));
   advance(200);
   expect(container).toHaveTextContent("The response has arrived.");
-  expect(container.querySelector('[data-testid="thinking-indicator"]')).toBeNull();
+  // Hidden reasoning never gets a row of its own, so a single placeholder keeps
+  // standing in for it while the step runs, below the text it already wrote.
+  expect(container.querySelectorAll('[data-testid="thinking-indicator"]')).toHaveLength(1);
   expect(container.querySelector('[data-live="true"]')).toBeNull();
 });
 

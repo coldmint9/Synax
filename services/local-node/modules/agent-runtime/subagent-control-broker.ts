@@ -5,6 +5,7 @@ import { emitRuntimeBusEvent } from './runtime-bus-bridge.js';
 import { patchRuntime, runtimeClient, decode } from './sidecar/runtime-repository.js';
 import { nowIso } from './runtime-ids.js';
 import type { AgentSession } from './contracts.js';
+import { isInteractiveSideChat } from './side-chat-contract.js';
 
 export type SubagentJoinMode = 'blocking' | 'async';
 export interface SubagentControlState {
@@ -70,9 +71,33 @@ export function readSubagentControl(session: Pick<AgentSession, 'sessionMetadata
   return state;
 }
 export function subagentBlocksParent(session: Pick<AgentSession, 'status' | 'sessionMetadata'>): boolean {
+  if (isInteractiveSideChat(session)) return false;
   if (!['queued', 'running'].includes(session.status)) return false;
+  // The supervisor writes a terminal task state as soon as it stops driving the
+  // child. A row can still lag behind that settlement — an unconfirmed stop keeps
+  // it non-terminal behind a fence — and treating the row as pending there is
+  // what turns "the child failed" into a parent that can never finish.
+  if (subagentTaskSettled(session)) return false;
   const state = readSubagentControl(session);
   return state?.joinMode !== 'async' && !state?.terminal;
+}
+/** True once the owning supervisor recorded a terminal outcome for the child. */
+export function subagentTaskSettled(session: Pick<AgentSession, 'sessionMetadata'>): boolean {
+  const state = (session.sessionMetadata?.subagentTask as { state?: unknown } | undefined)?.state;
+  return typeof state === 'string' && TERMINAL.has(state);
+}
+/**
+ * Whether this child still occupies one of its parent's delegation slots.
+ * Settlement frees the slot immediately: a row that trails behind an
+ * unconfirmed stop must never make delegation fail with "maximum concurrent
+ * subagents" after the child has already ended.
+ */
+export function subagentHoldsSlot(
+  session: Pick<AgentSession, 'status' | 'sessionMetadata'>,
+): boolean {
+  if (isInteractiveSideChat(session)) return false;
+  if (!['queued', 'running', 'waiting_permission', 'waiting_input'].includes(session.status)) return false;
+  return !subagentTaskSettled(session);
 }
 export function listOwnedSubagentSessions(parentId: string, store: AgentRuntimeStore = agentRuntimeStore): AgentSession[] {
   const root = store.getSession(parentId), queue = [...root.childSessionIds ?? []], seen = new Set<string>([parentId]);
@@ -82,7 +107,7 @@ export function listOwnedSubagentSessions(parentId: string, store: AgentRuntimeS
     if (seen.has(id)) continue;
     seen.add(id);
     const session = store.tryGetSession(id);
-    if (!session) continue;
+    if (!session || isInteractiveSideChat(session)) continue;
     sessions.push(session);
     queue.push(...session.childSessionIds ?? []);
   }
@@ -178,6 +203,7 @@ export class SubagentCompletionBroker {
     return this.serialized(event.childSessionId, async () => {
       if (store === agentRuntimeStore) await store.hydrateSessionSummary(event.childSessionId, true);
       const child = store.getSession(event.childSessionId);
+      if (isInteractiveSideChat(child)) throw new Error('Interactive conversations do not publish delegated task results.');
       if (child.parentSessionId !== event.parentSessionId) throw new Error('Subagent event is outside its parent assignment.');
       const previous = readSubagentControl(child);
       if (previous && previous.taskId !== event.taskId) throw new Error('Subagent task binding changed.');
@@ -336,7 +362,7 @@ export class SubagentCompletionBroker {
         let event: SubagentControlState | undefined, released = false;
         for (const child of children) {
           ids.add(child.id);
-          if (child.parentSessionId !== options.parentSessionId) continue;
+          if (child.parentSessionId !== options.parentSessionId || isInteractiveSideChat(child)) continue;
           // updateSessionMetadata publishes an in-memory hint before its I/O
           // tail is durable. Do not release a parent until that publication
           // completes; serialized() emits the final wake-up.

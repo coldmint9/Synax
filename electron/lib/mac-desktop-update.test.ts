@@ -10,6 +10,7 @@ import {
   macApplicationPath,
   MAC_INSTALL_SCRIPT,
   verifyMacBundle,
+  verifyMacFrameworkArchive,
   prepareMacInstallation,
 } from "./mac-desktop-update.js";
 import { hashFile, type DesktopManifest } from "./desktop-update-format.js";
@@ -27,7 +28,17 @@ afterEach(async () => {
 describe.skipIf(process.platform !== "darwin")(
   "macOS bundle architecture",
   () => {
-    it("prepares a verified full ZIP without mounting a DMG or replacing the running bundle", async () => {
+    it.each(["incoming", "current"])("rejects a Synax %s bundle even with a matching release version", async (side) => {
+      const incoming = path.join(root, "incoming.app");
+      const current = path.join(root, "current.app");
+      for (const bundle of [incoming, current]) {
+        await fs.mkdir(path.join(bundle, "Contents"), { recursive: true });
+        const upstream = bundle === (side === "incoming" ? incoming : current);
+        await fs.writeFile(path.join(bundle, "Contents/Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${upstream ? "com.Synax.desktop" : "com.Synax.desktop"}</string><key>CFBundleExecutable</key><string>${upstream ? "Synax" : "Synax"}</string><key>CFBundleShortVersionString</key><string>0.2.0</string></dict></plist>`);
+      }
+      await expect(verifyMacBundle(incoming, current, "0.2.0", "arm64")).rejects.toThrow("identity");
+    });
+    it.each(['dmg', 'zip'])("verifies and stages a %s without replacing the running bundle", async extension => {
       const arch = process.arch as "arm64" | "x64";
       const target = path.join(root, "installed", "Synax.app");
       const source = path.join(root, "release", "Synax.app");
@@ -61,29 +72,28 @@ describe.skipIf(process.platform !== "darwin")(
       await signFixture(source);
       const directory = path.join(root, "cache");
       await fs.mkdir(directory);
-      const name = `Synax-0.2.0-darwin-${arch}.zip`;
-      const zip = path.join(directory, name);
-      await run("zip", ["-r", "-y", zip, "Synax.app"], {
-        cwd: path.dirname(source),
-      });
+      const name = `Synax-0.2.0-darwin-${arch}.${extension}`;
+      const archive = path.join(directory, name);
+      if (extension === 'dmg')
+        await run('/usr/bin/hdiutil', ['create', '-srcfolder', path.dirname(source), '-format', 'UDZO', archive]);
+      else
+        await run('zip', ['-r', '-y', archive, 'Synax.app'], { cwd: path.dirname(source) });
+      const artifact = { name, size: (await fs.stat(archive)).size, sha256: await hashFile(archive) };
       const manifest: DesktopManifest = {
         format: 1,
         version: "0.2.0",
         platform: "darwin",
         arch,
-        artifact: {
-          name: `Synax-0.2.0-darwin-${arch}.dmg`,
-          size: 1,
-          sha256: "a".repeat(64),
+        artifact: extension === 'dmg' ? artifact : {
+          name: `Synax-0.2.0-darwin-${arch}.dmg`, size: 1, sha256: 'a'.repeat(64),
         },
-        updateArchive: {
-          name,
-          size: (await fs.stat(zip)).size,
-          sha256: await hashFile(zip),
-        },
+        ...(extension === 'zip' ? { updateArchive: artifact } : {}),
       };
+      const executable = path.join(target, 'Contents/MacOS/Synax');
+      await expect(verifyMacFrameworkArchive(archive, executable, '0.2.0', arch)).resolves.toBeUndefined();
+      await expect(verifyMacFrameworkArchive(archive, executable, '0.3.0', arch)).rejects.toThrow('identity or version');
       const prepared = await prepareMacInstallation(
-        zip,
+        archive,
         manifest,
         path.join(target, "Contents/MacOS/Synax"),
         directory,

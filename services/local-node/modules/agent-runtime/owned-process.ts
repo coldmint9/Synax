@@ -1,5 +1,5 @@
 import { fork, spawn, type ChildProcess } from "node:child_process";
-import type { Writable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,10 @@ export function spawnOwnedProcess(
     sessionId?: string;
     background?: boolean;
     commandLabel?: string;
+    /** Local foreground Bash only. Validation shares the target's owned group. */
+    validateBash?: boolean;
+    onGateReleased?: () => void;
+    onSyntaxChecked?: (valid: boolean) => void;
   } = {},
 ): ChildProcess & {
   ownedProcessId: string;
@@ -66,6 +70,10 @@ export function spawnOwnedProcess(
   ownedProcessReaped: Promise<void>;
 } {
   const grouped = process.platform !== "win32";
+  const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
+  if (options.validateBash && (!grouped || wsl || options.background || options.shell ||
+      command !== "/bin/bash" || args.length !== 4 || args[0] !== "-o" || args[1] !== "pipefail" || args[2] !== "-c"))
+    throw new Error("Bash validation requires a local foreground bash -o pipefail -c command.");
   const ticket = prepareOwnedProcess(
     options.background
       ? (options.commandLabel ?? command)
@@ -75,7 +83,6 @@ export function spawnOwnedProcess(
     grouped,
     options,
   );
-  const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
   if (wsl) recordOwnedRuntimeTarget(ticket.id, wsl.distribution);
   const target = wsl
     ? wslCommandSpec(wsl.distribution, wsl.path, command, args, {
@@ -97,6 +104,9 @@ export function spawnOwnedProcess(
   const child = direct ? spawn("/bin/sh", [
     "-c",
     'IFS= read -r start <&3 && [ "$start" = start ] || exit 125; exec 3<&-; '
+      + (options.validateBash
+        ? 'if /bin/bash -n -c "$5"; then printf "ok\\n" >&4; else printf "invalid\\n" >&4; exit 2; fi; exec 4>&-; '
+        : '')
       + 'command -v "$1" >/dev/null 2>&1 || { printf "ENOENT: %s\\n" "$1" >&2; exit 127; }; exec "$@"',
     "synax-command",
     ...(options.shell ? ["/bin/sh", "-c", [command, ...args].join(" ")] : [command, ...args]),
@@ -104,7 +114,7 @@ export function spawnOwnedProcess(
     cwd: options.cwd,
     detached: true,
     env,
-    stdio: [options.stdin ?? "pipe", "pipe", "pipe", "pipe"],
+    stdio: [options.stdin ?? "pipe", "pipe", "pipe", "pipe", ...(options.validateBash ? ["pipe" as const] : [])],
   }) : fork(launcherPath(), [], {
     cwd: wsl ? undefined : options.cwd,
     detached: grouped,
@@ -116,6 +126,19 @@ export function spawnOwnedProcess(
     stdio: [options.stdin ?? "pipe", "pipe", "pipe", "ipc"],
   });
   const gate = direct ? child.stdio[3] as Writable : undefined;
+  if (options.validateBash) {
+    // fd 4 is closed before exec, so target output cannot forge setup status.
+    const status = child.stdio[4] as Readable;
+    let buffer = "";
+    let reported = false;
+    status.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString();
+      if (!reported && buffer.includes("\n")) {
+        reported = true;
+        options.onSyntaxChecked?.(buffer.trim() === "ok");
+      }
+    });
+  }
   gate?.on("error", () => { /* cancellation may close the gate before start */ });
   let completedCode: number | null = null;
   child.on("message", (message: any) => {
@@ -124,6 +147,7 @@ export function spawnOwnedProcess(
   });
   const sendStart = () => {
     if (child.killed || child.exitCode !== null || child.signalCode !== null) return;
+    options.onGateReleased?.();
     if (gate) {
       gate.end("start\n");
       return;

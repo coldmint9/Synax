@@ -34,7 +34,9 @@ impl InvalidToolArguments {
         }
     }
 
-    pub(crate) fn is_truncated(&self) -> bool { self.truncated }
+    pub(crate) fn is_truncated(&self) -> bool {
+        self.truncated
+    }
 }
 
 /// DeepSeek-compatible gateways occasionally emit literal newlines, tabs or

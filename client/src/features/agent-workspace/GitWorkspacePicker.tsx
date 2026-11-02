@@ -79,11 +79,36 @@ function GitWorkspacePickerContent({
   const zh = locale === "zh";
   const isHill = variant === "hill";
   const cacheKey = `git-workspace-picker:${projectId}:${rootId ?? ""}`;
-  const cachedSummary = readStaleResource<GitWorkspaceSummary>(cacheKey);
+  // The trigger names the checked-out branch before the popover opens, so an
+  // inventory-only summary (no history, no status scan) is cached separately.
+  const inventoryKey = `${cacheKey}:inventory`;
+  const cachedSummary =
+    readStaleResource<GitWorkspaceSummary>(cacheKey) ??
+    readStaleResource<GitWorkspaceSummary>(inventoryKey);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<GitWorkspaceSummary | null>(() => cachedSummary ?? null);
   const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    if (
+      readStaleResource<GitWorkspaceSummary>(cacheKey) ||
+      readStaleResource<GitWorkspaceSummary>(inventoryKey)
+    )
+      return;
+
+    let active = true;
+    void fetchStaleResource(inventoryKey, () =>
+      projectApi.listGitWorkspaces(projectId, rootId, "inventory"),
+    )
+      .then((result) => {
+        if (active) setSummary(result);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [projectId, rootId, cacheKey, inventoryKey]);
 
   useEffect(() => {
     if (open) setQuery("");
@@ -97,7 +122,8 @@ function GitWorkspacePickerContent({
 
     let active = true;
     const cached = readStaleResource<GitWorkspaceSummary>(cacheKey);
-    setSummary(cached ?? null);
+    // Keep the preloaded branch visible while the popover refreshes.
+    setSummary((previous) => cached ?? previous ?? null);
     setLoading(cached === undefined);
     setUnavailable(false);
     void fetchStaleResource(cacheKey, () => projectApi.listGitWorkspaces(projectId, rootId))
@@ -168,6 +194,14 @@ function GitWorkspacePickerContent({
   const selectedId = selectionId(value);
   const selected = options.find((option) => option.id === selectedId);
   const label = selected?.label ?? (zh ? "项目默认工作区" : "Project default");
+  // Only the default workspace hides its branch behind a generic label; worktree
+  // and branch selections already show the branch as their label.
+  const defaultWorktree = summary?.worktrees.find((item) => item.path === summary.defaultPath);
+  const currentBranch =
+    value.kind === "default" && defaultWorktree && !defaultWorktree.detached
+      ? defaultWorktree.branch
+      : null;
+  const workspaceName = zh ? "Git 工作区" : "Git workspace";
   const search = query.trim().toLocaleLowerCase();
   const filtered = options.filter((option) =>
     `${option.label} ${option.meta} ${option.detail}`.toLocaleLowerCase().includes(search),
@@ -188,7 +222,7 @@ function GitWorkspacePickerContent({
       >
         <PopoverButton
           disabled={disabled}
-          aria-label={zh ? "Git 工作区" : "Git workspace"}
+          aria-label={currentBranch ? `${workspaceName} · ${currentBranch}` : workspaceName}
           className={
             isHill
               ? "workspace-hill"
@@ -204,7 +238,10 @@ function GitWorkspacePickerContent({
           ) : (
             <GitBranch size={isHill ? 13 : 11} aria-hidden />
           )}
-          <span>{label}</span>
+          <span className="git-workspace-trigger-label">{label}</span>
+          {currentBranch && (
+            <span className="git-workspace-trigger-branch">{currentBranch}</span>
+          )}
         </PopoverButton>
       </Tooltip>
       <PopoverPanel

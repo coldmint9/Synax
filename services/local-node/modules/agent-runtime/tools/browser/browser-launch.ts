@@ -9,6 +9,22 @@ export interface BrowserLaunchTarget {
   options: LaunchOptions;
 }
 
+/**
+ * Chromium only reads the macOS Keychain to keep its safe-storage key. A
+ * browser started by another process (agent shell, automation host) has no
+ * launch-context keychain, so that lookup fails and macOS raises
+ * 「找不到用于储存"Chrome"的钥匙串」 on every launch. The mock keychain keeps
+ * the key in memory instead, so the browser never touches the user's Keychain.
+ */
+export const KEYCHAIN_FREE_ARGS = ["--use-mock-keychain"] as const;
+
+function launchOptions(
+  target: Pick<LaunchOptions, "executablePath" | "channel">,
+  headless: boolean,
+): LaunchOptions {
+  return { ...target, headless, args: [...KEYCHAIN_FREE_ARGS] };
+}
+
 /** Headless by default; opt out per call or via SYNAX_BROWSER_HEADLESS=0. */
 export function defaultHeadless(): boolean {
   const raw = process.env[BROWSER_HEADLESS_ENV]?.trim().toLowerCase();
@@ -70,7 +86,7 @@ export function launchTargets(headless: boolean): BrowserLaunchTarget[] {
       );
     targets.push({
       source: `env ${BROWSER_PATH_ENV}`,
-      options: { executablePath: envPath, headless },
+      options: launchOptions({ executablePath: envPath }, headless),
     });
   }
   try {
@@ -78,18 +94,21 @@ export function launchTargets(headless: boolean): BrowserLaunchTarget[] {
     if (bundled && fs.existsSync(bundled))
       targets.push({
         source: "playwright-managed chromium",
-        options: { headless },
+        options: launchOptions({}, headless),
       });
   } catch {
     // Registry unavailable (odd install); fall through to system browsers.
   }
   for (const channel of ["chrome", "msedge"] as const) {
-    targets.push({ source: `system ${channel}`, options: { channel, headless } });
+    targets.push({
+      source: `system ${channel}`,
+      options: launchOptions({ channel }, headless),
+    });
   }
   for (const executablePath of systemBrowserCandidates()) {
     targets.push({
       source: `system browser at ${executablePath}`,
-      options: { executablePath, headless },
+      options: launchOptions({ executablePath }, headless),
     });
   }
   return targets;

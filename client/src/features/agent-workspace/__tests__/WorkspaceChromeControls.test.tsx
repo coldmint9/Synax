@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render as testingRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as testingRender, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenuProvider";
 import type { WorkspaceEnvironmentView } from "../workspaceEnvironmentView";
@@ -162,6 +162,27 @@ describe("WorkspaceTabStrip", () => {
     expect(new Set(colors).size).toBe(2);
   });
 
+  it("marks a diff tab that shares a file name with an open editor tab", () => {
+    useSessionWorkspaceStore.setState({
+      sessions: {
+        "session-1": {
+          tabs: [
+            { id: "file:src/app.ts", kind: "file", title: "app.ts", path: "src/app.ts" },
+            { id: "diff:src/app.ts", kind: "diff", title: "app.ts", path: "src/app.ts" },
+          ],
+          activeTabId: "diff:src/app.ts",
+          presentation: "dock",
+        },
+      },
+    });
+
+    render(<WorkspaceTabStrip sessionId="session-1" />);
+
+    const [fileTab, diffTab] = screen.getAllByRole("tab", { name: /app\.ts/ });
+    expect(within(fileTab).queryByText("diff")).toBeNull();
+    expect(within(diffTab).getByText("diff")).toBeTruthy();
+  });
+
   it("returns to the conversation without discarding output tabs", () => {
     render(<WorkspaceTabStrip sessionId="session-1" />);
     fireEvent.click(screen.getByRole("button", { name: "返回对话" }));
@@ -183,11 +204,11 @@ describe("WorkspaceTabStrip", () => {
     });
   });
 
-  it("refreshes and toggles fullscreen mode from the tab actions", () => {
+  it("toggles fullscreen mode without a manual refresh control", () => {
     render(<WorkspaceTabStrip sessionId="session-1" />);
 
-    fireEvent.click(screen.getByLabelText("刷新工作区"));
-    expect(mocks.reload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("刷新工作区")).toBeNull();
+    expect(mocks.reload).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByLabelText("全屏"));
     expect(

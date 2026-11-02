@@ -25,6 +25,7 @@ import {
 } from "../project-workspace.js";
 import { workspaceFileIndex } from "./workspace-file-index.js";
 import { recentWorkspaceReadPaths } from "./recent-workspace-reads.js";
+import { signedInAccountTags } from "./signed-in-accounts.js";
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { subagentTemplates } from "./subagent-templates.js";
 import type { CustomSubagent } from "./subagent-config.js";
@@ -83,7 +84,8 @@ export async function listTurnReferenceOptions(
     items = subagentTemplates.list().filter(item => item.enabled).map(item => ({ kind, id: item.id, label: item.name, description: item.description }));
   } else if (kind === "skill") {
     items = skillAgentBridge
-      .listForPrompt({ projectId, profileId: "synax", activeSkillIds: [] })
+      .listForPrompt({ projectId, profileId: "synax", activeSkillIds: [],
+        signedInAccounts: signedInAccountTags() })
       .map((skill) => ({ kind, id: skill.id, label: skill.label }));
   } else if (kind === "mcp") {
     items = getProjectSettings(projectId)

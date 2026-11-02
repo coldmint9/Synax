@@ -5,6 +5,31 @@ export interface RuntimeRecordState {
   blockedReason: string | null;
   updatedAt: string;
 }
+/** The streaming writer only needs these fields from one published session. */
+export function decodeRuntimeRecordState(
+  bytes: Uint8Array,
+): RuntimeRecordState {
+  const value = JSON.parse(new TextDecoder().decode(bytes));
+  const nullableString = (field: unknown) =>
+    field == null || typeof field === "string";
+  if (
+    !value ||
+    typeof value.status !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    !nullableString(value.activeRunId) ||
+    !nullableString(value.pendingResumeToken) ||
+    !nullableString(value.blockedReason)
+  ) {
+    throw new Error("Invalid persisted runtime record state.");
+  }
+  return {
+    status: value.status,
+    activeRunId: value.activeRunId ?? null,
+    pendingResumeToken: value.pendingResumeToken ?? null,
+    blockedReason: value.blockedReason ?? null,
+    updatedAt: value.updatedAt,
+  };
+}
 export interface RuntimePayload {
   schema: 1;
   chunk: { type: string; [key: string]: unknown };

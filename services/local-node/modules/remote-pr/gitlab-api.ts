@@ -1,24 +1,18 @@
 import { getGitLabTokenForHost } from "../../infrastructure/runtime/config/config-store.js";
 import { GitMrError } from "../git-mr/errors.js";
+import { normalizeGitLabHost } from "./gitlab-host.js";
 
 const MAX_BYTES = 4 * 1024 * 1024;
 
 export function gitLabHost(value: string): string {
-  const host = value.trim().toLowerCase();
-  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/.test(host))
+  const host = normalizeGitLabHost(value);
+  if (!host)
     throw new GitMrError(
       "请输入 GitLab 主机，例如 gitlab.com。",
       "INVALID_HOST",
       400,
     );
-  try {
-    const url = new URL(`https://${host}`);
-    if (url.hostname.startsWith(".") || url.hostname.endsWith("."))
-      throw new Error();
-    return url.host;
-  } catch {
-    throw new GitMrError("GitLab 主机或端口无效。", "INVALID_HOST", 400);
-  }
+  return host;
 }
 
 /** Token stays in the header and is never forwarded through redirects or included in errors. */

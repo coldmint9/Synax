@@ -40,10 +40,14 @@ let requests: Array<Record<string, unknown>>;
 let sessionId: string;
 let multiple = false;
 let askHuman = false;
-let scenario: "normal" | "goal" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" | "overflow" | "active-compact" | "length" | "length-loop" = "normal";
+let scenario: "normal" | "goal" | "goal-progress" | "plan" | "mixed" | "restart" | "compact" | "media" | "long" | "overflow" | "active-compact" | "length" | "length-loop" = "normal";
 let rejectedContextRequests = 0;
 let mediaAssetId: string;
 let longToolRounds = 34;
+
+// Cache boundary annotations move as history grows; they are not model input.
+const cacheableWire = (messages: unknown[]) => JSON.stringify(messages, (key, value) =>
+  ["prompt_cache_breakpoint", "cache_control"].includes(key) ? undefined : value);
 
 it("lets a waiting conversation take a real worker at a safe step boundary", async () => {
   vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
@@ -196,6 +200,17 @@ beforeEach(async () => {
     } else if (scenario === "restart" && !afterTools) {
       chunk({ content: "Partial before restart" });
       return;
+    } else if (scenario === "goal-progress") {
+      if (requests.length === 1) {
+        call(0, "plan.propose", { title: "Inspect", objective: "Inspect project", steps: [
+          { id: "inspect", title: "Inspect", description: "List workspace files", dependsOn: [], expectedFiles: [] },
+        ], acceptanceCriteria: ["Workspace inspected"], humanAcceptanceCriteria: [], assumptions: [], risks: [] });
+      } else if (requests.length <= 3) {
+        call(0, "file.list", { path: "." });
+      } else {
+        call(0, "work.checkpoint", { action: "blocked", summary: "A required service is unavailable." });
+      }
+      chunk({}, "tool_calls");
     } else if (scenario === "goal") {
       if (requests.length === 1) { chunk({ content: "I am done." }); chunk({}, "stop"); }
       else { call(0, "work.checkpoint", { action: "blocked", summary: "A required service is unavailable." }); chunk({}, "tool_calls"); }
@@ -243,6 +258,24 @@ async function submit() {
   expect(requests).toHaveLength(1);
   return accepted.run.id;
 }
+
+it("refreshes a retained worker before each new turn", async () => {
+  scenario = "compact";
+  vi.stubEnv("SYNAX_AGENT_SESSION_CHILD", "1");
+  const hydrate = vi.spyOn(store, "hydrateExecutionSession");
+  try {
+    await coordinator.submitAsync(sessionId, { message: "First turn" }, "retained-worker-first");
+    await coordinator.waitForIdle();
+    await coordinator.submitAsync(sessionId, { message: "Second turn" }, "retained-worker-second");
+    await coordinator.waitForIdle();
+
+    const refreshes = hydrate.mock.calls.filter(([id, refresh]) => id === sessionId && refresh === true);
+    expect(refreshes.length).toBeGreaterThanOrEqual(2);
+    expect(store.listMessages(sessionId).filter(message => message.role === "user")).toHaveLength(2);
+  } finally {
+    hydrate.mockRestore();
+  }
+}, 30_000);
 async function reply(action: "once" | "reject") {
   debug("reply() entered", action);
   const pending = store.listPermissions(sessionId).find(permission => permission.action === "ask")!;
@@ -320,12 +353,13 @@ it.each(["1", "0"])("suspends on human input and resumes with the saved answer (
   expect(store.getToolCall(sessionId, interaction.toolCallId).status).toBe("completed");
 }, 20_000);
 
-it.each(["permission", "input"] as const)("expires pending %s after a runtime restart without executing tools", async (kind) => {
+it.each(["permission", "input"] as const)("settles pending %s after a runtime restart without executing tools", async (kind) => {
   askHuman = kind === "input";
   if (askHuman) store.updateSession(sessionId, { profileId: "synax" });
   const accepted = await coordinator.submitAsync(sessionId, { message: "Wait for approval" }, `restart-${kind}`);
   await coordinator.waitForIdle();
   expect(store.getRun(accepted.run.id).status).toBe(kind === "input" ? "waiting_input" : "waiting_permission");
+  const form = kind === "input" ? interactionService.pending(sessionId)! : null;
   const oldPid = Number(process.env.SYNAX_RUNTIME_SIDECAR_PID);
   process.kill(oldPid, "SIGKILL");
   await vi.waitFor(() => expect(Number(process.env.SYNAX_RUNTIME_SIDECAR_PID)).not.toBe(oldPid), { timeout: 10_000 });
@@ -335,17 +369,34 @@ it.each(["permission", "input"] as const)("expires pending %s after a runtime re
   expect(recovery.resumable).toEqual([]);
   await store.hydrateSession(sessionId, true);
   expect(store.getRun(accepted.run.id).status).toBe("interrupted");
-  expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
-  expect(interactionService.pending(sessionId)).toBeNull();
   expect(permissionPolicy.list(sessionId).some(item => item.action === "ask" && !item.resolvedAt)).toBe(false);
   expect(requests).toHaveLength(1);
   expect(store.listToolCalls(sessionId).some(call => call.status === "completed")).toBe(false);
   await expect(recoverRuntime("restarted-host")).resolves.toMatchObject({ resumable: [] });
-  const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, `continue-${kind}`);
-  expect(next.run.id).not.toBe(accepted.run.id);
-  await coordinator.waitForIdle();
-  expect(store.getRun(next.run.id).status).toBe("completed");
+  if (!form) {
+    expect(store.getSession(sessionId)).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
+    expect(interactionService.pending(sessionId)).toBeNull();
+    const next = await coordinator.submitAsync(sessionId, { message: "Continue" }, `continue-${kind}`);
+    expect(next.run.id).not.toBe(accepted.run.id);
+    await coordinator.waitForIdle();
+    expect(store.getRun(next.run.id).status).toBe("completed");
+    expect(requests).toHaveLength(2);
+    return;
+  }
+  // The question outlived its run: the session stays parked on the saved form,
+  // and the answer continues the work instead of a self-heal turn doing it.
+  expect(store.getSession(sessionId)).toMatchObject({
+    status: "waiting_input", activeRunId: null, pendingResumeToken: `interaction:${form.id}`,
+  });
+  expect(interactionService.pending(sessionId)).toMatchObject({ id: form.id, status: "pending" });
+  await replyAndContinueInteraction(sessionId, form.id, {
+    revision: form.revision, action: "submit", answers: { file: "README.md" },
+  });
+  const continued = store.listRuns(sessionId).find(run => run.id !== accepted.run.id)!;
+  await vi.waitFor(() => expect(store.getRun(continued.id).status).toBe("completed"), { timeout: 15_000 });
   expect(requests).toHaveLength(2);
+  expect(JSON.stringify(requests[1].messages)).toContain("README.md");
+  expect(interactionService.pending(sessionId)).toBeNull();
 }, 25_000);
 
 it("keeps tool call/result identities in the next user turn", async () => {
@@ -369,22 +420,47 @@ it("requires goal acceptance instead of completing on a plain-text claim", async
   await coordinator.waitForIdle();
   expect(requests).toHaveLength(2);
   expect(JSON.stringify(requests[1])).toContain("A plain-text answer does not satisfy acceptance");
+  const first = requests[0].messages as Array<{ role: string; content: unknown }>;
+  const next = requests[1].messages as Array<{ role: string; content: unknown }>;
+  expect(next.filter(message => message.role === "system")).toEqual(first.filter(message => message.role === "system"));
+  expect(cacheableWire(next.slice(0, first.length))).toBe(cacheableWire(first));
+  expect(JSON.stringify(next.at(-1))).toContain("A plain-text answer does not satisfy acceptance");
   expect(store.getRun(accepted.run.id)).toMatchObject({ status: "blocked", stopReason: "goal_stopped" });
   expect(store.getSession(sessionId).sessionMetadata?.goal).toMatchObject({ status: "blocked" });
 });
 
-it("ends a saved plan without making an extra model request", async () => {
+it("preserves the sent request prefix while Goal evidence grows on successive tool steps", async () => {
+  scenario = "goal-progress";
+  store.updateSession(sessionId, { profileId: "synax" });
+  store.updateSessionMetadata(sessionId, { mode: "goal", goal: { objective: "Inspect project", status: "executing" } });
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Inspect the project" }, "goal-cache");
+  await coordinator.waitForIdle();
+  expect(requests).toHaveLength(4);
+  expect(store.getRun(accepted.run.id).status).toBe("blocked");
+  // Approval legitimately changes available tools; subsequent evidence must
+  // only append context, never rewrite instructions or earlier reminders.
+  for (let index = 2; index < requests.length; index++) {
+    const previous = requests[index - 1].messages as unknown[];
+    const next = requests[index].messages as unknown[];
+    expect(requests[index].tools).toEqual(requests[index - 1].tools);
+    expect(cacheableWire(next.slice(0, previous.length))).toBe(cacheableWire(previous));
+  }
+  const proof = store.listToolCalls(sessionId).filter(call => call.toolId === "file.list");
+  expect(proof).toHaveLength(2);
+  const last = requests.at(-1)!.messages as unknown[];
+  expect(JSON.stringify(last.at(-1))).toContain(proof[0].id);
+  expect(JSON.stringify(last.at(-1))).toContain(proof[1].id);
+});
+
+it("saves a plan without implicitly starting execution", async () => {
   scenario = "plan";
   store.updateSession(sessionId, { profileId: "synax" });
   const accepted = await coordinator.submitAsync(sessionId, { message: "Plan the inspection" }, "plan-policy");
   await coordinator.waitForIdle();
-  const interaction = interactionService.pending(sessionId)!;
-  expect(interaction.kind).toBe("plan_approval");
-  await interactionService.replyAuthoritative(sessionId, interaction.id, { revision: interaction.revision, action: "cancel" });
-  coordinator.resume(sessionId);
-  await coordinator.waitForIdle();
-  expect(store.getRun(accepted.run.id)).toMatchObject({ status: "completed", stopReason: "plan_saved" });
-  expect(requests).toHaveLength(1);
+  expect(interactionService.pending(sessionId)).toBeNull();
+  expect(store.getSession(sessionId).sessionMetadata?.plan).toMatchObject({ status: "saved", title: "Fixture plan" });
+  expect(store.getRun(accepted.run.id).status).toBe("completed");
+  expect(requests.length).toBeGreaterThanOrEqual(1);
 });
 
 it("cancels a human input checkpoint without continuing the model", async () => {
@@ -420,23 +496,22 @@ it("includes workspace rules, environment and the selected workflow in Rust's re
   expect(JSON.stringify(messages)).toContain(root);
 });
 
-it("refreshes tool availability after plan execution is approved", async () => {
+it("keeps plan mode read-only after a proposal is saved", async () => {
   scenario = "plan";
   store.updateSession(sessionId, { profileId: "synax" });
   store.updateSessionMetadata(sessionId, { mode: "plan" });
-  const accepted = await coordinator.submitAsync(sessionId, { message: "Plan the inspection" }, "plan-execute");
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Plan the inspection" }, "plan-save-only");
   await coordinator.waitForIdle();
   const firstTools = requests[0].tools as Array<{ function: { name: string } }>;
   expect(firstTools.map(tool => tool.function.name)).not.toContain("file_write");
-  const interaction = interactionService.pending(sessionId)!;
-  await interactionService.replyAuthoritative(sessionId, interaction.id, { revision: interaction.revision, action: "execute" });
-  coordinator.resume(sessionId);
-  await coordinator.waitForIdle();
   expect(store.getRun(accepted.run.id).status).toBe("completed");
+  expect(interactionService.pending(sessionId)).toBeNull();
+  expect(store.getSession(sessionId).sessionMetadata?.mode).toBe("plan");
+  expect(store.getSession(sessionId).sessionMetadata?.plan).toMatchObject({ status: "saved" });
   expect(requests).toHaveLength(2);
   const nextTools = requests[1].tools as Array<{ function: { name: string } }>;
-  expect(nextTools.map(tool => tool.function.name)).toContain("file_write");
-  expect(store.getSession(sessionId).sessionMetadata?.mode).toBe("chat");
+  expect(nextTools.map(tool => tool.function.name)).not.toContain("file_write");
+  expect(nextTools.map(tool => tool.function.name)).toContain("plan_execute");
 });
 
 it("keeps an acknowledged step context in memory and immutable across retries", async () => {
@@ -515,6 +590,7 @@ it("interrupts an active run after Rust is killed and starts a new run only on u
   await coordinator.waitForIdle();
   expect(store.getRun(next.run.id).status).toBe("completed");
   expect(requests).toHaveLength(2);
+  expect(JSON.stringify(requests[1].messages)).toContain("Partial before restart");
 }, 15_000);
 
 it("renews a configured output cap in one message and replays its full history on the next turn", async () => {
@@ -724,3 +800,53 @@ it("keeps an admitted native run going past 32 steps and ignores legacy maxSteps
   expect(store.listToolCalls(sessionId).filter(call => call.toolId === "file.list" && call.status === "completed")).toHaveLength(34);
 // This is a 35-round durability check, not a latency benchmark.
 }, 90_000);
+
+it("heals a stopped session on a no-message continue instead of replaying the original prompt", async () => {
+  const at = new Date().toISOString();
+  await _rfProbe.sessionPatch(sessionId, "test-pause", {
+    status: "paused",
+    activeRunId: null,
+    pendingResumeToken: null,
+    blockedReason: null,
+    completedAt: null,
+    sessionMetadata: { manualStop: { at, reason: "Stopped by user." } },
+  });
+  await store.hydrateSession(sessionId, true);
+  expect(store.getSession(sessionId).status).toBe("paused");
+  const accepted = await coordinator.submitAsync(sessionId, {}, "healing-resume", "continue");
+  await coordinator.waitForIdle();
+  const users = store.listMessages(sessionId).filter(message => message.role === "user");
+  expect(users).toHaveLength(1);
+  const trigger = users[0]!;
+  expect(trigger.metadata.source).toBe("system_injection");
+  expect(trigger.content).toMatch(/^Session (was interrupted|previously failed)/);
+  expect(trigger.content).not.toContain("Write files");
+  expect(store.getRun(accepted.run.id).triggerMessageId).toBe(trigger.id);
+  expect(store.getSession(sessionId).sessionMetadata?.manualStop ?? null).toBeNull();
+  // The model receives the healing instruction, not a replayed user prompt.
+  expect(JSON.stringify(requests[0])).toContain("Session was interrupted.");
+}, 30_000);
+
+it("clears a user-stop fence left by any stop status on the next user turn", async () => {
+  const at = new Date().toISOString();
+  // `interrupted` is not the `paused` status that reopens checkpoints; a stop
+  // marker written here used to survive every following turn and fence work
+  // that the conversation was allowed to do, such as launching a merge worker.
+  await _rfProbe.sessionPatch(sessionId, "test-stale-stop", {
+    status: "interrupted",
+    activeRunId: null,
+    pendingResumeToken: null,
+    blockedReason: null,
+    completedAt: null,
+    sessionMetadata: { manualStop: { at, reason: "Stopped by user." } },
+  });
+  await store.hydrateSession(sessionId, true);
+  expect(store.getSession(sessionId).sessionMetadata?.manualStop).toBeTruthy();
+  const accepted = await coordinator.submitAsync(sessionId, { message: "Continue the merge" }, "stale-stop-turn");
+  // The fence is cleared before the turn streams; the fixture model may then wait
+  // for a permission, which is unrelated to the session stop semantics here.
+  await vi.waitFor(() => expect(store.getSession(sessionId).sessionMetadata?.manualStop ?? null).toBeNull());
+  expect(accepted.run.id).toBeTruthy();
+  await coordinator.interrupt(sessionId, "stale-stop test cleanup");
+  await coordinator.waitForIdle();
+}, 30_000);

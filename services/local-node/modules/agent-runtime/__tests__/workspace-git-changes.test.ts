@@ -180,6 +180,74 @@ describe("workspace Git changes", () => {
     expect(repository.deletions).toBe(0);
   });
 
+  it("reports how many commits are unpushed and when the oldest one landed", async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "synax-workspace-git-remote-"));
+    git("init", "--bare", "--quiet", remote);
+    git("remote", "add", "origin", remote);
+    git("push", "--quiet", "-u", "origin", git("branch", "--show-current").trim());
+
+    const commitAt = (message: string, date: string) => {
+      write("src/main.ts", `${message}\n`);
+      git("add", "src/main.ts");
+      execFileSync("git", ["commit", "--quiet", "-m", message], {
+        cwd: workspace,
+        env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+      });
+    };
+    commitAt("first unpushed", "2026-10-01T08:30:00+08:00");
+    commitAt("second unpushed", "2026-10-02T09:00:00+08:00");
+
+    const repository = primary(await read());
+
+    expect(repository.unpushedCommitCount).toBe(2);
+    expect(repository.unpushedSince).toBe("2026-10-01T08:30:00+08:00");
+  });
+
+  it("counts only what the branch upstream misses, not every remote", async () => {
+    const origin = fs.mkdtempSync(path.join(os.tmpdir(), "synax-git-origin-"));
+    const backup = fs.mkdtempSync(path.join(os.tmpdir(), "synax-git-backup-"));
+    git("init", "--bare", "--quiet", origin);
+    git("init", "--bare", "--quiet", backup);
+    git("remote", "add", "origin", origin);
+    git("remote", "add", "backup", backup);
+    const branch = git("branch", "--show-current").trim();
+    git("push", "--quiet", "-u", "origin", branch);
+    git("push", "--quiet", "backup", branch);
+
+    write("src/main.ts", "only in backup\n");
+    git("add", "src/main.ts");
+    execFileSync("git", ["commit", "--quiet", "-m", "backup only"], {
+      cwd: workspace,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "2026-10-03T10:00:00+08:00",
+        GIT_COMMITTER_DATE: "2026-10-03T10:00:00+08:00",
+      },
+    });
+    git("push", "--quiet", "backup", branch);
+
+    const repository = primary(await read());
+
+    // The commit already exists on `backup`, but the branch publishes to origin.
+    expect(git("rev-list", "--count", "HEAD", "--not", "--remotes").trim()).toBe("0");
+    expect(repository.unpushedCommitCount).toBe(1);
+    expect(repository.unpushedSince).toBe("2026-10-03T10:00:00+08:00");
+  });
+
+  it("reports no pending commits while the branch has no upstream", async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "synax-git-origin-"));
+    git("init", "--bare", "--quiet", remote);
+    git("remote", "add", "origin", remote);
+    write("src/main.ts", "local only\n");
+    git("add", "src/main.ts");
+    git("commit", "--quiet", "-m", "local only");
+
+    const repository = primary(await read());
+
+    expect(repository.unpushedCommitCount).toBe(0);
+    expect(repository.unpushedSince).toBeNull();
+  });
+
   it("shares one probe between sessions in the same worktree", async () => {
     const run = vi.spyOn(commands, "runCommand");
     await Promise.all([read("first-session"), read("second-session")]);

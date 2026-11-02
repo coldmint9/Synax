@@ -1,4 +1,5 @@
-import fs from "node:fs";
+import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { DATA_ROOT } from "../runtime/env.js";
 import { logger } from "../runtime/logger.js";
@@ -17,15 +18,26 @@ const MODELS_DEV_URL = "https://models.dev/api.json";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 let memoryCache: { ts: number; catalog: RuntimeCatalog } | null = null;
-let refreshPromise: Promise<void> | null = null;
+let refreshPromise: Promise<RuntimeCatalog> | null = null;
+let loadPromise: Promise<void> | null = null;
+let workerReload: Promise<void> | null = null;
+let workerReloadAt = 0;
 
-function triggerBackgroundRefresh(): void {
-  if (refreshPromise) return;
-  refreshPromise = fetchRemoteCatalog()
-    .then((catalog) => {
+function refreshWorkerCache(): void {
+  if (workerReload || Date.now() < workerReloadAt) return;
+  workerReloadAt = Date.now() + 1000;
+  workerReload = readCacheFile().then(disk => {
+    if (disk) memoryCache = disk;
+  }).finally(() => { workerReload = null; });
+}
+
+function refreshCatalog(): Promise<RuntimeCatalog> {
+  return refreshPromise ??= fetchRemoteCatalog()
+    .then(async (catalog) => {
       const now = Date.now();
       memoryCache = { ts: now, catalog };
-      writeCacheFile(catalog, now);
+      await writeCacheFile(catalog, now);
+      return catalog;
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -33,54 +45,42 @@ function triggerBackgroundRefresh(): void {
         { err: message },
         "[llm-runtime] background catalog refresh failed",
       );
+      return memoryCache!.catalog;
     })
     .finally(() => {
       refreshPromise = null;
     });
 }
 
+/** Load local metadata ahead of a turn; remote discovery never gates a send. */
+export function warmupRuntimeCatalog(): void {
+  void getRuntimeCatalog().catch(err => logger.warn({ err }, "[llm-runtime] catalog warm-up failed"));
+}
+
 export async function getRuntimeCatalog(
   forceRefresh = false,
 ): Promise<RuntimeCatalog> {
-  const now = Date.now();
-
-  if (!forceRefresh && memoryCache) {
-    if (now - memoryCache.ts >= CACHE_TTL_MS) triggerBackgroundRefresh();
-    return memoryCache.catalog;
+  if (!memoryCache) {
+    await (loadPromise ??= (async () => {
+      const disk = await readCacheFile();
+      memoryCache = disk ?? { ts: 0, catalog: createCatalogFromProviders(LLM_CATALOG_SNAPSHOT, "snapshot") };
+    })().finally(() => { loadPromise = null; }));
   }
-
-  if (!forceRefresh) {
-    const disk = readCacheFile();
-    if (disk) {
-      memoryCache = { ts: disk.ts, catalog: disk.catalog };
-      if (now - disk.ts >= CACHE_TTL_MS) triggerBackgroundRefresh();
-      return disk.catalog;
-    }
+  const cached = memoryCache!;
+  if (forceRefresh) return refreshCatalog();
+  if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
+    // The API host refreshes the shared catalog. Three warm workers must not
+    // each download and parse another catalog while a user is sending.
+    if (cached.catalog.source === "snapshot" || Date.now() - cached.ts >= CACHE_TTL_MS) refreshWorkerCache();
+    return cached.catalog;
   }
-
-  try {
-    const remote = await fetchRemoteCatalog();
-    memoryCache = { ts: now, catalog: remote };
-    writeCacheFile(remote, now);
-    return remote;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    logger.warn(
-      { err: message },
-      "[llm-runtime] failed to refresh models.dev catalog",
-    );
-    const disk = readCacheFile();
-    if (disk) {
-      memoryCache = { ts: disk.ts, catalog: disk.catalog };
-      return disk.catalog;
-    }
-    const snapshot = createCatalogFromProviders(
-      LLM_CATALOG_SNAPSHOT,
-      "snapshot",
-    );
-    memoryCache = { ts: now, catalog: snapshot };
-    return snapshot;
+  if (Date.now() - cached.ts >= CACHE_TTL_MS) {
+    // Coalesce requests and back off after an offline refresh instead of
+    // starting another network request on every model step.
+    cached.ts = Date.now();
+    void refreshCatalog();
   }
+  return cached.catalog;
 }
 
 export async function getRuntimeProvider(
@@ -93,6 +93,7 @@ export async function getRuntimeProvider(
 async function fetchRemoteCatalog(): Promise<RuntimeCatalog> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
+  timeout.unref();
   try {
     const resp = await fetch(MODELS_DEV_URL, {
       headers: { Accept: "application/json" },
@@ -180,19 +181,16 @@ function cacheFilePath(): string {
   const root = path.isAbsolute(DATA_ROOT)
     ? DATA_ROOT
     : path.resolve(process.cwd(), DATA_ROOT);
-  const dir = path.join(root, "llm-runtime");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "models-dev-catalog.json");
+  return path.join(root, "llm-runtime", "models-dev-catalog.json");
 }
 
-function readCacheFile(): { ts: number; catalog: RuntimeCatalog } | null {
+async function readCacheFile(): Promise<{ ts: number; catalog: RuntimeCatalog } | null> {
   try {
     const file = cacheFilePath();
-    if (!fs.existsSync(file)) return null;
     const raw = JSON.parse(
-      fs.readFileSync(file, "utf8"),
+      await fs.readFile(file, "utf8"),
     ) as CachedCatalogPayload;
-    if (!raw?.savedAt || !raw?.catalog) return null;
+    if (!Number.isFinite(Date.parse(raw?.savedAt)) || !Array.isArray(raw?.catalog?.providers)) return null;
     return {
       ts: Date.parse(raw.savedAt),
       catalog: {
@@ -205,10 +203,13 @@ function readCacheFile(): { ts: number; catalog: RuntimeCatalog } | null {
   }
 }
 
-function writeCacheFile(catalog: RuntimeCatalog, ts: number): void {
+async function writeCacheFile(catalog: RuntimeCatalog, ts: number): Promise<void> {
+  const file = cacheFilePath();
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(
-      cacheFilePath(),
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      temporary,
       JSON.stringify(
         {
           savedAt: new Date(ts).toISOString(),
@@ -219,11 +220,14 @@ function writeCacheFile(catalog: RuntimeCatalog, ts: number): void {
       ),
       "utf8",
     );
+    await fs.rename(temporary, file);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.warn(
       { err: message },
       "[llm-runtime] failed to persist catalog cache",
     );
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => undefined);
   }
 }

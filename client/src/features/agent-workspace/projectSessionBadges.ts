@@ -4,6 +4,7 @@ import {
   type SessionBadgeRow,
 } from "../../adapters/transport/agentRuntime";
 import { subscribe } from "../../adapters/transport/runtimeEventBus";
+import { ProjectBadgeRefresh } from "./projectBadgeRefresh";
 import { loadReadMarkers, useAgentSessionStore } from "./state/agentSessionStore";
 
 const RUNNING_SESSION_STATUS = "running";
@@ -13,7 +14,7 @@ const COMPLETED_SESSION_STATUSES = new Set<string>([
   "failed",
 ]);
 
-const EVENT_REFRESH_DEBOUNCE_MS = 300;
+
 const PROJECT_BADGE_VIEWED_KEY = "synax.projectBadgeViewedAt";
 
 function loadProjectBadgeViewedAt(projectId: string): number {
@@ -126,8 +127,7 @@ export function useProjectSessionBadges(
   >({});
   const [now, setNow] = useState(() => Date.now());
   const [viewedAtByProject, setViewedAtByProject] = useState<Record<string, number>>({});
-  const requestVersion = useRef(0);
-  const eventRefreshTimer = useRef<number | null>(null);
+  const refreshOwner = useRef<ProjectBadgeRefresh<{ items: SessionBadgeRow[] }> | null>(null);
 
   const markProjectViewed = useCallback((projectId: string) => {
     const viewedAt = Date.now();
@@ -148,79 +148,58 @@ export function useProjectSessionBadges(
     return () => markProjectViewed(currentProjectId);
   }, [currentProjectId, markProjectViewed]);
 
-  const clearScheduledRefresh = useCallback(() => {
-    if (eventRefreshTimer.current === null) return;
-    window.clearTimeout(eventRefreshTimer.current);
-    eventRefreshTimer.current = null;
-  }, []);
-
-  const refresh = useCallback(async () => {
-    clearScheduledRefresh();
-    if (stableProjectIds.length <= 1) return;
-
-    const version = ++requestVersion.current;
-    setNow(Date.now());
-    try {
-      // One sparse badges query replaces per-project full list fetches: badge
-      // math needs only id/status/updatedAt.
-      const { items } =
-        await agentRuntimeApi.listSessionBadges(stableProjectIds);
-      if (requestVersion.current !== version) return;
-
-      const nextSessionsByProject: Record<string, SessionBadgeRow[]> = {};
-      for (const projectId of stableProjectIds)
-        nextSessionsByProject[projectId] = [];
-      for (const row of items) {
-        if (row.projectId in nextSessionsByProject)
-          nextSessionsByProject[row.projectId].push(row);
-      }
-      setSessionsByProject(nextSessionsByProject);
-    } catch {
-      // Project badges are best-effort; retain the last successful snapshot.
-    }
-  }, [clearScheduledRefresh, stableProjectIds]);
-
-  const scheduleEventRefresh = useCallback(() => {
-    if (stableProjectIds.length <= 1) return;
-    clearScheduledRefresh();
-    eventRefreshTimer.current = window.setTimeout(() => {
-      eventRefreshTimer.current = null;
-      void refresh();
-    }, EVENT_REFRESH_DEBOUNCE_MS);
-  }, [clearScheduledRefresh, refresh, stableProjectIds.length]);
+  const refresh = useCallback(() => refreshOwner.current?.refresh() ?? Promise.resolve(), []);
 
   useEffect(() => {
     if (stableProjectIds.length <= 1) {
-      clearScheduledRefresh();
-      requestVersion.current += 1;
       setSessionsByProject({});
       return;
     }
-
+    let rows = new Map<string, SessionBadgeRow>();
+    const owner = new ProjectBadgeRefresh(
+      () => agentRuntimeApi.listSessionBadges(stableProjectIds),
+      ({ items }) => {
+        rows = new Map(items.map(row => [row.id, row]));
+        const grouped: Record<string, SessionBadgeRow[]> = Object.fromEntries(stableProjectIds.map(id => [id, []]));
+        for (const row of items) if (row.projectId in grouped) grouped[row.projectId].push(row);
+        setNow(Date.now());
+        setSessionsByProject(grouped);
+      },
+    );
+    refreshOwner.current = owner;
+    const invalidate = () => owner.invalidate();
+    const changed = (event: MessageEvent) => {
+      try {
+        const { sessionId, patch } = JSON.parse(event.data);
+        if (!patch || typeof patch !== "object") { invalidate(); return; }
+        const metadata = patch.sessionMetadata;
+        if (metadata && ["archivedAt", "deletedAt", "forkPreparing", "runtimeControl"].some(key => key in metadata)) {
+          invalidate(); return;
+        }
+        if ("projectId" in patch || "parentSessionId" in patch) { invalidate(); return; }
+        const row = rows.get(sessionId);
+        // Token/metadata-only updates of an active session cannot change its badge.
+        if ("status" in patch && (!row || patch.status !== row.status)) { invalidate(); return; }
+        if (row && COMPLETED_SESSION_STATUSES.has(row.status) && "updatedAt" in patch && patch.updatedAt !== row.updatedAt)
+          invalidate();
+      } catch { invalidate(); }
+    };
     const unsubscribe = subscribe({
-      onConnect: scheduleEventRefresh,
+      onConnect: invalidate,
       events: {
-        session_created: scheduleEventRefresh,
-        session_changed: scheduleEventRefresh,
-        session_deleted: scheduleEventRefresh,
-        session_archived: scheduleEventRefresh,
+        session_created: invalidate,
+        session_changed: changed,
+        session_deleted: invalidate,
+        session_archived: invalidate,
       },
     });
-
-    // The shared SSE connection may already be open, so synchronize once on mount.
-    void refresh();
-
+    void owner.refresh();
     return () => {
       unsubscribe();
-      clearScheduledRefresh();
-      requestVersion.current += 1;
+      owner.dispose();
+      if (refreshOwner.current === owner) refreshOwner.current = null;
     };
-  }, [
-    clearScheduledRefresh,
-    refresh,
-    scheduleEventRefresh,
-    stableProjectIds.length,
-  ]);
+  }, [stableProjectIds]);
 
   const badges = useMemo(() => {
     const nextBadges: Record<string, ProjectSessionBadge> = {};

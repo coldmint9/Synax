@@ -1,5 +1,12 @@
 import { Menu, BrowserWindow, app, shell } from "electron";
 import { showAboutWindow } from "./about-window.js";
+import {
+  menuCopy,
+  resolveMenuLocale,
+  type MenuCopy,
+  type MenuLocale,
+} from "./menu-copy.js";
+import { onlineUpdatesEnabled } from "./updater/update-policy.js";
 
 interface Project {
   id: string;
@@ -13,6 +20,7 @@ export interface DesktopMenuState {
   hasViewer: boolean;
   inWork: boolean;
   dark: boolean;
+  locale: MenuLocale;
 }
 
 let context: DesktopMenuState = {
@@ -21,11 +29,23 @@ let context: DesktopMenuState = {
   hasViewer: false,
   inWork: false,
   dark: false,
+  locale: "zh",
 };
 let checkUiUpdates: (() => void) | null = null;
 
 export function updateMenuState(state: DesktopMenuState): void {
-  context = state;
+  context = { ...state, locale: resolveMenuLocale(state.locale) };
+  buildAppMenu();
+}
+
+/**
+ * Applies the OS language before the renderer reports its saved preference, so
+ * the menu bar is never briefly in the wrong language at launch.
+ */
+export function setMenuLocale(raw: unknown): void {
+  const locale = resolveMenuLocale(raw);
+  if (locale === context.locale) return;
+  context = { ...context, locale };
   buildAppMenu();
 }
 
@@ -40,11 +60,35 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
   win?.webContents.send(channel, ...args);
 }
 
+/** A renderer command whose menu id doubles as the action the renderer handles. */
+function command(
+  id: string,
+  label: string,
+  accelerator: string,
+  enabled = true,
+): Electron.MenuItemConstructorOptions {
+  return {
+    id,
+    label,
+    accelerator,
+    enabled,
+    click: () => sendToRenderer("menu:action", id),
+  };
+}
+
+/** Fresh zoom items per build; Electron owns the option objects it receives. */
+const zoomItems = (c: MenuCopy): Electron.MenuItemConstructorOptions[] => [
+  { role: "zoomIn", label: c.zoomIn, accelerator: "CmdOrCtrl+=" },
+  { role: "zoomOut", label: c.zoomOut, accelerator: "CmdOrCtrl+-" },
+  { role: "resetZoom", label: c.actualSize, accelerator: "CmdOrCtrl+0" },
+];
+
 export function buildAppMenu(projects?: Project[]): void {
   if (projects) currentProjects = projects;
   const isMac = process.platform === "darwin";
+  const c = menuCopy(context.locale);
   const preferences: Electron.MenuItemConstructorOptions = {
-    label: "偏好设置...",
+    label: c.settings,
     accelerator: "CmdOrCtrl+,",
     click: () => sendToRenderer("menu:navigate", "/settings"),
   };
@@ -60,105 +104,105 @@ export function buildAppMenu(projects?: Project[]): void {
               `/projects/${encodeURIComponent(p.id)}/sessions`,
             ),
         }))
-      : [{ label: "无项目", enabled: false }];
+      : [{ label: c.noProject, enabled: false }];
 
   const template: Electron.MenuItemConstructorOptions[] = [];
   if (isMac)
     template.push({
       label: app.name,
       submenu: [
-        { label: "关于 Synax", click: () => showAboutWindow() },
+        { label: c.about, click: () => showAboutWindow() },
         { type: "separator" },
         preferences,
         { type: "separator" },
-        { role: "services", label: "服务" },
+        { role: "services", label: c.services },
         { type: "separator" },
-        { role: "hide", label: "隐藏 Synax" },
-        { role: "hideOthers", label: "隐藏其他" },
-        { role: "unhide", label: "显示全部" },
+        { role: "hide", label: c.hide },
+        { role: "hideOthers", label: c.hideOthers },
+        { role: "unhide", label: c.unhide },
         { type: "separator" },
-        { role: "quit", label: "退出 Synax" },
+        { role: "quit", label: c.quit },
       ],
     });
   template.push(
     {
-      label: "文件",
+      label: c.file,
       submenu: [
-        {
-          label: "导入项目…",
-          id: "project:import",
-          accelerator: "CmdOrCtrl+O",
-          click: () => sendToRenderer("menu:action", "project:import"),
-        },
-        {
-          label: "新任务",
-          id: "session:new",
-          accelerator: "CmdOrCtrl+N",
-          enabled: Boolean(context.projectId),
-          click: () => sendToRenderer("menu:action", "session:new"),
-        },
+        command(
+          "session:new",
+          c.newTask,
+          "CmdOrCtrl+N",
+          Boolean(context.projectId),
+        ),
+        command(
+          "terminal:new",
+          c.newTerminal,
+          "CmdOrCtrl+Shift+T",
+          Boolean(context.projectId),
+        ),
         { type: "separator" },
-        { label: "切换项目", submenu: projectSubmenu },
-        {
-          label: "新增终端",
-          id: "terminal:new",
-          accelerator: "CmdOrCtrl+Shift+T",
-          enabled: Boolean(context.projectId),
-          click: () => sendToRenderer("menu:action", "terminal:new"),
-        },
-        { type: "separator" },
-        { role: "close", label: "关闭窗口" },
-        ...(!isMac
-          ? [preferences, { role: "quit" as const, label: "退出 Synax" }]
-          : []),
+        command("project:import", c.importProject, "CmdOrCtrl+O"),
+        { label: c.switchProject, submenu: projectSubmenu },
+        // Close lives next to the file actions on macOS and in the window menu
+        // elsewhere, so every platform exposes it exactly once.
+        ...(isMac
+          ? [
+              { type: "separator" as const },
+              { role: "close" as const, label: c.closeWindow },
+            ]
+          : [
+              { type: "separator" as const },
+              preferences,
+              { type: "separator" as const },
+              { role: "quit" as const, label: c.quit },
+            ]),
       ],
     },
     {
-      label: "编辑",
+      label: c.edit,
       submenu: [
-        { role: "undo", label: "撤销" },
-        { role: "redo", label: "重做" },
+        { role: "undo", label: c.undo },
+        { role: "redo", label: c.redo },
         { type: "separator" },
-        { role: "cut", label: "剪切" },
-        { role: "copy", label: "复制" },
-        { role: "paste", label: "粘贴" },
-        { role: "selectAll", label: "全选" },
+        { role: "cut", label: c.cut },
+        { role: "copy", label: c.copy },
+        { role: "paste", label: c.paste },
+        { role: "selectAll", label: c.selectAll },
+        { type: "separator" },
+        command("search:sessions", c.findSessions, "CmdOrCtrl+F"),
       ],
     },
     {
-      label: "视图",
+      label: c.view,
       submenu: [
-        {
-          label: "显示 / 隐藏终端",
-          id: "terminal:toggle",
-          accelerator: "CmdOrCtrl+J",
-          click: () => sendToRenderer("menu:action", "terminal:toggle"),
-        },
+        command(
+          "terminal:toggle",
+          c.toggleTerminal,
+          "CmdOrCtrl+J",
+          Boolean(context.projectId),
+        ),
+        command(
+          "toggle:sidebar",
+          c.toggleSidebar,
+          "CmdOrCtrl+B",
+          context.inWork,
+        ),
+        command(
+          "view:conversation",
+          c.backToConversation,
+          "CmdOrCtrl+Alt+Left",
+          context.hasViewer,
+        ),
+        { type: "separator" },
+        command(
+          "workspace:refresh",
+          c.refreshWorkspace,
+          "CmdOrCtrl+R",
+          context.inWork && context.hasSession,
+        ),
         { type: "separator" },
         {
-          label: "切换会话侧栏",
-          id: "toggle:sidebar",
-          enabled: context.inWork,
-          accelerator: "CmdOrCtrl+B",
-          click: () => sendToRenderer("menu:action", "toggle:sidebar"),
-        },
-        { type: "separator" },
-        {
-          label: "返回对话",
-          id: "view:conversation",
-          accelerator: "CmdOrCtrl+Alt+Left",
-          enabled: context.hasViewer,
-          click: () => sendToRenderer("menu:action", "view:conversation"),
-        },
-        {
-          label: "刷新工作区",
-          id: "workspace:refresh",
-          accelerator: "CmdOrCtrl+R",
-          enabled: context.inWork && context.hasSession,
-          click: () => sendToRenderer("menu:action", "workspace:refresh"),
-        },
-        {
-          label: "深色模式",
+          label: c.darkMode,
           id: "theme:toggle",
           type: "checkbox",
           checked: context.dark,
@@ -166,37 +210,51 @@ export function buildAppMenu(projects?: Project[]): void {
           click: () => sendToRenderer("menu:action", "theme:toggle"),
         },
         { type: "separator" },
-        { role: "toggleDevTools", label: "开发者工具" },
+        ...zoomItems(c),
+        // macOS injects its own full-screen command into the View menu, so an
+        // explicit item here would render a second, duplicate entry.
+        ...(isMac
+          ? []
+          : [
+              { type: "separator" as const },
+              { role: "togglefullscreen" as const, label: c.fullscreen },
+            ]),
+        { type: "separator" },
         {
           role: "reload",
-          label: "重新加载界面",
+          label: c.reloadInterface,
           accelerator: "CmdOrCtrl+Shift+R",
         },
-        { type: "separator" },
-        { role: "togglefullscreen", label: "全屏" },
+        // Inspection tools stay available in development builds only.
+        ...(app.isPackaged
+          ? []
+          : [{ role: "toggleDevTools" as const, label: c.devTools }]),
       ],
     },
     {
-      label: "窗口",
+      label: c.window,
       submenu: [
-        { role: "minimize", label: "最小化" },
+        { role: "minimize", label: c.minimize },
         ...(isMac
           ? [
-              { role: "zoom" as const, label: "缩放" },
+              { role: "zoom" as const, label: c.zoom },
               { type: "separator" as const },
-              { role: "front" as const, label: "全部置前" },
+              { role: "front" as const, label: c.bringAllToFront },
             ]
-          : [{ role: "close" as const, label: "关闭窗口" }]),
+          : [
+              { type: "separator" as const },
+              { role: "close" as const, label: c.closeWindow },
+            ]),
       ],
     },
     {
-      label: "帮助",
+      label: c.help,
       submenu: [
-        ...(!isMac ? [{ role: "about" as const, label: "关于 Synax" }] : []),
-        ...(app.isPackaged && (isMac || process.platform === "win32")
+        ...(!isMac ? [{ label: c.about, click: () => showAboutWindow() }] : []),
+        ...(onlineUpdatesEnabled() && app.isPackaged && (isMac || process.platform === "win32")
           ? [
               {
-                label: "软件更新…",
+                label: c.checkUpdates,
                 id: "ui:check-updates",
                 enabled: Boolean(checkUiUpdates),
                 click: () => checkUiUpdates?.(),
@@ -205,7 +263,7 @@ export function buildAppMenu(projects?: Project[]): void {
             ]
           : []),
         {
-          label: "文档",
+          label: c.documentation,
           click: () => shell.openExternal("https://github.com/coldmint9/Synax"),
         },
       ],

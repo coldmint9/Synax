@@ -7,6 +7,8 @@ import { subscribe } from "../../adapters/transport/runtimeEventBus";
 import {
   desktopNotificationBridge,
   notificationKind,
+  notificationMarker,
+  quietSessionNotification,
   sessionNotificationPayload,
   SessionNotificationTracker,
   validNotificationTarget,
@@ -33,17 +35,17 @@ async function sendNotification(
     await native.showDesktopNotification(payload);
     return;
   }
-  if (
-    typeof Notification === "undefined" ||
-    Notification.permission !== "granted" ||
-    (document.visibilityState === "visible" && document.hasFocus())
-  )
+  // A suspended or settled session is worth interrupting the user for even
+  // when this window has focus: they may be reading another session or project.
+  if (typeof Notification === "undefined" || Notification.permission !== "granted")
     return;
   dismiss(payload.sessionId);
   const notice = new Notification(payload.title, {
     body: payload.body,
     icon: "/synax-icon.png",
     tag: payload.id,
+    // System default alert sound, never muted.
+    silent: false,
   });
   browserNotices.set(payload.sessionId, notice);
   notice.onclick = () => {
@@ -67,6 +69,7 @@ export function useDesktopNotification(
   onOpenSession: (target: SessionNotificationTarget) => void,
 ) {
   const enabled = useShellStore((s) => s.preferences.notifications);
+  const locale = useShellStore((s) => s.preferences.locale);
   const wasEnabled = useRef(enabled);
   const onOpen = useRef(onOpenSession);
   onOpen.current = onOpenSession;
@@ -84,7 +87,9 @@ export function useDesktopNotification(
 
   useEffect(() => {
     const native = desktopNotificationBridge();
-    native?.setDesktopNotificationsEnabled(enabled);
+    // The background runtime owns delivery while this window is gone, so it
+    // needs the same locale this window renders notices in.
+    native?.setDesktopNotificationsEnabled(enabled, locale);
     if (!enabled) for (const id of browserNotices.keys()) dismiss(id);
     // Native notifications use OS app permissions, never the Chromium permission prompt.
     if (!native && enabled && !wasEnabled.current) {
@@ -113,7 +118,7 @@ export function useDesktopNotification(
       }
     }
     wasEnabled.current = enabled;
-  }, [enabled]);
+  }, [enabled, locale]);
 
   useEffect(() => {
     let active = true;
@@ -186,22 +191,11 @@ export function useDesktopNotification(
                 return;
               if (
                 state.marker &&
-                state.marker !==
-                  (state.status === "completed"
-                    ? session.completedAt
-                    : session.pendingResumeToken)
+                state.marker !== notificationMarker(state.status, session)
               )
                 return;
-              state.marker ??=
-                (state.status === "completed"
-                  ? session.completedAt
-                  : session.pendingResumeToken) ?? undefined;
-              // Child workers should not flood the desktop when they finish; actionable waits still notify.
-              if (
-                session.parentSessionId &&
-                (kind === "completed" || kind === "failed")
-              )
-                return;
+              state.marker ??= notificationMarker(state.status, session);
+              if (quietSessionNotification(session, kind)) return;
               const payload = sessionNotificationPayload(
                 session,
                 kind,

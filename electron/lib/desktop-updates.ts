@@ -10,6 +10,7 @@ import { finishMacInstallation } from "./mac-desktop-update.js";
 import { UpdaterController } from "../updater/controller.js";
 import type { UpdaterRequest, UpdaterState } from "../updater/contract.js";
 import { updateFailureMessage } from "../updater/update-errors.js";
+import { onlineUpdatesEnabled, requireOnlineUpdates } from "../updater/update-policy.js";
 
 /**
  * Adapts electron-updater to the renderer's silent background update flow.
@@ -42,6 +43,7 @@ export class DesktopUpdates {
   }
 
   start(window: BrowserWindow): void {
+    if (!onlineUpdatesEnabled()) return;
     this.window = window;
     this.lastPhase = null;
     this.publish(this.controller.snapshot());
@@ -96,6 +98,7 @@ export class DesktopUpdates {
   }
 
   async markHealthy(): Promise<void> {
+    if (!onlineUpdatesEnabled()) return;
     await this.initialized;
     await this.controller.markHealthy();
     const directory = path.join(app.getPath("userData"), "desktop-updates");
@@ -131,6 +134,7 @@ export class DesktopUpdates {
   }
 
   check(manual: boolean): Promise<void> {
+    if (!onlineUpdatesEnabled()) return Promise.resolve();
     if (manual) this.send("updates:show");
     if (this.opening) return this.opening;
     this.opening = this.runCheck(manual)
@@ -177,6 +181,7 @@ export class DesktopUpdates {
   }
 
   async install(): Promise<void> {
+    requireOnlineUpdates();
     await this.initialized;
     if (this.controller.state.phase !== "ready") return;
     await this.controller.install();

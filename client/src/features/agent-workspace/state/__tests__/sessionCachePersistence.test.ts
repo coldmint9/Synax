@@ -259,6 +259,22 @@ function session(status: string) {
 }
 
 describe("store restore", () => {
+  it("hot-loads an evicted completed transcript directly from disk on selection", async () => {
+    schedulePersistDetail("session", "p1", entry(), "terminal");
+    await flushSessionCacheWrites();
+    store.setState({ ...store.getInitialState(), projectId: "p1", sessions: [session("completed")] });
+    store.getState().openPanel("session");
+    await vi.waitFor(() => expect(store.getState().detailRefreshing).toBe(false));
+    expect(store.getState().messages.map(message => message.id)).toEqual(["m1"]);
+    expect(agentRuntimeApi.historyWindow).not.toHaveBeenCalled();
+    expect(agentRuntimeApi.getSessionStats).not.toHaveBeenCalled();
+  });
+
+  it("retains a dirty marker when a changed page is persisted again", async () => {
+    schedulePersistDetail("session", "p1", { ...entry(), invalidated: true }, "terminal");
+    await flushSessionCacheWrites();
+    expect((await readPersistedDetail("session", "p1"))?.invalidated).toBe(true);
+  });
   it("reopens a completed transcript from disk without re-reading history", async () => {
     schedulePersistDetail("session", "p1", entry(), "terminal");
     await flushSessionCacheWrites();
@@ -359,4 +375,24 @@ describe("store restore", () => {
     await store.getState().fetchSessionStats();
     expect(agentRuntimeApi.getSessionStats).toHaveBeenCalledTimes(1);
   });
+});
+
+it("restores the complete rail and viewport retention without restoring evicted bodies", async () => {
+  const snapshot = entry();
+  snapshot.timelineMessages = [
+    { ...snapshot.messages[0], id: "older", content: "Old question" },
+    ...snapshot.messages,
+  ];
+  snapshot.timelineRuns = [];
+  snapshot.timelineSteps = [];
+  snapshot.timelineToolCalls = [];
+  snapshot.timelineIndexLoaded = true;
+  snapshot.historyViewportRetain = { messages: 200 };
+  schedulePersistDetail("session", "p1", snapshot);
+  await flushSessionCacheWrites();
+  const restored = await readPersistedDetail("session", "p1");
+  expect(restored?.messages.map(message => message.id)).toEqual(["m1"]);
+  expect(restored?.timelineMessages?.map(message => message.id)).toEqual(["older", "m1"]);
+  expect(restored?.timelineIndexLoaded).toBe(true);
+  expect(restored?.historyViewportRetain).toEqual({ messages: 200 });
 });

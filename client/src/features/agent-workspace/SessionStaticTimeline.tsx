@@ -24,16 +24,21 @@ import {
   estimateEntryHeight,
 } from "./TimelineLazyEntry";
 import { groupActivityEntries } from "./groupActivityEntries";
+import { useFoldTransition } from "./useFoldTransition";
 import {
   EMPTY_STREAMING_BUFFERS,
   materializeLiveBlocks,
 } from "./streamingLiveBlocks";
 import type { TurnContentBlock } from "./buildInterleavedTurns";
+import { withSubagentCards } from "./subagentCallMatch";
 import { useAgentSessionStore } from "./state/agentSessionStore";
 import { isLiveStepPersisted } from "./state/liveStepRetirement";
+import { hasDisplayableReasoning } from "./activityText";
 import { useShellStore } from "../../shared/state/shellStore";
 import { useAppendedEntryIds } from "./useAppendedEntryIds";
 import "./transcriptAppend.css";
+import type { ConversationController } from "./state/conversationController";
+import { useScopedConversationValue } from "./state/useConversationState";
 
 interface Props {
   unifiedLive?: boolean;
@@ -47,26 +52,39 @@ interface Props {
   isRunning?: boolean;
   onExpandChild?: (sessionId: string) => void;
   scrollRootRef?: RefObject<HTMLElement | null>;
+  scopedConversation?: ConversationController;
 }
 
-type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef"> & {
+type RowsProps = Pick<Props, "onExpandChild" | "scrollRootRef" | "scopedConversation"> & {
   entries: ConversationTimelineEntry[];
   sessionId?: string;
+  /** Children of the rendered session, so a delegation row owns its card. */
+  childSessions?: AgentSession[];
   streaming?: boolean;
   liveId?: string | null;
   liveSeed?: readonly TurnContentBlock[];
+  /** Start of the streaming step, the anchor for calls without a child id. */
+  liveStartedAt?: string | null;
   eager?: boolean;
   /** Version of cached height measurements, independent of React row identity. */
   cacheVersion?: string;
   /** Temporary live snapshots share the live height-cache namespace. */
   liveEntryIds?: ReadonlySet<string>;
+  /**
+   * The live step hides its reasoning, so one trailing placeholder must
+   * represent every reasoning record of its newest stream.
+   */
+  hiddenReasoning?: boolean;
 };
 
 type RowProps = Omit<RowsProps, "entries" | "streaming"> & {
   entry: ConversationTimelineEntry;
   isWorking: boolean;
   isStreaming: boolean;
+  showsHiddenReasoning: boolean;
   appended: boolean;
+  /** Height of the process rows this work log replaced, on the fold itself. */
+  foldFrom?: number;
 };
 
 const EMPTY_LIVE_SEED: readonly TurnContentBlock[] = [];
@@ -104,7 +122,6 @@ function sameTimelineEntry(
       return (
         next.kind === "user" &&
         previous.content === next.content &&
-        previous.injected === next.injected &&
         previous.contentParts === next.contentParts
       );
     case "work_log":
@@ -136,9 +153,11 @@ const TimelineRow = memo(
     scrollRootRef,
     isWorking,
     isStreaming,
+    showsHiddenReasoning,
     eager,
     cacheVersion,
     appended,
+    foldFrom,
   }: RowProps) {
     const key = `${sessionId ?? "standalone"}:${cacheVersion ?? "initial"}:${entry.kind}-${entry.id}`;
     return (
@@ -146,6 +165,7 @@ const TimelineRow = memo(
         entryId={entry.id}
         cacheKey={key}
         estimate={estimateEntryHeight(entry)}
+        measureScope={sessionId ?? "standalone"}
         scrollRootRef={scrollRootRef}
         eager={eager}
         appended={appended}
@@ -155,6 +175,8 @@ const TimelineRow = memo(
           onExpandChild={onExpandChild}
           isWorking={isWorking}
           isStreaming={isStreaming}
+          showsHiddenReasoning={showsHiddenReasoning}
+          foldFrom={foldFrom}
         />
       </TimelineLazyEntry>
     );
@@ -166,8 +188,10 @@ const TimelineRow = memo(
       previous.scrollRootRef !== next.scrollRootRef ||
       previous.isWorking !== next.isWorking ||
       previous.isStreaming !== next.isStreaming ||
+      previous.showsHiddenReasoning !== next.showsHiddenReasoning ||
       previous.eager !== next.eager ||
-      previous.cacheVersion !== next.cacheVersion
+      previous.cacheVersion !== next.cacheVersion ||
+      previous.foldFrom !== next.foldFrom
     )
       return false;
     return sameTimelineEntry(previous.entry, next.entry);
@@ -185,9 +209,16 @@ function renderTimelineRows({
   cacheVersion,
   liveEntryIds,
   appendedIds,
+  foldTransitions,
+  hiddenReasoning = false,
   visibleEntries = entries,
   start = 0,
-}: RowsProps & { appendedIds: ReadonlySet<string>; visibleEntries?: ConversationTimelineEntry[]; start?: number }) {
+}: RowsProps & {
+  appendedIds: ReadonlySet<string>;
+  foldTransitions: ReadonlyMap<string, number>;
+  visibleEntries?: ConversationTimelineEntry[];
+  start?: number;
+}) {
   let latestActivityIndex = -1;
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
@@ -230,6 +261,19 @@ function renderTimelineRows({
     }
     if (liveIndex >= 0) latestActivityIndex = liveIndex;
   }
+  // One placeholder closes the live step: the newest hidden reasoning segment
+  // owns it when that segment is last, and the reply row borrows it when text
+  // has already arrived. Both cases render exactly one shimmering row.
+  let hiddenReasoningIndex = -1;
+  if (hiddenReasoning && liveId) {
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (entry.kind === "agent" && entry.turn.stepId === liveId) {
+        hiddenReasoningIndex = index;
+        break;
+      }
+    }
+  }
   return visibleEntries.map((entry, visibleIndex) => {
     const index = start + visibleIndex;
     let isLiveEntry = false;
@@ -258,6 +302,8 @@ function renderTimelineRows({
         eager={eager}
         cacheVersion={entryCacheVersion}
         appended={appendedIds.has(entry.id)}
+        foldFrom={foldTransitions.get(entry.id)}
+        showsHiddenReasoning={index === hiddenReasoningIndex}
         isWorking={Boolean(streaming && index === latestActivityIndex)}
         isStreaming={Boolean(
           streaming &&
@@ -274,16 +320,37 @@ function TimelineRows({
   entries,
   liveId,
   sessionId,
+  childSessions,
   streaming,
   onExpandChild,
   scrollRootRef,
   cacheVersion,
   liveEntryIds,
   liveSeed = EMPTY_LIVE_SEED,
+  liveStartedAt = null,
+  scopedConversation,
 }: RowsProps) {
-  const live = useAgentSessionStore((s) =>
-    liveId ? s.streamingLive : EMPTY_STREAMING_BUFFERS,
+  const globalLive = useAgentSessionStore((s) =>
+    !scopedConversation && liveId ? s.streamingLive : EMPTY_STREAMING_BUFFERS,
   );
+  const scopedLive = useScopedConversationValue(scopedConversation, s => s.streamingLive);
+  const live = scopedConversation ? scopedLive ?? EMPTY_STREAMING_BUFFERS : globalLive;
+  const showThinking = useShellStore((s) => s.preferences.sessionShowThinking);
+  // Hidden reasoning still needs one visible stand-in while the live step runs:
+  // without it the transcript freezes as soon as no tool row or reply arrives.
+  const hiddenReasoning = useMemo(() => {
+    if (!liveId || !streaming || showThinking) return false;
+    const blocks = [...liveSeed, ...materializeLiveBlocks(live)];
+    if (
+      blocks.some(
+        (block) => block.type === "tool_call" || block.type === "tool_call_group",
+      )
+    )
+      return false;
+    return blocks.some(
+      (block) => block.type === "thinking" && hasDisplayableReasoning(block.content),
+    );
+  }, [live, liveId, liveSeed, showThinking, streaming]);
   const combined = useMemo(() => {
     if (!liveId) return groupActivityEntries(entries);
     const rows = [...entries];
@@ -291,10 +358,13 @@ function TimelineRows({
       (entry) =>
         entry.kind === "interaction" && entry.interaction.stepId === liveId,
     );
-    const liveBlocks = [
-      ...liveSeed,
-      ...materializeLiveBlocks(live),
-    ];
+    // A live step never reaches the persisted timeline, so its delegation rows
+    // get their cards here; without this the subagent stays an anonymous tool
+    // line until the step is written to history.
+    const liveBlocks = withSubagentCards(
+      [...liveSeed, ...materializeLiveBlocks(live)],
+      { parentSessionId: sessionId, childSessions, startedAt: liveStartedAt },
+    );
     rows.splice(interactionIndex < 0 ? rows.length : interactionIndex, 0, {
       id: liveId,
       kind: "agent",
@@ -310,9 +380,20 @@ function TimelineRows({
       },
     });
     return groupActivityEntries(rows);
-  }, [entries, live, liveId, liveSeed]);
+  }, [
+    entries,
+    live,
+    liveId,
+    liveSeed,
+    sessionId,
+    childSessions,
+    liveStartedAt,
+  ]);
   // Appending a row reveals it; a history page or a folded round must not.
   const appendedIds = useAppendedEntryIds(combined, sessionId);
+  // A fold that happens while this view is open contracts from the rows the
+  // reader was already looking at; anything that arrives folded stays still.
+  const foldTransitions = useFoldTransition(combined, sessionId);
   return <TimelineVirtualWindow
     key={sessionId ?? "standalone"}
     cacheKey={`${sessionId ?? "standalone"}:${cacheVersion}`}
@@ -320,7 +401,8 @@ function TimelineRows({
     scrollRootRef={scrollRootRef}
     renderRows={(visibleEntries, start) => renderTimelineRows({
       entries: combined, visibleEntries, start, sessionId, streaming, liveId,
-      onExpandChild, scrollRootRef, cacheVersion, liveEntryIds, appendedIds, eager: true,
+      onExpandChild, scrollRootRef, cacheVersion, liveEntryIds, appendedIds, hiddenReasoning, eager: true,
+      foldTransitions,
     })}
   />;
 }
@@ -337,24 +419,33 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   isRunning = false,
   onExpandChild,
   scrollRootRef,
+  scopedConversation,
 }: Props) {
   const { t } = useLocale();
-  const historyWindow = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
+  const globalHistoryWindow = useAgentSessionStore(s => !scopedConversation && session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
+  const scopedHistoryWindow = useScopedConversationValue(scopedConversation, s => s.history.historyWindow);
+  const historyWindow = scopedConversation ? scopedHistoryWindow : globalHistoryWindow;
   const includeInitialPrompt = !historyWindow?.hasEarlier;
   const browsingHistory = historyWindow?.latest === false;
 
-  const interactions = useAgentSessionStore((s) =>
-    s.interactionState?.sessionId === session?.id
+  const globalInteractions = useAgentSessionStore((s) =>
+    !scopedConversation && s.interactionState?.sessionId === session?.id
       ? s.interactionState?.items
       : undefined,
   );
+  const scopedInteractions = useScopedConversationValue(scopedConversation, s => s.interactions);
+  const interactions = scopedConversation ? scopedInteractions : globalInteractions;
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
-  const parkedSnapshots = useAgentSessionStore((s) =>
-    unifiedLive && !browsingHistory ? s.streamingCompletedSteps : null,
+  const globalParkedSnapshots = useAgentSessionStore((s) =>
+    !scopedConversation && unifiedLive && !browsingHistory ? s.streamingCompletedSteps : null,
   );
-  const liveId = useAgentSessionStore((s) =>
-    unifiedLive && !browsingHistory ? s.streamingStepId : null,
+  const globalLiveId = useAgentSessionStore((s) =>
+    !scopedConversation && unifiedLive && !browsingHistory ? s.streamingStepId : null,
   );
+  const scopedParkedSnapshots = useScopedConversationValue(scopedConversation, s => s.streamingCompletedSteps);
+  const scopedLiveId = useScopedConversationValue(scopedConversation, s => s.streamingStepId);
+  const parkedSnapshots = scopedConversation ? scopedParkedSnapshots : globalParkedSnapshots;
+  const liveId = scopedConversation ? scopedLiveId : globalLiveId;
   // History can reach this render before the store retires its parked row.
   // Keep a current live seed, but never let stale reasoning hide a saved reply.
   const snapshots = useMemo(
@@ -448,7 +539,13 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
             // A live snapshot has no server completion time yet; the persisted
             // step replaces this row with its own stamp.
             completedAt: null,
-            blocks: snapshot.blocks,
+            // A parked snapshot is the same live step, so its delegation row
+            // keeps its card until the persisted step takes over.
+            blocks: withSubagentCards(snapshot.blocks, {
+              parentSessionId: session?.id,
+              childSessions,
+              startedAt: createdAt,
+            }),
           },
         },
       );
@@ -498,10 +595,17 @@ export const SessionStaticTimeline = memo(function SessionStaticTimeline({
   return (
     <div className="flex flex-col gap-5">
       <TimelineRows
+        scopedConversation={scopedConversation}
         entries={timeline}
         liveId={showLive ? liveId : null}
         streaming={isRunning}
         sessionId={session?.id}
+        childSessions={childSessions}
+        liveStartedAt={
+          showLive && liveId
+            ? steps.find((step) => step.id === liveId)?.startedAt ?? null
+            : null
+        }
         onExpandChild={onExpandChild}
         scrollRootRef={scrollRootRef}
         cacheVersion={cacheVersion}

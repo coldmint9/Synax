@@ -8,8 +8,8 @@ import { SettingsSelect } from "./SettingsSelect";
 import { FormRow } from "./FormRow";
 
 export function LayoutSection() {
-  const { t } = useLocale();
-  const locale = useShellStore((s) => s.preferences.locale);
+  const { t, locale } = useLocale();
+  const zh = locale === "zh";
   const defaultHome = useShellStore((s) => s.preferences.defaultHome);
   const notifications = useShellStore((s) => s.preferences.notifications);
   const foldWorkRuns = useShellStore((s) => s.preferences.sessionFoldWorkRuns);
@@ -30,11 +30,8 @@ export function LayoutSection() {
 
   return (
     <SettingsCard title={t("settingsLayoutTitle")} icon={SlidersHorizontal}>
-      <div className="settings-rows">
-        <FormRow
-          label={t("settingsLanguage")}
-          description={t("settingsLanguageHint")}
-        >
+      <div className="settings-rows settings-rows--split">
+        <FormRow label={t("settingsLanguage")}>
           <SettingsSelect
             className="w-32 max-w-full"
             selectedKey={locale}
@@ -51,25 +48,6 @@ export function LayoutSection() {
         </FormRow>
 
         <FormRow
-          label={t("settingsDefaultHome")}
-          description={t("settingsDefaultHomeHint")}
-        >
-          <SettingsSelect
-            className="w-32 max-w-full"
-            selectedKey={defaultHome}
-            onSelectionChange={(key) => {
-              if (key) setDefaultHome(key as "global-home" | "last-project");
-            }}
-            disallowEmptySelection
-            aria-label={t("settingsDefaultHome")}
-            options={[
-              { key: "global-home", label: t("settingsGlobalHome") },
-              { key: "last-project", label: t("settingsLastProject") },
-            ]}
-          />
-        </FormRow>
-
-        <FormRow
           label={t("settingsNotifications")}
           description={t("settingsNotificationsHint")}
         >
@@ -81,15 +59,19 @@ export function LayoutSection() {
           />
         </FormRow>
 
-        <FormRow
-          label={t("sessionWorkLogToggle")}
-          description={t("settingsFoldWorkLogHint")}
-        >
-          <Switch
-            size="sm"
-            checked={foldWorkRuns}
-            onChange={setFoldWorkRuns}
-            aria-label={t("sessionWorkLogToggle")}
+        <FormRow label={zh ? "界面字体大小" : "Interface font size"}>
+          <SettingsSelect
+            className="w-32 max-w-full"
+            selectedKey={String(agentFontSize)}
+            onSelectionChange={(key) => {
+              if (key) setAgentFontSize(Number(key));
+            }}
+            disallowEmptySelection
+            aria-label={zh ? "界面字体大小" : "Interface font size"}
+            options={[12, 13, 14, 15, 16, 18, 20].map((size) => ({
+              key: String(size),
+              label: `${size}px${size === 14 ? (zh ? "（默认）" : " (default)") : ""}`,
+            }))}
           />
         </FormRow>
 
@@ -105,29 +87,7 @@ export function LayoutSection() {
           />
         </FormRow>
 
-        <FormRow
-          label="界面字体大小"
-          description="调整 Synax 所有界面文字大小，默认 14px"
-        >
-          <SettingsSelect
-            className="w-32 max-w-full"
-            selectedKey={String(agentFontSize)}
-            onSelectionChange={(key) => {
-              if (key) setAgentFontSize(Number(key));
-            }}
-            disallowEmptySelection
-            aria-label="界面字体大小"
-            options={[12, 13, 14, 15, 16, 18, 20].map((size) => ({
-              key: String(size),
-              label: `${size}px${size === 14 ? "（默认）" : ""}`,
-            }))}
-          />
-        </FormRow>
-
-        <FormRow
-          label="用户消息字重"
-          description="调整 island 对话页用户消息框的字体粗细，默认 450"
-        >
+        <FormRow label={zh ? "用户消息字重" : "Message font weight"}>
           <div className="flex w-44 items-center gap-2">
             <input
               type="range"
@@ -138,7 +98,7 @@ export function LayoutSection() {
               onChange={(event) =>
                 setUserMessageFontWeight(Number(event.target.value))
               }
-              aria-label="用户消息字重"
+              aria-label={zh ? "用户消息字重" : "Message font weight"}
               className="min-w-0 flex-1"
             />
             <output className="w-8 text-right text-xs tabular-nums text-muted-foreground">
@@ -147,12 +107,36 @@ export function LayoutSection() {
           </div>
         </FormRow>
 
-
         <FormRow
-          label={t("settingsEditor")}
-          description={t("settingsEditorHint")}
+          label={t("sessionWorkLogToggle")}
+          description={t("settingsFoldWorkLogHint")}
         >
+          <Switch
+            size="sm"
+            checked={foldWorkRuns}
+            onChange={setFoldWorkRuns}
+            aria-label={t("sessionWorkLogToggle")}
+          />
+        </FormRow>
+
+        <FormRow label={t("settingsEditor")}>
           <FileOpenerSelect />
+        </FormRow>
+
+        <FormRow label={t("settingsDefaultHome")}>
+          <SettingsSelect
+            className="w-32 max-w-full"
+            selectedKey={defaultHome}
+            onSelectionChange={(key) => {
+              if (key) setDefaultHome(key as "global-home" | "last-project");
+            }}
+            disallowEmptySelection
+            aria-label={t("settingsDefaultHome")}
+            options={[
+              { key: "global-home", label: t("settingsGlobalHome") },
+              { key: "last-project", label: t("settingsLastProject") },
+            ]}
+          />
         </FormRow>
       </div>
     </SettingsCard>

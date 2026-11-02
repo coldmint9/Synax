@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionEnvironmentSubagent } from "../../../adapters/transport/agentRuntime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentRun, AgentRunStep, AgentSession, SessionEnvironmentSubagent } from "../../../adapters/transport/agentRuntime";
 import { useShellStore } from "../../../shared/state/shellStore";
 import { SubagentIsland } from "../SubagentIsland";
 import { SubagentConversationPanel } from "../SubagentConversationPanel";
+import { ConversationController, getConversationController } from "../state/conversationController";
 import { useSessionWorkspace, useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
 
 const snapshot = vi.hoisted(() => ({ subagents: [] as SessionEnvironmentSubagent[] }));
@@ -16,6 +17,10 @@ vi.mock("../../../app/layouts/IslandSurface", () => ({
 vi.mock("../SubagentReadonlyView", () => ({
   SubagentReadonlyView: ({ sessionId }: { sessionId: string }) => <div>记录 {sessionId}</div>,
 }));
+vi.mock("../useProviderNames", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../useProviderNames")>(),
+  useProviderNames: () => [{ id: "custom-api:test", label: "测试供应商" }],
+}));
 
 function child(id: string, status: SessionEnvironmentSubagent["status"]): SessionEnvironmentSubagent {
   return { id, parentSessionId: "parent", subagentName: id === "a" ? "林墨" : "江岚", roleName: "探索员", profileId: "explorer", status, title: null, prompt: "## 检查布局\n梳理交互入口", updatedAt: "2026-10-08T00:00:00Z", completedAt: null, resultSummary: null };
@@ -27,11 +32,87 @@ function Harness({ owner = "parent" }: { owner?: string }) {
 
 beforeEach(() => {
   snapshot.subagents = [];
+  for (const id of ["a", "b", "parent"]) {
+    const controller = getConversationController(id);
+    controller.store.setState(new ConversationController(id).getSnapshot(), true);
+    vi.spyOn(controller, "retain").mockReturnValue(() => {});
+  }
   useSessionWorkspaceStore.setState({ sessions: {} });
   useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: "zh" } }));
 });
+afterEach(() => vi.restoreAllMocks());
 
 describe("SubagentIsland", () => {
+  it("shows the child's executed provider/model and effort inline without the subtitle", () => {
+    const controller = getConversationController("a");
+    controller.store.setState({
+      session: { id: "a", activeRunId: "run-a", model: "custom-api:test/configured", reasoningEffort: "low" } as AgentSession,
+      history: {
+        ...controller.getSnapshot().history,
+        runs: [{ id: "run-a", sessionId: "a", model: "custom-api:test/run-model", metadata: { reasoningEffort: "medium" }, startedAt: "2026-10-30T00:00:00Z" } as AgentRun],
+        steps: [
+          { id: "step-a", sessionId: "a", runId: "run-a", model: "custom-api:test/actual-model", metadata: { reasoningEffort: "max" }, startedAt: "2026-10-30T00:00:01Z" } as AgentRunStep,
+          { id: "step-parent", sessionId: "parent", runId: "run-parent", model: "other/parent-model", metadata: { reasoningEffort: "none" }, startedAt: "2026-10-30T00:00:02Z" } as AgentRunStep,
+        ],
+      },
+    });
+    useSessionWorkspaceStore.getState().openSubagent("parent", "a", "林墨");
+    const { container } = render(<Harness />);
+    const model = screen.getByLabelText("供应商/模型: 测试供应商/actual-model");
+    expect(model).toHaveTextContent("测试供应商/actual-model");
+    expect(model).toHaveAttribute("title", "供应商/模型: 测试供应商/actual-model");
+    expect(screen.getByLabelText("推理强度: max")).toHaveTextContent("max");
+    expect(container.querySelector(".subagent-conversation-header")).toContainElement(model);
+    expect(screen.queryByText(/主对话保持可见/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "全屏查看子代理对话" }));
+    expect(screen.queryByText(/Esc 返回分栏/)).toBeNull();
+    expect(screen.getByLabelText("供应商/模型: 测试供应商/actual-model")).toBe(model);
+  });
+
+  it("updates runtime metadata and does not carry it across child switches", () => {
+    useSessionWorkspaceStore.getState().openSubagent("parent", "a", "林墨");
+    render(<Harness />);
+    expect(screen.getByLabelText("供应商/模型: —")).toBeInTheDocument();
+    expect(screen.getByLabelText("推理强度: —")).toBeInTheDocument();
+    act(() => getConversationController("a").store.setState({
+      session: { id: "a", model: "custom-api:test/model-a", reasoningEffort: "high" } as AgentSession,
+    }));
+    expect(screen.getByLabelText("供应商/模型: 测试供应商/model-a")).toBeInTheDocument();
+    expect(screen.getByLabelText("推理强度: high")).toBeInTheDocument();
+    act(() => getConversationController("a").store.setState({
+      session: { id: "a", model: "custom-api:test/model-a", reasoningEffort: "none" } as AgentSession,
+    }));
+    expect(screen.getByLabelText("推理强度: none")).toBeInTheDocument();
+    act(() => useSessionWorkspaceStore.getState().openSubagent("parent", "b", "江岚"));
+    expect(screen.queryByText("测试供应商/model-a")).toBeNull();
+    expect(screen.getByLabelText("供应商/模型: —")).toBeInTheDocument();
+    expect(screen.getByLabelText("推理强度: —")).toBeInTheDocument();
+    act(() => getConversationController("b").store.setState({
+      session: { id: "b", model: "unknown-provider/model-b", reasoningEffort: "low" } as AgentSession,
+    }));
+    expect(screen.getByLabelText("供应商/模型: unknown-provider/model-b")).toBeInTheDocument();
+    expect(screen.getByLabelText("推理强度: low")).toBeInTheDocument();
+  });
+
+  it("uses run metadata when no step exists and preserves an explicitly unknown effort", () => {
+    const controller = getConversationController("a");
+    controller.store.setState({
+      session: { id: "a", activeRunId: "run-a", model: "custom-api:test/configured", reasoningEffort: "high" } as AgentSession,
+      history: {
+        ...controller.getSnapshot().history,
+        runs: [{ id: "run-a", sessionId: "a", model: "custom-api:test/run-model", metadata: { reasoningEffort: null }, startedAt: "2026-10-30T00:00:00Z" } as AgentRun],
+      },
+    });
+    useShellStore.setState(state => ({ preferences: { ...state.preferences, locale: "en" } }));
+    useSessionWorkspaceStore.getState().openSubagent("parent", "a", "Lin");
+    render(<Harness />);
+    expect(screen.getByLabelText("Provider/model: 测试供应商/run-model")).toBeInTheDocument();
+    expect(screen.getByLabelText("Reasoning effort: —")).toBeInTheDocument();
+    expect(screen.queryByText(/parent conversation stays open/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View subagent fullscreen" }));
+    expect(screen.queryByText(/Esc to return to split view/)).toBeNull();
+  });
+
   it("toggles fullscreen and returns with Escape without remounting the conversation", () => {
     useSessionWorkspaceStore.getState().openSubagent("parent", "a", "林墨");
     render(<Harness />);

@@ -128,11 +128,11 @@ export function installedCatalog(projectId: string): ExtensionItem[] {
         server.transport === 'http'
           ? (server.url ?? '')
           : [server.command, ...(server.args ?? [])].join(' '),
-      sourceId: 'local',
-      sourceLabel: 'MCP',
+      sourceId: server.builtin ? 'builtin' : 'local',
+      sourceLabel: server.builtin ? 'Synax' : 'MCP',
       installed: true,
       enabled: server.enabled !== false,
-      editable: true,
+      editable: !server.builtin,
       permissions: ['mcp'],
     })),
   );
@@ -190,7 +190,7 @@ export async function listExtensions(
   const installed = installedCatalog(projectId);
   let items = [...installed];
   const market = query.view === 'market';
-  if (market) {
+  if (market && (!query.source || query.source.startsWith('catalog/'))) {
     for (const item of remoteCatalogItems(projectId))
       if (
         !items.some(
@@ -203,11 +203,17 @@ export async function listExtensions(
     try {
       const local = localExtensionSource(projectId);
       warnings.push(
-        ...local.warnings,
+        ...(!query.kind || query.kind === 'tool' ? local.warnings : []),
         ...local.locations
-          .filter((location) => location.status === 'error')
+          .filter(
+            (location) =>
+              location.status === 'error' &&
+              (!query.kind || location.kind === query.kind),
+          )
           .map((location) => `${location.path}: ${location.message}`),
-        ...local.mcp.unsupported.map((item) => `${item.name}: ${item.reason}`),
+        ...(!query.kind || query.kind === 'mcp'
+          ? local.mcp.unsupported.map((item) => `${item.name}: ${item.reason}`)
+          : []),
       );
       const servers = getProjectSettings(projectId, true).mcpServers;
       for (const found of local.mcp.servers) {

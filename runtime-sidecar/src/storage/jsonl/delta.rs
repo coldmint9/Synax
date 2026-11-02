@@ -1,4 +1,7 @@
 //! Versioned field changes. Full UI/execution states never cross this codec.
+mod persistent;
+pub use persistent::between_persistent;
+
 use super::{JsonlError, JsonlResult, assets};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

@@ -1,23 +1,28 @@
-import { MacUpdater, NsisUpdater, type AppUpdater, type UpdateInfo } from "electron-updater";
+import { NsisUpdater, type AppUpdater, type UpdateInfo } from "electron-updater";
 import { GenericProvider } from "electron-updater/out/providers/GenericProvider.js";
 import type { ProviderRuntimeOptions } from "electron-updater/out/providers/Provider.js";
 import type { GenericServerOptions } from "builder-util-runtime";
 import {
-  FRAMEWORK_FEED_URL,
   frameworkChannel,
   frameworkUpdateInfo,
-  missingFrameworkChannel,
 } from "../updater/framework-feed.js";
+import { effectiveUpdateSource } from "../updater/effective-update-source.js";
 import { updateRequestUrl } from "./update-network.js";
-import { AdHocMacUpdater, needsMacCompatibilityUpdater } from "./mac-compat-updater.js";
+import { DmgMacUpdater, needsMacCompatibilityUpdater } from "./mac-compat-updater.js";
 
-/** Share framework downloads; certificate-free macOS apps use our bundle installer. */
+/** All macOS builds share the DMG installer; native Squirrel.Mac requires ZIP. */
 export async function createFrameworkUpdater(
   platform: string,
   inspectMac = needsMacCompatibilityUpdater,
+  resolveSource: () => string = effectiveUpdateSource,
 ): Promise<AppUpdater> {
-  if (platform === "darwin") return await inspectMac(process.execPath)
-    ? new AdHocMacUpdater() : new MacUpdater();
+  resolveSource();
+  if (platform === "darwin") {
+    // Unexpected signature inspection failures still fail closed. The bundle
+    // installer preserves signed apps' designated requirements for both modes.
+    await inspectMac(process.execPath);
+    return new DmgMacUpdater(resolveSource);
+  }
   if (platform === "win32") return new NsisUpdater();
   throw new Error("此平台请通过发布页手动安装更新。");
 }
@@ -27,33 +32,24 @@ export function configureFrameworkFeed(
   platform: string,
   arch: string,
   proxy: string | null,
+  resolveSource: () => string = effectiveUpdateSource,
 ): void {
+  const feed = resolveSource();
   const channel = frameworkChannel(platform, arch);
   class UpdateProvider extends GenericProvider {
-    private readonly currentVersion: string;
     constructor(_options: unknown, host: AppUpdater, runtime: ProviderRuntimeOptions) {
       const options: GenericServerOptions = {
         provider: "generic",
-        url: updateRequestUrl(FRAMEWORK_FEED_URL, proxy).href,
+        url: updateRequestUrl(feed, proxy, feed).href,
         channel,
         useMultipleRangeRequest: false,
       };
       super(options, host, { ...runtime, isUseMultipleRangeRequest: false });
-      this.currentVersion = host.currentVersion.version;
     }
     override async getLatestVersion(): Promise<UpdateInfo> {
-      let info: UpdateInfo;
-      try {
-        info = await super.getLatestVersion();
-      } catch (error) {
-        if ((error as { code?: string })?.code !== "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND") throw error;
-        const release = await this.httpRequest(updateRequestUrl(
-          "https://api.github.com/repos/coldmint9/Synax/releases/latest", proxy,
-        ), { Accept: "application/vnd.github+json", "User-Agent": "Synax-Updater" });
-        if (!release) throw new Error("无法确认最新正式版信息，请稍后重试。");
-        return missingFrameworkChannel(JSON.parse(release), this.currentVersion);
-      }
-      return frameworkUpdateInfo(info, platform, arch, proxy);
+      const info = await super.getLatestVersion();
+      if (resolveSource() !== feed) throw new Error("Synax 自动更新不可用：企业更新源已变更，请重新检查。");
+      return frameworkUpdateInfo(info, platform, arch, proxy, () => feed);
     }
   }
   updater.setFeedURL({ provider: "custom", updateProvider: UpdateProvider });

@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { LayoutGrid } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { SessionWorkspacePanel } from "./SessionWorkspacePanel";
@@ -8,9 +8,11 @@ import { WorkspaceWidgetManager } from "./WorkspaceWidgetManager";
 export const WorkspaceWidgetDock = memo(function WorkspaceWidgetDock({
   sessionId,
   scope,
+  footerActions,
 }: {
   sessionId: string | null;
   scope: string;
+  footerActions?: ReactNode;
 }) {
   const [layoutOpen, setLayoutOpen] = useState(false);
   const zh = useLocale().locale === "zh";
@@ -26,6 +28,7 @@ export const WorkspaceWidgetDock = memo(function WorkspaceWidgetDock({
         role="toolbar"
         aria-label={zh ? "工作组件操作" : "Work widget actions"}
       >
+        {footerActions}
         <button
           type="button"
           className="work-widget-toggle"

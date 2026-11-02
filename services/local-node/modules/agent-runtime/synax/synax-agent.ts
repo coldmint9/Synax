@@ -142,6 +142,9 @@ export class SynaxAgent {
     session: Pick<AgentSession, "profileId" | "sessionMetadata">,
   ): string | null {
     if (!this.isSynaxSession(session)) return null;
+    // Old keyword routing must not keep steering unrelated future requests.
+    // Explicit agent.adapt selections and legacy unsourced variants remain readable.
+    if (this.asMetadata(session.sessionMetadata).routeSource === "auto") return null;
     const state = this.resolveVariantState(session);
     if (!state) return null;
 
@@ -158,9 +161,8 @@ export class SynaxAgent {
 
   buildEffectiveLoopHints(
     session: Pick<AgentSession, "profileId" | "sessionMetadata">,
-  ): string[] {
-    if (!this.isSynaxSession(session)) return [];
-    return [];
+  ): string[] | null {
+    return null; // No override: retain the profile's explicitly configured guidance.
   }
 
   createSessionMetadata(

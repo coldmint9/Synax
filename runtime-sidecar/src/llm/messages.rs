@@ -1,5 +1,5 @@
 //! Lossless conversation, tool receipt and attachment mapping.
-use super::{Error, common::content_text, contract::ProviderRequest};
+use super::{Error, common::content_text, contract::ProviderRequest, tokenizer::tokens};
 use rig_core::message::{
     AssistantContent, AssistantMessage, Audio, Document, DocumentSourceKind, Image, Message,
     Opaque, Origin, Reasoning, ToolCall, ToolFunction, ToolName, ToolResultContent, UserContent,
@@ -10,10 +10,137 @@ use std::collections::HashMap;
 
 /// A single displayed answer can retain several original signed provider turns.
 pub(crate) fn expanded_messages(prompt: &[Value]) -> Vec<&Value> {
-    prompt.iter().flat_map(|message| match message.get("continuationMessages").and_then(Value::as_array) {
-        Some(messages) if !messages.is_empty() => messages.iter().collect(),
-        _ => vec![message],
-    }).collect()
+    prompt
+        .iter()
+        .flat_map(|message| {
+            match message
+                .get("continuationMessages")
+                .and_then(Value::as_array)
+            {
+                Some(messages) if !messages.is_empty() => messages.iter().collect(),
+                _ => vec![message],
+            }
+        })
+        .collect()
+}
+
+const MESSAGE_OVERHEAD_TOKENS: usize = 4;
+const TOOL_CALL_OVERHEAD_TOKENS: usize = 8;
+
+/// Text tokens the provider receives for one prompt message.
+///
+/// A stored message can carry the same turn twice — the canonical content and
+/// the provider's `rigMessage` copy with its native item echoes — while the
+/// request rebuilds exactly one of them. Counting the whole record therefore
+/// overstates context by the size of the duplicate, so this walks the parts the
+/// provider is actually sent. It never fails on legacy or partial prompts
+/// because it only classifies parts; unknown parts count as zero.
+pub(crate) fn message_text_tokens(value: &Value) -> usize {
+    let mut total = MESSAGE_OVERHEAD_TOKENS;
+    if let Some(rig) = value.get("rigMessage") {
+        for part in rig
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            total += content_part_tokens(part);
+        }
+        return total;
+    }
+    match value.get("content").unwrap_or(&Value::Null) {
+        Value::String(text) => total += tokens(text),
+        Value::Array(parts) => {
+            for part in parts {
+                total += content_part_tokens(part);
+            }
+        }
+        _ => {}
+    }
+    total
+}
+
+fn content_part_tokens(part: &Value) -> usize {
+    match part.get("type").and_then(Value::as_str).unwrap_or("text") {
+        "text" => tokens(part.get("text").and_then(Value::as_str).unwrap_or_default()),
+        "thinking" | "reasoning" => tokens(
+            part.get("text")
+                .or_else(|| part.get("thinking"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ),
+        "tool-call" | "tool_use" | "toolcall" => {
+            let function = part.get("function");
+            let name = function
+                .and_then(|function| function.get("name"))
+                .or_else(|| part.get("toolName"))
+                .or_else(|| part.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = function
+                .and_then(|function| function.get("arguments"))
+                .or_else(|| part.get("input"))
+                .or_else(|| part.get("arguments"));
+            TOOL_CALL_OVERHEAD_TOKENS
+                + tokens(name)
+                + tokens(&match arguments {
+                    Some(Value::String(arguments)) => arguments.clone(),
+                    Some(arguments) => arguments.to_string(),
+                    None => String::new(),
+                })
+        }
+        "tool-result" | "tool_result" | "toolresult" => {
+            TOOL_CALL_OVERHEAD_TOKENS
+                + tokens(
+                    part.get("toolName")
+                        .or_else(|| part.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
+                + tokens(&output_text(
+                    part.get("output")
+                        .or_else(|| part.get("content"))
+                        .unwrap_or(&Value::Null),
+                ))
+        }
+        // Media bytes are billed by the provider, never as prompt text.
+        _ => 0,
+    }
+}
+
+fn output_text(output: &Value) -> String {
+    if let Value::Array(parts) = output {
+        return text_parts(parts);
+    }
+    match output.get("type").and_then(Value::as_str) {
+        Some("json" | "error-json") => output
+            .get("value")
+            .map(Value::to_string)
+            .unwrap_or_default(),
+        Some("content") => output
+            .get("value")
+            .and_then(Value::as_array)
+            .map(|parts| text_parts(parts))
+            .unwrap_or_default(),
+        _ => match output.get("value") {
+            Some(Value::String(text)) => text.clone(),
+            Some(value) => value.to_string(),
+            None => output
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        },
+    }
+}
+
+fn text_parts(parts: &[Value]) -> String {
+    parts
+        .iter()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(super) fn convert_message(
@@ -301,5 +428,92 @@ fn attachment(part: &Value) -> Result<UserContent, Error> {
         }))
     } else {
         Err(format!("unsupported attachment media type '{media}'").into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_a_turn_once_although_the_record_keeps_two_copies() {
+        let text = "Resolve the kanban snapshot cache before revalidating.";
+        // The stored turn keeps the canonical copy, the provider copy and the
+        // provider item echo of one text the request sends once.
+        let message = json!({
+            "role":"assistant",
+            "content":[{"type":"text","text":text}],
+            "rigMessage":{"content":[{"type":"text","text":text,"native":{
+                "item":{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":text}],"id":"msg_1"},
+                "fingerprint":"f"}}]}
+        });
+        assert_eq!(
+            message_text_tokens(&message),
+            tokens(text) + MESSAGE_OVERHEAD_TOKENS
+        );
+    }
+
+    #[test]
+    fn native_reasoning_echoes_and_media_are_not_prompt_text() {
+        let reasoning = "Check the composer ring before changing the estimator.";
+        let echoed = json!({
+            "role":"assistant",
+            "rigMessage":{"content":[{
+                "type":"reasoning","text":reasoning,
+                "native":{"item":{"type":"reasoning","id":"rs_1",
+                    "summary":[{"type":"summary_text","text":reasoning}]}}
+            }]}
+        });
+        assert_eq!(
+            message_text_tokens(&echoed),
+            tokens(reasoning) + MESSAGE_OVERHEAD_TOKENS
+        );
+
+        let media = json!({
+            "role":"user",
+            "content":[
+                {"type":"text","text":"Look"},
+                {"type":"file","source":{"type":"base64","data":"QUJD".repeat(20_000)}}
+            ]
+        });
+        assert_eq!(
+            message_text_tokens(&media),
+            MESSAGE_OVERHEAD_TOKENS + tokens("Look")
+        );
+    }
+
+    #[test]
+    fn counts_tool_results_without_their_attachment_bytes() {
+        let output = "Evidence line.\n".repeat(500);
+        let message = json!({
+            "role":"tool",
+            "content":[{"type":"tool-result","toolCallId":"call","toolName":"bash","output":{
+                "type":"content",
+                "value":[{"type":"text","text":output},{"type":"image","source":{"type":"base64","data":"QUJD".repeat(5000)}}]
+            }}]
+        });
+        let count = message_text_tokens(&message);
+        assert!(count >= tokens(&output));
+        assert!(
+            count < tokens(&output)
+                + tokens("bash")
+                + MESSAGE_OVERHEAD_TOKENS
+                + TOOL_CALL_OVERHEAD_TOKENS
+                + 32
+        );
+    }
+
+    #[test]
+    fn cjk_text_is_estimated_per_character_not_per_byte() {
+        let text = "修复上下文统计：总量取服务商实测，分类保持本地估算，中文按字符计费。";
+        let characters = text.chars().count();
+        let count = tokens(text);
+        // A byte-level fallback would charge three UTF-8 bytes per character.
+        assert!(count * 2 >= characters, "CJK text is under-counted: {count} for {characters} characters");
+        assert!(
+            count * 2 <= characters * 3,
+            "CJK text is over-counted: {count} for {characters} characters"
+        );
     }
 }

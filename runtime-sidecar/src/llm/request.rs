@@ -19,12 +19,14 @@ pub(super) fn request(input: &ProviderRequest) -> Result<CompletionRequest, Erro
         }
         messages.push(message);
     }
-    let max_tokens = input
-        .max_output_tokens
-        .map(u64::from)
-        .or_else(|| (input.api_format == "anthropic").then(|| {
-            input.required_max_output_tokens.map(u64::from).unwrap_or(8192)
-        }));
+    let max_tokens = input.max_output_tokens.map(u64::from).or_else(|| {
+        (input.api_format == "anthropic").then(|| {
+            input
+                .required_max_output_tokens
+                .map(u64::from)
+                .unwrap_or(8192)
+        })
+    });
     let modern_cap = input.api_format == "openai"
         && input.output_token_parameter.as_deref() == Some("max_completion_tokens");
     let mut request = CompletionRequest::from(messages)

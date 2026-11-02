@@ -4,27 +4,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   loadProjectRulesSection,
-  stripPromptBloat,
+  loadScopedRules,
+  PROJECT_RULE_FILE_MAX_CHARS,
   truncateForPrompt,
 } from "../synax-instructions.js";
-
-describe("stripPromptBloat", () => {
-  it("removes HeroUI docs index block", () => {
-    const input = [
-      "# Project",
-      "<!-- HEROUI-REACT-AGENTS-MD-START -->",
-      "huge index content",
-      "<!-- HEROUI-REACT-AGENTS-MD-END -->",
-      "## Architecture",
-      "Keep this",
-    ].join("\n");
-
-    const output = stripPromptBloat(input);
-    expect(output).not.toContain("HEROUI-REACT-AGENTS-MD");
-    expect(output).toContain("## Architecture");
-    expect(output).toContain("Keep this");
-  });
-});
 
 describe("truncateForPrompt", () => {
   it("appends truncation marker when over budget", () => {
@@ -56,6 +39,13 @@ describe("bounded project rule inheritance", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("loads Synax scoped rules without reading the Synax project directory", () => {
+    write(".synax/rules/shared.md", "SYNAX_ONLY");
+    expect(loadScopedRules(root, "src/main.ts")).toEqual([]);
+    write(".synax/rules/shared.md", "SYNAX_ONLY");
+    expect(loadScopedRules(root, "src/main.ts")).toEqual(["SYNAX_ONLY"]);
   });
 
   it.each(["directory", "worktree-file"])(
@@ -147,22 +137,60 @@ describe("bounded project rule inheritance", () => {
     expect(text).not.toContain("IGNORED_DEPRECATED");
   });
 
-  it("caps individual files and prioritizes deeper rules under the total budget", () => {
+  it("hard-caps each rule file and points at the unread remainder", () => {
+    fs.mkdirSync(path.join(root, ".git"));
+    const body = "Background. ".repeat(1000) + "\nNever change production dependencies.";
+    write("AGENTS.md", body);
+    const text = loadProjectRulesSection(root)!;
+    expect(text).toContain(
+      `Each rule file is written up to ${PROJECT_RULE_FILE_MAX_CHARS} characters`,
+    );
+    expect(text).toContain(
+      `[...truncated to the first ${PROJECT_RULE_FILE_MAX_CHARS} of ${body.length} characters.`,
+    );
+    expect(text).toContain(
+      `file.read path=${JSON.stringify(fs.realpathSync(path.join(root, "AGENTS.md")))}`,
+    );
+    expect(text).not.toContain("Never change production dependencies.");
+    expect(text.slice(text.indexOf('### "AGENTS.md"')).length).toBeLessThanOrEqual(
+      PROJECT_RULE_FILE_MAX_CHARS + 32,
+    );
+  });
+
+  it("caps every rule file and prioritizes deeper rules in an explicitly bounded preview", () => {
     fs.mkdirSync(path.join(root, ".git"));
     for (const name of ["CLAUDE.md", "AGENTS.md"])
       write(name, "ROOT".repeat(5000));
     write("services/AGENTS.md", "DEEP".repeat(5000));
     write("services/CLAUDE.md", "KEEP_DEEP_CLAUDE");
     const text = loadProjectRulesSection(path.join(root, "services"))!;
-    expect(text.length).toBeLessThanOrEqual(18000);
-    expect(text).toContain("truncated for context budget");
+    expect(
+      text.match(/\[\.\.\.truncated to the first 8000 of 20000 characters/g),
+    ).toHaveLength(3);
+    expect(text.length).toBeLessThan(
+      3 * PROJECT_RULE_FILE_MAX_CHARS + 2000,
+    );
     expect(text).toContain("KEEP_DEEP_CLAUDE");
+    expect(text).toContain(
+      `file.read path=${JSON.stringify(fs.realpathSync(path.join(root, "services", "AGENTS.md")))}`,
+    );
     const tight = loadProjectRulesSection(path.join(root, "services"), {
-      maxChars: 450,
+      maxChars: 1200,
     })!;
-    expect(tight.length).toBeLessThanOrEqual(450);
+    expect(tight.length).toBeLessThanOrEqual(1200);
     expect(tight).toContain('### "services/AGENTS.md"');
     expect(tight).not.toContain("ROOTROOT");
     expect(tight).toContain("lower-priority rules omitted");
+    expect(tight).toContain("Read the source files");
+  });
+
+  it("honors a caller-provided per-file cap and leaves short files untouched", () => {
+    fs.mkdirSync(path.join(root, ".git"));
+    write("CLAUDE.md", "SHORT_RULE");
+    write("AGENTS.md", "A".repeat(500));
+    const text = loadProjectRulesSection(root, { maxCharsPerFile: 300 })!;
+    expect(text).toContain("truncated to the first 300 of 500 characters");
+    expect(text).toContain("SHORT_RULE");
+    expect(text).not.toContain("A".repeat(200));
   });
 });

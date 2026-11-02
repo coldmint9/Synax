@@ -78,7 +78,7 @@ export interface AgentProfile {
 }
 
 /** Includes legacy plan for persisted/test compatibility; the UI no longer offers it. */
-export type AgentSessionMode = "chat" | "plan" | "goal";
+export type AgentSessionMode = "chat" | "plan" | "goal" | "super";
 
 export interface HumanQuestion {
   id: string;
@@ -157,9 +157,21 @@ export interface SessionDesignMetadata {
 }
 
 export interface AgentSessionMetadata extends Record<string, unknown> {
+  /** Optional intent label written by asynchronous title generation (2-10 chars). */
+  intentCategory?: string;
   subagentName?: string;
   roleName?: string;
   roleDescription?: string;
+  subagentKind?: "task" | "side-chat";
+  sideChatReady?: boolean;
+  sideChatContext?: {
+    kind: "side-chat";
+    sourceSessionId: string;
+    sourceRevision: number;
+    /** Snapshot copy instant: inherited records stay context-only and never render. */
+    inheritedThrough: string | null;
+    createdAt: string;
+  };
   design?: SessionDesignMetadata | null;
   /** Legacy "plan" sessions are accepted for read-only compatibility. */
   mode?: AgentSessionMode | "plan" | "plan_node";
@@ -257,6 +269,7 @@ export type ToolCallStatus =
   | "failed"
   | "denied"
   | "cancelled"
+  | "blocked"
   | "compacted";
 
 export interface ToolCallRecord {
@@ -566,6 +579,10 @@ export interface SessionStats {
 /** Persisted, incrementally updated request-context snapshot. */
 export interface ContextUsageSnapshot {
   version: 1;
+  /** Only a provider-reported request measurement is displayed. */
+  source?: "provider";
+  /** Legacy marker from snapshots that predate `source`. */
+  measured?: number | null;
   stepId: string;
   total: number;
   limit: number | null;
@@ -586,7 +603,7 @@ export interface SessionAnalyticsUsage {
 }
 
 export interface SessionAnalytics {
-  version: 1;
+  version: 1 | 2 | 3;
   updatedAt: string;
   steps: number;
   completedRuns: number;
@@ -598,6 +615,9 @@ export interface SessionAnalytics {
     string,
     { steps: number; input: number; output: number; total: number }
   >;
+  durationMs: number;
+  userInputCount: number;
+  lastUserInputId: string | null;
   lastStepId: string | null;
   lastCompletedRunId: string | null;
 }
@@ -605,8 +625,13 @@ export interface SessionAnalytics {
 export interface ProjectAnalyticsSession {
   id: string;
   parentSessionId: string | null;
+  sessionGroup: string | null;
   title: string;
   status: AgentSessionStatus;
+  createdAt: string;
+  completedAt: string | null;
+  durationMs: number;
+  userInputCount: number;
   updatedAt: string;
   model: string | null;
   context: {
@@ -619,6 +644,18 @@ export interface ProjectAnalyticsSession {
   analytics: SessionAnalytics | null;
 }
 
+export interface ProjectAnalyticsGroup {
+  sessionGroup: string | null;
+  sessions: number;
+  activeSessions: number;
+  steps: number;
+  completedRuns: number;
+  toolCalls: number;
+  userInputs: number;
+  durationMs: number;
+  tokens: { input: number; output: number; total: number };
+}
+
 export interface ProjectAnalytics {
   projectId: string;
   generatedAt: string;
@@ -628,9 +665,15 @@ export interface ProjectAnalytics {
   totals: {
     sessions: number;
     activeSessions: number;
+    /** Archived sessions still counted in the totals; older servers omit it. */
+    archivedSessions?: number;
+    /** Deleted sessions retained from the ledger; older servers omit it. */
+    deletedSessions?: number;
     steps: number;
     completedRuns: number;
     toolCalls: number;
+    userInputs: number;
+    durationMs: number;
     tokens: { input: number; output: number; total: number };
     cache: {
       inputTokens: number;
@@ -661,6 +704,7 @@ export interface ProjectAnalytics {
     total: number;
   }>;
   tools: Array<{ toolId: string; calls: number }>;
+  groups: ProjectAnalyticsGroup[];
 }
 
 export interface TodoItem {
@@ -757,6 +801,8 @@ export interface WorkspaceRepositoryGit {
   headCommitSha: string;
   /** Absent when connected to an older server. */
   unpushedCommitCount?: number;
+  /** Committer time of the oldest unpushed commit; absent on older servers. */
+  unpushedSince?: string | null;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -968,8 +1014,21 @@ async function requestBlob(
 }
 
 export interface SessionSearchResponse {
-  items: Array<{ session: AgentSession; snippet: string }>;
+  items: Array<{
+    session: AgentSession;
+    snippet: string;
+    /** Where the hit landed; a title hit is the label the user recognizes. */
+    kind?: "title" | "prompt" | "message";
+    messageId?: string | null;
+    role?: "system" | "user" | "assistant" | "tool" | null;
+    createdAt?: string | null;
+    matchCount?: number;
+  }>;
   hasMore: boolean;
+  /** Normalized keywords the server matched; highlight exactly these. */
+  terms?: string[];
+  /** Sessions still being indexed; results keep growing until pending is 0. */
+  indexing?: { ready: number; pending: number; total: number };
 }
 
 export interface HistoryWindowState {
@@ -999,7 +1058,37 @@ export interface HistoryWindowResponse {
   removed?: Array<{ collection: string; id: string }>;
 }
 
+/** Where the runtime is with continuing a session on its own. */
+export type AutoResumePhase = "queued" | "retrying" | "waiting_network";
+
+export interface AutoResumeItem {
+  sessionId: string;
+  projectId: string;
+  title: string | null;
+  cause: "restart" | "network" | "manual";
+  phase: AutoResumePhase;
+  attempts: number;
+  enqueuedAt: string;
+  updatedAt: string;
+  nextAttemptAt: string | null;
+  lastError: string | null;
+}
+
+export interface AutoResumeSnapshot {
+  online: boolean;
+  items: AutoResumeItem[];
+}
+
 export const agentRuntimeApi = {
+  /** Sessions the runtime is continuing after a restart or a network outage. */
+  getAutoResumeState: () =>
+    request<AutoResumeSnapshot>("/sessions/auto-resume", { silent: true }),
+  /** Take one session off the automatic queue for good. */
+  dismissAutoResume: (sessionId: string) =>
+    request<{ ok: true }>(
+      `/sessions/auto-resume/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE", body: JSON.stringify({}), silent: true },
+    ),
   bindSessionWorktree: (sessionId: string, body: { rootId: string; path: string; expectedPath: string }) =>
     request<{ roots: import('./project').ProjectWorkspaceRoot[]; revision?: number }>(
       `/sessions/${encodeURIComponent(sessionId)}/workspace/binding`, { method: 'POST', body: JSON.stringify(body) },
@@ -1081,11 +1170,30 @@ export const agentRuntimeApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  createSideChat: (
+    sessionId: string,
+    body: { reuse?: boolean } = {},
+  ) =>
+    request<{ session: AgentSession; reused: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}/side-chat`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  readSideChat: (sessionId: string) =>
+    request<{ session: AgentSession | null }>(
+      `/sessions/${encodeURIComponent(sessionId)}/side-chat`,
+    ),
+  /** Erase the side chats of a conversation so the next open starts fresh. */
+  deleteSideChat: (sessionId: string) =>
+    request<{ ok: true; deletedSessionIds: string[] }>(
+      `/sessions/${encodeURIComponent(sessionId)}/side-chat`,
+      { method: "DELETE", body: JSON.stringify({}), silent: true },
+    ),
   listSessions: (
     query: {
       projectId?: string;
       nodeId?: string;
       status?: AgentSessionStatus;
+      includeChildren?: boolean;
       limit?: number;
       offset?: number;
     } = {},
@@ -1100,8 +1208,8 @@ export const agentRuntimeApi = {
   },
   getSession: (sessionId: string) =>
     request<SessionPayload>(`/sessions/${encodeURIComponent(sessionId)}`),
-  getSessionSummary: (sessionId: string) =>
-    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/summary`),
+  getSessionSummary: (sessionId: string, options?: Pick<ApiRequestOptions, "silent">) =>
+    request<{ session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/summary`, options),
   getSessionPlan: (sessionId: string) =>
     request<{ plan: AgentPlanArtifact | null }>(
       `/sessions/${encodeURIComponent(sessionId)}/plan`,
@@ -1148,14 +1256,6 @@ export const agentRuntimeApi = {
   permanentlyDeleteSession: (sessionId: string) =>
     request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
       method: "POST", body: JSON.stringify({}), silent: true,
-    }),
-  createSideChat: (sessionId: string, requestId: string) =>
-    request<{ sessionId: string; session: AgentSession }>(`/sessions/${encodeURIComponent(sessionId)}/side-chat`, {
-      method: "POST", body: JSON.stringify({ requestId, workspaceMode: "reuse_worktree" }), silent: true,
-    }),
-  destroySideChatOnUnload: (sessionId: string) =>
-    request<{ ok: true; deletedSessionIds: string[] }>(`/sessions/${encodeURIComponent(sessionId)}/delete-permanently`, {
-      method: "POST", body: JSON.stringify({}), silent: true, keepalive: true,
     }),
   updateSessionMode: (sessionId: string, mode: AgentSessionMode) =>
     request<{ session: AgentSession }>(
@@ -1354,13 +1454,20 @@ export const agentRuntimeApi = {
     branch: string,
     rootId?: string,
     transferChanges = false,
+    remote = false,
   ) =>
     request<SessionGitBranches>(
       `/sessions/${encodeURIComponent(sessionId)}/git/branches/switch`,
       {
         method: "POST",
-        body: JSON.stringify({ branch, rootId, transferChanges }),
+        body: JSON.stringify({ branch, rootId, transferChanges, remote }),
       },
+    ),
+  /** Plain local merge: merges the selected branch into the checked-out one. */
+  mergeSessionBranch: (sessionId: string, branch: string, rootId?: string) =>
+    request<SessionGitMergeResult>(
+      `/sessions/${encodeURIComponent(sessionId)}/git/branches/merge`,
+      { method: "POST", body: JSON.stringify({ branch, rootId }) },
     ),
   /** Workspace-level Git facts shared by every session of one project. */
   getWorkspaceGitChanges: (
@@ -1400,6 +1507,20 @@ export const agentRuntimeApi = {
   ) =>
     request<SessionEnvironmentFileView>(
       `/sessions/${encodeURIComponent(sessionId)}/environment/file?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
+    ),
+  /** Whether a document link resolves to something the viewer can open. */
+  sessionEnvironmentFileEntry: (
+    sessionId: string,
+    path: string,
+    rootId?: string,
+  ) =>
+    request<{
+      sessionId: string;
+      path: string;
+      exists: boolean;
+      isFile: boolean;
+    }>(
+      `/sessions/${encodeURIComponent(sessionId)}/environment/file/exists?path=${encodeURIComponent(path)}${rootId ? `&rootId=${encodeURIComponent(rootId)}` : ""}`,
     ),
   getSessionEnvironmentFileMedia: (
     sessionId: string,
@@ -1584,6 +1705,15 @@ export interface SessionGitBranches {
   dirtyFileCount: number;
   current: string;
   branches: { name: string; current: boolean; occupied: boolean }[];
+  /** Remote-tracking refs without a local branch; checking one out creates it. */
+  remoteBranches?: { name: string; remote: string; branch: string }[];
+}
+
+export interface SessionGitMergeResult extends SessionGitBranches {
+  merged:
+    | { status: "up-to-date" }
+    | { status: "merged" }
+    | { status: "conflicted"; files: string[] };
 }
 
 async function submitAndObserveRun(

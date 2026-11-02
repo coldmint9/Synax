@@ -235,4 +235,72 @@ describe("GitHub/GitLab provider API", () => {
       ),
     ).rejects.toMatchObject({ code: "PR_MERGE_PENDING" });
   });
+
+  it("loads GitLab pipeline stages, approvals, commits and diff totals", async () => {
+    const api = vi.fn(async (_repo, _method, endpoint) => {
+      if (endpoint.includes("/repository/branches/")) return { commit: { id: base } };
+      if (endpoint.includes("/approvals"))
+        return {
+          approvals_required: 2,
+          approved_by: [{ user: { username: "ana" } }],
+        };
+      if (endpoint.includes("/pipelines/123/jobs"))
+        return [
+          { name: "compile", stage: "build", status: "success" },
+          {
+            name: "unit",
+            stage: "test",
+            status: "failed",
+            web_url: "https://gitlab.example.com/group/sub/app/-/jobs/1",
+          },
+        ];
+      if (endpoint.includes("/pipelines/123"))
+        return {
+          id: 123,
+          stages: [
+            { name: "build", status: "success" },
+            { name: "test", status: "failed" },
+          ],
+        };
+      if (endpoint.includes("/merge_requests/9/commits"))
+        return [
+          {
+            id: "c".repeat(40),
+            title: "Fix sessions",
+            author_name: "mint",
+            created_at: "2026-10-01",
+          },
+        ];
+      if (endpoint.includes("/repository/compare"))
+        return {
+          commits: [],
+          diffs: [{ diff: "@@ -1 +1,2 @@\n-old\n+new\n+more\n" }],
+        };
+      return { ...gitlabRow, changes_count: "1" };
+    });
+    const provider = new RemotePrProvider(api);
+    const pr = await provider.get(gitlab, 9);
+    expect(pr.checks).toEqual([
+      { name: "Pipeline #123", status: "passed", url: "" },
+    ]);
+    expect(pr.pipeline?.stages.map((stage) => [stage.name, stage.status])).toEqual([
+      ["build", "passed"],
+      ["test", "failed"],
+    ]);
+    expect(pr.pipeline?.stages[1].jobs[0]).toMatchObject({
+      name: "unit",
+      status: "failed",
+    });
+    expect(pr.review).toEqual({
+      required: 2,
+      approvedBy: ["ana"],
+      reviewers: [],
+    });
+    expect(pr.commits?.[0]).toMatchObject({
+      sha: "c".repeat(40),
+      title: "Fix sessions",
+      author: "mint",
+    });
+    expect(pr.stats).toEqual({ additions: 2, deletions: 1, files: 1 });
+  });
 });

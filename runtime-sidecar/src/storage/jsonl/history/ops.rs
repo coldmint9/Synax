@@ -23,7 +23,7 @@ use super::{
 use crate::storage::jsonl::layout;
 use crate::storage::jsonl::record::Record;
 use crate::storage::jsonl::store::JsonlStore;
-use crate::storage::session_cache::SessionCache;
+use super::cache::HistoryCache;
 
 #[path = "context.rs"]
 mod context;
@@ -37,7 +37,7 @@ const OBJECT_DIGEST: &str = "sha256";
 
 pub struct HistoryOps {
     store: Arc<JsonlStore>,
-    sessions: Arc<SessionCache<Arc<HistorySession>>>,
+    sessions: Arc<HistoryCache>,
     slots: Arc<Semaphore>,
     measurement_slots: Arc<Semaphore>,
 }
@@ -58,7 +58,7 @@ impl HistoryOps {
     pub fn new(store: Arc<JsonlStore>) -> Self {
         Self {
             store,
-            sessions: Arc::new(SessionCache::default()),
+            sessions: Arc::new(HistoryCache::default()),
             slots: Arc::new(Semaphore::new(32)),
             measurement_slots: Arc::new(Semaphore::new(2)),
         }
@@ -74,7 +74,11 @@ impl HistoryOps {
     ) -> Result<Vec<u8>, HistoryError> {
         // Tokenization is CPU work, independent of history. It must not fill
         // the queue used by UI reads while several agents prepare prompts.
-        let slots = if operation == "context_measure" { &self.measurement_slots } else { &self.slots };
+        let slots = if operation == "context_measure" {
+            &self.measurement_slots
+        } else {
+            &self.slots
+        };
         let permit = slots
             .clone()
             .acquire_owned()
@@ -99,33 +103,54 @@ fn object_value_chunk(session: &HistorySession, value: &Value) -> Result<Vec<u8>
     let id = required_string(value, "objectId")?;
     validate_object_id(id)?;
     let index = session.read();
-    let entity = index.objects.get(id).ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
-    let cached = session.encoded_values.lock().iter().find(|(key, _)| key == id).map(|(_, text)| text.clone());
+    let entity = index
+        .objects
+        .get(id)
+        .ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
+    let cached = session
+        .encoded_values
+        .lock()
+        .iter()
+        .find(|(key, _)| key == id)
+        .map(|(_, text)| text.clone());
     let text_value = match cached {
         Some(text) => text,
         None => {
-            let text = Arc::new(serde_json::to_string(&entity.value)
-                .map_err(|error| HistoryError::InvalidCommand(format!("serialization: {error}")))?);
-            if text.len() > MAX_OBJECT_BYTES { return Err(HistoryError::InvalidCommand("object value exceeds transfer budget".into())); }
+            let text = Arc::new(serde_json::to_string(&entity.value).map_err(|error| {
+                HistoryError::InvalidCommand(format!("serialization: {error}"))
+            })?);
+            if text.len() > MAX_OBJECT_BYTES {
+                return Err(HistoryError::InvalidCommand(
+                    "object value exceeds transfer budget".into(),
+                ));
+            }
             let mut cache = session.encoded_values.lock();
             cache.retain(|(key, _)| key != id);
-            while cache.len() >= 2 { cache.pop_front(); }
+            while cache.len() >= 2 {
+                cache.pop_front();
+            }
             cache.push_back((id.to_owned(), text.clone()));
             text
         }
     };
     let offset = value["offset"].as_u64().unwrap_or(0) as usize;
     if offset > text_value.len() || !text_value.is_char_boundary(offset) {
-        return Err(HistoryError::InvalidCommand("invalid object chunk offset".into()));
+        return Err(HistoryError::InvalidCommand(
+            "invalid object chunk offset".into(),
+        ));
     }
     let mut end = offset.saturating_add(64 * 1024).min(text_value.len());
-    while !text_value.is_char_boundary(end) { end -= 1; }
-    serialized(&serde_json::json!({"text":&text_value[offset..end],"next":if end < text_value.len() {Some(end)} else {None}}))
+    while !text_value.is_char_boundary(end) {
+        end -= 1;
+    }
+    serialized(
+        &serde_json::json!({"text":&text_value[offset..end],"next":if end < text_value.len() {Some(end)} else {None}}),
+    )
 }
 
 struct HistoryTask {
     store: Arc<JsonlStore>,
-    sessions: Arc<SessionCache<Arc<HistorySession>>>,
+    sessions: Arc<HistoryCache>,
 }
 
 /// Query ids are correlation only: persisted query results are never
@@ -263,18 +288,25 @@ impl HistoryTask {
             return self.fork_copy(session_id, request_id, &value);
         }
         if operation == "context_measure" {
-            let request = serde_json::from_value(serde_json::json!({"apiFormat":"openai","model":"context-measure",
-                "prompt":value["prompt"],"tools":value["tools"]}))
-                .map_err(|_| HistoryError::InvalidCommand("invalid context measurement".into()))?;
-            return serialized(&crate::agent::context::composition(&request)
-                .map_err(|_| HistoryError::InvalidCommand("context measurement failed".into()))?);
+            let request = serde_json::from_value(
+                serde_json::json!({"apiFormat":"openai","model":"context-measure",
+                "prompt":value["prompt"],"tools":value["tools"]}),
+            )
+            .map_err(|_| HistoryError::InvalidCommand("invalid context measurement".into()))?;
+            return serialized(
+                &crate::agent::context::composition(&request).map_err(|_| {
+                    HistoryError::InvalidCommand("context measurement failed".into())
+                })?,
+            );
         }
         if matches!(operation, "history_sync" | "head_read" | "message_content") {
             let session = self.session(session_id)?;
             let index = session.read();
             return match operation {
                 "history_sync" => serialized(&history_sync(&index, session_id, &value)?),
-                "message_content" => serialized(&super::sync::message_content(&index, session_id, &value)?),
+                "message_content" => {
+                    serialized(&super::sync::message_content(&index, session_id, &value)?)
+                }
                 _ => serialized(&index.head),
             };
         }
@@ -287,12 +319,22 @@ impl HistoryTask {
         // Keep the execution owner pinned through the history commit. Stop or
         // takeover cannot revoke a lease between this check and publication.
         // Lock order is actor -> history; history reads never acquire actors.
-        let authority_session = if matches!(operation, "context_begin" | "context_commit" | "context_recover") {
+        let authority_session = if matches!(
+            operation,
+            "context_begin" | "context_commit" | "context_recover"
+        ) {
             Some(self.store.session(session_id).map_err(convert_io)?)
-        } else { None };
-        let authority = authority_session.as_ref().map(|session| session.actor.lock());
-        let configuration = authority.as_ref().filter(|actor| actor.projection.is_some())
-            .map(|actor| context::configuration_fingerprint(actor)).transpose()?;
+        } else {
+            None
+        };
+        let authority = authority_session
+            .as_ref()
+            .map(|session| session.actor.lock());
+        let configuration = authority
+            .as_ref()
+            .filter(|actor| actor.projection.is_some())
+            .map(|actor| context::configuration_fingerprint(actor))
+            .transpose()?;
         let session = self.session(session_id)?;
         let mut guard = session.lock.lock();
         layout::ensure_not_deleted(self.root(), session_id).map_err(convert_io)?;
@@ -304,20 +346,43 @@ impl HistoryTask {
                 return Ok(receipt.result.clone());
             }
         }
-        if let Some(actor) = authority.as_ref().filter(|actor| actor.projection.is_some() && operation != "context_recover") {
+        if let Some(actor) = authority
+            .as_ref()
+            .filter(|actor| actor.projection.is_some() && operation != "context_recover")
+        {
             if !value["executionContext"].is_null() {
-                let lease = crate::runtime::execution::ExecutionLease::decode(session_id, &value["executionContext"])
-                    .map_err(|error| HistoryError::InvalidCommand(error.to_string()))?;
-                lease.assert_current(actor.state.active_run_id.as_deref(), actor.control.execution_lease.as_ref())
+                let lease = crate::runtime::execution::ExecutionLease::decode(
+                    session_id,
+                    &value["executionContext"],
+                )
+                .map_err(|error| HistoryError::InvalidCommand(error.to_string()))?;
+                lease
+                    .assert_current(
+                        actor.state.active_run_id.as_deref(),
+                        actor.control.execution_lease.as_ref(),
+                    )
                     .map_err(|error| HistoryError::InvalidCommand(error.to_string()))?;
                 if actor.control.runtime_control.is_some() {
-                    return Err(HistoryError::InvalidCommand("COMPACTION_OWNER_STOPPING".into()));
+                    return Err(HistoryError::InvalidCommand(
+                        "COMPACTION_OWNER_STOPPING".into(),
+                    ));
                 }
             } else {
                 let owner = value["ownerId"].as_str().filter(|id| !id.is_empty());
-                if owner.is_none() || actor.state.active_run_id.is_some() || !actor.control.runtime_control.as_ref()
-                    .is_some_and(|marker| marker["state"] == "compacting" && marker["ownerId"].as_str() == owner)
-                { return Err(HistoryError::InvalidCommand("COMPACTION_OWNER_SUPERSEDED".into())); }
+                if owner.is_none()
+                    || actor.state.active_run_id.is_some()
+                    || !actor
+                        .control
+                        .runtime_control
+                        .as_ref()
+                        .is_some_and(|marker| {
+                            marker["state"] == "compacting" && marker["ownerId"].as_str() == owner
+                        })
+                {
+                    return Err(HistoryError::InvalidCommand(
+                        "COMPACTION_OWNER_SUPERSEDED".into(),
+                    ));
+                }
             }
         }
         let mut ops = SessionOps {
@@ -387,11 +452,21 @@ impl HistoryTask {
                 serialized(&*ops.read_object(object_id)?)?
             }
             "fork_status" => {
-                if ops.state.failed { return Err(HistoryError::FileIo("Fork publication durability is not confirmed; retry the copy request.".into())); }
+                if ops.state.failed {
+                    return Err(HistoryError::FileIo(
+                        "Fork publication durability is not confirmed; retry the copy request."
+                            .into(),
+                    ));
+                }
                 let request = required_string(&value, "requestId")?;
                 let receipt = ops.index().receipts.get(&receipt_key(session_id, request));
-                let result: Option<Value> = receipt.map(|r| serde_json::from_slice(&r.result)
-                    .map_err(|_| HistoryError::InvalidCommand("invalid fork receipt".into()))).transpose()?;
+                let result: Option<Value> = receipt
+                    .map(|r| {
+                        serde_json::from_slice(&r.result).map_err(|_| {
+                            HistoryError::InvalidCommand("invalid fork receipt".into())
+                        })
+                    })
+                    .transpose()?;
                 serialized(&serde_json::json!({"result":result}))?
             }
             "head_switch" | "checkpoint" | "rollback" => ops.head_switch(&value, operation)?,
@@ -806,12 +881,18 @@ impl SessionOps<'_> {
         layout::validate_session_id(target).map_err(convert_io)?;
         layout::ensure_not_deleted(self.root(), source).map_err(convert_io)?;
         layout::ensure_not_deleted(self.root(), target).map_err(convert_io)?;
-        if source == target { return Err(HistoryError::InvalidCommand("fork asset owner must differ".into())); }
+        if source == target {
+            return Err(HistoryError::InvalidCommand(
+                "fork asset owner must differ".into(),
+            ));
+        }
         let prefix = format!("binding\0{source}\0");
         let snapshot = self.index().aux.clone();
         let mut count = 0;
         for (key, bound) in snapshot.range(prefix.clone()..map_end(&prefix)) {
-            if bound.as_ref().is_none_or(|v| v != true) { continue; }
+            if bound.as_ref().is_none_or(|v| v != true) {
+                continue;
+            }
             let asset = key.trim_start_matches(&prefix);
             self.set_aux(format!("binding\0{target}\0{asset}"), Some(boolean(true)));
             count += 1;
@@ -826,7 +907,10 @@ impl SessionOps<'_> {
         let snapshot = self.index().aux.clone();
         let mut count = 0;
         for (key, bound) in snapshot.range(prefix.clone()..map_end(&prefix)) {
-            if bound.is_some() { self.set_aux(key.clone(), None); count += 1; }
+            if bound.is_some() {
+                self.set_aux(key.clone(), None);
+                count += 1;
+            }
         }
         serialized(&serde_json::json!({"released":count}))
     }
@@ -835,16 +919,22 @@ impl SessionOps<'_> {
         let session = required_string(value, "sessionId")?;
         layout::validate_session_id(session).map_err(convert_io)?;
         if !layout::deletion_marker(self.root(), session).try_exists()? {
-            return Err(HistoryError::InvalidCommand("Session must be deleted before its assets".into()));
+            return Err(HistoryError::InvalidCommand(
+                "Session must be deleted before its assets".into(),
+            ));
         }
         let prefix = format!("binding\0{session}\0");
         let snapshot = self.index().aux.clone();
         let mut deleted = Vec::new();
         for (key, bound) in snapshot.range(prefix.clone()..map_end(&prefix)) {
-            if bound.as_ref().is_none_or(|v| v != true) { continue; }
+            if bound.as_ref().is_none_or(|v| v != true) {
+                continue;
+            }
             let asset = key.trim_start_matches(&prefix);
             let suffix = format!("\0{asset}");
-            let shared = self.index().aux_entries("binding\0")
+            let shared = self
+                .index()
+                .aux_entries("binding\0")
                 .any(|(other, _)| other != key && other.ends_with(&suffix));
             if !shared {
                 // The global asset writer fences new bindings while bytes are
@@ -915,114 +1005,200 @@ impl SessionOps<'_> {
 
     /// Remove a user message and everything following it using the visible
     /// message index. No checkpoint is required, including for imported chats.
-    fn truncate_message(&mut self, request_id: &str, value: &Value) -> Result<Vec<u8>, HistoryError> {
+    fn truncate_message(
+        &mut self,
+        request_id: &str,
+        value: &Value,
+    ) -> Result<Vec<u8>, HistoryError> {
         self.truncate_at_message(request_id, value, false)
     }
 
     /// Retain the selected visible message, removing only its suffix. Unlike
     /// editing an input this accepts any role, but never the latest message.
-    fn truncate_history(&mut self, request_id: &str, value: &Value) -> Result<Vec<u8>, HistoryError> {
+    fn truncate_history(
+        &mut self,
+        request_id: &str,
+        value: &Value,
+    ) -> Result<Vec<u8>, HistoryError> {
         self.truncate_at_message(request_id, value, true)
     }
 
-    fn truncate_at_message(&mut self, request_id: &str, value: &Value, inclusive: bool) -> Result<Vec<u8>, HistoryError> {
+    fn truncate_at_message(
+        &mut self,
+        request_id: &str,
+        value: &Value,
+        inclusive: bool,
+    ) -> Result<Vec<u8>, HistoryError> {
         let expected = required_u64(value, "expectedRevision")?;
         let actual = self.index().head.revision;
         if expected != actual {
             return Err(HistoryError::RevisionConflict { expected, actual });
         }
         let message_id = required_string(value, "messageId")?;
-        if self.context_sealed("message", message_id) { return Err(HistoryError::ReadOnlyHistory); }
-        let messages: Vec<_> = self.index().entity_keys("message")
-            .map(|(_, item)| item.clone()).collect();
-        let selected = messages.iter().position(|item| item.value["id"] == message_id)
+        if self.context_sealed("message", message_id) {
+            return Err(HistoryError::ReadOnlyHistory);
+        }
+        let messages: Vec<_> = self
+            .index()
+            .entity_keys("message")
+            .map(|(_, item)| item.clone())
+            .collect();
+        let selected = messages
+            .iter()
+            .position(|item| item.value["id"] == message_id)
             .ok_or_else(|| HistoryError::ObjectMissing(format!("message {message_id}")))?;
         if inclusive && selected + 1 == messages.len() {
-            return Err(HistoryError::InvalidCommand("cannot truncate at the latest message".into()));
+            return Err(HistoryError::InvalidCommand(
+                "cannot truncate at the latest message".into(),
+            ));
         }
         let boundary = selected + usize::from(inclusive);
         let target = &messages[boundary].value;
         if !inclusive && target["role"] != "user" {
-            return Err(HistoryError::InvalidCommand("only user messages can be edited".into()));
+            return Err(HistoryError::InvalidCommand(
+                "only user messages can be edited".into(),
+            ));
         }
-        let keep_messages: HashSet<_> = messages[..boundary].iter()
-            .filter_map(|item| item.value["id"].as_str()).collect();
-        let keep_runs: HashSet<_> = messages[..boundary].iter()
-            .filter_map(|item| item.value["runId"].as_str()).collect();
-        let keep_steps: HashSet<_> = messages[..boundary].iter()
-            .filter_map(|item| item.value["stepId"].as_str()).collect();
-        let removed_steps: HashSet<_> = messages[boundary..].iter()
+        let keep_messages: HashSet<_> = messages[..boundary]
+            .iter()
+            .filter_map(|item| item.value["id"].as_str())
+            .collect();
+        let keep_runs: HashSet<_> = messages[..boundary]
+            .iter()
+            .filter_map(|item| item.value["runId"].as_str())
+            .collect();
+        let keep_steps: HashSet<_> = messages[..boundary]
+            .iter()
             .filter_map(|item| item.value["stepId"].as_str())
-            .filter(|id| !keep_steps.contains(id)).collect();
+            .collect();
+        let removed_steps: HashSet<_> = messages[boundary..]
+            .iter()
+            .filter_map(|item| item.value["stepId"].as_str())
+            .filter(|id| !keep_steps.contains(id))
+            .collect();
         // A reordered/imported transcript must not move a sealed row into the
         // removed suffix, even when the selected message itself is unsealed.
-        if inclusive && messages[boundary..].iter().any(|item|
-            item.value["id"].as_str().is_some_and(|id| self.context_sealed("message", id))) {
+        if inclusive
+            && messages[boundary..].iter().any(|item| {
+                item.value["id"]
+                    .as_str()
+                    .is_some_and(|id| self.context_sealed("message", id))
+            })
+        {
             return Err(HistoryError::ReadOnlyHistory);
         }
-        let selected_revision = self.index().first_revision.get(
-            &super::identity_key("message", self.session_id, message_id)).copied().unwrap_or(0);
+        let selected_revision = self
+            .index()
+            .first_revision
+            .get(&super::identity_key("message", self.session_id, message_id))
+            .copied()
+            .unwrap_or(0);
         let timestamp = |item: &Value| -> String {
-            ["createdAt", "startedAt", "timestamp"].iter()
-                .find_map(|key| item[*key].as_str()).unwrap_or("").to_owned()
+            ["createdAt", "startedAt", "timestamp"]
+                .iter()
+                .find_map(|key| item[*key].as_str())
+                .unwrap_or("")
+                .to_owned()
         };
         let cutoff = timestamp(target);
         let mut retained = Vec::new();
         for item in self.index().order.values() {
-            let Some(kind) = indexed_kind(&item.kind, &item.value) else { continue };
+            let Some(kind) = indexed_kind(&item.kind, &item.value) else {
+                continue;
+            };
             let id = item.value["id"].as_str().unwrap_or("");
             let owner = item.value["sessionId"].as_str().unwrap_or(self.session_id);
             let identity = super::identity_key(kind, owner, id);
-            if self.index().identity.get(&identity)
+            if self
+                .index()
+                .identity
+                .get(&identity)
                 .and_then(|key| self.index().order.get(key))
-                .is_none_or(|current| current.object_id != item.object_id) {
+                .is_none_or(|current| current.object_id != item.object_id)
+            {
                 continue;
             }
-            let run = if kind == "run" { Some(id) } else {
-                item.value["runId"].as_str().or_else(|| item.value["payload"]["runId"].as_str())
+            let run = if kind == "run" {
+                Some(id)
+            } else {
+                item.value["runId"]
+                    .as_str()
+                    .or_else(|| item.value["payload"]["runId"].as_str())
             };
             let keep = if inclusive {
-                let step = if kind == "step" { Some(id) } else { item.value["stepId"].as_str() };
+                let step = if kind == "step" {
+                    Some(id)
+                } else {
+                    item.value["stepId"].as_str()
+                };
                 let message = item.value["messageId"].as_str();
                 match kind {
                     "message" => keep_messages.contains(id),
                     _ if self.context_sealed(kind, id) => true,
-                    "compaction" => self.index().aux_value("context\0current")
+                    "compaction" => self
+                        .index()
+                        .aux_value("context\0current")
                         .is_some_and(|current| current["objectId"] == item.object_id),
                     "context" => false,
                     _ if message.is_some_and(|id| !keep_messages.contains(id)) => false,
                     _ if step.is_some_and(|id| removed_steps.contains(id)) => false,
                     _ if run.is_some_and(|id| !keep_runs.contains(id)) => false,
                     "run" => keep_runs.contains(id),
-                    _ if self.index().first_revision.get(&identity)
-                        .is_some_and(|revision| *revision > selected_revision) => false,
+                    _ if self
+                        .index()
+                        .first_revision
+                        .get(&identity)
+                        .is_some_and(|revision| *revision > selected_revision) =>
+                    {
+                        false
+                    }
                     _ if message.is_some_and(|id| keep_messages.contains(id)) => true,
                     _ if step.is_some_and(|id| keep_steps.contains(id)) => true,
-                    _ => self.index().first_revision.get(&identity).is_some_and(|revision|
-                        *revision < selected_revision || (*revision == selected_revision
-                            && !cutoff.is_empty() && !timestamp(&item.value).is_empty()
-                            && timestamp(&item.value) < cutoff)),
+                    _ => self
+                        .index()
+                        .first_revision
+                        .get(&identity)
+                        .is_some_and(|revision| {
+                            *revision < selected_revision
+                                || (*revision == selected_revision
+                                    && !cutoff.is_empty()
+                                    && !timestamp(&item.value).is_empty()
+                                    && timestamp(&item.value) < cutoff)
+                        }),
                 }
-            } else { match kind {
-                "message" => keep_messages.contains(id),
-                // Files remain as they are; preserve their ownership records.
-                "file_change" => true,
-                // Summaries may contain the removed tail. Rebuild context from
-                // the retained messages instead of reusing stale compactions.
-                "compaction" => self.index().aux_value("context\0current")
-                    .is_some_and(|current| current["objectId"] == item.object_id),
-                "context" => false,
-                _ if run.is_some_and(|run| !keep_runs.contains(run)) => false,
-                "run" => true,
-                _ if run.is_some() && run != target["runId"].as_str() => true,
-                _ => !cutoff.is_empty() && !timestamp(&item.value).is_empty()
-                    && timestamp(&item.value) < cutoff,
-            }};
-            if keep { retained.push(item.clone()); }
+            } else {
+                match kind {
+                    "message" => keep_messages.contains(id),
+                    // Files remain as they are; preserve their ownership records.
+                    "file_change" => true,
+                    // Summaries may contain the removed tail. Rebuild context from
+                    // the retained messages instead of reusing stale compactions.
+                    "compaction" => self
+                        .index()
+                        .aux_value("context\0current")
+                        .is_some_and(|current| current["objectId"] == item.object_id),
+                    "context" => false,
+                    _ if run.is_some_and(|run| !keep_runs.contains(run)) => false,
+                    "run" => true,
+                    _ if run.is_some() && run != target["runId"].as_str() => true,
+                    _ => {
+                        !cutoff.is_empty()
+                            && !timestamp(&item.value).is_empty()
+                            && timestamp(&item.value) < cutoff
+                    }
+                }
+            };
+            if keep {
+                retained.push(item.clone());
+            }
         }
         let mut refs = Vec::with_capacity(retained.len());
         for item in retained {
-            if self.index().aux_value("context\0current").is_some_and(|current| current["objectId"] == item.object_id) {
+            if self
+                .index()
+                .aux_value("context\0current")
+                .is_some_and(|current| current["objectId"] == item.object_id)
+            {
                 // The checkpoint references its sealed prefix, never the tail
                 // being removed. Keep its content identity and logical snapshot.
                 refs.push(item.object_id.clone());
@@ -1030,7 +1206,8 @@ impl SessionOps<'_> {
             }
             // Entity refs must not bring removed history back into the graph.
             let (saved, _) = self.put_object_value(&object(&[
-                ("kind", text(&item.kind)), ("value", item.value.clone()),
+                ("kind", text(&item.kind)),
+                ("value", item.value.clone()),
             ]))?;
             refs.push(saved.object_id.clone());
         }
@@ -1049,20 +1226,34 @@ impl SessionOps<'_> {
         }))?;
         // Drop action pins that refer to deleted rows, without requiring any
         // pins to exist in order to perform the edit.
-        let removed_pins: Vec<_> = self.index().aux_entries("pin\0")
-            .filter(|(_, pin)| pin["metadata"]["messageId"].as_str()
-                .is_some_and(|id| !keep_messages.contains(id)))
-            .map(|(key, _)| key.clone()).collect();
-        for key in removed_pins { self.set_aux(key, None); }
-        let result = self.file_command(request_id, "restore_transcript", &serde_json::json!({
-            "objectId":root.object_id, "expectedRevision":expected,
-            "metadata":value["metadata"],
-        }))?;
+        let removed_pins: Vec<_> = self
+            .index()
+            .aux_entries("pin\0")
+            .filter(|(_, pin)| {
+                pin["metadata"]["messageId"]
+                    .as_str()
+                    .is_some_and(|id| !keep_messages.contains(id))
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in removed_pins {
+            self.set_aux(key, None);
+        }
+        let result = self.file_command(
+            request_id,
+            "restore_transcript",
+            &serde_json::json!({
+                "objectId":root.object_id, "expectedRevision":expected,
+                "metadata":value["metadata"],
+            }),
+        )?;
         if inclusive {
             // A plain Head record does not rebuild during log replay. Persist
             // the destructive projection, not just the new pointer, so losing
             // the optional index checkpoint cannot resurrect the suffix.
-            self.staged.push(Record::HistoryAux(AuxRecord::TruncateHead(self.index().head.clone())));
+            self.staged.push(Record::HistoryAux(AuxRecord::TruncateHead(
+                self.index().head.clone(),
+            )));
         }
         Ok(result)
     }
@@ -1158,8 +1349,17 @@ impl SessionOps<'_> {
         let mut bytes = 2048;
         let mut last: Option<String> = None;
         let mut more = false;
-        let lower = if after.is_empty() { "pin\0".to_owned() } else { format!("pin\0{after}\0") };
-        for (key, saved) in self.index().aux.range(lower..map_end("pin\0")).filter_map(|(key, value)| value.as_ref().map(|value| (key, value))) {
+        let lower = if after.is_empty() {
+            "pin\0".to_owned()
+        } else {
+            format!("pin\0{after}\0")
+        };
+        for (key, saved) in self
+            .index()
+            .aux
+            .range(lower..map_end("pin\0"))
+            .filter_map(|(key, value)| value.as_ref().map(|value| (key, value)))
+        {
             let id = key.trim_start_matches("pin\0").to_owned();
             let mut metadata = saved["metadata"].clone();
             if let Some(message_id) = metadata["messageId"].as_str() {
@@ -1199,17 +1399,40 @@ impl SessionOps<'_> {
     }
 
     fn lookup_checkpoints(&self, value: &Value) -> Result<Vec<u8>, HistoryError> {
-        let ids = value["ids"].as_array().filter(|ids| ids.len() <= 128)
-            .ok_or_else(|| HistoryError::InvalidCommand("checkpoint lookup exceeds 128 ids".into()))?;
+        let ids = value["ids"]
+            .as_array()
+            .filter(|ids| ids.len() <= 128)
+            .ok_or_else(|| {
+                HistoryError::InvalidCommand("checkpoint lookup exceeds 128 ids".into())
+            })?;
         let mut items = Vec::new();
         for id in ids {
-            let requested = id.as_str().filter(|id| id.len() <= 256).ok_or_else(|| HistoryError::InvalidCommand("invalid checkpoint ID".into()))?;
+            let requested = id
+                .as_str()
+                .filter(|id| id.len() <= 256)
+                .ok_or_else(|| HistoryError::InvalidCommand("invalid checkpoint ID".into()))?;
             let id = if value["byMessage"] == true {
-                let Some(id) = self.index().aux_value(&format!("pin-query\0{requested}")).and_then(Value::as_str) else { continue; }; id
-            } else { requested };
-            let Some(pin) = self.index().aux_value(&format!("pin\0{id}")) else { continue; };
+                let Some(id) = self
+                    .index()
+                    .aux_value(&format!("pin-query\0{requested}"))
+                    .and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                id
+            } else {
+                requested
+            };
+            let Some(pin) = self.index().aux_value(&format!("pin\0{id}")) else {
+                continue;
+            };
             let mut metadata = pin["metadata"].clone();
-            if metadata["messageId"].as_str().is_some_and(|id| self.context_sealed("message", id)) { metadata["readOnly"] = boolean(true); }
+            if metadata["messageId"]
+                .as_str()
+                .is_some_and(|id| self.context_sealed("message", id))
+            {
+                metadata["readOnly"] = boolean(true);
+            }
             items.push(serde_json::json!({"id":id,"objectId":pin["objectId"],"metadata":metadata}));
         }
         serialized(&serde_json::json!({"items":items}))
@@ -1491,11 +1714,24 @@ impl SessionOps<'_> {
         // Seek directly to the cursor. Filtering from the collection start on
         // every page makes a complete paged traversal quadratic.
         let matching: Box<dyn Iterator<Item = (&String, &Arc<HistoryObject>)>> = if reverse {
-            Box::new(self.index().order.range(prefix.clone()..start.clone()).rev())
+            Box::new(
+                self.index()
+                    .order
+                    .range(prefix.clone()..start.clone())
+                    .rev(),
+            )
         } else {
             use std::ops::Bound::{Excluded, Included};
-            let lower = if cursor.is_some() { Excluded(start.clone()) } else { Included(start.clone()) };
-            Box::new(self.index().order.range((lower, Excluded(map_end(&prefix)))))
+            let lower = if cursor.is_some() {
+                Excluded(start.clone())
+            } else {
+                Included(start.clone())
+            };
+            Box::new(
+                self.index()
+                    .order
+                    .range((lower, Excluded(map_end(&prefix)))),
+            )
         };
         let mut items = Vec::new();
         // Envelope and cursor are reserved before any body is read.
@@ -1572,25 +1808,45 @@ impl SessionOps<'_> {
     fn subagent_summary(&mut self, value: &Value) -> Result<Vec<u8>, HistoryError> {
         let mut message = value["message"].clone();
         let id = required_string(&message, "id")?.to_owned();
-        if !id.starts_with("subagent-summary:") || message["sessionId"] != self.session_id
-            || message["role"] != "assistant" || message["metadata"]["source"] != "subagent_summary"
-            || message["content"].as_str().is_none_or(|text| text.len() > 8192) {
-            return Err(HistoryError::InvalidCommand("invalid subagent summary".into()));
+        if !id.starts_with("subagent-summary:")
+            || message["sessionId"] != self.session_id
+            || message["role"] != "assistant"
+            || message["metadata"]["source"] != "subagent_summary"
+            || message["content"]
+                .as_str()
+                .is_none_or(|text| text.len() > 8192)
+        {
+            return Err(HistoryError::InvalidCommand(
+                "invalid subagent summary".into(),
+            ));
         }
         let sequence = required_u64(&message["metadata"], "eventSeq")?;
-        let prior = self.index().identity.get(&super::identity_key("message", self.session_id, &id))
-            .and_then(|key| self.index().order.get(key)).cloned();
+        let prior = self
+            .index()
+            .identity
+            .get(&super::identity_key("message", self.session_id, &id))
+            .and_then(|key| self.index().order.get(key))
+            .cloned();
         if let Some(prior) = &prior {
             let previous = prior.value["metadata"]["eventSeq"].as_u64().unwrap_or(0);
-            if sequence <= previous { return serialized(&prior.value); }
+            if sequence <= previous {
+                return serialized(&prior.value);
+            }
             message["sequence"] = prior.value["sequence"].clone();
             message["createdAt"] = prior.value["createdAt"].clone();
         } else {
-            let last = self.index().entity_keys_rev("message").next()
-                .and_then(|(_, item)| item.value["sequence"].as_u64()).unwrap_or(0);
+            let last = self
+                .index()
+                .entity_keys_rev("message")
+                .next()
+                .and_then(|(_, item)| item.value["sequence"].as_u64())
+                .unwrap_or(0);
             message["sequence"] = number(last.saturating_add(1));
         }
-        self.stage_append(&serde_json::json!({"objects":[{"kind":"runtime.message","value":message}]}), None)?;
+        self.stage_append(
+            &serde_json::json!({"objects":[{"kind":"runtime.message","value":message}]}),
+            None,
+        )?;
         serialized(&message)
     }
 
@@ -1713,7 +1969,9 @@ impl SessionOps<'_> {
         refs.extend(staged.iter().rev().map(|object| object.object_id.clone()));
         let mut changes = Vec::new();
         for object in &staged {
-            if let Some(collection) = change_collection(&object.kind, &object.value).or_else(|| indexed_kind(&object.kind, &object.value)) {
+            if let Some(collection) = change_collection(&object.kind, &object.value)
+                .or_else(|| indexed_kind(&object.kind, &object.value))
+            {
                 changes.push(ChangeEntry {
                     collection: collection.to_owned(),
                     object_id: object.object_id.clone(),
@@ -1906,13 +2164,23 @@ impl SessionOps<'_> {
         if matches!(operation, "restore_checkpoint" | "file_preview") {
             let id = required_string(value, "checkpointId")?;
             if let Some(pin) = self.index().aux_value(&format!("pin\0{id}")) {
-                if operation == "restore_checkpoint" && value["includeFiles"] != false && pin["metadata"]["transcriptOnly"] == true {
-                    return Err(HistoryError::InvalidCommand("forked history cannot restore source workspace files".into()));
+                if operation == "restore_checkpoint"
+                    && value["includeFiles"] != false
+                    && pin["metadata"]["transcriptOnly"] == true
+                {
+                    return Err(HistoryError::InvalidCommand(
+                        "forked history cannot restore source workspace files".into(),
+                    ));
                 }
-                if pin["metadata"]["messageId"].as_str().is_some_and(|id| self.context_sealed("message", id)) {
+                if pin["metadata"]["messageId"]
+                    .as_str()
+                    .is_some_and(|id| self.context_sealed("message", id))
+                {
                     return Err(HistoryError::ReadOnlyHistory);
                 }
-                if let Some(root) = pin["objectId"].as_str() { self.guard_context_head(root)?; }
+                if let Some(root) = pin["objectId"].as_str() {
+                    self.guard_context_head(root)?;
+                }
             }
         } else if operation == "restore_transcript" {
             self.guard_context_head(required_string(value, "objectId")?)?;
@@ -2099,18 +2367,34 @@ mod read_isolation_tests {
 
     #[test]
     fn ui_reads_and_token_measurement_do_not_wait_for_history_writer() {
-        let root = std::env::temp_dir().join(format!("synax-read-isolation-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("synax-read-isolation-{}", uuid::Uuid::new_v4()));
         let store = Arc::new(JsonlStore::open(&root).unwrap());
-        let task = HistoryTask { store: store.clone(), sessions: Arc::new(SessionCache::default()) };
+        let task = HistoryTask {
+            store: store.clone(),
+            sessions: Arc::new(HistoryCache::default()),
+        };
         let payload = serde_json::json!({"objects":[{"kind":"runtime.message","value":{
             "id":"m","sessionId":"s","sequence":1,"role":"assistant","content":"历史🙂".repeat(5000)}}]});
-        task.command("s", "seed", "append_entities", &serialized(&payload).unwrap()).unwrap();
+        task.command(
+            "s",
+            "seed",
+            "append_entities",
+            &serialized(&payload).unwrap(),
+        )
+        .unwrap();
         // Initialize the bundled tokenizer before measuring lock isolation;
         // loading its vocabulary is unrelated to waiting for a writer.
         crate::agent::context::tokens("warm tokenizer");
         let session = task.session("s").unwrap();
         let published = session.read();
-        let object_id = published.entity_keys("message").next().unwrap().1.object_id.clone();
+        let object_id = published
+            .entity_keys("message")
+            .next()
+            .unwrap()
+            .1
+            .object_id
+            .clone();
         let revision = published.head.revision;
         drop(published);
         let mut writer = session.lock.lock();
@@ -2119,12 +2403,22 @@ mod read_isolation_tests {
         let (send, receive) = std::sync::mpsc::channel();
         let read = std::thread::spawn(move || {
             let results = [
-                ("context_measure", serde_json::json!({"prompt":[{"role":"user","content":"measure"}],"tools":[]})),
+                (
+                    "context_measure",
+                    serde_json::json!({"prompt":[{"role":"user","content":"measure"}],"tools":[]}),
+                ),
                 ("history_sync", serde_json::json!({})),
                 ("head_read", serde_json::json!({})),
-                ("object_value_chunk", serde_json::json!({"objectId":object_id,"offset":0})),
-                ("message_content", serde_json::json!({"messageId":"m","offset":0,"revision":revision})),
-            ].map(|(op, value)| task.command("s", "read", op, &serialized(&value).unwrap()));
+                (
+                    "object_value_chunk",
+                    serde_json::json!({"objectId":object_id,"offset":0}),
+                ),
+                (
+                    "message_content",
+                    serde_json::json!({"messageId":"m","offset":0,"revision":revision}),
+                ),
+            ]
+            .map(|(op, value)| task.command("s", "read", op, &serialized(&value).unwrap()));
             send.send(results).unwrap();
         });
         let result = receive.recv_timeout(std::time::Duration::from_secs(3));
@@ -2132,12 +2426,16 @@ mod read_isolation_tests {
         drop(writer);
         read.join().unwrap();
         let results = result.expect("read waited for the history writer");
-        for result in &results { assert!(result.is_ok(), "{result:?}"); }
+        for result in &results {
+            assert!(result.is_ok(), "{result:?}");
+        }
         let head: Value = serde_json::from_slice(results[2].as_ref().unwrap()).unwrap();
         assert_eq!(head["revision"], revision);
         let page: Value = serde_json::from_slice(results[4].as_ref().unwrap()).unwrap();
         assert!(page["text"].as_str().unwrap().len() <= 8192);
         assert!(page["next"].as_u64().unwrap() > 0);
-        drop(session); drop(store); std::fs::remove_dir_all(root).unwrap();
+        drop(session);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -12,7 +12,6 @@ import {
 } from "./interaction-service.js";
 import { agentRuntimeStore as store } from "./session-store.js";
 import { getGoalState, initializeGoal } from "./goal-control.js";
-import { isUnrestrictedPermissionRules } from "./permission-tiers.js";
 import {
   assertUserInstructionTurn,
   executeStoredPlan,
@@ -66,7 +65,7 @@ export const planProposeTool: RegisteredTool = {
   label: "Propose a plan",
   description:
     "Submit a versioned implementation plan artifact from chat or goal. The report remains previewable across turns; the user may defer the decision and execute it from a later turn. Include explicit acceptance criteria. Must be the only tool call in this step.",
-  progressiveDetails: "Step IDs must be unique and dependencies may refer only to earlier steps. humanAcceptanceCriteria may be specified independently of acceptanceCriteria. Unrestricted sessions persist and execute immediately without user confirmation; other permission tiers request a user decision. Execution stays in chat unless goal was selected. Child agents return proposals to the primary agent.",
+  progressiveDetails: "Step IDs must be unique and dependencies may refer only to earlier steps. humanAcceptanceCriteria may be specified independently of acceptanceCriteria. Saving a proposal never executes it, including with unrestricted permissions. If the user already requested implementation, continue with plan.execute; if the user requested only a plan, return the saved proposal. Tool permissions still apply during execution. Execution stays in chat unless goal was selected. Child agents return proposals to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",
@@ -75,47 +74,12 @@ export const planProposeTool: RegisteredTool = {
   async execute(input) {
     if (!input.runId || !input.stepId)
       throw new AgentValidationError("A plan requires an active run step.");
-    const session = store.getSession(input.sessionId);
-    if (isUnrestrictedPermissionRules(session.permissionRules)) {
-      const planArgs = agentPlanSchema.parse(input.args);
-      const artifact = persistPlanProposal(input.sessionId, planArgs);
-      const plan = executeStoredPlan({
-        sessionId: input.sessionId,
-        runId: input.runId,
-        stepId: input.stepId,
-        expectedRevision: artifact.revision,
-      });
-      return {
-        result: plan,
-        displaySummary: `Started plan revision ${plan.revision}.`,
-        artifacts: [{
-          kind: "decision" as const,
-          title: "Plan execution started",
-          summary: `Started plan revision ${plan.revision}: ${plan.title}.`,
-          risk: "low" as const,
-        }],
-      };
-    }
-    const interaction = runtimeFacade.streamMode() === "authoritative"
-      ? await interactionService.requestAuthoritative({
-          ...input,
-          runId: input.runId,
-          stepId: input.stepId,
-          kind: "plan_approval",
-          request: { plan: input.args },
-        })
-      : interactionService.request({
-      ...input,
-      runId: input.runId,
-      stepId: input.stepId,
-      kind: "plan_approval",
-      request: { plan: input.args },
-    });
+    const plan = persistPlanProposal(input.sessionId, agentPlanSchema.parse(input.args), "saved");
     return {
-      result: null,
-      displaySummary: interaction.request.title,
-      artifacts: [],
-      suspend: { interactionId: interaction.id },
+      result: plan,
+      displaySummary: `Saved plan revision ${plan.revision}.`,
+      artifacts: [{ kind: "decision", title: "Plan saved",
+        summary: `Saved plan revision ${plan.revision}: ${plan.title}.`, risk: "low" }],
     };
   },
 };
@@ -172,8 +136,8 @@ export const planExecuteTool: RegisteredTool = {
   id: "plan.execute",
   label: "Execute saved plan",
   description:
-    "Start executing the current deferred plan. Planning returns to chat execution; only an explicitly chosen goal session remains in goal mode. Call only when the user explicitly instructs execution in the current turn instead of using the one-time execute shortcut. Must be the only call in a step.",
-  progressiveDetails: "Read the saved plan before using its revision. A saved current plan and an explicit execution instruction in the current user turn are required; a stale revision is rejected. Child agents return execution requests to the primary agent.",
+    "Start executing the current saved plan. Planning returns to chat execution; only an explicitly chosen goal session remains in goal mode. Call when the current user request authorizes implementation, including after saving a plan in that same turn. A request for analysis or a proposal alone does not authorize execution. Must be the only call in a step.",
+  progressiveDetails: "Read the saved plan before using its revision. A saved current plan and a current user request authorizing implementation are required; a stale revision is rejected. Child agents return execution requests to the primary agent.",
   category: "task",
   internalGate: "none",
   mutability: "task",

@@ -8,7 +8,7 @@ import { formatTokenCount } from "../../shared/lib/formatTokens";
 import { formatModelDisplayName, useProviderNames } from "./useProviderNames";
 import {
   ChevronRight,
-  Target,
+  Goal,
   FileEdit,
   FilePlus,
   FileX,
@@ -257,7 +257,7 @@ export function SessionModeSummary({ session }: { session: AgentSession }) {
           className="agent-disclosure-arrow"
         />
         <span className="agent-summary-icon" aria-hidden="true">
-          <Target size={15} />
+          <Goal size={15} />
         </span>
         {status && (
           <span role="status" className="agent-summary-status">

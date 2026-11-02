@@ -85,14 +85,15 @@ export function FileOpenerSelect() {
         </span>
       )}
       {error && (
-        <button
-          type="button"
-          role="alert"
-          className="settings-opener-status"
-          onClick={() => setRetry((value) => value + 1)}
-        >
-          {locale === "zh" ? "检测失败，点击重试" : "Detection failed. Retry"}
-        </button>
+        <span role="alert" data-error-toast="off">
+          <button
+            type="button"
+            className="settings-opener-status"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            {locale === "zh" ? "检测失败，点击重试" : "Detection failed. Retry"}
+          </button>
+        </span>
       )}
     </div>
   );

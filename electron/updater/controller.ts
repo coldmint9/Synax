@@ -7,18 +7,28 @@ import type { UpdaterRequest, UpdaterState, UpdateHistory } from "./contract.js"
 import { getUpdateProxyUrl } from "../lib/update-network.js";
 import { frameworkChannel, DESKTOP_RELEASE_URL } from "./framework-feed.js";
 import { updateFailureMessage } from "./update-errors.js";
+import { assertProductIdentity, PRODUCT_NAME, PRODUCT_BUNDLE_ID } from "./update-source.js";
+import { effectiveUpdateSource } from "./effective-update-source.js";
+import { requireOnlineUpdates } from "./update-policy.js";
+
+import { verifyWindowsInstaller } from "./windows-installer.js";
 
 export interface ControllerDependencies {
+  resolveSource?: () => string;
   create: () => Promise<AppUpdater>;
   configure: (updater: AppUpdater, proxy: string | null) => Promise<void>;
   eligible: () => Promise<void>;
+  verifyInstaller?: (file: string, version: string) => Promise<void>;
 }
 
 async function eligibility(request: UpdaterRequest): Promise<void> {
+  effectiveUpdateSource();
   const { app } = await import("electron");
   if (!app.isPackaged) throw new Error("开发版本不执行自动更新，请安装正式发布版。");
   frameworkChannel(process.platform, process.arch);
   if (process.platform === "win32") {
+    if (path.basename(request.executable) !== "Synax.exe")
+      throw new Error("当前应用不是 Synax，已停止更新。");
     try {
       await fs.access(path.join(path.dirname(request.executable), "Uninstall Synax.exe"));
     } catch {
@@ -35,6 +45,14 @@ function defaults(request: UpdaterRequest): ControllerDependencies {
     create: async () => (await import("../lib/desktop-updater-engine.js")).createFrameworkUpdater(process.platform),
     configure: async (updater, proxy) => (await import("../lib/desktop-updater-engine.js")).configureFrameworkFeed(updater, process.platform, process.arch, proxy),
     eligible: () => eligibility(request),
+    verifyInstaller: async (file, version) => {
+      if (process.platform === "darwin")
+        await (await import("../lib/mac-desktop-update.js")).verifyMacFrameworkArchive(
+          file, request.executable, version, process.arch,
+        );
+      else if (process.platform === "win32")
+        await verifyWindowsInstaller(file, version, process.arch);
+    },
   };
 }
 
@@ -46,6 +64,9 @@ interface PendingUpdate {
 }
 
 interface CachedUpdate {
+  productName: string;
+  bundleId: string;
+  source: string;
   version: string;
   file: string;
   size: number;
@@ -64,6 +85,7 @@ export class UpdaterController {
   private file: string | null = null;
   private restoredCache = false;
   private installing = false;
+  private readonly source: string | null;
   private historyWrite: Promise<void> = Promise.resolve();
 
   constructor(
@@ -77,6 +99,21 @@ export class UpdaterController {
       phase: "idle", currentVersion: request.currentVersion, uiVersion: request.uiVersion,
       availableVersion: null, size: 0, progress: 0, notes: "", message: "尚未检查更新", history: [],
     };
+    try {
+      requireOnlineUpdates();
+      this.source = (this.dependencies.resolveSource ?? effectiveUpdateSource)();
+    }
+    catch (error) {
+      this.source = null;
+      this.state.phase = "error";
+      this.state.message = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private requireSource(): void {
+    requireOnlineUpdates();
+    if (!this.source || (this.dependencies.resolveSource ?? effectiveUpdateSource)() !== this.source)
+      throw new Error("Synax 自动更新不可用：企业更新源未配置或已变更，请重启后重新检查更新。");
   }
 
   snapshot(): UpdaterState { return structuredClone(this.state); }
@@ -98,6 +135,7 @@ export class UpdaterController {
     } finally { await fs.rm(temporary, { force: true }); }
   }
   async initialize(): Promise<void> {
+    if (!this.source) return;
     try {
       const entries = JSON.parse(await fs.readFile(path.join(this.directory, "history.json"), "utf8"));
       if (Array.isArray(entries)) this.update({ history: entries.filter((entry) =>
@@ -117,6 +155,7 @@ export class UpdaterController {
     await fs.rm(this.readyCacheFile(), { force: true });
   }
   private async restoreCachedUpdate(): Promise<void> {
+    this.requireSource();
     let cached: CachedUpdate;
     try {
       cached = JSON.parse(await fs.readFile(this.readyCacheFile(), "utf8"));
@@ -128,6 +167,8 @@ export class UpdaterController {
     if (
       !cached ||
       typeof cached !== "object" ||
+      cached.productName !== PRODUCT_NAME || cached.bundleId !== PRODUCT_BUNDLE_ID ||
+      cached.source !== this.source ||
       !/^\d+\.\d+\.\d+$/.test(cached.version) ||
       cached.version === this.request.currentVersion ||
       typeof cached.file !== "string" ||
@@ -144,13 +185,15 @@ export class UpdaterController {
       return;
     }
     this.info = {
+      productName: PRODUCT_NAME,
+      bundleId: PRODUCT_BUNDLE_ID,
       version: cached.version,
       path: cached.file,
       sha512: cached.sha512,
       releaseDate: cached.at,
       releaseNotes: cached.notes,
       files: [{ url: cached.file, size: cached.size, sha512: cached.sha512 }],
-    };
+    } as UpdateInfo;
     this.file = cached.file;
     try {
       await this.verify();
@@ -175,6 +218,9 @@ export class UpdaterController {
     const item = this.info.files[0];
     if (!item || typeof item.size !== "number") throw new Error("更新安装包缺少大小信息。");
     await this.atomic("framework-ready.json", {
+      productName: PRODUCT_NAME,
+      bundleId: PRODUCT_BUNDLE_ID,
+      source: this.source!,
       version: this.info.version,
       file: this.file,
       size: item.size,
@@ -196,6 +242,7 @@ export class UpdaterController {
     return task;
   }
   async markHealthy(): Promise<void> {
+    if (!this.source) return;
     let pending: PendingUpdate;
     const file = path.join(this.directory, "framework-pending.json");
     try { pending = JSON.parse(await fs.readFile(file, "utf8")); }
@@ -242,6 +289,7 @@ export class UpdaterController {
   check(): Promise<void> {
     if (["downloading", "verifying", "ready", "installing"].includes(this.state.phase)) return this.active ?? Promise.resolve();
     return this.operation(async () => {
+      this.requireSource();
       // Keep a verified installer available after a native installation failure.
       // Retrying should be able to use it without depending on electron-updater's
       // internal cache state or downloading the same package again.
@@ -263,6 +311,10 @@ export class UpdaterController {
       const result = await updater.checkForUpdates();
       if (!result) throw new Error("自动更新不可用，请安装正式发布版。");
       this.info = result.isUpdateAvailable ? result.updateInfo : null;
+      if (this.info) {
+        try { assertProductIdentity(this.info); }
+        catch (error) { this.info = null; this.file = null; throw error; }
+      }
       this.file = null;
       await this.clearReadyCache();
       if (!this.info) {
@@ -278,6 +330,8 @@ export class UpdaterController {
   download(): Promise<void> {
     if (!this.info || !["available", "error"].includes(this.state.phase)) return this.active ?? Promise.resolve();
     return this.operation(async () => {
+      this.requireSource();
+      assertProductIdentity(this.info);
       await this.clearReadyCache();
       await this.dependencies.eligible();
       this.update({ phase: "downloading", progress: 0, message: "正在下载完整安装包…" });
@@ -291,6 +345,8 @@ export class UpdaterController {
     });
   }
   private async verify(): Promise<void> {
+    this.requireSource();
+    assertProductIdentity(this.info);
     const item = this.info?.files[0];
     if (!this.file || !item) throw new Error("请先下载更新安装包。");
     const stat = await fs.lstat(this.file);
@@ -298,6 +354,7 @@ export class UpdaterController {
     if (!stat.isFile() || stat.size !== item.size) throw new Error("安装包校验失败，请重新下载。");
     for await (const bytes of createReadStream(this.file)) hash.update(bytes);
     if (hash.digest("base64") !== item.sha512) throw new Error("安装包校验失败，请重新下载。");
+    await this.dependencies.verifyInstaller?.(this.file, this.info!.version);
   }
   private async failInstallation(): Promise<void> {
     this.installing = false;
@@ -317,6 +374,8 @@ export class UpdaterController {
       await this.clearReadyCache();
       throw new Error("缓存的更新已过期，请重新检查更新。");
     }
+    assertProductIdentity(result.updateInfo);
+    this.info = result.updateInfo;
     const files = await updater.downloadUpdate();
     if (files.length !== 1) throw new Error("更新框架未返回有效安装包。");
     this.file = files[0];
@@ -326,6 +385,7 @@ export class UpdaterController {
   install(): Promise<void> {
     if (!this.info || !this.file || this.state.phase !== "ready") return this.active ?? Promise.resolve();
     return this.operation(async () => {
+      this.requireSource();
       await this.dependencies.eligible();
       await this.restoreUpdaterCache();
       this.update({ phase: "verifying", message: "正在重新校验安装包…" });

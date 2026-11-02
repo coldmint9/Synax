@@ -51,6 +51,7 @@ export {
   loadProjectInstructions,
   loadMergedProjectInstructions,
   loadProjectRulesSection,
+  PROJECT_RULE_FILE_MAX_CHARS,
   truncateForPrompt,
 } from './synax-instructions.js';
 export {

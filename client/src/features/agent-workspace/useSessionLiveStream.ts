@@ -6,6 +6,7 @@ import {
 } from "../../adapters/transport/sessionLiveClient";
 import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { enqueueLiveEvent } from "./state/liveEventQueue";
 
 export function useSessionLiveStream(sessionId: string | null) {
   const active = useWorkbenchPageActive();
@@ -24,7 +25,8 @@ export function useSessionLiveStream(sessionId: string | null) {
     if (apiReachable === "unreachable") return;
 
     ensureSessionLiveSubscription(sessionId, (event) => {
-      useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
+      // Records are collected for the frame and committed together.
+      enqueueLiveEvent(event, sessionId);
     });
 
     // openPanel owns initial loading and cache freshness. Revalidating on every

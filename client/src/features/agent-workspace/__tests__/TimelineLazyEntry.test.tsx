@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
-import { TimelineLazyEntry } from "../TimelineLazyEntry";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  TimelineLazyEntry,
+  TRANSCRIPT_ENTRY_READY_EVENT,
+} from "../TimelineLazyEntry";
 import type { ConversationTimelineEntry } from "../buildConversationTimeline";
 
 type ObserverCallback = (
@@ -109,6 +112,31 @@ describe("TimelineLazyEntry", () => {
 
     expect(screen.getByText("eager body")).toBeTruthy();
     expect(userEntry("e3", "eager body").kind).toBe("user");
+  });
+
+  it("flags a deferred body as pending and reports readiness after it mounts", async () => {
+    const { container } = render(
+      <TimelineLazyEntry entryId="e4" cacheKey="user-e4" estimate={120}>
+        <span>deferred body</span>
+      </TimelineLazyEntry>,
+    );
+    const anchor = document.getElementById("session-entry-e4");
+    expect(anchor?.getAttribute("data-entry-pending")).toBe("true");
+
+    const reported: string[] = [];
+    container.addEventListener(TRANSCRIPT_ENTRY_READY_EVENT, (event) => {
+      const target = event.target as HTMLElement | null;
+      reported.push(target?.dataset.sessionEntry ?? "");
+    });
+
+    await act(async () => {
+      FakeIntersectionObserver.instances[0]?.emit(true);
+    });
+
+    expect(screen.getByText("deferred body")).toBeTruthy();
+    expect(anchor?.getAttribute("data-entry-pending")).toBeNull();
+    // Two animation frames: the body lays out, then readiness is reported.
+    await waitFor(() => expect(reported).toEqual(["e4"]));
   });
 
   it("never reserves placeholder height for live rows, including after they settle", () => {

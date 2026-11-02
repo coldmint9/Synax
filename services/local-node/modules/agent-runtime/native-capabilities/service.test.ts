@@ -17,6 +17,7 @@ import { codeParentId } from "../code-mode/history.js";
 import { countTokens } from "../context-tokenizer.js";
 import { capabilityContract, disclose, readDisclosure, reconcileDisclosure } from "./disclosure.js";
 import type { RegisteredTool } from "../contracts.js";
+import { extensionStore } from '../../extensions/extension-store.js';
 
 let registry: ToolRegistry, id: string, dir: string;
 const projectId = "native-capability-test";
@@ -46,14 +47,71 @@ beforeEach(async () => {
   updateProjectSettings(projectId, { codeMode: { enabled: true, mcpTools: [tool(0).id] } }, "test");
   registry.register(tool(0));
 });
-afterEach(() => { vi.unstubAllEnvs(); clearSessionWorkspaceRoot(id); fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(async () => { vi.unstubAllEnvs(); clearSessionWorkspaceRoot(id); fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe("native capability lifecycle", () => {
+  it("runs approved composition reads concurrently with bounded, ordered audit receipts", async () => {
+    const batch = Promise.withResolvers<void>();
+    let active = 0, peak = 0;
+    registry.register({ ...tool(0), execute: async input => {
+      active++; peak = Math.max(peak, active);
+      if (active === 4) batch.resolve();
+      await batch.promise;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      return { result: { path: (input.args as { path: string }).path }, displaySummary: "Read", artifacts: [] };
+    } });
+    await discover([tool(0).id]);
+    await project();
+    const result = await run(`return await Promise.all(Array.from({length:8},(_,i)=>tools.call(${JSON.stringify(tool(0).id)},{path:String(i)})));`);
+    expect(result).toMatchObject({ status: "completed", value: Array.from({ length: 8 }, (_, i) => ({ path: String(i) })) });
+    expect(peak).toBe(4);
+    const receipts = store.listToolCalls(id).filter(record => codeParentId(record));
+    expect(receipts).toHaveLength(8);
+    expect(new Set(receipts.map(record => record.modelToolCallId)).size).toBe(8);
+    expect(receipts.every(record => record.status === "completed")).toBe(true);
+  });
+
+  it("lets a script recover from a caught read failure without poisoning later calls", async () => {
+    await project();
+    expect(await run(`try { await tools.call('file.read',{path:'missing.txt'}); } catch {} return (await tools.call('file.read',{path:'a.txt'})).content;`))
+      .toMatchObject({ status: "completed", value: "hello" });
+    const receipts = store.listToolCalls(id).filter(record => codeParentId(record));
+    // A missing path is a soft miss: the receipt completes and carries the
+    // advisory result, while the script still sees a rejection it can catch.
+    expect(receipts.map(record => record.status)).toEqual(["completed", "completed"]);
+    expect(JSON.stringify(receipts[0])).toContain("missing.txt");
+  });
+
+  it("preserves read/write/read dependencies even when submitted with Promise.all", async () => {
+    await project();
+    const result = await run(`const results = await Promise.all([
+      tools.call('file.read',{path:'a.txt'}),
+      tools.call('file.write',{path:'a.txt',content:'updated'}),
+      tools.call('file.read',{path:'a.txt'})
+    ]); return [results[0].content,results[2].content];`);
+    expect(result).toMatchObject({ status: "completed", value: ["hello", "updated"] });
+    expect(fs.readFileSync(path.join(dir, "a.txt"), "utf8")).toBe("updated");
+  });
+
+
+  it('exposes webSearch as a resident core tool without discovery', async () => {
+    const first = await project();
+    expect(first.tools.some(tool => tool.id === 'webSearch')).toBe(true);
+    const directoryLine = first.prompt.split('\n').find(line => line.startsWith('Deferred capability directory'));
+    expect(directoryLine).not.toContain('webSearch');
+    expect(() => registry.capabilities.assertContract(id, 'webSearch')).not.toThrow();
+    expect(store.listToolCalls(id).some(call => call.toolId === 'agent.discover')).toBe(false);
+  });
+
+
+
+
   it.each([1200, 9000])("delivers five complete file reads (%i chars each) and recovers exact evidence without replay", async (size) => {
     const paths = Array.from({ length: 5 }, (_, i) => `source-${i}.ts`);
     const contents = paths.map((_, i) => `export const item${i} = '${"中😀\\\"".repeat(size).slice(0, size)}';\n// tail-${i}`);
     paths.forEach((name, i) => fs.writeFileSync(path.join(dir, name), contents[i]));
-    const projection = project();
+    const projection = await project();
     expect(projection.tools.some(t => t.id === "code.result")).toBe(true);
     store.appendMessage({ id: "delivery-request", sessionId: id, runId: null, stepId: null, role: "user", content: "Read five files", metadata: { source: "turn_request" }, createdAt: "2026-01-01" });
     store.appendRun({ id: "delivery-run", sessionId: id, triggerMessageId: "delivery-request", status: "completed", startedAt: "2026-01-01", completedAt: null, currentStep: 0, stopReason: null, model: null, metadata: {} });
@@ -101,7 +159,7 @@ describe("native capability lifecycle", () => {
   });
 
   it("scopes saved returns to their session and rejects missing paths and non-Code-Mode records", async () => {
-    project();
+    await project();
     const execution = await registry.execute(id, "agent.execute", { code: 'return {items:[{text:"saved"}]};' });
     const executionId = execution.record.id;
     for (const args of [{ executionId, path: ["items", "9"] }, { executionId, path: ["toString"] }, { executionId, offset: 9999 }, { executionId: "missing" }]) {
@@ -114,7 +172,7 @@ describe("native capability lifecycle", () => {
   });
 
   it("does not replay a write when retrieving a large return", async () => {
-    project();
+    await project();
     const execution = await registry.execute(id, "agent.execute", { code: 'await tools.call("file.write",{path:"once.txt",content:"first"}); return "x".repeat(40000);' });
     expect(execution.record.status).toBe("completed");
     fs.writeFileSync(path.join(dir, "once.txt"), "second");
@@ -123,13 +181,23 @@ describe("native capability lifecycle", () => {
     expect(store.listToolCalls(id).filter(t => t.toolId === "file.write")).toHaveLength(1);
   });
 
+  it("resolves the model's short tool name inside Code Mode", async () => {
+    await project();
+    const execution = await registry.execute(id, "agent.execute", {
+      code: 'await tools.call("write",{path:"alias.txt",content:"from alias"}); return "ok";',
+    });
+    expect(execution.toolResult?.result).toMatchObject({ status: "completed", value: "ok" });
+    expect(fs.readFileSync(path.join(dir, "alias.txt"), "utf8")).toBe("from alias");
+    expect(store.listToolCalls(id).some(call => call.toolId === "file.write")).toBe(true);
+  });
+
   it("processes dependent reads in a program and exposes only the selected return value to the model", async () => {
     fs.writeFileSync(path.join(dir, "index.json"), JSON.stringify({ path: "rows.json", internal: "index-audit-only" }));
     fs.writeFileSync(path.join(dir, "rows.json"), JSON.stringify([
       { id: "a", amount: 3, internal: "row-audit-only" },
       { id: "b", amount: 8, internal: "row-audit-only" },
     ]));
-    const projection = project();
+    const projection = await project();
     store.appendMessage({ id: "program-request", sessionId: id, runId: null, stepId: null, role: "user", content: "Compute selected total", metadata: { source: "turn_request" }, createdAt: "2026-01-01" });
     store.appendRun({ id: "program-run", sessionId: id, triggerMessageId: "program-request", status: "running", startedAt: "2026-01-01", completedAt: null, currentStep: 0, stopReason: null, model: null, metadata: {} });
     store.appendRunStep({ id: "program-step", sessionId: id, runId: "program-run", index: 0, status: "completed", model: null, startedAt: "2026-01-01", completedAt: "2026-01-01", finishReason: "tool-calls", metadata: {} });
@@ -161,7 +229,7 @@ describe("native capability lifecycle", () => {
     })).toolResult?.result as { contracts: Array<{ id: string }>; missing: string[] };
     expect(result.contracts.map((item) => item.id)).toEqual([tool(0).id]);
     expect(result.missing).toEqual([]);
-    expect(project().tools.map((item) => item.id)).toContain(tool(0).id);
+    expect((await project()).tools.map((item) => item.id)).toContain(tool(0).id);
   });
 
   it("browses summaries without mounting tools and reports loaded state", async () => {
@@ -169,7 +237,7 @@ describe("native capability lifecycle", () => {
       mode: "list", group: "mcp.fixture", ids: [],
     })).toolResult?.result as { results: Array<{ id: string; loaded: boolean }>; contracts: unknown[] };
     expect(await browse()).toMatchObject({ results: [{ id: tool(0).id, loaded: false }], contracts: [] });
-    expect(project().tools.map((item) => item.id)).not.toContain(tool(0).id);
+    expect((await project()).tools.map((item) => item.id)).not.toContain(tool(0).id);
     await discover([tool(0).id]);
     expect(await browse()).toMatchObject({ results: [{ id: tool(0).id, loaded: true }] });
   });
@@ -185,7 +253,7 @@ describe("native capability lifecycle", () => {
   it("advertises MCP purposes and uses full dotted server IDs", async () => {
     const dotted = { ...tool(1), id: "mcp.docs.internal.read", discoveryGroup: "mcp.docs.internal", label: "Search product manuals" };
     registry.register(dotted);
-    expect(project().prompt).toContain("Search product manuals");
+    expect((await project()).prompt).toContain("Search product manuals");
     const result = (await registry.execute(id, "agent.discover", { group: "mcp.docs.internal" })).toolResult?.result as { contracts: Array<{ id: string; group: string }> };
     expect(result.contracts).toEqual([expect.objectContaining({ id: dotted.id, group: "mcp.docs.internal" })]);
   });
@@ -201,7 +269,7 @@ describe("native capability lifecycle", () => {
     expect(initializeProjectSettings("native-legacy-new-project").codeMode?.enabled).toBeUndefined();
   });
   it("keeps common reads and native execution available without discovery", async () => {
-    const ids = project().tools.map((item) => item.id);
+    const ids = (await project()).tools.map((item) => item.id);
     expect(ids).toContain("file.read");
     expect(ids).toContain("agent.discover");
     expect(ids).toContain("agent.execute");
@@ -213,6 +281,31 @@ describe("native capability lifecycle", () => {
     expect(result.value).toEqual({ read: true });
   });
 
+  it("exposes the super graph tools without a discovery round trip", async () => {
+    for (const superToolId of ["super.plan", "super.message", "super.close"])
+      registry.register({
+        id: superToolId,
+        label: superToolId,
+        description: `${superToolId} fixture`,
+        category: "task",
+        mutability: "task",
+        resumeBehavior: "auto",
+        inputSchema: z.object({}),
+        execute: () => ({
+          result: { ok: true },
+          displaySummary: superToolId,
+          artifacts: [],
+        }),
+      });
+    store.updateSessionMetadata(id, { mode: "super" });
+
+    const ids = (await project()).tools.map((item) => item.id);
+
+    expect(ids).toEqual(
+      expect.arrayContaining(["super.plan", "super.message", "super.close"]),
+    );
+  });
+
   it("composes file writes through the existing registry and mutation tracker", async () => {
     const result = await run('return await tools.call("file.write", {path:"generated.txt", content:"generated by the loop"});');
     expect(result.status).toBe("completed");
@@ -220,21 +313,27 @@ describe("native capability lifecycle", () => {
   });
 
   it("discovers contracts but does not execute them until the next projection", async () => {
-    project();
+    await project();
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("failed");
     expect((await discover([tool(0).id])).contracts[0].compose).toBe(true);
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("failed");
-    expect(project().tools.map((item) => item.id)).toContain(tool(0).id);
+    expect((await project()).tools.map((item) => item.id)).toContain(tool(0).id);
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
   });
 
   it("reuses an idempotent disclosure without rewriting session metadata", async () => {
     await discover([tool(0).id]);
-    const first = project();
-    const before = JSON.stringify(store.getSession(id).sessionMetadata);
+    const first = await project();
+    // Invocation analytics legitimately advance for every discover call;
+    // disclosure and advertised contracts must remain idempotent.
+    const visibility = () => {
+      const metadata = store.getSession(id).sessionMetadata;
+      return JSON.stringify([metadata?.capabilityDisclosure, metadata?.advertisedCapabilities]);
+    };
+    const before = visibility();
     await discover([tool(0).id]);
-    const after = JSON.stringify(store.getSession(id).sessionMetadata);
-    const second = project();
+    const after = visibility();
+    const second = await project();
 
     expect(after).toBe(before);
     expect(second.tools.map((item) => item.id)).toEqual(first.tools.map((item) => item.id));
@@ -245,16 +344,16 @@ describe("native capability lifecycle", () => {
     await discover([tool(0).id]);
     registry = new ToolRegistry();
     registry.register(tool(0));
-    expect(project().tools.map((item) => item.id)).toContain(tool(0).id);
+    expect((await project()).tools.map((item) => item.id)).toContain(tool(0).id);
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
   });
 
   it("refreshes changed schemas on the next projection and checks grants again at execution", async () => {
     await discover([tool(0).id]);
-    project();
+    await project();
     registry.register({ ...tool(0), inputSchema: z.object({ changed: z.boolean() }) });
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("failed");
-    const refreshed = project().tools.find((item) => item.id === tool(0).id);
+    const refreshed = (await project()).tools.find((item) => item.id === tool(0).id);
     expect(refreshed).toBeDefined();
     expect(z.toJSONSchema(refreshed!.inputSchema!)).toMatchObject({ properties: { changed: { type: "boolean" } } });
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {changed:true})`)).status).toBe("completed");
@@ -264,25 +363,25 @@ describe("native capability lifecycle", () => {
 
   it("keeps native execution available with deprecated composition flags", async () => {
     updateProjectSettings(projectId, { codeMode: { enabled: false } }, "test");
-    const projected = project();
+    const projected = await project();
     expect(projected.tools.map((item) => item.id)).toContain("agent.discover");
     expect(projected.tools.map((item) => item.id)).toContain("agent.execute");
     expect(projected.prompt).toContain("Use agent.execute");
     await discover(["file.write"]);
-    expect(project().tools.map((item) => item.id)).toContain("file.write");
+    expect((await project()).tools.map((item) => item.id)).toContain("file.write");
     expect((await discover(["file.write"])).contracts[0].compose).toBe(true);
     vi.stubEnv("SYNAX_NATIVE_CAPABILITIES", "0");
-    expect(project().prompt).toContain("Use agent.execute");
-    expect(project().tools.map((item) => item.id)).toContain("file.write");
+    expect((await project()).prompt).toContain("Use agent.execute");
+    expect((await project()).tools.map((item) => item.id)).toContain("file.write");
   });
 
-  it("ignores deprecated environment flags and excludes external backends", () => {
+  it("ignores deprecated environment flags and excludes external backends", async () => {
     vi.stubEnv("SYNAX_CODE_MODE", "0");
-    expect(project().tools.map((item) => item.id)).toContain("agent.execute");
+    expect((await project()).tools.map((item) => item.id)).toContain("agent.execute");
     store.updateSessionMetadata(id, { backend: { id: "acp" } });
-    expect(project().tools.map((item) => item.id)).not.toContain("agent.discover");
-    expect(project().tools.map((item) => item.id)).not.toContain("agent.execute");
-    expect(project().prompt).toBe("");
+    expect((await project()).tools.map((item) => item.id)).not.toContain("agent.discover");
+    expect((await project()).tools.map((item) => item.id)).not.toContain("agent.execute");
+    expect((await project()).prompt).toBe("");
   });
 
   it("rejects inherited disclosure state for a different session", async () => {
@@ -319,14 +418,14 @@ describe("native capability lifecycle", () => {
     for (let index = 1; index < 20; index++) registry.register(tool(index));
     for (let index = 0; index < 20; index += 4) {
       await discover(Array.from({ length: 4 }, (_, offset) => tool(index + offset).id));
-      project();
+      await project();
     }
     registry = new ToolRegistry();
     for (let index = 0; index < 20; index++) registry.register(tool(index));
-    const projected = project();
+    const projected = await project();
     const ids = projected.tools.map((item) => item.id);
     for (let index = 0; index < 20; index++) expect(ids).toContain(tool(index).id);
-    expect(project().tools.map((item) => item.id)).toEqual(ids);
+    expect((await project()).tools.map((item) => item.id)).toEqual(ids);
     expect(projected.prompt).toContain("stay loaded across turns and context compaction");
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("completed");
   });
@@ -337,14 +436,14 @@ describe("native capability lifecycle", () => {
     registry.register(large);
     const ids = [tool(0).id, large.id];
     expect((await discover(ids)).contracts.map((item) => item.id)).toEqual(ids);
-    expect(project().tools.map((item) => item.id)).toEqual(expect.arrayContaining(ids));
+    expect((await project()).tools.map((item) => item.id)).toEqual(expect.arrayContaining(ids));
   });
 
   it("removes unavailable tools from persisted disclosure and rejects stale execution", async () => {
     await discover([tool(0).id]);
-    project();
+    await project();
     registry = new ToolRegistry();
-    expect(project().tools.map((item) => item.id)).not.toContain(tool(0).id);
+    expect((await project()).tools.map((item) => item.id)).not.toContain(tool(0).id);
     expect(readDisclosure(store.getSession(id).sessionMetadata?.capabilityDisclosure, id).entries).toEqual([]);
     expect((await run(`return await tools.call(${JSON.stringify(tool(0).id)}, {path:"a"})`)).status).toBe("denied");
   });
@@ -358,7 +457,7 @@ describe("native capability lifecycle", () => {
       }))));
     };
     const full = countTokens(await serialize(registry.listForSession(id).filter((tool) => !["agent.discover", "agent.execute"].includes(tool.id))));
-    const reduced = countTokens(await serialize(project().tools));
+    const reduced = countTokens(await serialize((await project()).tools));
     expect(reduced / full).toBeLessThanOrEqual(0.5);
     console.info("capability-schema-baseline", { full, reduced, ratio: reduced / full });
   });

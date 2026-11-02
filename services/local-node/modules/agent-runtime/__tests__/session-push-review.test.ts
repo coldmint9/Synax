@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({ root: vi.fn(), invalidate: vi.fn() }));
 vi.mock('../session-store.js', () => ({ agentRuntimeStore: { getSession: () => ({ id: 's', projectId: 'p' }) } }));
 vi.mock('../session-environment.js', () => ({ resolveSessionRepository: mocks.root, invalidateSessionEnvironment: mocks.invalidate }));
 vi.mock('../session-git-branches.js', () => ({ switchSessionGitBranch: vi.fn() }));
+// Conflict resolution needs a model; keep the push path deterministic.
+vi.mock('../../../infrastructure/llm-runtime/gateway.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  generateGatewayTextResult: vi.fn().mockRejectedValue(new Error('gateway unavailable')),
+}));
 import { listSessionWorkspaceCommits, pushSessionWorkspace } from '../session-git-commit.js';
 let directory: string;
 let repo: string;
@@ -76,3 +81,93 @@ it('does not silently omit older commits from a long review', async () => {
   for (let index = 0; index < 205; index++) commit(`change ${index}`);
   expect((await listSessionWorkspaceCommits('s')).commits).toHaveLength(205);
 }, 30000);
+
+const gitAt = (cwd: string, ...args: string[]): string =>
+  execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+/** A second checkout that publishes to the same remote while this session works. */
+function createPeer(): string {
+  const peer = path.join(directory, 'peer');
+  execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: remote });
+  execFileSync('git', ['clone', '-q', remote, peer], { cwd: directory, encoding: 'utf8' });
+  gitAt(peer, 'config', 'user.name', 'Peer');
+  gitAt(peer, 'config', 'user.email', 'peer@example.com');
+  gitAt(peer, 'config', 'commit.gpgsign', 'false');
+  return peer;
+}
+
+it('pulls the remote branch before publishing instead of rejecting the push', async () => {
+  fs.writeFileSync(path.join(repo, 'local.txt'), 'local\n');
+  git('add', '.');
+  const local = commit('local work');
+
+  const peer = createPeer();
+  fs.writeFileSync(path.join(peer, 'remote.txt'), 'remote\n');
+  gitAt(peer, 'add', '.');
+  gitAt(peer, 'commit', '-qm', 'remote work');
+  gitAt(peer, 'push', '-q', 'origin', 'main');
+  const peerHead = gitAt(peer, 'rev-parse', 'HEAD');
+
+  await pushSessionWorkspace('s', {
+    expectedHeadSha: local,
+    expectedBranch: 'main',
+    expectedUpstream: 'origin/main',
+  });
+
+  // The sync merged the remote work into a merge commit and published both sides.
+  expect(git('rev-list', '--parents', '-n', '1', 'HEAD').split(' ')).toHaveLength(3);
+  expect(git('show', 'HEAD:remote.txt')).toBe('remote');
+  expect(git('show', 'HEAD:local.txt')).toBe('local');
+  expect(gitAt(remote, 'show', 'main:local.txt')).toBe('local');
+  expect(gitAt(remote, 'show', 'main:remote.txt')).toBe('remote');
+  expect(git('merge-base', '--is-ancestor', peerHead, 'HEAD')).toBe('');
+});
+
+it('stops the push on a pull conflict and keeps the merge for resolution', async () => {
+  fs.writeFileSync(path.join(repo, 'shared.txt'), 'base\n');
+  git('add', '.');
+  commit('base');
+  git('push', '-q', 'origin', 'main');
+
+  fs.writeFileSync(path.join(repo, 'shared.txt'), 'local\n');
+  git('add', '.');
+  const local = commit('local edit');
+
+  const peer = createPeer();
+  fs.writeFileSync(path.join(peer, 'shared.txt'), 'remote\n');
+  gitAt(peer, 'add', '.');
+  gitAt(peer, 'commit', '-qm', 'peer edit');
+  gitAt(peer, 'push', '-q', 'origin', 'main');
+
+  await expect(
+    pushSessionWorkspace('s', {
+      expectedHeadSha: local,
+      expectedBranch: 'main',
+      expectedUpstream: 'origin/main',
+    }),
+  ).rejects.toMatchObject({ code: 'GIT_PULL_CONFLICTS', status: 409 });
+
+  // Nothing was published, and the conflicting merge is still resolvable.
+  expect(gitAt(remote, 'show', 'main:shared.txt')).toBe('remote');
+  expect(fs.existsSync(path.join(repo, '.git', 'MERGE_HEAD'))).toBe(true);
+  expect(git('status', '--porcelain')).toContain('UU shared.txt');
+});
+
+it('refuses to pull while the index holds uncommitted staged work', async () => {
+  const peer = createPeer();
+  fs.writeFileSync(path.join(peer, 'remote.txt'), 'remote\n');
+  gitAt(peer, 'add', '.');
+  gitAt(peer, 'commit', '-qm', 'remote work');
+  gitAt(peer, 'push', '-q', 'origin', 'main');
+
+  fs.writeFileSync(path.join(repo, 'staged.txt'), 'staged\n');
+  git('add', 'staged.txt');
+
+  await expect(pushSessionWorkspace('s', { rootId: 'root' })).rejects.toMatchObject({
+    code: 'GIT_PUSH_STAGED_CHANGES',
+    status: 409,
+  });
+  // Nothing was merged or published behind the user's back.
+  expect(fs.existsSync(path.join(repo, '.git', 'MERGE_HEAD'))).toBe(false);
+  expect(gitAt(remote, 'ls-tree', '-r', '--name-only', 'main')).not.toContain('staged.txt');
+});

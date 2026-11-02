@@ -6,7 +6,31 @@ import { resolveRipgrep, RIPGREP_MISSING_HELP } from "./ripgrep.js";
 import * as z from "zod/v4";
 import type { RegisteredTool, ToolExecutionResult } from "../contracts.js";
 import { recordSessionFileDiscovery } from "../read-tracker.js";
-import { resolveWorkspacePath, toWorkspaceRelative, workspaceRoot } from "./workspace.js";
+import { toWorkspaceRelative, workspaceRoot } from "./workspace.js";
+import { probeReadPath, readPathMissResult } from "./read-path-probe.js";
+
+const SEARCH_PREVIEW_MAX_CHARS = 240;
+
+interface SearchLineMetadata {
+  truncated: boolean;
+  originalLength: number;
+}
+
+interface SearchLinePreview {
+  text: string;
+  metadata: SearchLineMetadata;
+}
+
+function previewSearchLine(value: string): SearchLinePreview {
+  const text = value.slice(0, SEARCH_PREVIEW_MAX_CHARS);
+  return {
+    text,
+    metadata: {
+      truncated: text.length < value.length,
+      originalLength: value.length,
+    },
+  };
+}
 
 export const grepSearchTool: RegisteredTool = {
   id: "grep.search",
@@ -94,10 +118,11 @@ export const grepSearchTool: RegisteredTool = {
         "query is required. Provide a text or regex pattern to search for. " +
           "Available options: query (required), path, limit, caseSensitive, regex, filePattern, excludePattern, contextLines, wordBoundary, multiline.",
       );
-    const requested = resolveWorkspacePath(args.path ?? ".", input.sessionId);
+    const probe = probeReadPath(args.path ?? ".", input.sessionId);
+    if (probe.kind === "missing") return readPathMissResult(probe);
+    const { absolutePath: requested, stat } = probe;
     const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
     const contextLines = Math.min(Math.max(args.contextLines ?? 0, 0), 5);
-    const stat = fs.statSync(requested);
     const cwd = stat.isDirectory() ? requested : path.dirname(requested);
 
     const rgArgs = [
@@ -218,12 +243,17 @@ async function runGrepSearch(
     path: string;
     line: number;
     preview: string;
+    previewMetadata: SearchLineMetadata;
     contextBefore?: string[];
+    contextBeforeMetadata?: SearchLineMetadata[];
     contextAfter?: string[];
+    contextAfterMetadata?: SearchLineMetadata[];
   }> = [];
   let currentMatch: (typeof hits)[number] | null = null;
   const contextBefore: string[] = [];
+  const contextBeforeMetadata: SearchLineMetadata[] = [];
   const contextAfter: string[] = [];
+  const contextAfterMetadata: SearchLineMetadata[] = [];
   let collectingAfter = false;
 
   for (const line of result.stdout.split(/\r?\n/)) {
@@ -243,13 +273,15 @@ async function runGrepSearch(
     }
 
     if (event.type === "context" && contextLines > 0) {
-      const text = (event.data?.lines?.text ?? "")
+      const line = previewSearchLine((event.data?.lines?.text ?? "")
         .replace(/\r?\n$/, "")
-        .slice(0, 240);
+      );
       if (collectingAfter) {
-        contextAfter.push(text);
+        contextAfter.push(line.text);
+        contextAfterMetadata.push(line.metadata);
       } else {
-        contextBefore.push(text);
+        contextBefore.push(line.text);
+        contextBeforeMetadata.push(line.metadata);
       }
       continue;
     }
@@ -257,8 +289,10 @@ async function runGrepSearch(
     if (event.type === "match") {
       if (currentMatch && contextLines > 0) {
         currentMatch.contextAfter = [...contextAfter];
+        currentMatch.contextAfterMetadata = [...contextAfterMetadata];
       }
       contextAfter.length = 0;
+      contextAfterMetadata.length = 0;
       collectingAfter = true;
 
       if (!event.data?.path?.text || typeof event.data.line_number !== "number")
@@ -267,17 +301,21 @@ async function runGrepSearch(
       const fileInfo = fs.statSync(absolutePath);
       if (fileInfo.size > 256_000) continue;
 
+      const preview = previewSearchLine(
+        (event.data?.lines?.text ?? "").replace(/\r?\n$/, ""),
+      );
       currentMatch = {
         path: toWorkspaceRelative(absolutePath, sessionId),
         line: event.data.line_number,
-        preview: (event.data.lines?.text ?? "")
-          .replace(/\r?\n$/, "")
-          .slice(0, 240),
+        preview: preview.text,
+        previewMetadata: preview.metadata,
       };
       if (contextLines > 0) {
         currentMatch.contextBefore = [...contextBefore];
+        currentMatch.contextBeforeMetadata = [...contextBeforeMetadata];
       }
       contextBefore.length = 0;
+      contextBeforeMetadata.length = 0;
       hits.push(currentMatch);
       recordSessionFileDiscovery(sessionId, currentMatch.path);
       if (hits.length >= limit) break;
@@ -287,9 +325,12 @@ async function runGrepSearch(
     if (event.type === "end") {
       if (currentMatch && contextLines > 0) {
         currentMatch.contextAfter = [...contextAfter];
+        currentMatch.contextAfterMetadata = [...contextAfterMetadata];
       }
       contextBefore.length = 0;
+      contextBeforeMetadata.length = 0;
       contextAfter.length = 0;
+      contextAfterMetadata.length = 0;
       currentMatch = null;
       collectingAfter = false;
     }
@@ -297,6 +338,7 @@ async function runGrepSearch(
 
   if (currentMatch && contextLines > 0 && contextAfter.length > 0) {
     currentMatch.contextAfter = [...contextAfter];
+    currentMatch.contextAfterMetadata = [...contextAfterMetadata];
   }
 
   return searchResult(prepared, hits, false);
@@ -371,17 +413,22 @@ async function runGrepFallback(
     path: string;
     line: number;
     preview: string;
+    previewMetadata: SearchLineMetadata;
     contextBefore?: string[];
+    contextBeforeMetadata?: SearchLineMetadata[];
     contextAfter?: string[];
+    contextAfterMetadata?: SearchLineMetadata[];
   }> = [];
   let current: (typeof hits)[number] | null = null;
   let before: string[] = [];
+  let beforeMetadata: SearchLineMetadata[] = [];
   const allowed = (relativePath: string): boolean =>
     (!filePattern || matchesSearchGlob(relativePath, filePattern)) &&
     (!excludePattern || !matchesSearchGlob(relativePath, excludePattern));
   const finish = (): void => {
     current = null;
     before = [];
+    beforeMetadata = [];
   };
 
   for (const outputLine of stdout.split(/\r?\n/)) {
@@ -399,8 +446,14 @@ async function runGrepFallback(
     )
       continue;
     if (separator === "-") {
-      if (current) (current.contextAfter ??= []).push(text.slice(0, 240));
-      else before.push(text.slice(0, 240));
+      const line = previewSearchLine(text);
+      if (current) {
+        (current.contextAfter ??= []).push(line.text);
+        (current.contextAfterMetadata ??= []).push(line.metadata);
+      } else {
+        before.push(line.text);
+        beforeMetadata.push(line.metadata);
+      }
       continue;
     }
     if (current && contextLines > 0) current.contextAfter ??= [];
@@ -409,13 +462,19 @@ async function runGrepFallback(
     } catch {
       continue;
     }
+    const preview = previewSearchLine(text);
     current = {
       path: toWorkspaceRelative(absolutePath, sessionId),
       line: Number(lineText),
-      preview: text.slice(0, 240),
+      preview: preview.text,
+      previewMetadata: preview.metadata,
     };
-    if (contextLines > 0 && before.length) current.contextBefore = before;
+    if (contextLines > 0 && before.length) {
+      current.contextBefore = before;
+      current.contextBeforeMetadata = beforeMetadata;
+    }
     before = [];
+    beforeMetadata = [];
     hits.push(current);
     if (hits.length >= limit) break;
   }

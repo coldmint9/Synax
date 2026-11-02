@@ -28,20 +28,64 @@ import {
   runtimeClient,
   seedSession,
 } from "./sidecar/runtime-repository.js";
+import { RuntimeSidecarError } from "./sidecar/sidecar-client.js";
 import {
   projectSessionUsage,
   type SessionUsageProjection,
 } from "./usage-projection.js";
 import {
+  isUserInputMessage,
   readSessionAnalytics,
   withCompletedRunAnalytics,
   withStepAnalytics,
   withToolCallAnalytics,
+  withUserInputAnalytics,
   type SessionAnalytics,
 } from "./analytics-projection.js";
 import type { WorkRecord } from "./work-store.js";
+import {
+  accumulateWaitWindow,
+  isAwaitingUser,
+  isParkedStep,
+  type WaitWindow,
+} from "./step-execution-time.js";
+import { logger } from "../../infrastructure/runtime/logger.js";
 
 type Entity = { id: string; sessionId?: string | null };
+export type SessionRetirementReason = "archived" | "deleted";
+export interface SessionRetirement {
+  session: AgentSession;
+  reason: SessionRetirementReason;
+}
+type SessionRetirementListener = (event: SessionRetirement) => void;
+const retirementListeners = new Set<SessionRetirementListener>();
+
+/**
+ * Observe sessions that are leaving the visible set, before their record is
+ * gone. Retired statistics are the reason this exists: a permanent delete
+ * removes the session directory, so listeners must persist what they need now.
+ */
+export function onSessionRetired(
+  listener: SessionRetirementListener,
+): () => void {
+  retirementListeners.add(listener);
+  return () => {
+    retirementListeners.delete(listener);
+  };
+}
+function notifySessionRetired(event: SessionRetirement): void {
+  for (const listener of [...retirementListeners]) {
+    try {
+      listener({ session: copy(event.session), reason: event.reason });
+    } catch (error) {
+      // A listener is an observer: it must never break archiving or deleting.
+      logger.warn(
+        { error, sessionId: event.session.id, reason: event.reason },
+        "[agent-runtime] session retirement listener failed",
+      );
+    }
+  }
+}
 export interface SessionArchiveBatch {
   archiveBatchId: string;
   rootSessionId: string;
@@ -202,8 +246,15 @@ export class AgentRuntimeStore {
         const kind = operation.startsWith('permission_') ? 'permission' : 'interaction';
         const record = result.entity as Entity;
         this.collection(kind).set(record.id, copy(record));
+        // A replayed control is answered from its receipt, but this reconcile
+        // keeps one stable request id while the session revision keeps moving,
+        // so the sidecar reports a conflict instead of a replay. The first
+        // application already refreshed the projection; a later revision is
+        // published by its own write.
         await runtimeClient().historyCommand({ sessionId, requestId: `control-history:${createHash('sha256').update(requestId).digest('hex')}`,
-          operation: 'reconcile_stream', payload: {} });
+          operation: 'reconcile_stream', payload: {} }).catch(error => {
+          if (!(error instanceof RuntimeSidecarError) || error.code !== 'REQUEST_CONFLICT') throw error;
+        });
       }
     });
   }
@@ -271,6 +322,9 @@ export class AgentRuntimeStore {
       if (boundary !== undefined) {
         const refs: Array<{ kind: string; id: string }> = [];
         if (snapshot.session.contextSnapshotId) refs.push({ kind: "context", id: snapshot.session.contextSnapshotId });
+        const loadedSkills = snapshot.session.sessionMetadata?.loadedSkillContexts;
+        if (loadedSkills && typeof loadedSkills === "object")
+          for (const id of Object.values(loadedSkills)) if (typeof id === "string") refs.push({ kind: "context", id });
         const activeWorkId = snapshot.session.sessionMetadata?.activeWorkId;
         if (typeof activeWorkId === "string") refs.push({ kind: "work", id: activeWorkId });
         const plan = snapshot.session.sessionMetadata?.plan as { id?: string } | undefined;
@@ -528,7 +582,7 @@ export class AgentRuntimeStore {
       const parent = this.getSession(session.parentSessionId);
       this.updateSession(parent.id, {
         childSessionIds: [...new Set([...parent.childSessionIds, session.id])],
-        updatedAt: session.createdAt,
+        ...(session.sessionMetadata?.subagentKind === "side-chat" ? {} : { updatedAt: session.createdAt }),
       });
     }
     return copy(session);
@@ -624,6 +678,13 @@ export class AgentRuntimeStore {
     this.writeSessionAnalytics(
       call.sessionId,
       withToolCallAnalytics(current, call.toolId),
+    );
+  }
+  private recordUserInputAnalytics(message: AgentRuntimeMessage): void {
+    if (!isUserInputMessage(message)) return;
+    this.writeSessionAnalytics(
+      message.sessionId,
+      withUserInputAnalytics(this.sessionAnalytics(message.sessionId), message.id),
     );
   }
   listSessionBadges(projectIds: string[]) {
@@ -722,6 +783,10 @@ export class AgentRuntimeStore {
       if (childSessionIds.length !== session.childSessionIds.length)
         this.updateSession(session.id, { childSessionIds });
     }
+    // The record still holds the last full snapshot; hand it over before the
+    // archived state makes the session invisible to statistics.
+    for (const s of items)
+      notifySessionRetired({ session: s, reason: "archived" });
     for (const s of items)
       this.updateSessionMetadata(s.id, { archivedAt, archiveBatchId: id });
     for (const s of items)
@@ -808,6 +873,10 @@ export class AgentRuntimeStore {
       if (childSessionIds.length !== session.childSessionIds.length)
         this.updateSession(session.id, { childSessionIds });
     }
+    // Capture the contribution before the record (and later its history
+    // directory) is gone; this is the only chance to keep the numbers.
+    for (const s of items)
+      notifySessionRetired({ session: s, reason: "deleted" });
     for (const s of items) {
       this.updateSession(s.id, {
         sessionMetadata: { ...s.sessionMetadata, deletedAt: nowIso() },
@@ -849,6 +918,7 @@ export class AgentRuntimeStore {
         Number(prior?.metadata.eventSeq ?? 0) > Number(message.metadata.eventSeq ?? 0)) return;
     this.collection("message").set(message.id, copy(message));
     this.messageSequences.set(message.sessionId, Math.max(this.messageSequences.get(message.sessionId) ?? 0, message.sequence ?? 0));
+    if (!prior) this.recordUserInputAnalytics(message);
   }
   appendMessage(message: AgentRuntimeMessage): AgentRuntimeMessage {
     const prior = this.getRecord<AgentRuntimeMessage & { sequence?: number }>(
@@ -857,7 +927,9 @@ export class AgentRuntimeStore {
     );
     const sequence = prior?.sequence ?? (this.messageSequences.get(message.sessionId) ?? 0) + 1;
     this.messageSequences.set(message.sessionId, Math.max(sequence, this.messageSequences.get(message.sessionId) ?? 0));
-    return this.saveRecord("message", { ...message, sequence });
+    const saved = this.saveRecord("message", { ...message, sequence });
+    if (!prior) this.recordUserInputAnalytics(saved);
+    return saved;
   }
   getMessage(sessionId: string, id: string): AgentRuntimeMessage | undefined {
     const m = this.getRecord<AgentRuntimeMessage>("message", id);
@@ -965,9 +1037,64 @@ export class AgentRuntimeStore {
     );
   }
   appendRunStep(step: AgentRunStep) {
-    const saved = this.saveRecord("step", step);
+    const saved = this.saveRecord("step", this.trackStepExecutionTime(step));
     this.recordStepAnalytics(saved);
     return saved;
+  }
+  /**
+   * Records the parts of a step span in which the step did not execute.
+   *
+   * `completedAt - startedAt` is wall time: it contains a form waiting for the
+   * user, a pending permission reply, child sessions and — after a quit — the
+   * whole downtime, because recovery stamps the end at restart. Measuring it as
+   * execution time is what made project totals far exceed real work, so the
+   * store accumulates parked time and the last real activity on the step itself.
+   * It also keeps the part of that span the user owned, so the transcript can
+   * report work time without the time it waited for the reader. Both the
+   * incremental mirror and the authoritative backfill read these keys.
+   */
+  private trackStepExecutionTime(step: AgentRunStep): AgentRunStep {
+    const prior = this.collection("step").get(step.id) as AgentRunStep | undefined;
+    const now = Date.now();
+    const priorMetadata = (prior?.metadata ?? {}) as Record<string, unknown>;
+    const metadata: Record<string, unknown> = { ...step.metadata };
+    const parkedNow = isParkedStep(step);
+    const recorded = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+    const storedMs = (key: string) => recorded(priorMetadata[key]);
+    const storedSince = (key: string) =>
+      typeof priorMetadata[key] === "string" ? priorMetadata[key] as string : null;
+    const trackWindow = (msKey: string, sinceKey: string, window: WaitWindow) => {
+      if (window.ms > 0) metadata[msKey] = window.ms;
+      else delete metadata[msKey];
+      if (window.since) metadata[sinceKey] = window.since;
+      else delete metadata[sinceKey];
+    };
+    // `analyticsParkedMs` keeps its former meaning — every idle span, including
+    // child sessions — while `analyticsUserWaitMs` covers only the spans the
+    // user owned: a form answer or a pending permission reply. The transcript
+    // reports work time from the second one, because waiting for the reader is
+    // not time the agent spent working.
+    trackWindow("analyticsParkedMs", "analyticsParkedSince", accumulateWaitWindow(
+      {
+        ms: Math.max(storedMs("analyticsParkedMs"), recorded(metadata.analyticsParkedMs)),
+        since: storedSince("analyticsParkedSince"),
+      },
+      parkedNow,
+      now,
+    ));
+    trackWindow("analyticsUserWaitMs", "analyticsUserWaitSince", accumulateWaitWindow(
+      { ms: storedMs("analyticsUserWaitMs"), since: storedSince("analyticsUserWaitSince") },
+      isAwaitingUser(step),
+      now,
+    ));
+    // Only a running step produces activity. A terminal write must not hide
+    // when the step actually stopped, or a restart gap looks like work.
+    if (!parkedNow && step.status === "running") {
+      metadata.analyticsLastActiveAt = new Date(now).toISOString();
+    }
+    if (JSON.stringify(metadata) === JSON.stringify(step.metadata)) return step;
+    return { ...step, metadata };
   }
   getRunStep(id: string) {
     return this.requireRecord<AgentRunStep>("step", id);

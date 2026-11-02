@@ -41,6 +41,28 @@ describe('emitSessionLive', () => {
 
     process.send = originalSend;
   });
+
+  it('forwards tool_call start markers from agent child processes', () => {
+    process.env.SYNAX_AGENT_SESSION_CHILD = '1';
+    const sent: unknown[] = [];
+    const originalSend = process.send;
+    process.send = ((message: unknown) => {
+      sent.push(message);
+      return true;
+    }) as typeof process.send;
+
+    const toolCall = {
+      id: 'tool-1', sessionId, runId: 'run-1', stepId: 'step-1',
+      modelToolCallId: 'model-1', toolId: 'subagent.delegate', category: 'task',
+      mutability: 'task', argsHash: 'hash', inputSummary: 'delegate', inputRef: {},
+      outputSummary: null, outputRef: null, status: 'running',
+      permissionDecisionId: null, startedAt: '2026-01-01T00:00:00.000Z', endedAt: null, error: null,
+    } as never;
+    emitSessionLive(sessionId, { type: 'tool_call', stepId: 'step-1', toolCall });
+
+    expect(sent).toEqual([{ type: 'session:live', sessionId, event: { type: 'tool_call', stepId: 'step-1', toolCall } }]);
+    process.send = originalSend;
+  });
 });
 
 describe('forwardChunkToLiveBus', () => {

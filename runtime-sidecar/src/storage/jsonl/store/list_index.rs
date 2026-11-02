@@ -1,9 +1,27 @@
 //! The root-level sorted view of session summaries for paging.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use serde_json::Value;
+use std::sync::Arc;
+
+struct Entry {
+    row: Value,
+    encoded: Arc<[u8]>,
+    badge: Arc<[u8]>,
+}
+impl Entry {
+    fn new(row: Value) -> Self {
+        let row = super::list_projection::summary(&row);
+        let encoded = serde_json::to_vec(&row).expect("JSON value").into();
+        let badge = serde_json::to_vec(&super::list_projection::badge(&row)).expect("JSON value").into();
+        Self { row, encoded, badge }
+    }
+}
 
 use crate::storage::jsonl::error::JsonlResult;
 use crate::storage::jsonl::record::{ListRecord, Record};
@@ -16,7 +34,7 @@ const PAGE_BYTES: usize = 900 * 1024;
 
 #[derive(Default)]
 pub struct ListIndex {
-    rows: BTreeMap<ListKey, Value>,
+    rows: BTreeMap<ListKey, Entry>,
     by_id: HashMap<String, ListKey>,
 }
 
@@ -36,17 +54,10 @@ impl ListIndex {
         Ok(index)
     }
 
-    fn apply(&mut self, mut row: ListRecord) {
+    fn apply(&mut self, row: ListRecord) {
         // Control probes can open an unseeded session. It has no list row yet.
         if !row.del && !row.h.is_object() {
             return;
-        }
-        if let Some(metadata) = row
-            .h
-            .get_mut("sessionMetadata")
-            .and_then(Value::as_object_mut)
-        {
-            metadata.remove("latestSystemPrompt");
         }
         if let Some(previous) = self.by_id.remove(&row.s) {
             self.rows.remove(&previous);
@@ -54,7 +65,7 @@ impl ListIndex {
         if !row.del {
             let key = (std::cmp::Reverse(row.u.clone()), row.s.clone());
             self.by_id.insert(row.s, key.clone());
-            self.rows.insert(key, row.h);
+            self.rows.insert(key, Entry::new(row.h));
         }
     }
 
@@ -83,16 +94,13 @@ impl ListIndex {
         let mut next = None;
         let start = after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
         for (key, row) in self.rows.range((start, std::ops::Bound::Unbounded)) {
-            let cost = serde_json::to_vec(row)
-                .map(|bytes| bytes.len())
-                .unwrap_or(0)
-                + 1;
-            if items.len() == limit || bytes + cost > PAGE_BYTES {
+            let cost = row.encoded.len() + 1;
+            if items.len() == limit || (!items.is_empty() && bytes + cost > PAGE_BYTES) {
                 return (items, next);
             }
             bytes += cost;
             next = Some(key.clone());
-            items.push(row.clone());
+            items.push(row.row.clone());
         }
         let more = self
             .rows
@@ -110,16 +118,45 @@ impl ListIndex {
         self.by_id
             .get(id)
             .and_then(|key| self.rows.get(key))
-            .cloned()
+            .map(|entry| entry.row.clone())
+    }
+
+    /// Encode cached rows without JSON traversal, deep clones, or holding a
+    /// mutable session actor. Both projections have the same stable cursor.
+    pub fn page_json(&self, after: Option<&ListKey>, badges: bool) -> Vec<u8> {
+        let start = after.map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+        let mut bytes = Vec::with_capacity(8192);
+        bytes.extend_from_slice(b"{\"items\":[");
+        let mut count = 0;
+        let mut last = None;
+        let mut more = false;
+        for (key, entry) in self.rows.range((start, std::ops::Bound::Unbounded)) {
+            let row = if badges { &entry.badge } else { &entry.encoded };
+            if count == PAGE_ITEMS || (count > 0 && bytes.len() + row.len() + 2048 > PAGE_BYTES) {
+                more = true;
+                break;
+            }
+            if count > 0 { bytes.push(b','); }
+            bytes.extend_from_slice(row);
+            count += 1;
+            last = Some(key);
+        }
+        bytes.extend_from_slice(b"],\"next\":");
+        let cursor = if more { last.map(Self::encode_cursor) } else { None };
+        serde_json::to_writer(&mut bytes, &cursor).expect("list cursor");
+        bytes.extend_from_slice(b",\"loading\":false}");
+        bytes
     }
 
     /// Process bookkeeping can change recovery eligibility without changing
     /// any other list field. Update this scalar in place, not the large row.
     pub fn set_recovery_required(&mut self, id: &str, required: bool) {
         if let Some(key) = self.by_id.get(id)
-            && let Some(row) = self.rows.get_mut(key).and_then(Value::as_object_mut)
+            && let Some(entry) = self.rows.get_mut(key)
+            && entry.row["runtimeRecoveryRequired"] != Value::Bool(required)
         {
-            row.insert("runtimeRecoveryRequired".into(), Value::Bool(required));
+            entry.row["runtimeRecoveryRequired"] = Value::Bool(required);
+            entry.encoded = serde_json::to_vec(&entry.row).expect("JSON value").into();
         }
     }
 

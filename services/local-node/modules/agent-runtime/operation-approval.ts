@@ -115,7 +115,7 @@ export function reviewOperation(
   const toolId =
     typeof input.metadata?.toolId === "string" ? input.metadata.toolId : "";
   const args = (input.metadata?.args ?? {}) as Record<string, unknown>;
-  const command =
+  const command = toolId === "run" ? null :
     typeof input.metadata?.command === "string"
       ? input.metadata.command
       : typeof args.command === "string"
@@ -219,6 +219,11 @@ export function reviewOperation(
       "network",
     );
   if (shell) {
+    // run's argv is not shell text, and scripts are arbitrary programs. Keep
+    // both manual under auto/boundary rather than guessing from their source.
+    // Their declared cwd/argv paths have already undergone the review above.
+    if (toolId === "run")
+      return request("Run commands and scripts require explicit approval in this mode.", "shell");
     const simple =
       command !== null &&
       /^[\p{L}\p{N}\s_./:-]+$/u.test(command) &&

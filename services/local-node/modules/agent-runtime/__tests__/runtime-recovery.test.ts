@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { admitActiveFixtureRun, resetAgentRuntimeFixtures, plannerSessionInput } from "./agent-runtime-fixtures.js";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore } from "../session-store.js";
+import { ensureSynaxAgentRegistered } from "../synax/index.js";
+import { interactionService } from "../interaction-service.js";
+import { makeRuntimeId, nowIso } from "../runtime-ids.js";
 import { runtimeFacade } from "../sidecar/runtime-facade.js";
 import { runtimeClient } from "../sidecar/runtime-repository.js";
 import { needsRuntimeRecovery, recoverRuntime, recoverRuntimeSession } from "../runtime-recovery.js";
@@ -9,6 +12,28 @@ import { needsRuntimeRecovery, recoverRuntime, recoverRuntimeSession } from "../
 beforeEach(async () => {
   await resetAgentRuntimeFixtures();
 });
+
+/** Park a real fixture run on a human question, exactly like `human.ask`. */
+async function parkOnQuestion(sessionId: string) {
+  const run = await admitActiveFixtureRun(sessionId, "Ask which file");
+  const at = nowIso();
+  const step = agentRuntimeStore.appendRunStep({
+    id: makeRuntimeId("stp"), runId: run.id, sessionId, index: 1, status: "running",
+    model: null, startedAt: at, completedAt: null, finishReason: null, metadata: {},
+  });
+  const call = agentRuntimeStore.appendToolCall({
+    id: makeRuntimeId("call"), sessionId, runId: run.id, stepId: step.id,
+    modelToolCallId: "provider-question", toolId: "human.ask", category: "task",
+    mutability: "read", argsHash: "", inputSummary: "Which file?", inputRef: {},
+    outputSummary: null, outputRef: null, status: "running", permissionDecisionId: null,
+    startedAt: at, endedAt: null, error: null,
+  });
+  const form = await interactionService.requestAuthoritative({
+    sessionId, runId: run.id, stepId: step.id, toolCallId: call.id, kind: "clarification",
+    request: { title: "Pick a file", questions: [{ id: "file", type: "text", label: "Which file?" }] },
+  });
+  return { run, step, call, form };
+}
 
 describe("recoverRuntime", () => {
   it("cleans up an uncommitted fork from a previous host without exposing an empty session", async () => {
@@ -127,5 +152,46 @@ describe("recoverRuntime", () => {
     const settled = await runtimeFacade.uiSnapshotAuthoritative(sessionId);
     expect(settled.session.status).toBe("interrupted");
     expect((settled.session.sessionMetadata as { runtimeControl?: unknown } | undefined)?.runtimeControl ?? null).toBeNull();
+  });
+
+  it("keeps an interrupted question answerable instead of pausing the session", async () => {
+    ensureSynaxAgentRegistered();
+    const session = agentSessionRuntime.create({ ...plannerSessionInput, profileId: "synax", workDir: process.cwd() });
+    const { form, call } = await parkOnQuestion(session.id);
+
+    // The user closed the app while the form was open; the next launch has a new host.
+    await recoverRuntimeSession("new-host", session.id);
+
+    const recovered = await runtimeFacade.uiSnapshotAuthoritative(session.id);
+    expect(recovered.session).toMatchObject({
+      status: "waiting_input",
+      activeRunId: null,
+      pendingResumeToken: `interaction:${form.id}`,
+      blockedReason: "Pick a file",
+    });
+    expect(recovered.run!.status).toBe("interrupted");
+    // The question survives: the answer still starts the continuation turn,
+    // and nothing auto-continues the work without it.
+    expect(interactionService.pending(session.id)).toMatchObject({ id: form.id, status: "pending" });
+    const control = await runtimeFacade.controlState(session.id) as { interactions?: Array<Record<string, unknown>> };
+    expect(control.interactions).toContainEqual(expect.objectContaining({ id: form.id, status: "pending" }));
+    expect(agentRuntimeStore.getToolCall(session.id, call.id).status).toBe("pending");
+    expect(agentRuntimeStore.getSession(session.id)).toMatchObject({
+      status: "waiting_input",
+      activeRunId: null,
+      pendingResumeToken: `interaction:${form.id}`,
+    });
+  });
+
+  it("still pauses a session whose interrupted run had no open question", async () => {
+    const session = agentSessionRuntime.create({ ...plannerSessionInput, workDir: process.cwd() });
+    const run = await admitActiveFixtureRun(session.id, "Write the file");
+
+    await recoverRuntimeSession("new-host", session.id);
+
+    const recovered = await runtimeFacade.uiSnapshotAuthoritative(session.id);
+    expect(recovered.session).toMatchObject({ status: "paused", activeRunId: null, pendingResumeToken: null });
+    expect(recovered.run!.status).toBe("interrupted");
+    expect(run.id).toBe(recovered.run!.id);
   });
 });

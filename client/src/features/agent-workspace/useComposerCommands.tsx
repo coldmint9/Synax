@@ -1,4 +1,5 @@
 import { composerMenuPosition } from "./composerMenuPosition";
+import { composerErrorText } from "./composerErrorPresentation";
 import { createPortal } from "react-dom";
 import { ComposerContextPicker } from "./ComposerContextPicker";
 import {
@@ -15,7 +16,7 @@ import {
   Bot,
   Plug,
   Sparkles,
-  Target,
+  Goal,
   X,
 } from "lucide-react";
 import {
@@ -25,13 +26,14 @@ import {
   type TurnReferenceOption,
 } from "../../adapters/transport/agentRuntime";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { turnReferenceIcon, turnReferenceKindLabel } from "./turnReferences";
 
 const commands = [
   { id: "subagent", zh: "自定义子代理", en: "Custom subagent", Icon: Bot },
   { id: "skill", zh: "技能", en: "Skill", Icon: Sparkles },
   { id: "mcp", zh: "MCP 服务", en: "MCP server", Icon: Plug },
   { id: "file", zh: "项目文件", en: "Project file", Icon: FileText },
-  { id: "goal", zh: "目标模式", en: "Goal mode", Icon: Target },
+  { id: "goal", zh: "目标模式", en: "Goal mode", Icon: Goal },
 ] as const;
 
 type CommandId = (typeof commands)[number]["id"];
@@ -72,6 +74,7 @@ export function useComposerCommands({
   disabled,
   onAttachFiles,
   onOpenSideChat,
+  allowSubagents = true,
 }: {
   projectId: string;
   sessionId?: string;
@@ -87,6 +90,7 @@ export function useComposerCommands({
   disabled: boolean;
   onAttachFiles?: (files: File[]) => void;
   onOpenSideChat?: () => void;
+  allowSubagents?: boolean;
 }) {
   const { locale } = useLocale(),
     zh = locale === "zh";
@@ -202,6 +206,7 @@ export function useComposerCommands({
   }, [Boolean(query), references.length, mode]);
 
   const unavailable = (id: CommandId) => {
+    if (id === "subagent" && !allowSubagents) return zh ? "当前子会话不支持委派" : "Delegation is unavailable in this conversation";
     if ((id === "skill" || id === "mcp" || id === "subagent") && !native)
       return zh ? "此后端使用原生配置" : "Managed by this backend";
     if (["plan", "goal"].includes(id) && !modeEnabled)
@@ -322,6 +327,7 @@ export function useComposerCommands({
       onChange={setReferences}
       disabled={disabled}
       compactDisabled={compactDisabled}
+      allowSubagents={allowSubagents}
       onOpenChange={setContextOpen}
       onOpen={() => setQuery(null)}
       onAttachFiles={onAttachFiles}
@@ -335,21 +341,21 @@ export function useComposerCommands({
   );
   const header = references.length > 0 && (
     <div
-      className="session-composer-reference-tags"
+      className="session-reference-tags"
       aria-label={zh ? "本条消息引用" : "References for this message"}
     >
       {references.map((ref) => {
-        const Icon = commands.find((cmd) => cmd.id === ref.kind)!.Icon;
+        const Icon = turnReferenceIcon(ref.kind);
         return (
           <span
             key={`${ref.kind}:${ref.id}`}
-            className="session-composer-reference-tag"
+            className="session-reference-tag"
             data-kind={ref.kind}
             title={ref.id}
           >
             <Icon size={12} />
             <span>
-              {ref.kind} · {ref.label ?? ref.id}
+              {turnReferenceKindLabel(ref.kind, zh)} · {ref.label ?? ref.id}
             </span>
             <button
               type="button"
@@ -413,10 +419,10 @@ export function useComposerCommands({
         {loading && <p role="status">{zh ? "正在加载…" : "Loading…"}</p>}
         {!loading && rows.length === 0 && (
           <p role={error ? "alert" : "status"}>
-            {error || (zh ? "没有匹配项" : "No matches")}
+            {error ? composerErrorText(error, locale) : (zh ? "没有匹配项" : "No matches")}
           </p>
         )}
-        {error && rows.length > 0 && <p role="alert">{error}</p>}
+        {error && rows.length > 0 && <p role="alert">{composerErrorText(error, locale)}</p>}
         <div className="session-composer-command-help">
           <span>↑ ↓ {zh ? "选择" : "navigate"}</span>
           <span>↵ {zh ? "确认" : "select"}</span>

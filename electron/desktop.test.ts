@@ -29,6 +29,8 @@ const stageRuntimeSidecar = vi.hoisted(() => vi.fn().mockResolvedValue(undefined
 vi.mock("../scripts/stage-runtime-sidecar.js", () => ({ stageRuntimeSidecar }));
 const stageCuaDriver = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../scripts/stage-cua-driver.js", () => ({ stageCuaDriver }));
+const stagePythonRuntime = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("../scripts/stage-python-runtime.js", () => ({ stagePythonRuntime }));
 const validateCuaArtifact = vi.hoisted(() => vi.fn());
 vi.mock("../scripts/validate-cua-artifact.js", () => ({ validateCuaArtifact }));
 vi.mock("electron", () => electron);
@@ -40,6 +42,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { buildAppMenu, setUiUpdateAction, updateMenuState } from "./menu.js";
+import { configureUpdateSettings, DEFAULT_UPDATE_SETTINGS } from "./updater/update-settings.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import {
   startSidecar,
@@ -194,6 +197,8 @@ describe("desktop UI update menu", () => {
     (platformName) => {
       onPlatform(platformName);
       electron.app.isPackaged = true;
+      // Online updates are opt-in; the manual check only exists once enabled.
+      configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS, enabled: true });
       const check = vi.fn();
       setUiUpdateAction(check);
       const items = electron.Menu.buildFromTemplate.mock.lastCall![0] as any[];
@@ -205,6 +210,7 @@ describe("desktop UI update menu", () => {
       command.click();
       expect(check).toHaveBeenCalledOnce();
       setUiUpdateAction(null);
+      configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS });
     },
   );
 });
@@ -525,21 +531,23 @@ describe("desktop platform contract", () => {
       title: "Title",
       body: "Question",
     });
-    expect(ipc.send).toHaveBeenCalledWith("notifications:enabled", false);
+    expect(ipc.send).toHaveBeenCalledWith("notifications:enabled", false, undefined);
     expect(ipc.send).toHaveBeenCalledWith("notifications:dismiss", "s");
     expect(ipc.invoke).toHaveBeenCalledWith(
       "notifications:show",
       expect.objectContaining(target),
     );
-    await api.getUpdateNetworkSettings();
-    expect(ipc.invoke).toHaveBeenCalledWith("updates:get-network");
+    await api.getUpdateSettings();
+    expect(ipc.invoke).toHaveBeenCalledWith("updates:get-settings");
     const updateSettings = {
+      enabled: true,
+      sourceUrl: "https://updates.example/synax/",
       mode: "custom",
       customProxyUrl: "https://proxy.example/",
     };
-    await api.setUpdateNetworkSettings(updateSettings);
+    await api.setUpdateSettings(updateSettings);
     expect(ipc.invoke).toHaveBeenCalledWith(
-      "updates:set-network",
+      "updates:set-settings",
       updateSettings,
     );
     await api.getDesktopUpdateState();

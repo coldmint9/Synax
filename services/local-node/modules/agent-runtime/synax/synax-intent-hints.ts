@@ -119,15 +119,8 @@ export function shouldApplyCodingHints(input: SynaxIntentHintInput, intent: Syna
   return input.mode !== 'plan' && intent === 'coding';
 }
 
-/** A classification is an advisory focus, never an execution or delegation mandate. */
-export function buildSynaxIntentPromptSection(input: SynaxIntentHintInput): string | null {
-  const intent = classifySynaxIntent(input.message);
-  if (!intent) return null;
-  const focus = {
-    explore: 'Investigate and explain; do not implement changes unless the user also requests them.',
-    coding: input.mode === 'plan' ? 'Design the requested change without implementing it.' : 'Implement the requested change within current authorization; inspect and verify the affected behavior.',
-    review: 'Report actionable findings with file references; do not change code merely to perform a review.',
-    plan: 'Produce a decision-complete proposal proportional to the task. In chat, persist it with plan.propose as a versioned plan report; planning alone is not execution authorization.',
-  }[intent];
-  return `## Request focus\n${focus}\nThis routing hint is advisory; the actual user request and runtime mode take precedence.`;
+/** Keyword classification is retained for legacy callers, never converted into
+ * instructions. The current user request, workflow and tool contracts define the task. */
+export function buildSynaxIntentPromptSection(_input: SynaxIntentHintInput): string | null {
+  return null;
 }

@@ -54,6 +54,8 @@ export interface ShellPreferences {
   /** Render model reasoning content in the conversation transcript. */
   sessionShowThinking: boolean;
   sessionListDisplayMode: "title" | "preview";
+  /** Cluster the session list by intent category instead of calendar time. */
+  sessionListClusterByIntent: boolean;
 }
 
 export interface ProjectSearchFilter {
@@ -90,6 +92,7 @@ interface ShellState {
   setSessionListDisplayMode: (
     value: ShellPreferences["sessionListDisplayMode"],
   ) => void;
+  setSessionListClusterByIntent: (value: boolean) => void;
   addProject: (project: ProjectSummary) => void;
   setProjects: (projects: ProjectSummary[]) => void;
   removeProject: (projectId: string) => void;
@@ -162,6 +165,7 @@ export const useShellStore = create<ShellState>((set, get) => ({
     sessionFoldWorkRuns: true,
     sessionShowThinking: true,
     sessionListDisplayMode: "preview",
+    sessionListClusterByIntent: false,
   },
   currentProjectId: null,
   currentUser: {
@@ -236,6 +240,12 @@ export const useShellStore = create<ShellState>((set, get) => ({
   setSessionListDisplayMode: (value) => {
     set((state) => ({
       preferences: { ...state.preferences, sessionListDisplayMode: value },
+    }));
+    persistShellPreferences();
+  },
+  setSessionListClusterByIntent: (value) => {
+    set((state) => ({
+      preferences: { ...state.preferences, sessionListClusterByIntent: value },
     }));
     persistShellPreferences();
   },
@@ -414,6 +424,8 @@ export function hydrateShellPreferences() {
       patch.sessionFoldWorkRuns = parsed.sessionFoldWorkRuns;
     if (typeof parsed.sessionShowThinking === "boolean")
       patch.sessionShowThinking = parsed.sessionShowThinking;
+    if (typeof parsed.sessionListClusterByIntent === "boolean")
+      patch.sessionListClusterByIntent = parsed.sessionListClusterByIntent;
     if (
       parsed.sessionListDisplayMode === "title" ||
       parsed.sessionListDisplayMode === "preview"

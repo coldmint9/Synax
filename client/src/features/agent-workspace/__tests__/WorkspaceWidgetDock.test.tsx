@@ -102,8 +102,24 @@ it("opens project widget management from the bottom-right action and closes it",
     layouts: {},
     catalogs: { project: [{ id: "files", label: "Files" }] },
   });
-  render(<WorkspaceWidgetDock sessionId="session" scope="project" />);
+  const openEntry = vi.fn();
+  render(
+    <WorkspaceWidgetDock
+      sessionId="session"
+      scope="project"
+      footerActions={
+        <button type="button" onClick={openEntry}>
+          研发入口
+        </button>
+      }
+    />,
+  );
   const toolbar = screen.getByRole("toolbar");
+  expect(
+    within(toolbar).getByRole("button", { name: "研发入口" }),
+  ).toBeVisible();
+  await user.click(within(toolbar).getByRole("button", { name: "研发入口" }));
+  expect(openEntry).toHaveBeenCalledOnce();
   const rearrange = within(toolbar).getByRole("button", {
     name: "Rearrange widgets",
   });

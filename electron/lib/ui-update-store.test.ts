@@ -1,3 +1,8 @@
+// Algorithm-only coverage: production disables this legacy protocol.
+vi.mock("../updater/update-source.js", () => ({
+  requireLegacyUpdateSource: () => {},
+  frameworkFeedUrl: () => "https://github.com/test/Synax/releases/download/",
+}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";

@@ -39,6 +39,24 @@ function holdsForm(session: ReturnType<typeof store.getSession>): boolean {
 
 const LIVE_RUN_STATUSES = ["waiting_input", "waiting_permission", "running"];
 
+/** One checkpoint owns one form.
+ *
+ *  A run parks on `stepId:toolCallId` until the user answers; asking again from
+ *  the same checkpoint has to reuse that form instead of opening a second one.
+ *  Two copies of the same question were rendered as two ask boxes, and the user
+ *  answered both: one question, two replies. A checkpoint that already resolved
+ *  must not ask again either — a new question belongs to a new step.
+ */
+function checkpointForm(
+  sessionId: string,
+  stepId: string,
+  toolCallId: string,
+): AgentInteraction | undefined {
+  return store
+    .listRecords<AgentInteraction>("interaction", sessionId)
+    .find((item) => item.stepId === stepId && item.toolCallId === toolCallId);
+}
+
 /** A different live run owns the session's input, so an old form must not
  * answer for it. A parked run (or a session finished or restarted into
  * `paused`) leaves the unanswered form queued for the next turn. An unknown
@@ -78,9 +96,9 @@ function prepareInteraction(input: InteractionRequestInput): {
         })();
   const session = store.getSession(input.sessionId);
   if (
-    session.parentSessionId ||
+    !(session.profileId === "subagent" && session.parentSessionId && session.sessionMetadata?.subagentKind === "side-chat") && (session.parentSessionId ||
     (!["synax", "goal"].includes(session.profileId) &&
-      ((session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? "native") === "native")
+      ((session.sessionMetadata?.backend as { id?: string } | undefined)?.id ?? "native") === "native"))
   ) throw new AgentValidationError("Only the primary Synax agent can ask the user.");
   if (session.status !== "running" || session.activeRunId !== input.runId)
     conflict("The run is not active.");
@@ -154,15 +172,15 @@ function persistLocalInteraction(
   });
 }
 
-export function persistPlanProposal(sessionId: string, plan: AgentPlan) {
+export function persistPlanProposal(sessionId: string, plan: AgentPlan, status: "draft" | "saved" = "draft") {
   const artifact = createPlanArtifact({
     sessionId,
     plan,
-    status: "draft",
+    status,
   });
   const session = store.getSession(sessionId);
   store.updateSessionMetadata(sessionId, {
-    plan: { ...artifact, status: "draft" },
+    plan: artifact,
   });
   const goal = session.sessionMetadata?.goal;
   if (
@@ -190,6 +208,20 @@ export const interactionService = {
     return this.list(sessionId).find(i=>i.runId===session.activeRunId&&['answered','cancelled'].includes(i.status)&&i.response&&!i.consumedAt)??null;
   },
   request(input: InteractionRequestInput): AgentInteraction {
+    // Checkpoint identity outranks the run's current state: a retried or
+    // replayed ask must converge on the form it already opened, even while the
+    // session is still parked on it.
+    const existing = checkpointForm(
+      input.sessionId,
+      input.stepId,
+      input.toolCallId,
+    );
+    if (existing) {
+      if (existing.status === "pending") return existing;
+      conflict(
+        "This checkpoint already asked the user. Open a new step to ask again.",
+      );
+    }
     const prepared = prepareInteraction(input);
     if (this.pending(input.sessionId)) conflict("Resolve the current interaction first.");
     return store.transaction(() => {
@@ -199,7 +231,10 @@ export const interactionService = {
     });
   },
   async requestAuthoritative(input: InteractionRequestInput): Promise<AgentInteraction> {
-    await store.hydrateSession(input.sessionId);
+    // Another host process (the session worker, or a previous worker this one
+    // replaced) may own the form for this checkpoint. Decide on a refreshed
+    // working set, otherwise a stale cache opens a second copy of the question.
+    await store.hydrateSession(input.sessionId, true);
     const value = this.request(input);
     await store.flushSession(input.sessionId);
     return store.getRecord<AgentInteraction>('interaction', value.id)!;

@@ -12,6 +12,15 @@ const base = {
   loopHintsOverride: [],
 };
 describe("layered prompt composition", () => {
+  it("treats read path misses as quiet recovery without hiding real blockers", () => {
+    const prompt = buildLoopSystemPrompt({ ...base, availableToolIds: ["rg", "file.read"] });
+    expect(prompt).toContain("READ_PATH_NOT_FOUND");
+    expect(prompt).toContain("do not repeat the unchanged call or narrate a failure");
+    expect(prompt).toContain("Report a concrete blocker if recovery cannot find the required input");
+    expect(prompt).toContain("write failures must remain visible");
+    expect(buildLoopSystemPrompt({ ...base, availableToolIds: [] })).not.toContain("READ_PATH_NOT_FOUND");
+  });
+
   it("does not advertise or teach tools absent from the actual request", () => {
     const prompt = buildLoopSystemPrompt({
       ...base,
@@ -144,7 +153,7 @@ describe("layered prompt composition", () => {
       metadata: { mode: "plan" },
     });
     expect(plan).toContain("no file edits or shell execution");
-    expect(plan).toContain("With unrestricted permissions, the plan executes immediately and returns to chat");
+    expect(plan).toContain("Saving the plan does not authorize execution");
     const goal = synaxModePromptRegistry.buildSection({
       mode: "goal",
       prompt: "Feature",
@@ -173,12 +182,12 @@ describe("layered prompt composition", () => {
         prompt: "你好",
       }),
     });
-    // Keep the complete greeting prompt below 3.5 KB, including permission rules.
-    expect(prompt.length).toBeLessThan(3500);
+    // Keep the complete greeting prompt below 4,250 characters, including permission rules and coding/verification discipline.
+    expect(prompt.length).toBeLessThan(4250);
     expect(prompt).toContain("Preserve intent");
     expect(prompt).toContain("Permission gates");
     expect(prompt).toContain("smallest correct change");
-    expect(prompt).toContain("plan.propose saves and executes immediately without confirmation");
+    expect(prompt).toContain("plan.propose only saves a proposal");
     expect(prompt).toContain("Execution stays in chat unless goal was selected");
   });
 });

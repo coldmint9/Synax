@@ -61,6 +61,25 @@ impl Tx {
     }
 }
 
+/// Only scalar/control bookkeeping is converted to JSON; the large projection
+/// retains its persistent identity throughout transaction comparison.
+fn transaction_document(
+    state: &crate::storage::jsonl::record::SnapshotCond,
+    projection: &Projection,
+    control: &crate::runtime::session_types::ControlState,
+    queue: &crate::runtime::input_queue::QueueState,
+) -> crate::storage::jsonl::segment::PValue {
+    use crate::storage::jsonl::segment::PValue;
+    let mut state = state.clone();
+    state.header = None;
+    PValue::Object([
+        ("state".into(), PValue::from_json(&serde_json::to_value(state).expect("snapshot state"))),
+        ("projection".into(), projection.persistent_value()),
+        ("control".into(), PValue::from_json(&serde_json::to_value(control).expect("control state"))),
+        ("queue".into(), PValue::from_json(&serde_json::to_value(queue).expect("queue state"))),
+    ].into_iter().collect())
+}
+
 impl SessionActor {
     /// Apply a validated transaction: append its frames, seal them, update the
     /// in-memory state and publish.
@@ -68,7 +87,9 @@ impl SessionActor {
         super::super::layout::ensure_not_deleted(&handle.root, &self.id)?;
         // The projection budget is a commit invariant: an over-budget batch
         // would make the session unreadable forever.
-        if !tx.control_only { tx.projection.encode()?; }
+        if !tx.control_only {
+            tx.projection.encode()?;
+        }
         if std::env::var("SYNAX_RUNTIME_HOT_DISK_FULL").ok().as_deref() == Some("1") {
             return Err(RuntimeError::DiskFull);
         }
@@ -94,7 +115,7 @@ impl SessionActor {
                 },
             )?;
         }
-        let before = crate::storage::jsonl::delta::document(
+        let before = transaction_document(
             &self.state,
             &predicted,
             &self.control,
@@ -104,13 +125,13 @@ impl SessionActor {
         let next_state = tx.state(self, retained);
         let next_control = tx.control.as_ref().unwrap_or(&self.control);
         let next_queue = tx.queue.as_ref().unwrap_or(&self.queue);
-        let after = crate::storage::jsonl::delta::document(
+        let after = transaction_document(
             &next_state,
             &tx.projection,
             next_control,
             next_queue,
         );
-        let changes = crate::storage::jsonl::delta::between(&handle.root, &before, &after)?;
+        let changes = crate::storage::jsonl::delta::between_persistent(&handle.root, &before, &after)?;
         controls.push(
             writer
                 .line(&Record::Delta {
@@ -224,7 +245,9 @@ impl SessionActor {
             self.queue = queue.clone();
         }
         self.projection = Some(tx.projection);
-        if let Some(header) = &tx.header { self.header = header.to_json(); }
+        if let Some(header) = &tx.header {
+            self.header = header.clone();
+        }
         for event in &tx.events {
             push_event(
                 self,
@@ -249,8 +272,11 @@ impl SessionActor {
             );
         }
         self.commit = commit_id;
-        if tx.control_only { handle.publish_control(self); }
-        else { self.publish(handle); }
+        if tx.control_only {
+            handle.publish_control(self);
+        } else {
+            self.publish(handle);
+        }
         for event in tx.fan_out {
             super::fan_out(self, event);
         }
@@ -312,7 +338,9 @@ impl SessionActor {
 
     /// Make this actor's appended frames durable.
     pub fn sync(&mut self) -> crate::storage::jsonl::error::JsonlResult<()> {
-        self.files.sync()
+        self.files.sync()?;
+        self.durable_commit = self.commit;
+        Ok(())
     }
 
     /// The handle this actor belongs to.

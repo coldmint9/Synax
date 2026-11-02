@@ -7,10 +7,11 @@ import { useOlderTranscriptHistory } from "../useOlderTranscriptHistory";
 function Harness({ active = true }: { active?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const messages = store((state) => state.messages);
-  const { loading, error, retry } = useOlderTranscriptHistory(ref, "session", active);
+  const { loading, settling, error, retry } = useOlderTranscriptHistory(ref, "session", active);
   return (
     <div ref={ref} aria-label="Transcript">
       {loading && <span>Loading</span>}
+      <span data-testid="settling" data-settling={settling ? "true" : "false"} />
       {error && <button onClick={() => void retry()}>Retry</button>}
       {messages.map((message) => <p key={message.id}>{message.content}</p>)}
     </div>
@@ -79,7 +80,7 @@ it("loads at the top and keeps the visible position after prepending messages", 
   expect(viewport.scrollTop).toBe(120);
 });
 
-it("does not fetch history merely because the initial window is unscrollable", async () => {
+it("prefills an unscrollable window without a reading gesture", async () => {
   seed();
   const load = vi.fn(async () => {});
   store.setState({ loadOlderHistory: load });
@@ -88,7 +89,7 @@ it("does not fetch history merely because the initial window is unscrollable", a
   try {
     render(<Harness />);
     await act(async () => { await new Promise(requestAnimationFrame); });
-    expect(load).not.toHaveBeenCalled();
+    expect(load).toHaveBeenCalledWith({ retainViewport: true });
   } finally {
     if (originalHeight) Object.defineProperty(HTMLElement.prototype, "clientHeight", originalHeight);
     else delete (HTMLElement.prototype as unknown as { clientHeight?: number }).clientHeight;
@@ -159,7 +160,7 @@ it("prefetches within one viewport of the start and preserves scrolling during t
   expect(viewport.scrollTop).toBe(1300);
 });
 
-it("requires another upward gesture after a short page completes", async () => {
+it("continues filling after short pages without another gesture", async () => {
   seed();
   const complete: Array<() => void> = [];
   const load = vi.fn(() => new Promise<void>((resolve) => { complete.push(resolve); }));
@@ -184,8 +185,6 @@ it("requires another upward gesture after a short page completes", async () => {
   })));
   // The store can publish its new cursor before the original promise settles.
   await act(async () => { complete[0](); await new Promise(requestAnimationFrame); });
-  expect(load).toHaveBeenCalledTimes(1);
-  fireEvent.wheel(viewport, { deltaY: -100 });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   await act(async () => {
     store.setState((state) => ({
@@ -201,7 +200,7 @@ it("requires another upward gesture after a short page completes", async () => {
   expect(load).toHaveBeenCalledTimes(2);
 });
 
-it("does not prefetch from the bottom of a scrollable window", async () => {
+it("prefills at the bottom when less than two screens are scrollable", async () => {
   seed();
   const load = vi.fn(async () => {});
   store.setState({ loadOlderHistory: load });
@@ -215,7 +214,7 @@ it("does not prefetch from the bottom of a scrollable window", async () => {
   rerender(<Harness />);
   fireEvent.scroll(viewport);
   await act(async () => { await new Promise(requestAnimationFrame); });
-  expect(load).not.toHaveBeenCalled();
+  expect(load).toHaveBeenCalledWith({ retainViewport: true });
 });
 
 it("waits for a visible viewport before loading history", async () => {
@@ -229,7 +228,7 @@ it("waits for a visible viewport before loading history", async () => {
   expect(load).not.toHaveBeenCalled();
 });
 
-it("loads when scrolling to the top of a barely scrollable page", async () => {
+it("does not retry a stalled prefill on repeated upward gestures", async () => {
   seed();
   const load = vi.fn(async () => {});
   store.setState({ loadOlderHistory: load });
@@ -242,7 +241,7 @@ it("loads when scrolling to the top of a barely scrollable page", async () => {
   viewport.scrollTop = 30;
   rerender(<Harness />);
   await act(async () => { await new Promise(requestAnimationFrame); });
-  expect(load).not.toHaveBeenCalled();
+  expect(load).toHaveBeenCalledTimes(1);
   viewport.scrollTop = 0;
   fireEvent.wheel(viewport, { deltaY: -100 });
   fireEvent.scroll(viewport);
@@ -267,4 +266,74 @@ it("does not fetch history after a resize or programmatic scroll", async () => {
   expect(load).not.toHaveBeenCalled();
   fireEvent.keyDown(viewport, { key: "PageUp" });
   await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+});
+
+it("stops prefilling at two scrollable screens and keeps the bottom pin", async () => {
+  seed();
+  const load = vi.fn(async () => {
+    store.setState(state => ({
+      messages: [{ ...state.messages[0], id: "m1", content: "m1" }, ...state.messages],
+      sessionDetailCache: { session: { ...state.sessionDetailCache.session,
+        historyWindow: { ...state.sessionDetailCache.session.historyWindow!, olderCursor: "oldest" } } },
+    }));
+  });
+  store.setState({ loadOlderHistory: load });
+  const { rerender } = render(<Harness active={false} />);
+  const viewport = screen.getByLabelText("Transcript");
+  Object.defineProperties(viewport, {
+    scrollHeight: { configurable: true, get: () => viewport.querySelectorAll("p").length * 600 },
+    clientHeight: { configurable: true, value: 600 },
+  });
+  const reading = vi.fn();
+  viewport.addEventListener("transcript-history-reading", reading);
+  viewport.scrollTop = 600;
+  rerender(<Harness />);
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+  await act(async () => { await new Promise(requestAnimationFrame); });
+  expect(viewport.scrollHeight - viewport.clientHeight).toBe(1200);
+  expect(load).toHaveBeenCalledWith({ retainViewport: true });
+  expect(reading).not.toHaveBeenCalled();
+  expect(load).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the loading state until the prepended page has settled in the DOM", async () => {
+  vi.useFakeTimers();
+  const settlement = () => screen.getByTestId("settling").dataset.settling;
+  try {
+    seed();
+    let complete!: () => void;
+    const load = vi.fn(() => new Promise<void>((resolve) => { complete = resolve; }));
+    store.setState({ loadOlderHistory: load });
+    const { rerender } = render(<Harness active={false} />);
+    const viewport = screen.getByLabelText("Transcript");
+    Object.defineProperties(viewport, {
+      scrollHeight: { configurable: true, get: () => viewport.querySelectorAll("p").length * 100 },
+      clientHeight: { configurable: true, value: 100 },
+    });
+    viewport.scrollTop = 20;
+    rerender(<Harness />);
+    fireEvent.wheel(viewport, { deltaY: -100 });
+    fireEvent.scroll(viewport);
+    await act(async () => { await vi.advanceTimersByTimeAsync(32); });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(settlement()).toBe("false");
+    // The request ending is not the page landing: while a row still reserves
+    // height the reader keeps the loading state instead of a bare gap.
+    const mounting = document.createElement("div");
+    mounting.dataset.entryPending = "true";
+    viewport.appendChild(mounting);
+    await act(async () => {
+      store.setState((state) => ({
+        messages: [{ ...state.messages[0], id: "m1", content: "m1" }, ...state.messages],
+      }));
+      complete();
+      await vi.advanceTimersByTimeAsync(120);
+    });
+    expect(settlement()).toBe("true");
+    mounting.remove();
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(settlement()).toBe("false");
+  } finally {
+    vi.useRealTimers();
+  }
 });

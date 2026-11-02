@@ -15,6 +15,7 @@ import {
   PopoverPanel,
 } from "@/shared/ui/ui/Popover";
 import { OverlayStateObserver } from "@/shared/ui/ui/OverlayStateObserver";
+import { enqueueLiveEvent } from "./state/liveEventQueue";
 import {
   Check,
   Bot,
@@ -27,6 +28,7 @@ import {
   PanelRightOpen,
   Plug,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import {
   agentRuntimeApi,
@@ -54,6 +56,7 @@ interface Props {
   onChange: (references: TurnReference[]) => void;
   disabled: boolean;
   compactDisabled?: boolean;
+  allowSubagents?: boolean;
   onOpen: () => void;
   onOpenChange?: (open: boolean) => void;
   onAttachFiles?: (files: File[]) => void;
@@ -83,6 +86,7 @@ function ContextPickerContent({
   onChange,
   disabled,
   compactDisabled,
+  allowSubagents = true,
   onOpen,
   onOpenChange,
   onAttachFiles,
@@ -99,10 +103,17 @@ function ContextPickerContent({
   const hasModes = backendId === "native" && Boolean(mode && onModeChange);
   const unified = Boolean(onAttachFiles || hasModes);
   const selectedMode = mode === "plan" || mode === "plan_node" ? "chat" : mode;
-  const modeOptions = [
-    { id: "chat", label: "Chat" },
-    { id: "goal", label: "Goal" },
-  ] as const;
+  // Chat is the automatic default, so it reads as Auto; goal and super are
+  // still maturing, so they carry a beta tag next to the name.
+  const modeOptions: ReadonlyArray<{
+    id: Exclude<AgentSessionMode, "plan">;
+    label: string;
+    beta?: boolean;
+  }> = [
+    { id: "chat", label: "Auto" },
+    { id: "goal", label: "Goal", beta: true },
+    { id: "super", label: "Super", beta: true },
+  ];
   const [kind, setKind] = useState<TurnReference["kind"] | null>(null);
   const typeButtons = useRef<
     Partial<Record<TurnReference["kind"], HTMLButtonElement | null>>
@@ -146,7 +157,9 @@ function ContextPickerContent({
     // Manual compaction is a new run and needs its own bounded observation.
     return addSessionLiveListener(sessionId, event => {
       if (["context_compaction_state", "context_compacted", "context_compaction_failed"].includes(event.type))
-        useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
+        // Same collection window as the transcript stream, so a compaction
+        // record cannot overtake the records that arrived before it.
+        enqueueLiveEvent(event, sessionId);
     });
   }, [sessionId, compacting]);
   useEffect(() => {
@@ -412,12 +425,19 @@ function ContextPickerContent({
         ) : (
           <>
             {onOpenSideChat && sessionId && (
-              <button type="button" className="session-context-picker-option session-context-picker-option--featured" onClick={() => {
-                close();
-                onOpenSideChat();
-              }}>
+              <button
+                type="button"
+                className="session-context-picker-option session-context-picker-option--featured"
+                onClick={() => {
+                  close();
+                  onOpenSideChat();
+                }}
+              >
                 <PanelRightOpen size={15} aria-hidden="true" />
-                <span>{t("sideChatMenuLabel")}<small>{t("sideChatMenuDescription")}</small></span>
+                <span>
+                  {t("sideChatMenuLabel")}
+                  <small>{t("sideChatMenuDescription")}</small>
+                </span>
               </button>
             )}
             {onAttachFiles && (
@@ -444,6 +464,7 @@ function ContextPickerContent({
               {zh ? "添加上下文" : "Add context"}
             </div>
             {contextTypes
+              .filter(item => allowSubagents || item.id !== "subagent")
               .map(({ id, Icon, ...labels }) => {
                 const unavailable =
                   backendId !== "native" && (id === "skill" || id === "mcp" || id === "subagent");
@@ -487,17 +508,23 @@ function ContextPickerContent({
                   {zh ? "工作模式" : "Work mode"}
                 </div>
                 <div className="session-composer-mode-toggle">
-                {modeOptions.map(({ id, label }) => (
+                {modeOptions.map(({ id, label, beta }) => (
                   <Radio
                     as="button"
                     type="button"
                     key={id}
                     value={id}
-                    aria-label={label}
+                    aria-label={beta ? `${label} Beta` : label}
                     className="session-composer-mode-option"
                     data-mode={id}
                   >
+                    {id === "super" && <Zap size={14} className="shrink-0" aria-hidden="true" />}
                     <span>{label}</span>
+                    {beta && (
+                      <span className="session-composer-mode-beta" aria-hidden="true">
+                        Beta
+                      </span>
+                    )}
                   </Radio>
                 ))}
                 </div>

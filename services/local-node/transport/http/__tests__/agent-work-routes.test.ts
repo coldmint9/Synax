@@ -46,6 +46,18 @@ describe('work-aware session API', () => {
     expect(store.getSession(session.id).activeRunId).toBeNull();
     expect(store.listRuns(session.id)).toHaveLength(0);
   });
+  it('returns to a mode the user already switched to earlier', async () => {
+    const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Deliver verified change' });
+    store.updateSession(session.id, { status: 'completed', activeRunId: null });
+    const switchTo = (mode: string) => agentRuntimeRoutes.request(`http://localhost/sessions/${session.id}/mode`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }),
+    });
+    expect((await switchTo('goal')).status).toBe(200);
+    expect(store.getSession(session.id).sessionMetadata?.goal).toMatchObject({ status: 'planning' });
+    expect((await switchTo('chat')).status).toBe(200);
+    expect((await switchTo('goal')).status).toBe(200);
+    expect(store.getSession(session.id).sessionMetadata).toMatchObject({ mode: 'goal', goal: { status: 'planning' } });
+  });
   it('counts auxiliary calls once and exposes separate context/usage fields', async () => {
     const session = agentSessionRuntime.create({ projectId: 'fixture', profileId: 'synax', prompt: 'Question' });
     const id = startAuxUsage(session.id, 'session-title');

@@ -1,5 +1,6 @@
 import { ExternalLink } from "lucide-react";
 import { useLocale } from "../../../shared/hooks/useLocale";
+import { describeRunFailure } from "../../../shared/lib/runFailure";
 import { ThinkingBlock } from "../ThinkingBlock";
 import { AgentWorkingIndicator } from "./AgentWorkingIndicator";
 import {
@@ -38,9 +39,10 @@ export function AgentDockDialog({
   onReplyPermission,
   onOpenSession,
 }: Props) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const recent = toolCalls.slice(-16);
   const runningIndex = isRunning && recent.length > 0 ? recent.length - 1 : -1;
+  const failure = describeRunFailure(error, locale);
 
   return (
     <div className="agent-dock-dialog relative w-full rounded-2xl border border-border bg-overlay p-3.5 pb-3 shadow-overlay">
@@ -60,7 +62,7 @@ export function AgentDockDialog({
         {sessionTitle}
       </div>
 
-      {error && <p data-error-toast="off" role="alert" className="mb-2 text-[11px] text-destructive/90">{error}</p>}
+      {failure && <p data-error-toast="off" role="alert" className="mb-2 text-[11px] text-destructive/90">{failure}</p>}
 
       <div className="agent-dock-dialog-scroll max-h-[14rem] space-y-2 overflow-y-auto">
         {thinking.trim() && (

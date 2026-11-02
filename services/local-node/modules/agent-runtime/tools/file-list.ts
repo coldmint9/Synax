@@ -3,7 +3,8 @@ import path from 'node:path';
 import * as z from 'zod/v4';
 import type { RegisteredTool } from '../contracts.js';
 import { recordSessionFileDiscovery } from '../read-tracker.js';
-import { isWorkspaceEntryVisible, resolveWorkspacePath, toWorkspaceRelative } from './workspace.js';
+import { isWorkspaceEntryVisible, toWorkspaceRelative } from './workspace.js';
+import { probeReadPath, readPathMissResult } from './read-path-probe.js';
 
 export const fileListTool: RegisteredTool = {
   id: 'file.list',
@@ -15,19 +16,23 @@ export const fileListTool: RegisteredTool = {
   resumeBehavior: 'auto',
   internalGate: 'none',
   progressiveDetails:
-    'Accepts { path?: string, limit?: number } and returns names only. Directories are returned with their relative paths.',
+    'Accepts { path?: string, limit?: number } and returns names only. Directories are returned with their relative paths. limit is a requested maximum with an effective cap of 300; the result includes effectiveLimit, truncated, and hasMore.',
   inputSchema: z.object({
     path: z.string().min(1).optional().describe('Existing directory relative to the session working directory (default .), or an absolute path permitted by the sandbox. Lists immediate entries, not recursive descendants.'),
-    limit: z.number().int().positive().max(300).optional().describe('Maximum immediate entries (default 100, maximum 300).'),
+    limit: z.number().int().positive().optional().describe('Requested maximum immediate entries (default 100, effective cap 300).'),
   }),
   execute(input) {
     const args = (input.args ?? {}) as { path?: string; limit?: number };
-    const dir = resolveWorkspacePath(args.path ?? '.', input.sessionId);
-    const limit = Math.min(Math.max(args.limit ?? 100, 1), 300);
-    const items = fs
+    const probe = probeReadPath(args.path ?? '.', input.sessionId);
+    if (probe.kind === 'missing') return readPathMissResult(probe);
+    const dir = probe.absolutePath;
+    const effectiveLimit = Math.min(args.limit ?? 100, 300);
+    const visibleEntries = fs
       .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => isWorkspaceEntryVisible(entry.name, input.sessionId))
-      .slice(0, limit)
+      .filter((entry) => isWorkspaceEntryVisible(entry.name, input.sessionId));
+    const truncated = visibleEntries.length > effectiveLimit;
+    const items = visibleEntries
+      .slice(0, effectiveLimit)
       .map((entry) => ({
         name: entry.name,
         path: toWorkspaceRelative(path.join(dir, entry.name), input.sessionId),
@@ -37,7 +42,7 @@ export const fileListTool: RegisteredTool = {
       if (item.kind === 'file') recordSessionFileDiscovery(input.sessionId, item.path);
     }
     return {
-      result: { items },
+      result: { items, effectiveLimit, truncated, hasMore: truncated },
       displaySummary: `Listed ${items.length} entries under ${toWorkspaceRelative(dir, input.sessionId)}.`,
       artifacts: [],
     };

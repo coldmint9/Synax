@@ -5,12 +5,16 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateInfo } from "electron-updater";
 import type { DownloadUpdateOptions } from "electron-updater/out/AppUpdater.js";
+import {
+  DEFAULT_UPDATE_SETTINGS,
+  configureUpdateSettings,
+} from "../updater/update-settings.js";
 
 type UpdateFile = { url: URL; size: number; sha512: string };
 
 const mocks = vi.hoisted(() => ({
   root: "",
-  payload: Buffer.from("Synax 0.2.0 darwin application ZIP payload"),
+  payload: Buffer.from("Synax 0.2.0 darwin DMG payload"),
   order: [] as string[],
   files: null as string[] | null,
   codesign: { error: null as Error | null, stdout: "", stderr: "" },
@@ -83,28 +87,30 @@ vi.mock("./mac-desktop-update.js", async (importOriginal) => ({
 }));
 
 import {
-  AdHocMacUpdater,
+  DmgMacUpdater,
   needsMacCompatibilityUpdater,
 } from "./mac-compat-updater.js";
 
-const zipName = `Synax-0.2.0-darwin-${process.arch}.zip`;
+const dmgName = `Synax-0.2.0-darwin-${process.arch}.dmg`;
 const applicationPath = () =>
   path.join(mocks.root, "Applications", "Synax.app");
 const executablePath = () =>
   path.join(applicationPath(), "Contents", "MacOS", "Synax");
 const downloadDirectory = () => path.join(mocks.root, "cache");
-const destination = () => path.join(downloadDirectory(), zipName);
+const destination = () => path.join(downloadDirectory(), dmgName);
 const updateDirectory = () => path.join(mocks.root, "desktop-updates");
-const zipUrl = () => new URL(`https://updates.example/${zipName}`);
+const dmgUrl = () => new URL(`https://updates.example/${dmgName}`);
 const digest = (algorithm: "sha256" | "sha512") =>
   createHash(algorithm).update(mocks.payload).digest(
     algorithm === "sha256" ? "hex" : "base64",
   );
 const updateFiles = (): UpdateFile[] => [
-  { url: zipUrl(), size: mocks.payload.length, sha512: digest("sha512") },
+  { url: dmgUrl(), size: mocks.payload.length, sha512: digest("sha512") },
 ];
 const updateInfo = () =>
   ({
+    productName: "Synax",
+    bundleId: "com.Synax.desktop",
     version: "0.2.0",
     releaseDate: "2026-01-01T00:00:00.000Z",
     releaseNotes: "",
@@ -116,7 +122,7 @@ const downloadOptions = (files: UpdateFile[] = updateFiles()) =>
   ({
     updateInfoAndProvider: { info: updateInfo(), provider: { resolveFiles: () => files } },
   }) as unknown as DownloadUpdateOptions;
-const download = (updater: AdHocMacUpdater, options: DownloadUpdateOptions) =>
+const download = (updater: DmgMacUpdater, options: DownloadUpdateOptions) =>
   (
     updater as unknown as {
       doDownloadUpdate(value: DownloadUpdateOptions): Promise<string[]>;
@@ -129,8 +135,8 @@ type ExecuteOptions = {
   done(event: unknown): Promise<void>;
 };
 
-async function downloaded(): Promise<AdHocMacUpdater> {
-  const updater = new AdHocMacUpdater();
+async function downloaded(): Promise<DmgMacUpdater> {
+  const updater = new DmgMacUpdater();
   await expect(download(updater, downloadOptions())).resolves.toEqual([
     destination(),
   ]);
@@ -141,6 +147,8 @@ async function downloaded(): Promise<AdHocMacUpdater> {
 }
 
 beforeEach(async () => {
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS, enabled: true });
+  vi.stubEnv("SYNAX_FRAMEWORK_UPDATE_URL", "https://updates.example/");
   mocks.root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "synax-mac-compat-")),
   );
@@ -148,7 +156,7 @@ beforeEach(async () => {
   mocks.order.length = 0;
   mocks.executors.length = 0;
   mocks.files = null;
-  mocks.payload = Buffer.from("Synax 0.2.0 darwin application ZIP payload");
+  mocks.payload = Buffer.from("Synax 0.2.0 darwin DMG payload");
   mocks.codesign = { error: null, stdout: "", stderr: "" };
   mocks.installation = { workspace: path.join(mocks.root, "workspace") };
   mocks.getPath.mockReturnValue(mocks.root);
@@ -187,6 +195,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  configureUpdateSettings({ ...DEFAULT_UPDATE_SETTINGS });
   await fs.rm(mocks.root, { recursive: true, force: true });
 });
 
@@ -232,7 +242,7 @@ describe("macOS compatibility installer detection", () => {
     );
   });
 
-  it("keeps the native updater for Developer ID signed bundles", async () => {
+  it("identifies Developer ID signed bundles for strict installer verification", async () => {
     mocks.codesign.stderr = [
       `Executable=${executablePath()}`,
       "Identifier=com.Synax.desktop",
@@ -257,18 +267,18 @@ describe("macOS compatibility installer detection", () => {
   });
 });
 
-describe("AdHocMacUpdater downloads", () => {
-  it("downloads the application ZIP through one shared executor", async () => {
-    const updater = new AdHocMacUpdater();
+describe("DmgMacUpdater downloads", () => {
+  it("downloads the DMG through one shared executor", async () => {
+    const updater = new DmgMacUpdater();
     await expect(download(updater, downloadOptions())).resolves.toEqual([
       destination(),
     ]);
     expect(mocks.executeDownload).toHaveBeenCalledTimes(1);
     const call = mocks.executeDownload.mock.calls[0][0] as ExecuteOptions;
-    expect(call.fileExtension).toBe("zip");
-    expect(call.fileInfo.url.pathname.endsWith(".zip")).toBe(true);
+    expect(call.fileExtension).toBe("dmg");
+    expect(call.fileInfo.url.pathname.endsWith(".dmg")).toBe(true);
     expect(mocks.transfer).toHaveBeenCalledTimes(1);
-    expect(mocks.transfer.mock.calls[0][0]).toEqual(zipUrl());
+    expect(mocks.transfer.mock.calls[0][0]).toEqual(dmgUrl());
     expect(mocks.transfer.mock.calls[0][1]).toBe(destination());
     expect(mocks.dispatch).toHaveBeenCalledWith({ files: [destination()] });
     expect(mocks.executors).toHaveLength(1);
@@ -277,13 +287,13 @@ describe("AdHocMacUpdater downloads", () => {
     expect(mocks.executors).toHaveLength(1);
   });
 
-  it("rejects a release that offers no application ZIP and keeps running", async () => {
-    const updater = new AdHocMacUpdater();
+  it("rejects a release that offers no DMG and keeps running", async () => {
+    const updater = new DmgMacUpdater();
     await expect(
       download(updater, downloadOptions([
-        { url: new URL("https://updates.example/Synax-0.2.0.dmg"), size: 1, sha512: "x" },
+        { url: new URL("https://updates.example/Synax-0.2.0.zip"), size: 1, sha512: "x" },
       ])),
-    ).rejects.toThrow(/requires an application ZIP/);
+    ).rejects.toThrow(/requires a DMG/);
     expect(mocks.executeDownload).not.toHaveBeenCalled();
     expect(mocks.transfer).not.toHaveBeenCalled();
     await expect(updater.quitAndInstall()).rejects.toThrow(
@@ -293,9 +303,9 @@ describe("AdHocMacUpdater downloads", () => {
   });
 
   it("rejects a download that does not resolve to exactly one file", async () => {
-    mocks.files = [destination(), path.join(downloadDirectory(), "extra.zip")];
-    await expect(download(new AdHocMacUpdater(), downloadOptions())).rejects.toThrow(
-      /exactly one application ZIP/,
+    mocks.files = [destination(), path.join(downloadDirectory(), "extra.dmg")];
+    await expect(download(new DmgMacUpdater(), downloadOptions())).rejects.toThrow(
+      /exactly one DMG/,
     );
   });
 
@@ -312,7 +322,7 @@ describe("AdHocMacUpdater downloads", () => {
   });
 });
 
-describe("AdHocMacUpdater installation", () => {
+describe("DmgMacUpdater installation", () => {
   it("prepares the replacement, launches the helper and then quits", async () => {
     const updater = await downloaded();
     await expect(updater.quitAndInstall()).resolves.toBeUndefined();
@@ -326,8 +336,7 @@ describe("AdHocMacUpdater installation", () => {
         version: "0.2.0",
         platform: "darwin",
         arch: process.arch,
-        artifact: { name: zipName, size: mocks.payload.length, sha256: digest("sha256") },
-        updateArchive: { name: zipName, size: mocks.payload.length, sha256: digest("sha256") },
+        artifact: { name: dmgName, size: mocks.payload.length, sha256: digest("sha256") },
       },
       process.execPath,
       updateDirectory(),
@@ -388,7 +397,7 @@ describe("AdHocMacUpdater installation", () => {
   });
 
   it("refuses to install without a downloaded archive", async () => {
-    const updater = new AdHocMacUpdater();
+    const updater = new DmgMacUpdater();
     await expect(updater.quitAndInstall()).rejects.toThrow(
       "请先下载更新安装包。",
     );
@@ -397,3 +406,4 @@ describe("AdHocMacUpdater installation", () => {
     expect(mocks.quit).not.toHaveBeenCalled();
   });
 });
+

@@ -1,11 +1,9 @@
-import { refreshWorkspace } from "./workspaceRefresh";
 import { useEffect, useRef, useState } from "react";
 import {
   Bot,
   MessageSquare,
   Maximize2,
   Minimize2,
-  RefreshCw,
   X,
 } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
@@ -34,7 +32,7 @@ function tabIcon(tab: WorkspaceTab) {
   }
 }
 
-function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, activate, close, closeOthers, canCloseOthers }: {
+function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, activate, close, closeOthers, canCloseOthers, diffBadge }: {
   tab: WorkspaceTab;
   active: boolean;
   sessionId: string;
@@ -44,6 +42,8 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
   close: () => void;
   closeOthers: () => void;
   canCloseOthers: boolean;
+  /** Set when the same file is also open in the editor, so the two tabs read apart. */
+  diffBadge: boolean;
 }) {
   const { t } = useLocale();
   const root = environment?.repositories?.find(
@@ -65,9 +65,10 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
       ? [{ type: "separator" as const }, ...fileContextEntries({ t, path: tab.path, workspacePath, sessionId, rootId: tab.rootId, canOpenFile: fileExists })]
       : []),
   ] }));
-  return <div ref={active ? activeRef : undefined} className={`workspace-tab-item ${active ? "workspace-tab-item--active" : ""}`} data-project-color={projectColor} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
+  return <div ref={active ? activeRef : undefined} className={`workspace-tab-item ${active ? "workspace-tab-item--active" : ""}`} data-project-color={projectColor} data-tab-kind={tab.kind} onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown}>
     <button type="button" role="tab" className="workspace-tab-main" aria-selected={active} title={tab.path ?? tab.title} onClick={activate} aria-haspopup="menu">
-      {tabIcon(tab)}<span>{tab.title}</span>
+      {tabIcon(tab)}<span className="workspace-tab-title">{tab.title}</span>
+      {diffBadge ? <span className="workspace-tab-kind">diff</span> : null}
     </button>
     <button type="button" className="workspace-tab-close" aria-label={t("workspaceCloseTab", { title: tab.title })} title={t("workspaceCloseTab", { title: tab.title })} onClick={close}><X size={9} /></button>
   </div>;
@@ -76,7 +77,7 @@ function WorkspaceTabItem({ tab, active, sessionId, activeRef, environment, acti
 export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
   const { t, locale } = useLocale();
   const { tabs, activeTabId, presentation } = useSessionWorkspace(sessionId);
-  const { environment, loading, reload } = useSessionWorkspaceEnvironment(sessionId);
+  const { environment } = useSessionWorkspaceEnvironment(sessionId);
   const activateTab = useSessionWorkspaceStore((state) => state.activateTab);
   const closeTab = useSessionWorkspaceStore((state) => state.closeTab);
   const setPresentation = useSessionWorkspaceStore(
@@ -85,6 +86,11 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
   const activeRef = useRef<HTMLDivElement>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const focused = presentation === "focus";
+  const openFileKeys = new Set(
+    tabs
+      .filter((tab) => tab.kind === "file")
+      .map((tab) => `${tab.rootId ?? ""}:${tab.path ?? ""}`),
+  );
   const [pendingClose, setPendingClose] = useState<WorkspaceTab | null>(null);
   const [savingClose, setSavingClose] = useState(false);
   const closeQueue = useRef<{ ids: string[]; keepId?: string } | null>(null);
@@ -144,15 +150,16 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
         <button
           type="button"
           className="workspace-back-conversation"
-          aria-label={locale === "zh" ? "返回对话" : "Back to conversation"}
-          title={locale === "zh" ? "返回对话" : "Back to conversation"}
+          aria-label={t("workspaceBackToConversation")}
+          title={t("workspaceBackToConversation")}
           onClick={() =>
             useSessionWorkspaceStore.getState().showDashboard(sessionId)
           }
         >
-          <MessageSquare size={14} />
-          <span>{locale === "zh" ? "返回对话" : "Back to conversation"}</span>
+          <MessageSquare size={13} aria-hidden />
+          <span>{t("workspaceBackToConversation")}</span>
         </button>
+        <span className="workspace-tab-separator" aria-hidden />
         <div
           className="workspace-tab-rail"
           role="tablist"
@@ -170,24 +177,15 @@ export function WorkspaceTabStrip({ sessionId }: { sessionId: string | null }) {
               close={() => close(tab)}
               closeOthers={() => closeOthers(tab)}
               canCloseOthers={tabs.length > 1}
+              diffBadge={
+                tab.kind === "diff" &&
+                openFileKeys.has(`${tab.rootId ?? ""}:${tab.path ?? ""}`)
+              }
             />
           ))}
         </div>
 
         <div className="workspace-tab-actions">
-          <button
-            type="button"
-            className="workspace-chrome-icon"
-            aria-label={t("workspaceRefresh")}
-            title={t("workspaceRefresh")}
-            disabled={loading}
-            onClick={() => {
-              refreshWorkspace(sessionId);
-              void reload();
-            }}
-          >
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          </button>
           <button
             type="button"
             className="workspace-chrome-icon"

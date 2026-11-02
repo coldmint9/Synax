@@ -10,6 +10,12 @@ beforeEach(() => {
   useApiConnectivityStore.setState({ browserOnline: true, apiReachable: 'reachable', recoveryVersion: 0 })
 })
 afterEach(() => vi.clearAllMocks())
+it('passes an explicit resume cursor through the shared transport', async () => {
+  const source = new AuthenticatedEventSource('/api/agent-runtime/sessions/s/runs/r/stream?realtime=1', { cursor: '42' })
+  await Promise.resolve()
+  expect(mock.subscribe).toHaveBeenCalledWith(source.url, expect.any(Function), '42')
+  source.close()
+})
 it('preserves named SSE event data and cursors on the multiplexed transport', async () => {
   const source = new AuthenticatedEventSource('/api/agent-runtime/events/stream')
   const listener = vi.fn(); source.addEventListener('snapshot', listener)

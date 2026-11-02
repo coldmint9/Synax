@@ -4,9 +4,9 @@
 use super::event_budget::{self, EventBudget, EventPermit, TERMINAL_RESERVE};
 use crate::agent::context::{self as loop_context, Compaction, ContextAction, ContextPolicy};
 use crate::agent::policy::{self as loop_policy, Decision, Disposition, RuntimeBinding};
+use crate::llm::continuation::continuing_provider_events;
 use crate::llm::errors::InvalidToolArguments;
 use crate::llm::{completion::provider_events, contract::ProviderRequest};
-use crate::llm::continuation::continuing_provider_events;
 use crate::runtime::{actor::SessionShardRouter, execution::ExecutionLease};
 use crate::storage::jsonl::hot::HotOps as HotStore;
 use futures_util::StreamExt;
@@ -90,12 +90,32 @@ pub(crate) struct StepContextRequest {
     pub context_id: String,
     pub system_prompt: String,
     pub tools: Vec<Value>,
+    #[serde(default)]
+    pub before_model_tools: Vec<ContextToolCall>,
+    #[serde(default)]
+    pub completion_check: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<CompletionReview>,
     /// Fully reconstructed checkpoint + live tail, already budget-checked by
     /// the host against this session's durable history. No historical replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<Vec<Value>>,
     #[serde(default)]
     pub execution_context: Option<ExecutionLease>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct ContextToolCall {
+    pub id: String,
+    pub name: String,
+    pub input: Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub(crate) struct CompletionReview {
+    pub content: String,
+    #[serde(default)]
+    pub retry: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -111,6 +131,11 @@ enum Phase {
     Model {
         step: u32,
         attempt: u32,
+    },
+    Review {
+        step: u32,
+        context_id: String,
+        disposition: Disposition,
     },
     Compact {
         step: u32,
@@ -765,17 +790,30 @@ impl AgentLoopManager {
                 if previous.system_prompt != input.system_prompt
                     || previous.tools != input.tools
                     || previous.prompt != input.prompt
+                    || previous.before_model_tools != input.before_model_tools
+                    || previous.completion_check != input.completion_check
+                    || previous.completion != input.completion
                 {
                     return Err("conflicting step context".into());
                 }
                 return Ok(());
             }
         }
-        if !matches!(&next.phase, Phase::Context { context_id, .. } if context_id == &input.context_id)
+        if !matches!(&next.phase, Phase::Context { context_id, .. } | Phase::Review { context_id, .. } if context_id == &input.context_id)
             || next.terminal_at.is_some()
             || next.cancel_requested
         {
             return Err("step context is not pending".into());
+        }
+        if matches!(&next.phase, Phase::Review { .. }) != input.completion.is_some() {
+            return Err("completion response does not match the pending phase".into());
+        }
+        let mut preparation_ids = HashSet::new();
+        if input.before_model_tools.len() > 64 || input.before_model_tools.iter().any(|call|
+            call.name != "skill.load" || call.id.trim().is_empty()
+                || call.input["skillId"].as_str().is_none_or(|id| id.trim().is_empty())
+                || !preparation_ids.insert(&call.id)) {
+            return Err("invalid runtime skill preparation".into());
         }
         next.step_context = Some(input);
         handle
@@ -942,6 +980,7 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
             Phase::Prepare { step } => (*step, "prepare"),
             Phase::Context { step, .. } => (*step, "context"),
             Phase::Model { step, .. } => (*step, "model"),
+            Phase::Review { step, .. } => (*step, "review"),
             Phase::Compact { step, .. } => (*step, "compact"),
             Phase::Tools { step, .. } => (*step, "tools"),
             Phase::Finish { step, .. } => (*step, "finish"),
@@ -1017,8 +1056,71 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     .prompt
                     .insert(0, json!({"role":"system","content":prepared.system_prompt}));
                 next.request.provider.tools = prepared.tools;
-                next.phase = Phase::Model { step, attempt: 0 };
-                drop(handle.commit(state, next, Vec::new(), false).await?);
+                let mut events = Vec::new();
+                if prepared.before_model_tools.is_empty() {
+                    next.phase = Phase::Model { step, attempt: 0 };
+                } else {
+                    let mut ids = Vec::new();
+                    let mut parts = Vec::new();
+                    for call in prepared.before_model_tools {
+                        if next.results.contains_key(&call.id) || !next.pending.insert(call.id.clone()) {
+                            return Err("runtime reused a skill preparation identity".into());
+                        }
+                        next.call_tools.insert(call.id.clone(), call.name.clone());
+                        ids.push(call.id.clone());
+                        parts.push(json!({"type":"tool-call","toolCallId":call.id,"toolName":call.name,"input":call.input}));
+                        events.push(json!({"type":"tool-call","step":step,"toolCallId":call.id,"toolName":call.name,"input":call.input}));
+                    }
+                    let message = json!({"role":"assistant","content":parts});
+                    next.request.provider.prompt.push(message.clone());
+                    events.insert(0, json!({"type":"assistant-message","step":step,"message":message}));
+                    events.insert(0, json!({"type":"step-started","step":step,"source":"runtime_skill_preparation"}));
+                    next.phase = Phase::Tools { step, calls: ids };
+                }
+                drop(handle.commit(state, next, events, false).await?);
+            }
+
+            Phase::Review { step, context_id, mut disposition } => {
+                let mut changed = handle.changed.subscribe();
+                let review = loop {
+                    let state = handle.state.lock().await;
+                    if state.execution.cancel_requested { return Ok(LoopFinish::Cancelled); }
+                    if let Some(error) = &state.failure { return Err(error.clone().into()); }
+                    if let Some(context) = &state.execution.step_context {
+                        if context.context_id == context_id {
+                            break context.completion.clone().ok_or("missing completion review")?;
+                        }
+                    }
+                    drop(state);
+                    changed.changed().await?;
+                };
+                let state = handle.state.lock().await;
+                let mut next = state.execution.clone();
+                let mut events = vec![json!({"type":"step-completed","step":step})];
+                // Keep canonical history consistent with the host's reviewed
+                // answer. Provider-specific raw envelopes refer to the old text.
+                if let Some(message) = next.request.provider.prompt.last_mut() {
+                    if message["role"] == "assistant" {
+                        if let Some(parts) = message["content"].as_array_mut() {
+                            parts.retain(|part| part["type"] != "text");
+                            parts.push(json!({"type":"text","text":review.content}));
+                        }
+                        if let Some(object) = message.as_object_mut() {
+                            object.remove("rigMessage");
+                            object.remove("continuationMessages");
+                        }
+                    }
+                }
+                if let Some(reason) = review.retry {
+                    next.context_correction = Some(reason.clone());
+                    next.request.provider.prompt.push(json!({"role":"user","content":[{"type":"text","text":reason}]}));
+                    events.push(json!({"type":"policy-correction","step":step,"reason":reason}));
+                    next.phase = next_phase(&next.request, step + 1);
+                } else {
+                    disposition.summary = review.content;
+                    next.phase = Phase::Finish { step, disposition: Some(disposition) };
+                }
+                drop(handle.commit(state, next, events, false).await?);
             }
 
             Phase::Compact { step, mut plan } => {
@@ -1190,9 +1292,15 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     }
                     drop(handle.commit(state, next, vec![event], false).await?);
                 }
-                let mut events = continuing_provider_events(model_request,
-                    execution.request.context_policy.as_ref().map(ContextPolicy::input_budget),
-                    |request| Ok(loop_context::composition(request)?.total));
+                let mut events = continuing_provider_events(
+                    model_request,
+                    execution
+                        .request
+                        .context_policy
+                        .as_ref()
+                        .map(ContextPolicy::input_budget),
+                    |request| Ok(loop_context::composition(request)?.total),
+                );
                 check_execution(handle, execution.request.execution_context.as_ref()).await?;
                 let mut lease_tick = tokio::time::interval(std::time::Duration::from_millis(500));
                 let mut calls = Vec::new();
@@ -1467,10 +1575,16 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
                     next.phase = match decision {
                         Decision::Continue => Phase::Tools { step, calls },
                         Decision::Finish(disposition) => {
-                            final_events.push(json!({"type":"step-completed","step":step}));
-                            Phase::Finish {
-                                step,
-                                disposition: Some(disposition),
+                            if disposition.status == "completed"
+                                && next.step_context.as_ref().is_some_and(|context| context.completion_check)
+                            {
+                                let context_id = format!("{}:completion:{step}", handle.id);
+                                next.step_context = None;
+                                final_events.push(json!({"type":"completion-request","step":step,"contextId":context_id,"summary":disposition.summary}));
+                                Phase::Review { step, context_id, disposition }
+                            } else {
+                                final_events.push(json!({"type":"step-completed","step":step}));
+                                Phase::Finish { step, disposition: Some(disposition) }
                             }
                         }
                         Decision::Correct(reason) => {
@@ -1557,6 +1671,66 @@ async fn run_loop(handle: &LoopHandle) -> Result<LoopFinish, LoopError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn runtime_skill_context_is_idempotent_and_rejects_duplicate_or_non_skill_calls() {
+        let loops = AgentLoopManager::default();
+        let handle = pending_loop("skill-context");
+        handle.state.lock().await.execution.phase = Phase::Context { step: 1, context_id: "context-1".into() };
+        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+        let value = json!({"loopId":handle.id,"contextId":"context-1","systemPrompt":"rules","tools":[],
+            "beforeModelTools":[{"id":"load-1","name":"skill.load","input":{"skillId":"test/skill"}}]});
+        let mut invalid = value.clone();
+        invalid["beforeModelTools"][0]["name"] = json!("bash");
+        assert!(loops.set_context(serde_json::from_value(invalid).unwrap()).await.is_err());
+        let mut duplicate = value.clone();
+        duplicate["beforeModelTools"].as_array_mut().unwrap().push(value["beforeModelTools"][0].clone());
+        assert!(loops.set_context(serde_json::from_value(duplicate).unwrap()).await.is_err());
+        let context: StepContextRequest = serde_json::from_value(value).unwrap();
+        loops.set_context(context.clone()).await.unwrap();
+        loops.set_context(context.clone()).await.unwrap();
+        let mut changed = context;
+        changed.before_model_tools[0].input = json!({"skillId":"different"});
+        assert!(loops.set_context(changed).await.is_err());
+        assert!(handle.state.lock().await.execution.pending.is_empty());
+    }
+
+    #[tokio::test]
+    async fn completion_review_replays_and_cancellation_unblocks_the_barrier() {
+        let loops = AgentLoopManager::default();
+        let handle = pending_loop("completion-review");
+        handle.state.lock().await.execution.phase = Phase::Review { step: 1, context_id: "review-1".into(),
+            disposition: Disposition { status: "completed".into(), reason: "completed".into(), summary: "unchecked".into() } };
+        loops.loops.lock().await.insert(handle.id.clone(), handle.clone());
+        let context: StepContextRequest = serde_json::from_value(json!({"loopId":handle.id,"contextId":"review-1",
+            "systemPrompt":"","tools":[],"completion":{"content":"checked"}})).unwrap();
+        let mut missing = context.clone(); missing.completion = None;
+        assert!(loops.set_context(missing).await.is_err());
+        loops.set_context(context.clone()).await.unwrap();
+        loops.set_context(context.clone()).await.unwrap();
+        let mut changed = context; changed.completion.as_mut().unwrap().content = "conflicting".into();
+        assert!(loops.set_context(changed).await.is_err());
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), run_loop(&handle)).await.unwrap().unwrap();
+        let LoopFinish::Done(_, Some(result)) = outcome else { panic!("expected reviewed result") };
+        assert_eq!(result.summary, "checked");
+
+        let waiting = pending_loop("review-cancel");
+        waiting.state.lock().await.execution.phase = Phase::Review { step: 1, context_id: "review-2".into(),
+            disposition: Disposition { status: "completed".into(), reason: "completed".into(), summary: "unchecked".into() } };
+        loops.loops.lock().await.insert(waiting.id.clone(), waiting.clone());
+        let task = { let waiting = waiting.clone(); tokio::spawn(async move {
+            let outcome = run_loop(&waiting).await;
+            // The production supervisor emits this terminal event after run_loop.
+            waiting.emit(json!({"type":"cancelled"}), true).await.unwrap();
+            waiting.state.lock().await.running = false;
+            waiting.changed.send_modify(|revision| *revision += 1);
+            outcome
+        }) };
+        tokio::task::yield_now().await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), loops.cancel(&waiting.id)).await.unwrap().unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(1), task).await.unwrap().unwrap().unwrap();
+        assert!(matches!(outcome, LoopFinish::Cancelled));
+    }
 
     fn request() -> AgentLoopRequest {
         serde_json::from_value(json!({"apiFormat":"invalid","model":"test","maxSteps":1})).unwrap()

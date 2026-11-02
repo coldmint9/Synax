@@ -45,6 +45,17 @@ it('does not attach an unrelated session or accept late events after closing', (
   expect(sources).toHaveLength(1);
 });
 
+it('keeps realtime ownership while another reader catches up independently', () => {
+  const closeDock = sessionLiveStream('s', vi.fn());
+  const closeTranscript = sessionLiveStream('s', vi.fn());
+  announceRunObservation('s', 'r');
+  expect(hasRunRealtimeObservation('s')).toBe(true);
+  closeTranscript();
+  expect(hasRunRealtimeObservation('s')).toBe(true);
+  closeDock();
+  expect(hasRunRealtimeObservation('s')).toBe(false);
+});
+
 it('does not let delayed discovery of a finished run replace the current run stream', () => {
   const close = sessionLiveStream('s', vi.fn());
   announceRunObservation('s', 'r');

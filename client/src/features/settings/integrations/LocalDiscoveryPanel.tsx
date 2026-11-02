@@ -225,16 +225,10 @@ export function LocalDiscoveryPanel({ projectId, servers, onSave }: Props) {
         <div className="min-w-0 flex-1">
           <h3>
             {text(
-              '让熟悉的工具，在这里继续工作',
-              'Bring your familiar tools along',
+              '本地工具与技能',
+              'Local tools and skills',
             )}
           </h3>
-          <p>
-            {text(
-              '自动发现这台机器上的 MCP 与 Skill，选择后添加到当前项目。',
-              'Discover MCP servers and skills on this machine. Add the ones you need to this project.',
-            )}
-          </p>
         </div>
         <Button
           size="sm"

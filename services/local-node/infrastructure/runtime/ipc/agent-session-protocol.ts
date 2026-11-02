@@ -143,8 +143,10 @@ export function emitSessionLive(
   event: SessionLiveEvent,
 ): void {
   if (process.env.SYNAX_AGENT_SESSION_CHILD === "1") {
-    // Stream chunks already carry completion events; forward only the start marker.
-    if (event.type === "context_compaction_started" || event.type === "context_compaction_state" || event.type === "conversation_git_messages" || event.type === "conversation_git_state")
+    // Stream chunks carry the normal deltas/results, but a tool_call is created
+    // before its tool awaits. Forward that start marker too so worker-backed
+    // blocking delegates are visible while they are still running.
+    if (event.type === "tool_call" || event.type === "context_compaction_started" || event.type === "context_compaction_state" || event.type === "conversation_git_messages" || event.type === "conversation_git_state")
       sendToParent({ type: "session:live", sessionId, event });
     return;
   }

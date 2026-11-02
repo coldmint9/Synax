@@ -7,14 +7,18 @@ import { useShellStore } from "../../shared/state/shellStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { TextAttachmentCard } from "./TextAttachmentCard";
+import { MessageReferences } from "./MessageReferences";
+import type { TurnReference } from "../../adapters/transport/agentRuntime";
 interface Props {
   content: string;
   contentParts?: RuntimeContentPart[];
+  references?: TurnReference[];
   messageId?: string;
 }
 export const UserMessageBlock = memo(function UserMessageBlock({
   content,
   contentParts,
+  references,
   messageId,
 }: Props) {
   const { locale } = useLocale(),
@@ -74,6 +78,7 @@ export const UserMessageBlock = memo(function UserMessageBlock({
       {editing && history?.canEditMessages !== false ? (
         <div className="message-inline-editor">
           {attachmentCards}
+          <MessageReferences references={references} />
           <textarea
             ref={textarea}
             autoFocus
@@ -124,7 +129,6 @@ export const UserMessageBlock = memo(function UserMessageBlock({
       ) : (
         <div className="message-action-group min-w-0 max-w-[min(85%,42rem)]">
           <div className="flex min-w-0 flex-col gap-2">
-            {attachmentCards}
             {messageText ? (
               <div
                 className="session-user-message agent-conversation-copy rounded-2xl border border-primary/15 bg-primary/[0.08] px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap shadow-sm"
@@ -133,7 +137,11 @@ export const UserMessageBlock = memo(function UserMessageBlock({
                 {messageText}
               </div>
             ) : null}
+            {/* Attachments and references sit below the bubble so the bubble
+                stays exactly what the user typed. */}
+            {attachmentCards}
             <MediaParts parts={contentParts} />
+            <MessageReferences references={references} />
           </div>
           <MessageActionToolbar
             role="user"

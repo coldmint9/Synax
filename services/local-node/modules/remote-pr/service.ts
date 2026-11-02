@@ -21,7 +21,13 @@ import { conversationGitService } from "../agent-runtime/conversation-git/servic
 import type { AgentRuntimeMessage } from "../agent-runtime/contracts.js";
 import type { ConversationGitSnapshot } from "../agent-runtime/conversation-git/contracts.js";
 import { RemotePrProvider } from "./provider.js";
-import { parseRemote, remoteChoice } from "./remote.js";
+import { parseRemote } from "./remote.js";
+import {
+  listPrBranches,
+  listPrRemotes,
+  readPrLocalState,
+  resolvePrRemote,
+} from "./git-context.js";
 import type {
   RemotePrAction,
   RemotePrAttach,
@@ -77,70 +83,25 @@ export class RemotePrService {
     repo: Repo,
     input: RemotePrScope,
   ): Promise<RemoteRepository> {
-    const names = (await this.runGit(repo, ["remote"])).stdout
-      .trim()
-      .split("\n");
-    if (!names.includes(input.remote))
-      throw new GitMrError(
-        "请选择已配置的 Git remote。",
-        "PR_REMOTE_MISSING",
-        400,
-      );
-    const urls = (
-      await this.runGit(repo, ["remote", "get-url", "--all", input.remote])
-    ).stdout
-      .trim()
-      .split("\n");
-    if (urls.length !== 1)
-      throw new GitMrError(
-        "该 remote 有多个地址，请为 PR 使用单一仓库 remote。",
-        "PR_REMOTE_AMBIGUOUS",
-        409,
-      );
-    return parseRemote(input.remote, urls[0], input.provider);
+    return resolvePrRemote(repo, input, this.runGit);
   }
   private async local(repo: Repo) {
-    return {
-      branch: (
-        await this.runGit(repo, ["branch", "--show-current"])
-      ).stdout.trim(),
-      headSha: (await this.runGit(repo, ["rev-parse", "HEAD"])).stdout.trim(),
-      dirty: Boolean(
-        (await this.runGit(repo, ["status", "--porcelain=v1", "-z"])).stdout,
-      ),
-    };
+    return readPrLocalState(repo, this.runGit);
   }
   async discover(
     sessionId: string,
     rootId?: string,
   ): Promise<RemotePrDiscovery> {
     const { root, repo } = await this.scope(sessionId, rootId);
-    const names = (await this.runGit(repo, ["remote"])).stdout
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const remotes = await Promise.all(
-      names.map(async (name) =>
-        remoteChoice(
-          name,
-          (await this.runGit(repo, ["remote", "get-url", name])).stdout.trim(),
-        ),
-      ),
-    );
+    const [remotes, branches] = await Promise.all([
+      listPrRemotes(repo, this.runGit),
+      listPrBranches(repo, this.runGit),
+    ]);
     return {
       rootId: root.id,
       ...(await this.local(repo)),
       remotes,
-      branches: (
-        await this.runGit(repo, [
-          "for-each-ref",
-          "--format=%(refname:short)",
-          "refs/heads",
-        ])
-      ).stdout
-        .trim()
-        .split("\n")
-        .filter(Boolean),
+      branches,
     };
   }
   async list(sessionId: string, input: RemotePrScope, page = 1) {

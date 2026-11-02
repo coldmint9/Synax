@@ -2,7 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import { MarkdownImage } from "../../shared/ui/markdown/MarkdownImage";
-import { parseFileLink, type FileLinkRoot } from "./fileLink";
+import {
+  parseFileLink,
+  resolveDocumentRelativePath,
+  type FileLinkRoot,
+} from "./fileLink";
 
 interface Scope {
   sessionId: string | null;
@@ -24,15 +28,8 @@ export function resolveMarkdownImage(src: string, scope: Scope) {
   } catch {
     return null;
   }
-  const parts = scope.path?.replace(/\\/g, "/").split("/").slice(0, -1) ?? [];
-  for (const part of decoded.replace(/\\/g, "/").split("/")) {
-    if (!part || part === ".") continue;
-    if (part === "..") {
-      if (!parts.length) return null;
-      parts.pop();
-    } else parts.push(part);
-  }
-  return parts.length ? { path: parts.join("/"), rootId: scope.rootId } : null;
+  const path = resolveDocumentRelativePath(decoded, scope.path);
+  return path ? { path, rootId: scope.rootId } : null;
 }
 
 function WorkspaceMarkdownImage({ src = "", alt = "", title, scope }: {

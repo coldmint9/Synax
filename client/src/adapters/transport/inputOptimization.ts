@@ -10,7 +10,7 @@ export interface InputOptimizationRequest {
 export interface InputOptimizationResult {
   text: string;
   // Optional for compatibility with servers that only return text.
-  status?: "optimized" | "unchanged" | "preserved";
+  status?: "optimized" | "unchanged";
 }
 
 export async function optimizeInput(

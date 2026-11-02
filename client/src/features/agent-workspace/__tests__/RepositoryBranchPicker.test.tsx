@@ -1,6 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenuProvider";
 import { RepositoryBranchPicker } from "../RepositoryBranchPicker";
 import { agentRuntimeApi } from "../../../adapters/transport/agentRuntime";
 vi.mock("../../../adapters/transport/agentRuntime", () => ({
@@ -8,6 +10,7 @@ vi.mock("../../../adapters/transport/agentRuntime", () => ({
     listSessionBranches: vi.fn(),
     switchSessionBranch: vi.fn(),
     createSessionBranch: vi.fn(),
+    mergeSessionBranch: vi.fn(),
   },
 }));
 vi.mock("../../../shared/hooks/useLocale", () => ({
@@ -74,6 +77,8 @@ it("lists local branches and prevents choosing a branch used by another worktree
     "s",
     "feature",
     "r",
+    false,
+    false,
   );
 });
 it("confirms and transfers dirty files before switching", async () => {
@@ -97,7 +102,13 @@ it("confirms and transfers dirty files before switching", async () => {
   await userEvent.click(screen.getByRole("button", { name: /Switch Git branch/ }));
   await userEvent.click(await screen.findByRole("option", { name: "feature" }));
   await waitFor(() =>
-    expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith("s", "feature", "r", true),
+    expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledWith(
+      "s",
+      "feature",
+      "r",
+      true,
+      false,
+    ),
   );
   expect(confirm).toHaveBeenCalledOnce();
 });
@@ -118,7 +129,7 @@ it("shows switch failures in a dismissible dialog and refreshes the actual branc
     screen.getByRole("button", { name: /Switch Git branch/ }),
   );
   await userEvent.click(await screen.findByRole("option", { name: "feature" }));
-  expect(await screen.findByRole("alertdialog", { name: "Branch switch incomplete" })).toHaveTextContent(
+  expect(await screen.findByRole("alertdialog", { name: "Branch action needs attention" })).toHaveTextContent(
     "uncommitted changes",
   );
   expect(document.querySelector('.ws-branch-error')).toBeNull();
@@ -190,6 +201,8 @@ it("shows full branch names in a flat list and switches with the full name", asy
     "s",
     "feature/ui/header",
     "r",
+    false,
+    false,
   );
 });
 
@@ -250,6 +263,8 @@ it("supports keyboard selection and preserves current and occupied branch indica
     "s",
     "feature",
     "r",
+    false,
+    false,
   );
 });
 
@@ -276,7 +291,7 @@ it("shows a loading failure without an empty list message", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Cannot read branches",
   );
-  expect(screen.queryByText("No local branches")).not.toBeInTheDocument();
+  expect(screen.queryByText("No branches to check out")).not.toBeInTheDocument();
 });
 
 it("honors external open requests through the actual trigger and dismisses with Escape or outside click", async () => {
@@ -351,4 +366,119 @@ it("keeps a failed creation editable and does not submit an existing branch", as
   await user.click(screen.getByRole("button", { name: "Create and check out" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Please commit first");
   expect(input).toHaveValue("feature/new-ui");
+});
+
+const remoteBranches = {
+  rootId: "r",
+  current: "main",
+  dirtyFileCount: 0,
+  branches: [{ name: "main", current: true, occupied: false }],
+  remoteBranches: [
+    { name: "origin/feature/login", remote: "origin", branch: "feature/login" },
+    { name: "upstream/fix/login-timeout", remote: "upstream", branch: "fix/login-timeout" },
+  ],
+};
+
+it("groups local and remote branches and checks a remote ref out as a local branch", async () => {
+  vi.mocked(agentRuntimeApi.listSessionBranches).mockResolvedValue(remoteBranches);
+  vi.mocked(agentRuntimeApi.switchSessionBranch).mockResolvedValue({
+    ...remoteBranches,
+    current: "feature/login",
+    branches: [
+      { name: "main", current: false, occupied: false },
+      { name: "feature/login", current: true, occupied: false },
+    ],
+    remoteBranches: [remoteBranches.remoteBranches[1]],
+  });
+  const changed = vi.fn();
+  render(
+    <RepositoryBranchPicker
+      sessionId="s"
+      rootId="r"
+      branch="main"
+      onSwitched={changed}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /Switch Git branch/ }));
+  expect(await screen.findByRole("group", { name: "Local" })).toHaveTextContent(
+    "main",
+  );
+  expect(screen.getByRole("group", { name: "Remote" })).toHaveTextContent(
+    "origin/feature/login",
+  );
+  await user.click(screen.getByRole("option", { name: "origin/feature/login" }));
+  await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  expect(agentRuntimeApi.switchSessionBranch).toHaveBeenCalledExactlyOnceWith(
+    "s",
+    "origin/feature/login",
+    "r",
+    false,
+    true,
+  );
+});
+
+it("filters local and remote branches with the same search field", async () => {
+  vi.mocked(agentRuntimeApi.listSessionBranches).mockResolvedValue(remoteBranches);
+  render(
+    <RepositoryBranchPicker sessionId="s" branch="main" onSwitched={vi.fn()} />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: /Switch Git branch/ }));
+  const search = await screen.findByRole("combobox", { name: "Search branches" });
+  await user.type(search, "login");
+  expect(
+    screen.queryByRole("group", { name: "Local" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getAllByRole("option").map((option) => option.getAttribute("aria-label")),
+  ).toEqual(["origin/feature/login", "upstream/fix/login-timeout"]);
+  await user.clear(search);
+  await user.type(search, "main");
+  expect(screen.getByRole("group", { name: "Local" })).toHaveTextContent(
+    "main",
+  );
+  expect(
+    screen.queryByRole("group", { name: "Remote" }),
+  ).not.toBeInTheDocument();
+});
+
+it("merges a branch into the checked-out branch from its right-click menu", async () => {
+  const changed = vi.fn();
+  vi.mocked(agentRuntimeApi.mergeSessionBranch).mockResolvedValue({
+    ...branches,
+    dirtyFileCount: 0,
+    merged: { status: "merged" },
+  });
+  render(
+    <MemoryRouter>
+      <ContextMenuProvider>
+        <RepositoryBranchPicker
+          sessionId="s"
+          rootId="r"
+          branch="main"
+          onSwitched={changed}
+        />
+      </ContextMenuProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: /Switch Git branch/ }),
+  );
+  fireEvent.contextMenu(await screen.findByRole("option", { name: "feature" }), {
+    clientX: 10,
+    clientY: 12,
+  });
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Merge into main" }),
+  );
+  await waitFor(() =>
+    expect(agentRuntimeApi.mergeSessionBranch).toHaveBeenCalledWith(
+      "s",
+      "feature",
+      "r",
+    ),
+  );
+  expect(await screen.findByText("Merged feature into main")).toBeVisible();
+  expect(changed).toHaveBeenCalled();
 });

@@ -5,11 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { agentSessionRuntime } from "../session-runtime.js";
 import { agentRuntimeStore as store } from "../session-store.js";
 import { toolRegistry } from "../tool-registry.js";
-import { createConfiguredSubagent } from "../subagent-delegation.js";
+import { createConfiguredSubagent, createInteractiveSideChat } from "../subagent-delegation.js";
 import { subagentTemplates } from "../subagent-templates.js";
 import { prepareTurnReferences } from "../turn-references.js";
 import { applySessionPermissionUpdate } from "../session-permissions.js";
 import { businessStore } from "../../../infrastructure/persistence/business-store.js";
+import { updateGlobalConfig } from "../../../infrastructure/runtime/config/config-store.js";
 import { ensureSynaxAgentRegistered } from "../synax/index.js";
 import { resetAgentRuntimeFixtures, admitActiveFixtureRun } from "./agent-runtime-fixtures.js";
 import type { ToolExecutionInput } from "../contracts.js";
@@ -35,6 +36,15 @@ describe("generic subagent configuration", () => {
     expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
     expect(store.getSession(parentId).childSessionIds).toHaveLength(5);
   });
+  it("frees a delegation slot as soon as its child is settled, even if the row still runs", async () => {
+    const settled = await Promise.all(Array.from({ length: 5 }, (_, index) =>
+      createConfiguredSubagent(input(), { prompt: `Inspect area ${index}`, profile: { access: "read-only" } })));
+    // Every child ended, but an unconfirmed stop can leave its row `running`.
+    for (const { child } of settled)
+      store.updateSessionMetadata(child.id, { subagentTask: { state: "failed", phase: "failed" } });
+    await expect(createConfiguredSubagent(input(), { prompt: "Inspect the retry", profile: { access: "read-only" } }))
+      .resolves.toMatchObject({ child: { parentSessionId: parentId } });
+  });
   it("automatically inherits parent tools and authorization and supports shell execution", async () => {
     const { child } = await createConfiguredSubagent(input(), { prompt: "Check the workspace" });
     expect(child.profileId).toBe("subagent");
@@ -44,6 +54,18 @@ describe("generic subagent configuration", () => {
     const call = await toolRegistry.execute(child.id, "bash", { command: "printf inherited" });
     expect(call.record).toMatchObject({ status: "completed", outputRef: { stdout: "inherited" } });
     expect(store.listPermissions(child.id).some(item => item.action === "ask")).toBe(false);
+  });
+  it("creates an interactive child that shares the primary session's tools without the task orchestrator", async () => {
+    const child = await createInteractiveSideChat(parentId, "Temporary side conversation.");
+    expect(child.profileId).toBe("subagent");
+    expect(child.parentSessionId).toBe(parentId);
+    expect(child.sessionMetadata?.subagentProfile).toMatchObject({
+      profile: { access: "inherit" },
+    });
+    const tools = toolRegistry.listForSession(child.id).map((tool) => tool.id);
+    expect(tools).toEqual(expect.arrayContaining(["file.read", "file.write"]));
+    expect(tools).not.toContain("subagent.delegate");
+    expect(store.getSession(parentId).childSessionIds).toContain(child.id);
   });
   it("keeps scoped writers within their files and prevents shell bypasses", async () => {
     const { child } = await createConfiguredSubagent(input(), { prompt: "Implement", profile: { writeScope: ["src"] } });
@@ -85,5 +107,18 @@ describe("generic subagent configuration", () => {
     const saved = subagentTemplates.save({ ...template, enabled: false });
     expect(() => prepareTurnReferences(parentId, [{ kind: "subagent", id: saved.id }])).toThrow(/disabled/);
     await expect(createConfiguredSubagent(input(), { prompt: "Task", templateId: saved.id })).rejects.toThrow(/disabled/);
+  });
+  it("rejects an unconfigured child model before the child session exists", async () => {
+    await expect(createConfiguredSubagent(input(), { prompt: "Inspect", profile: { model: "deep" } }))
+      .rejects.toThrow(/thinking mode, not a model/);
+    await expect(createConfiguredSubagent(input(), { prompt: "Inspect", profile: { model: "openai/gpt-4o-mini" } }))
+      .rejects.toThrow(/not a configured model/);
+    expect(store.getSession(parentId).childSessionIds).toHaveLength(0);
+  });
+  it("normalizes a configured model to an exact ref on the child", async () => {
+    updateGlobalConfig({ providerConnections: { openai: {
+      providerId: "openai", apiKey: "sk-test", baseUrl: "https://api.openai.com/v1" } } }, "subagent-model-test");
+    const { child } = await createConfiguredSubagent(input(), { prompt: "Inspect", profile: { model: "gpt-4o-mini" } });
+    expect((child.sessionMetadata?.backend as { model?: string }).model).toBe("openai/gpt-4o-mini");
   });
 });

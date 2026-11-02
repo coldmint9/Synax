@@ -6,7 +6,6 @@ import type { InterleavedTurn } from "../buildInterleavedTurns";
 function userEntry(
   id: string,
   content: string,
-  injected = false,
 ): ConversationTimelineEntry {
   return {
     id,
@@ -14,7 +13,6 @@ function userEntry(
     createdAt: `2026-09-10T10:00:${id.padStart(2, "0")}.000Z`,
     label: content,
     content,
-    ...(injected ? { injected: true } : {}),
   };
 }
 
@@ -107,25 +105,6 @@ describe("groupTimelineIntoTurns", () => {
     expect(turns[1].members.map((member) => member.id)).toEqual(["4", "5"]);
   });
 
-  it("does not create a rail anchor for an injected system prompt", () => {
-    const turns = groupTimelineIntoTurns([
-      userEntry("1", "继续", true),
-      agentEntry("2", [{ type: "text", content: "收到" }]),
-      userEntry("3", "再改一处", true),
-      agentEntry("4", [{ type: "text", content: "完成" }]),
-      userEntry("5", "提交这些代码"),
-    ]);
-
-    expect(turns.map((turn) => turn.id)).toEqual(["2", "5"]);
-    expect(turns[0].members.map((member) => member.id)).toEqual(["2", "4"]);
-  });
-
-  it("renders no ticks when the timeline only contains injected prompts", () => {
-    expect(
-      groupTimelineIntoTurns([userEntry("1", "系统提示", true)]),
-    ).toEqual([]);
-  });
-
   it("keeps leading agent activity as its own first tick", () => {
     const turns = groupTimelineIntoTurns([
       agentEntry("1", [{ type: "text", content: "开场" }]),
@@ -160,14 +139,7 @@ describe("turnPreview", () => {
     });
   });
 
-  it("omits injected scaffolding and strips the duplicated label stem", () => {
-    const [agentAfterInjection] = groupTimelineIntoTurns([
-      userEntry("1", "## Language Output Directive\n请用中文回答", true),
-      agentEntry("2", [{ type: "text", content: "好" }]),
-    ]);
-    expect(agentAfterInjection.id).toBe("2");
-    expect(turnPreview(agentAfterInjection).body).toBe("好");
-
+  it("strips the duplicated label stem", () => {
     const [agentHeaded] = groupTimelineIntoTurns([
       agentEntry(
         "1",

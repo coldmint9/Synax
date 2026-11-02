@@ -223,6 +223,7 @@ export function McpServersSection({
   return (
     <SettingsCard
       title={title ?? t("settingsMcpTitle")}
+      description={description ?? t("settingsMcpDesc")}
       icon={Plug}
       trailing={
         <div className="flex items-center gap-2">
@@ -242,7 +243,6 @@ export function McpServersSection({
         </div>
       }
     >
-      <p className="settings-note">{description ?? t("settingsMcpDesc")}</p>
       {onSaveBuiltinComputerUse && <BuiltinMcpSection value={builtinComputerUse} onSave={onSaveBuiltinComputerUse} />}
       {servers.length === 0 && !editing && !onSaveBuiltinComputerUse && (
         <p className="settings-note">{t("settingsMcpEmpty")}</p>
@@ -253,7 +253,14 @@ export function McpServersSection({
             <div className="flex min-h-[76px] items-center gap-3 px-4 py-3">
               <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Plug size={17} /></div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground" title={server.name}>{server.name}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <p className="truncate text-sm font-medium text-foreground" title={server.name}>{server.name}</p>
+                  {server.builtin && (
+                    <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      {t('settingsMcpBuiltin')}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 truncate font-mono text-xs leading-5 text-muted-foreground" title={`${server.command} ${server.args?.join(' ') ?? ''}`}>
                   {server.command} {server.args?.join(' ') ?? ''}
                 </p>
@@ -262,9 +269,13 @@ export function McpServersSection({
               <ExtensionControls name={server.name} enabled={server.enabled !== false} busy={saving}
                 onToggle={(enabled) => handleToggleEnabled(server, enabled)}
                 actions={[
-                  { id: 'edit', label: t('settingsMcpEdit'), onAction: () => { setEditing(configToDraft(server)); setSaveError(null); } },
+                  ...(server.builtin ? [] : [
+                    { id: 'edit', label: t('settingsMcpEdit'), onAction: () => { setEditing(configToDraft(server)); setSaveError(null); } },
+                  ]),
                   { id: 'test', label: t(testingId === server.id ? 'settingsMcpConnecting' : 'settingsMcpTest'), disabled: testingId !== null, onAction: () => void handleTest(server) },
-                  { id: 'uninstall', label: t('settingsMcpDelete'), danger: true, onAction: () => { setSaveError(null); setPendingUninstall(server); } },
+                  ...(server.builtin ? [] : [
+                    { id: 'uninstall', label: t('settingsMcpDelete'), danger: true, onAction: () => { setSaveError(null); setPendingUninstall(server); } },
+                  ]),
                 ]} />
             </div>
           </div>

@@ -19,6 +19,13 @@
   line-height: 1.65;
   letter-spacing: 0;
 }
+/* The markdown reply closes the turn, so it keeps the narration's ink and adds
+   one step of weight instead of a separate brighter color. */
+.session-conversation-flow
+  .session-answer-region
+  > .agent-conversation-copy.feed-prose {
+  font-weight: 500;
+}
 .session-process-trigger {
   display: flex;
   align-items: center;
@@ -123,6 +130,27 @@
 .session-conversation-flow .bui-tool-group,
 .session-conversation-flow .bui-tool-list,
 .session-flow-tools.bui-tool-group { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: 0; padding: 0; }
+/* Read screenshots and generated images sit on the call row itself. The strip
+   stays one fixed 40px line so the virtual window can keep row arithmetic. */
+.bui-tool-media {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.bui-tool .bui-tool-media {
+  max-width: calc(100% - 24px);
+  margin: 2px 0 4px 24px;
+}
+.bui-tool-media.bui-process-media {
+  max-width: calc(100% - 22px);
+  margin: 4px 0 6px 22px;
+}
 .bui-tool .bui-tool-trigger {
   display: flex;
   align-items: center;
@@ -137,6 +165,40 @@
 .bui-tool .bui-tool-symbol { flex: 0 0 16px; width: 16px; color: inherit; }
 .bui-tool-copy { display: flex; align-items: baseline; min-width: 0; gap: 5px; }
 .bui-tool .bui-tool-label { flex: 0 0 auto; max-width: none; font-size: inherit; font-weight: 400; line-height: 1.65; }
+.bui-tool-trigger--subagent { gap: 5px; }
+.bui-tool-trigger--subagent .bui-tool-disclosure { flex: 0 1 auto; }
+.bui-subagent-object {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  max-width: min(16rem, 38vw);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 1px 7px 1px 5px;
+  color: color-mix(in srgb, var(--flow-ink) 88%, var(--accent));
+  font: inherit;
+  font-size: 0.94em;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bui-subagent-object > span { overflow: hidden; text-overflow: ellipsis; }
+button.bui-subagent-object { cursor: pointer; }
+button.bui-subagent-object:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--flow-ink);
+}
+button.bui-subagent-object:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
 .bui-tool .bui-tool-target,
 .bui-tool .bui-tool-result {
   display: block;
@@ -192,6 +254,7 @@ button.bui-tool-disclosure { cursor: pointer; }
 .bui-tool .bui-tool-result[data-tool-failure],
 .bui-tool[data-tool-status="failed"] > .bui-tool-trigger > .bui-tool-symbol,
 .bui-tool[data-tool-status="denied"] > .bui-tool-trigger > .bui-tool-symbol { color: var(--danger); }
+.bui-tool .bui-tool-result[data-tool-blocked] { color: var(--flow-muted); }
 .bui-tool .bui-tool-details, .bui-tool .bui-tool-batch-body { margin: 6px 0 10px 24px; padding: 0; border: 0; animation: none; }
 .bui-tool .bui-tool-detail-label { font-size: 11px; }
 .bui-tool .bui-tool-details pre { font-size: 12px; }
@@ -208,8 +271,8 @@ button.bui-tool-disclosure { cursor: pointer; }
 .bui-thinking .bui-thinking-body { font-size: 13px; line-height: 1.65; }
 .bui-thinking .bui-thinking-reveal[aria-hidden="true"] { grid-template-rows: 0fr; opacity: 0; }
 
-.session-flow-append .session-flow-entry,
-.session-process-window-frame[data-animate] .session-process-window-row { animation: session-flow-append 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
+.session-flow-append .session-flow-entry:not([data-activity]),
+.session-process-window-row[data-row-appended] { animation: session-flow-append 200ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1)); }
 @keyframes session-flow-append {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
@@ -238,4 +301,33 @@ button.bui-tool-disclosure { cursor: pointer; }
 }
 .session-activity-group[data-live] .session-process-window-frame:not([data-fade-top]):not([data-fade-bottom]) {
   mask-image: linear-gradient(to bottom, rgb(0 0 0 / .45), #000 54px);
+}
+/* A finished round folds its process and its intermediate replies into one row
+   that reports the work duration. The row starts at the height the removed rows
+   occupied and eases down to the single line, so the transcript contracts in
+   place instead of jumping to a new layout. */
+.session-fold-collapse {
+  /* The folded row lives in the transcript, not inside `.session-conversation-flow`,
+     so it declares the same reading-lane tokens the shared row styles read. */
+  --flow-muted: hsl(var(--muted-foreground));
+  --flow-ink: var(--foreground);
+  --flow-ease: cubic-bezier(.22, 1, .36, 1);
+  min-width: 0;
+  overflow: hidden;
+  transition: height 360ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1));
+}
+.dark .session-fold-collapse { --flow-muted: #797979; }
+.session-fold-collapse[data-settling] > .session-work-log {
+  animation: session-fold-settle 360ms var(--flow-ease, cubic-bezier(.22, 1, .36, 1));
+}
+@keyframes session-fold-settle {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* The one affordance on the folded row stays visible: without a chevron the
+   line reads as a caption instead of something that opens. */
+.session-work-log > .session-process-trigger .session-process-chevron { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .session-fold-collapse { transition: none; }
+  .session-fold-collapse[data-settling] > .session-work-log { animation: none; }
 }

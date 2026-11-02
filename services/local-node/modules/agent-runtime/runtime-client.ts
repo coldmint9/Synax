@@ -55,7 +55,7 @@ function resolveToken(options: RuntimeClientOptions): string | undefined {
   const remote = new URL(options.baseUrl ?? process.env.SYNAX_API ?? 'http://127.0.0.1:3210');
   if (!['localhost', '127.0.0.1', '[::1]'].includes(remote.hostname) && !options.tokenFile && !process.env.SYNAX_RUNTIME_TOKEN_FILE) return undefined;
   const tokenFile = options.tokenFile ?? process.env.SYNAX_RUNTIME_TOKEN_FILE ?? path.join(
-    process.env.DATA_ROOT ?? path.join(os.homedir(), '.synax'),
+    process.env.DATA_ROOT ?? path.join(os.homedir(), '.synax', 'v2'),
     'runtime-access-token',
   );
   try {

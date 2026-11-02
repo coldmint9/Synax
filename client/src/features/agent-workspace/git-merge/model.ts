@@ -86,3 +86,16 @@ export function layoutCommitGraph(
     return { commit, lane };
   });
 }
+
+/** Fence and recovery messages that reach the card from the server. */
+const mergeErrorTexts: Record<string, string> = {
+  "Continue the parent conversation before starting its merge worker.":
+    "所属会话已停止，请在该会话中继续对话后重试。",
+  "Continue the parent conversation before resuming its merge worker.":
+    "所属会话已停止，请在该会话中继续对话后重试。",
+};
+
+export function mergeErrorText(message?: string | null): string | undefined {
+  if (!message) return undefined;
+  return mergeErrorTexts[message] ?? message;
+}

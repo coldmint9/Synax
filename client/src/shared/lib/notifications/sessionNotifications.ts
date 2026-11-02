@@ -1,25 +1,40 @@
-import type { AgentSession } from "../../../adapters/transport/agentRuntime";
+import {
+  SESSION_NOTIFICATION_KINDS,
+  isSessionNotificationKind,
+  notificationKind,
+  notificationMarker,
+  quietSessionNotification,
+  sessionNotificationPayload,
+  type SessionNotificationKind,
+  type SessionNotificationPayload,
+  type SessionNotificationTarget,
+} from "../../../../../packages/contracts/session-notifications";
 
-export type SessionNotificationKind =
-  | "completed"
-  | "input"
-  | "approval"
-  | "failed";
-export interface SessionNotificationTarget {
-  projectId: string;
-  sessionId: string;
-  kind: SessionNotificationKind;
-}
-export interface SessionNotificationPayload extends SessionNotificationTarget {
-  id: string;
-  title: string;
-  body: string;
-}
+// The lifecycle rules and notice text are shared with the local runtime, which
+// keeps notifying while this window is gone. Re-exported so callers keep one
+// import surface.
+export {
+  SESSION_NOTIFICATION_KINDS,
+  isSessionNotificationKind,
+  notificationKind,
+  notificationMarker,
+  quietSessionNotification,
+  sessionNotificationPayload,
+};
+export type {
+  SessionNotificationKind,
+  SessionNotificationPayload,
+  SessionNotificationTarget,
+};
+
 export interface DesktopNotificationBridge {
   showDesktopNotification: (
     payload: SessionNotificationPayload,
   ) => Promise<boolean>;
-  setDesktopNotificationsEnabled: (enabled: boolean) => void;
+  setDesktopNotificationsEnabled: (
+    enabled: boolean,
+    locale?: "zh" | "en",
+  ) => void;
   dismissDesktopNotification: (sessionId: string) => void;
   onDesktopNotificationOpen: (
     callback: (target: SessionNotificationTarget) => void,
@@ -46,17 +61,10 @@ export function validNotificationTarget(
   return (
     [target.projectId, target.sessionId].every(
       (id) => typeof id === "string" && /^[a-zA-Z0-9_-]{1,200}$/.test(id),
-    ) &&
-    ["completed", "input", "approval", "failed"].includes(String(target.kind))
+    ) && isSessionNotificationKind(target.kind)
   );
 }
-export function notificationKind(
-  status: string,
-): SessionNotificationKind | undefined {
-  if (status === "waiting_input") return "input";
-  if (status === "waiting_permission") return "approval";
-  if (status === "completed" || status === "failed") return status;
-}
+
 interface Observation {
   status: string;
   marker?: string;
@@ -71,11 +79,7 @@ export class SessionNotificationTracker {
   observe(id: string, patch: Record<string, unknown>): Observation | undefined {
     if (typeof patch.status !== "string") return;
     const previous = this.states.get(id);
-    const token =
-      patch.status === "completed"
-        ? patch.completedAt
-        : patch.pendingResumeToken;
-    const marker = typeof token === "string" && token ? token : undefined;
+    const marker = notificationMarker(patch.status, patch);
     if (
       previous?.status === patch.status &&
       (!marker || marker === previous.marker)
@@ -100,66 +104,4 @@ export class SessionNotificationTracker {
   remove(id: string): void {
     this.states.delete(id);
   }
-}
-const text = (value: string | null | undefined, limit: number) =>
-  Array.from(
-    (value ?? "")
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/[#*_`]/g, "")
-      .replace(/\s+/g, " ")
-      .trim(),
-  )
-    .slice(0, limit)
-    .join("");
-export function sessionNotificationPayload(
-  session: AgentSession,
-  kind: SessionNotificationKind,
-  locale: "zh" | "en",
-  sequence: number,
-): SessionNotificationPayload {
-  const zh = locale === "zh";
-  const labels = zh
-    ? {
-        completed: "会话已完成",
-        input: "需要你提供输入",
-        approval: "需要你审批",
-        failed: "会话执行失败",
-      }
-    : {
-        completed: "Session completed",
-        input: "Your input is needed",
-        approval: "Approval required",
-        failed: "Session failed",
-      };
-  const fallback = zh
-    ? {
-        completed: "点击查看执行结果。",
-        input: "点击打开会话并回答问题。",
-        approval: "点击查看待确认的操作。",
-        failed: "点击查看详情并继续处理。",
-      }
-    : {
-        completed: "Open the session to view the result.",
-        input: "Open the session to answer the pending question.",
-        approval: "Open the session to review the operation.",
-        failed: "Open the session for details.",
-      };
-  const title = text(session.title, 100);
-  const summary = text(
-    kind === "completed"
-      ? session.resultSummary
-      : (session.blockedReason ?? session.resultSummary),
-    240,
-  );
-  return {
-    id: `${session.id}:${kind}:${session.pendingResumeToken ?? session.completedAt ?? sequence}`,
-    projectId: session.projectId,
-    sessionId: session.id,
-    kind,
-    title:
-      title && !/^new (session|chat|agent)$/i.test(title)
-        ? title
-        : `Synax · ${labels[kind]}`,
-    body: `${labels[kind]}\n${summary || fallback[kind]}`,
-  };
 }

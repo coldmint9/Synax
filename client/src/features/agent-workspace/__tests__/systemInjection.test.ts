@@ -65,12 +65,29 @@ describe("system prompt injection detection", () => {
     ).toBe(false);
   });
 
-  it("labels injected entries and keeps them in the timeline", () => {
+  it("detects super node wake-ups stored before the marker existed", () => {
+    expect(
+      isSystemInjectedMessage(
+        message({
+          metadata: { source: "turn_request" },
+          content:
+            "[Super internal continuation]\nChild node child-a settled as completed.",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps injected prompts out of the transcript", () => {
     const entries = buildUserMessageEntries([
       message({
         id: "msg-a",
         metadata: { source: "turn_request" },
         content: COMPOSED,
+      }),
+      message({
+        id: "msg-a2",
+        metadata: { source: "system_injection" },
+        content: "Continue the approved goal from the previous round handoff.",
       }),
       message({
         id: "msg-b",
@@ -79,12 +96,7 @@ describe("system prompt injection detection", () => {
       }),
     ]);
 
-    expect(entries).toHaveLength(2);
-    expect(entries[0].injected).toBe(true);
-    expect(entries[0].label).toBe("已注入系统提示");
-    // the full payload is still available, but not used as the label
-    expect(entries[0].content).toBe(COMPOSED);
-    expect(entries[1].injected).toBeUndefined();
-    expect(entries[1].label).toBe("提交这些代码");
+    expect(entries.map((entry) => entry.id)).toEqual(["msg-b"]);
+    expect(entries[0].label).toBe("提交这些代码");
   });
 });

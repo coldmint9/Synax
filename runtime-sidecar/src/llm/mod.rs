@@ -10,7 +10,7 @@ pub(crate) mod continuation;
 pub(crate) mod deadline;
 pub(crate) mod errors;
 mod messages;
-pub(crate) use messages::expanded_messages;
+pub(crate) use messages::{expanded_messages, message_text_tokens};
 pub mod metadata;
 mod request;
 pub mod retry;

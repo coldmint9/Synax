@@ -75,7 +75,7 @@ export class SkillInstallService {
     store.put('skill-installs',skillId,{
       id:skillId,sourceId:input.sourceId,name:input.name,version:parsed.version || entry?.version || input.version || '',
       label:parsed.label,description:parsed.description,installPath,contentDigest:digest,
-      appliesTo:parsed.appliesTo,requiredCapabilities:parsed.requiredCapabilities,status:'installed',installedAt:existing?.installedAt ?? now,updatedAt:now,
+      appliesTo:parsed.appliesTo,requiredCapabilities:parsed.requiredCapabilities,requiresAccounts:parsed.requiresAccounts,status:'installed',installedAt:existing?.installedAt ?? now,updatedAt:now,
     } satisfies SkillInstallRecord);
     await store.flush(['skill-installs']);
 

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 const HistoricalVisualizationReply = lazy(() => import("./HistoricalVisualizationReply"));
-const RemotePrCard = lazy(() => import("./git-actions/RemotePrCard"));
+const MergeRequestCard = lazy(() => import("./git-actions/MergeRequestCard"));
 const ConversationGitCard = lazy(() => import("./git-merge/ConversationGitCard"));
 const InlineVisualization = lazy(() =>
   import("../visualizations/InlineVisualization").then((module) => ({
@@ -15,7 +15,9 @@ import { useAgentSessionStore } from "./state/agentSessionStore";
 import { MessageActionToolbar } from "./MessageActionToolbar";
 import { useSessionHistory } from "./SessionHistoryContext";
 import { useShellStore } from "../../shared/state/shellStore";
+import { useNotificationStore } from "../../shared/state/notificationStore";
 import { Zap } from "lucide-react";
+import type { ForkWorkspaceMode } from "../../adapters/transport/conversationHistory";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { hasDisplayableReasoning } from "./activityText";
 import { ConversationActivityGroup } from "./ConversationActivityGroup";
@@ -42,7 +44,7 @@ function TranscriptGitMerge({ reference, messageId, superseded }: GitMergeReplyP
   if (superseded) return <ExpiredMergeTask title={reference.title} />;
   return (
     <Suspense fallback={<div className="text-[11px] text-muted-foreground" role="status">正在加载合并任务…</div>}>
-      {reference.schema === "synax.git-pr" ? <RemotePrCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} messageId={messageId} readOnly={historical || !sessionId} />}
+      {reference.schema === "synax.git-pr" ? <MergeRequestCard reference={reference} readOnly={historical || !sessionId} /> : <ConversationGitCard reference={reference} messageId={messageId} readOnly={historical || !sessionId} />}
     </Suspense>
   );
 }
@@ -226,6 +228,16 @@ export function TurnContent({
     </div>
   );
 }
+/**
+ * Rollback and fork share the stored checkpoint reason, but "the latest history
+ * node cannot be rolled back" says nothing about forking: the newest reply is
+ * exactly where a branch usually starts. Every other reason (compaction,
+ * missing boundary) does block the fork, so it is surfaced unchanged.
+ */
+function forkBlockedReason(reason: string | null | undefined): string | null {
+  if (!reason) return null;
+  return reason.startsWith("HISTORY_LATEST_NODE") ? null : reason;
+}
 /** One agent turn. Turn duration separators are intentionally omitted from the transcript. */
 export function TurnBody({
   turn,
@@ -233,6 +245,7 @@ export function TurnBody({
   onExpandChild,
   isStreaming = false,
   isWorking = isStreaming,
+  showsHiddenReasoning = false,
   showActions = true,
 }: {
   turn: InterleavedTurn;
@@ -240,6 +253,11 @@ export function TurnBody({
   onExpandChild?: (sessionId: string) => void;
   isStreaming?: boolean;
   isWorking?: boolean;
+  /**
+   * The step still runs with its reasoning hidden: one placeholder stands in
+   * for every reasoning record of the newest stream.
+   */
+  showsHiddenReasoning?: boolean;
   /**
    * Whether this row is the round's final reply. Process rows leave the
    * copy / fork / rollback toolbar to that row instead of mounting an idle
@@ -249,6 +267,7 @@ export function TurnBody({
 }) {
   const history = useSessionHistory();
   const { locale } = useLocale();
+  const zh = locale === "zh";
   const showThinking = useShellStore((state) => state.preferences.sessionShowThinking);
   const visibleBlocks = showThinking
     ? turn.blocks
@@ -292,13 +311,16 @@ export function TurnBody({
       ) : (
         <TurnContent blocks={visibleBlocks} onExpandChild={onExpandChild} rowKeyPrefix={entryId} stepId={turn.stepId ?? undefined} isStreaming={isStreaming} isWorking={isWorking} />
       )}
+      {showsHiddenReasoning && visibleBlocks.length > 0 && <ThinkingIndicator />}
       {hasAnswer && showActions && (
         <MessageActionToolbar
           role="assistant"
           text={text}
           timestamp={isStreaming ? null : turn.completedAt}
           disabledReason={history?.reason || checkpoint?.reason || undefined}
-          forkDisabledReason={history?.forkReason || checkpoint?.reason || null}
+          forkDisabledReason={
+            history?.forkReason ?? forkBlockedReason(checkpoint?.reason)
+          }
           rollbackDisabled={
             checkpoint
               ? checkpoint.canRollback === false ||
@@ -315,8 +337,21 @@ export function TurnBody({
           busy={history?.busy}
           onFork={
             forkCheckpoint?.available
-              ? (mode) => {
-                  void history?.request("fork", forkCheckpoint, undefined, mode);
+              ? (mode: ForkWorkspaceMode) => {
+                  // The provider reports refused forks itself; this only keeps an
+                  // unexpected throw from vanishing into an unhandled rejection.
+                  const pending = history?.request(
+                    "fork",
+                    forkCheckpoint,
+                    undefined,
+                    mode,
+                  );
+                  void pending?.catch((error: unknown) =>
+                    useNotificationStore.getState().push({
+                      type: "error",
+                      message: error instanceof Error ? error.message : String(error),
+                    }),
+                  );
                 }
               : undefined
           }

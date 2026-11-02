@@ -167,6 +167,14 @@ describe("browser launch", () => {
     for (const target of targets) expect(target.options.headless).toBe(true);
   });
 
+  it("keeps every launch target off the macOS Keychain", () => {
+    process.env.SYNAX_BROWSER_PATH = "/tmp";
+    const targets = launchTargets(true);
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets)
+      expect(target.options.args).toContain("--use-mock-keychain");
+  });
+
   it("explains how to install a browser when every launch fails", () => {
     const error = browserInstallError(["system chrome: boom"]);
     expect(error.message).toContain("npx playwright install chromium");

@@ -2,6 +2,7 @@
 // the swap to a detached helper that reuses the same Electron binary in Node
 // mode, waits for the host to exit, then runs the installation's own Update.exe.
 // Nothing extra is shipped in the package for this.
+import { requireLegacyUpdateSource } from "../updater/update-source.js";
 
 export interface WindowsInstallation {
   format: 1;
@@ -50,6 +51,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function runWindowsInstallation(
   file: string,
 ): Promise<number> {
+  requireLegacyUpdateSource();
   const fs = await import("node:fs/promises");
   const { execFile, spawn } = await import("node:child_process");
   const { promisify } = await import("node:util");

@@ -1,4 +1,5 @@
 import { SESSION_PAGE_SIZE } from "../../../shared/lib/sessionListPaging";
+import { captureRunRealtimeCheckpoint, type RunRealtimeCheckpoint } from "../../../adapters/transport/runRealtime";
 import type {
   HistoryWindowResponse,
   HistoryWindowState,
@@ -7,6 +8,13 @@ import type { RuntimeContentPart } from "../../../adapters/transport/runtimeMedi
 import type { TurnReference } from "../../../adapters/transport/agentRuntime";
 import type { BackendId } from "../../../adapters/transport/agentRuntime";
 import { create } from "zustand";
+import {
+  discardQueuedLiveEvents,
+  enqueueLiveEvent,
+  flushLiveEvents,
+  type LiveEventInput,
+  setLiveEventDispatcher,
+} from "./liveEventQueue";
 import { compactSessionTail, isSessionHistoryReading, SESSION_TAIL_RETAIN } from "./sessionTailWindow";
 import { mergeRefreshedHistory, prependHistory } from "./historyWindowMerge";
 import { hydrateHistoryMessageContent } from "./hydrateHistoryMessageContent";
@@ -31,6 +39,7 @@ import {
   timelineContainsEntry,
 } from "./timelineHistoryIndex";
 import { usePendingSubmissionStore } from "./pendingSubmissionStore";
+import { conversationTurnMode, submitConversationMessage } from "./submitConversationMessage";
 import {
   agentRuntimeApi,
   type AgentInteraction,
@@ -59,7 +68,7 @@ import {
   ensureSessionLiveSubscription,
   releaseSessionLiveSubscription,
 } from "../../../adapters/transport/sessionLiveClient";
-import { AppError } from "../../../shared/lib/errors";
+import { AppError, handleError } from "../../../shared/lib/errors";
 import {
   clearRuntimeResourcePendingRemoval,
   isRuntimeResourceGone,
@@ -170,7 +179,8 @@ export type SessionInputBody = {
   backendId?: BackendId;
   message: string;
   mode?: AgentSessionMode;
-  /** `system_injection` renders the message as an "injected" chip, not a bubble. */
+  /** `system_injection` marks runtime scaffolding (goal continuation, healing);
+   *  the transcript never renders those messages. */
   messageSource?: "user" | "system_injection";
   /** Enriched create/turn prompt; defaults to `message` when omitted. */
   prompt?: string;
@@ -183,6 +193,20 @@ export type SessionInputBody = {
   mcpServerIds?: string[];
   gitWorkspace?: GitWorkspaceSelection;
 };
+
+/**
+ * Composer skill chips are mounted per turn. Turn references carry them for
+ * both live and queued submissions, which otherwise drop unknown fields.
+ */
+function withSkillReferences(body: SessionInputBody): SessionInputBody {
+  if (!body.skillIds?.length) return body;
+  const references: TurnReference[] = [...(body.references ?? [])];
+  for (const skillId of body.skillIds) {
+    if (!references.some((reference) => reference.kind === "skill" && reference.id === skillId))
+      references.push({ kind: "skill", id: skillId });
+  }
+  return { ...body, references };
+}
 
 /** Stable fallback — never use inline `?? []` in Zustand selectors (breaks getSnapshot caching). */
 export const EMPTY_INPUT_QUEUE: QueuedInput[] = [];
@@ -250,28 +274,11 @@ export function isSessionUnread(
 // The persisted cache refills evicted sessions without a round trip, so the
 // in-memory tier can stay warm across a wider working set of open sessions.
 const SESSION_INACTIVE_PAGE_CACHE_LIMIT = 8;
-/**
- * Completed pages are safe to show immediately, but they still need a bounded
- * freshness window so a session revisited later cannot remain stale forever.
- */
-export const SESSION_INACTIVE_PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
-/**
- * A snapshot taken after the run settled is the finished transcript. It only
- * changes when the runtime rewrites history (signalled as `historyReset`) or the
- * session starts another run (status becomes active), so it can be trusted far
- * longer than a mid-run page.
- */
-export const RESTORED_TERMINAL_TRUST_MS = 30 * 60 * 1000;
-
-function isFreshInactivePageCache(
-  cache: SessionDetailCacheEntry | undefined,
-  ttl = SESSION_INACTIVE_PAGE_CACHE_TTL_MS,
-  now = Date.now(),
-): boolean {
+/** Reads do not expire a transcript. Runtime/history mutations invalidate it. */
+function isReusableInactivePageCache(cache: SessionDetailCacheEntry | undefined): boolean {
   return Boolean(
-    cache?.cachedAt &&
-      now - cache.cachedAt >= 0 &&
-      now - cache.cachedAt < ttl,
+    cache?.cachedAt && !cache.invalidated && cache.restored !== "active" &&
+      !cache.historyWindow?.hasMoreChanges,
   );
 }
 
@@ -286,7 +293,18 @@ export interface SessionDetailCacheEntry {
   sessionTodos: TodoItem[];
   sessionInvocationUsage: SessionInvocationUsageResponse | null;
   cachedAt: number;
+  /** A content change was observed after this complete snapshot was read. */
+  invalidated?: boolean;
   lastVisitedAt?: number;
+  /** In-memory live projection paired with its transport cursor; never persisted to disk. */
+  live?: {
+    runId: string;
+    checkpoint?: RunRealtimeCheckpoint;
+    streamingStepId: string | null;
+    streamingLive: StreamingLiveBuffers;
+    streamingCompletedSteps: CompletedLiveStep[];
+    streamingRetry: LlmRetryState | null;
+  };
   /**
    * Painted from the persisted cache. The value is the runtime status the
    * snapshot was captured under: a copy saved mid-run must be reconciled before
@@ -296,12 +314,15 @@ export interface SessionDetailCacheEntry {
   restored?: "active" | "terminal";
   historyWindow?: HistoryWindowState;
   historyPagesLoaded?: boolean;
+  /** Measured minimum retained tail for two scrollable viewports. */
+  historyViewportRetain?: Partial<Record<"messages" | "runs" | "steps" | "toolCalls" | "events" | "permissions", number>>;
   timelineMessages?: AgentRuntimeMessage[];
   timelineRuns?: AgentRun[];
   timelineSteps?: AgentRunStep[];
   timelineToolCalls?: ToolCallRecord[];
   timelineIndexLoaded?: boolean;
   timelineIndexError?: string;
+  timelineIndexCursor?: string;
   removed?: HistoryWindowResponse["removed"];
   historyDeleted?: Record<string, string[]>;
 }
@@ -512,6 +533,22 @@ function forgetSessionsFromInactiveDetails(sessionIds: readonly string[]): void 
     forgetInactiveProjectDetails(projectId, sessionIds);
 }
 
+function invalidateSessionTranscript(sessionId: string): void {
+  const state = useAgentSessionStore.getState();
+  const cached = state.sessionDetailCache[sessionId];
+  if (cached && !cached.invalidated) {
+    useAgentSessionStore.setState({ sessionDetailCache: {
+      ...state.sessionDetailCache, [sessionId]: { ...cached, invalidated: true },
+    } });
+  }
+  for (const [projectId, cache] of inactiveProjectDetails) {
+    if (cache[sessionId] && !cache[sessionId].invalidated)
+      inactiveProjectDetails.set(projectId, { ...cache, [sessionId]: { ...cache[sessionId], invalidated: true } });
+  }
+  // Do not resurrect the previous disk snapshot after an in-memory eviction.
+  scheduleDeletePersistedDetail([sessionId]);
+}
+
 /** Copy the live list of `projectId` into the remembered snapshot tier. */
 function rememberCurrentSessionList(projectId: string): void {
   const state = useAgentSessionStore.getState();
@@ -557,6 +594,81 @@ function isActiveSessionStatus(
     status === "waiting_permission" ||
     status === "waiting_input"
   );
+}
+
+/**
+ * One card per form.
+ *
+ * The durable form list is an append-only index, so the same interaction can
+ * arrive more than once. Every copy became its own ask box, and the user
+ * answered the same question twice: keep the newest state of each id in the
+ * order the runtime reported it.
+ */
+function mergeInteractions(items: AgentInteraction[]): AgentInteraction[] {
+  if (items.length < 2) return items;
+  const merged = new Map<string, AgentInteraction>();
+  let duplicated = false;
+  for (const item of items) {
+    const seen = merged.get(item.id);
+    if (!seen) {
+      merged.set(item.id, item);
+      continue;
+    }
+    duplicated = true;
+    merged.set(item.id, newerInteraction(seen, item));
+  }
+  return duplicated ? [...merged.values()] : items;
+}
+
+function newerInteraction(
+  current: AgentInteraction,
+  candidate: AgentInteraction,
+): AgentInteraction {
+  // A resolved copy always outranks a pending one for the same id.
+  const rank = (item: AgentInteraction) =>
+    (item.status === "pending" ? 0 : 2) + (item.resolvedAt ? 1 : 0);
+  const delta = rank(candidate) - rank(current);
+  if (delta !== 0) return delta > 0 ? candidate : current;
+  return candidate.revision > current.revision ? candidate : current;
+}
+
+/**
+ * A row's `waiting_input` is only a projection of "a form is unanswered".
+ *
+ * Once the durable form list has no pending request and carries the answer that
+ * resumed the run, the row is running again. Nothing else repairs it: the
+ * session list is read once per workspace and then only patched, so a missed or
+ * stale parked status kept "Needs your input" on a session that was already
+ * executing.
+ *
+ * A save, revision request or cancellation ends its turn instead of resuming
+ * it, so those answers leave the parked row alone and the durable terminal
+ * status settles it.
+ */
+function unparkAnsweredSession(
+  sessionId: string,
+  items: AgentInteraction[],
+  patchSession: (sessionId: string, patch: Partial<AgentSession>) => void,
+): void {
+  if (items.some((item) => item.status === "pending")) return;
+  if (
+    !items.some(
+      (item) =>
+        item.status === "answered" &&
+        ["submit", "skip", "execute"].includes(item.response?.action ?? ""),
+    )
+  )
+    return;
+  const session = useAgentSessionStore
+    .getState()
+    .sessions.find((item) => item.id === sessionId);
+  if (!session || session.status !== "waiting_input" || !session.activeRunId)
+    return;
+  patchSession(sessionId, {
+    status: "running",
+    pendingResumeToken: null,
+    blockedReason: null,
+  });
 }
 
 type AgentRunStreamChunk = {
@@ -655,11 +767,28 @@ function onSessionStreamChunk(sessionId: string, chunk: unknown): void {
   }
 }
 
-function patchSessionDetailCache(
+/**
+ * The detail cache write a live record owns. Folding it into the batch keeps
+ * the record's collection update and its cached copy in one transition.
+ */
+function detailCachePatch(
+  state: Pick<
+    AgentSessionStoreState,
+    | "sessionDetailCache"
+    | "selectedSessionId"
+    | "runs"
+    | "steps"
+    | "events"
+    | "messages"
+    | "toolCalls"
+    | "permissions"
+    | "sessionStats"
+    | "sessionTodos"
+    | "sessionInvocationUsage"
+  >,
   sessionId: string,
   patch: Partial<SessionDetailCacheEntry>,
-): void {
-  const state = useAgentSessionStore.getState();
+): Partial<AgentSessionStoreState> {
   const existing = state.sessionDetailCache[sessionId] ?? {
     runs: state.runs,
     steps: state.steps,
@@ -673,22 +802,64 @@ function patchSessionDetailCache(
     cachedAt: 0,
     lastVisitedAt: Date.now(),
   };
-  useAgentSessionStore.setState((s) => ({
+  return {
     sessionDetailCache: trimSessionDetailCache(
       {
-        ...s.sessionDetailCache,
+        ...state.sessionDetailCache,
         // Profile responses do not make an unfinished transcript fresh.
         [sessionId]: { ...existing, ...patch },
       },
-      s.selectedSessionId,
+      state.selectedSessionId,
     ),
-  }));
+  };
+}
+
+function patchSessionDetailCache(
+  sessionId: string,
+  patch: Partial<SessionDetailCacheEntry>,
+): void {
+  useAgentSessionStore.setState((s) => detailCachePatch(s, sessionId, patch));
 }
 
 function ensureLiveStream(sessionId: string): void {
   if (useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
-  ensureSessionLiveSubscription(sessionId, (event) => {
-    useAgentSessionStore.getState().applyLiveEvent(event, sessionId);
+  const state = useAgentSessionStore.getState();
+  const live = state.sessionDetailCache[sessionId]?.live;
+  const resume = live?.streamingLive === state.streamingLive &&
+    live.streamingStepId === state.streamingStepId ? live.checkpoint : undefined;
+  const receive = (event: SessionLiveEvent) => {
+    // Collected, not committed: one frame of records becomes one transition.
+    enqueueLiveEvent(event, sessionId);
+  };
+  if (resume) ensureSessionLiveSubscription(sessionId, receive, resume);
+  else ensureSessionLiveSubscription(sessionId, receive);
+}
+
+/** Save the painted records before selection clears the live slot. */
+function rememberSelectedTranscript(): void {
+  // A switch must park the complete conversation, including the records the
+  // current frame has not committed yet.
+  flushLiveEvents();
+  flushStreamingDeltas();
+  const state = useAgentSessionStore.getState();
+  const id = state.selectedSessionId;
+  if (!id) return;
+  const cached = state.sessionDetailCache[id];
+  const runId = state.sessions.find(session => session.id === id)?.activeRunId;
+  patchSessionDetailCache(id, {
+    runs: state.runs, steps: state.steps, messages: state.messages,
+    toolCalls: state.toolCalls, events: state.events, permissions: state.permissions,
+    // Saving a view must not make a stale server snapshot fresh.
+    cachedAt: cached?.cachedAt ?? 0,
+    lastVisitedAt: Date.now(),
+    live: runId ? {
+      runId,
+      checkpoint: captureRunRealtimeCheckpoint(id),
+      streamingStepId: state.streamingStepId,
+      streamingLive: state.streamingLive,
+      streamingCompletedSteps: state.streamingCompletedSteps,
+      streamingRetry: state.streamingRetry,
+    } : undefined,
   });
 }
 
@@ -753,6 +924,7 @@ export function scheduleSessionRefresh(
     if (refreshRevisions.size > 64)
       refreshRevisions.delete(refreshRevisions.keys().next().value!);
   }
+  if (sessionId && (target === "all" || target === "detail")) invalidateSessionTranscript(sessionId);
   if (!pendingRefresh || pendingRefresh.projectId !== state.projectId)
     pendingRefresh = {
       projectId: state.projectId,
@@ -767,19 +939,6 @@ export function scheduleSessionRefresh(
       pendingRefresh.detail = sessionId;
     if (target === "usage") pendingRefresh.usage = sessionId;
     if (target === "interactions") pendingRefresh.interactions = sessionId;
-  } else if (
-    sessionId &&
-    target !== "list" &&
-    target !== "interactions" &&
-    state.sessionDetailCache[sessionId]
-  ) {
-    const cached = state.sessionDetailCache[sessionId];
-    useAgentSessionStore.setState({
-      sessionDetailCache: {
-        ...state.sessionDetailCache,
-        [sessionId]: { ...cached, cachedAt: 0 },
-      },
-    });
   }
   if (!liveDetailRefreshTimer)
     // Usage and interactions reconcile visible state, so they ride the fast
@@ -795,6 +954,28 @@ function scheduleLiveRefreshDetail(target: "detail" | "usage" = "detail"): void 
     target,
   );
 }
+
+/**
+ * A settled session changes more than its own row: its position in the list,
+ * the totals and every count derived from the page. The live callback that
+ * reports the transition asks for that one coalesced list read instead of
+ * trusting the row patch alone.
+ */
+function scheduleSessionListRefreshOnSettle(
+  sessionId: string,
+  previousStatus: AgentSession["status"] | undefined,
+  nextStatus: AgentSession["status"] | undefined,
+): void {
+  if (nextStatus === undefined || nextStatus === previousStatus) return;
+  if (!isTerminalSessionStatus(nextStatus)) return;
+  // Only the workspace on screen has a list to re-read; a row remembered for
+  // another workspace is reconciled when that workspace is opened.
+  const state = useAgentSessionStore.getState();
+  const row = state.sessions.find((session) => session.id === sessionId);
+  if (!row || row.projectId !== state.projectId) return;
+  scheduleSessionRefresh(sessionId, "list");
+}
+
 function scheduleInvocationUsageRefresh(): void {
   scheduleSessionRefresh(
     useAgentSessionStore.getState().selectedSessionId,
@@ -897,6 +1078,13 @@ const STREAM_FLUSH_MS = 32;
 let deltaBuffer: Array<{ type: "text" | "thinking"; delta: string }> = [];
 let bufferedDeltaChars = 0;
 let deltaFlushTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Set while a live-event batch is folding: buffered text then belongs to the
+ * single commit at the end of the batch instead of landing on its own.
+ */
+let bufferedDeltaSink:
+  | ((pending: Array<{ type: "text" | "thinking"; delta: string }>) => void)
+  | null = null;
 
 function takeBufferedDeltas(): Array<{ type: "text" | "thinking"; delta: string }> {
   if (deltaFlushTimer !== null) clearTimeout(deltaFlushTimer);
@@ -924,6 +1112,10 @@ function applyBufferedDeltas(
 function flushStreamingDeltas(): void {
   const pending = takeBufferedDeltas();
   if (pending.length === 0) return;
+  if (bufferedDeltaSink) {
+    bufferedDeltaSink(pending);
+    return;
+  }
   useAgentSessionStore.setState((state) => ({
     streamingLive: applyBufferedDeltas(state.streamingLive, pending),
   }));
@@ -944,6 +1136,357 @@ function bufferStreamingDelta(type: "text" | "thinking", delta: string): void {
   // interval loops, artificial typewriter backlog, or permanently idle timers.
   if (deltaFlushTimer === null)
     deltaFlushTimer = setTimeout(flushStreamingDeltas, STREAM_FLUSH_MS);
+}
+
+interface LiveEventSink {
+  /** State including everything already staged by earlier records in the batch. */
+  read(): AgentSessionStoreState;
+  /** Stage a change; the batch commits every staged key once, at the end. */
+  write(
+    next:
+      | Partial<AgentSessionStoreState>
+      | ((
+          state: AgentSessionStoreState,
+        ) => Partial<AgentSessionStoreState> | AgentSessionStoreState),
+  ): void;
+  /** Run a store action that has to commit for real (it ends the current fold). */
+  immediate(run: () => void): void;
+  /** Work that must observe the committed state: reads, refreshes, scheduling. */
+  defer(run: () => void): void;
+}
+
+/**
+ * Project one live record onto the state a batch is building.
+ *
+ * Records only stage their changes, so a burst that describes a single moment —
+ * a step, its tool records, its persisted message and its status — reaches the
+ * store and the transcript as one transition. A record that runs a store action
+ * (a session patch, an ingested git message) commits what is staged, runs the
+ * action and keeps staging on top of its result, so order and final state stay
+ * identical to applying the records one at a time.
+ */
+function foldLiveEvent(
+  sink: LiveEventSink,
+  event: SessionLiveEvent,
+  streamSessionId?: string,
+): void {
+  // Deltas, steps, retries and tool records carry no session id of their
+  // own: they belong to the session whose live stream delivered them. The
+  // subscription singleton can still be attached to a previous session
+  // while selection already moved (its releasing effect runs later), so a
+  // stale stream must never render into the newly selected transcript.
+  const streamVisible =
+    streamSessionId === undefined ||
+    streamSessionId === sink.read().selectedSessionId;
+  switch (event.type) {
+    case "conversation_git_messages": {
+      if (streamSessionId)
+        sink.immediate(() =>
+          useAgentSessionStore
+            .getState()
+            .ingestConversationMessages(streamSessionId, event.messages),
+        );
+      break;
+    }
+    case "execution_status": {
+      if (!streamVisible || event.sessionId !== sink.read().selectedSessionId) break;
+      sink.write(state => ({ runs: state.runs.map(run => run.id === event.runId && run.sessionId === event.sessionId
+        ? { ...run, execution: event.execution } : run) }));
+      break;
+    }
+    case "message": {
+      if (!streamVisible || event.message.sessionId !== sink.read().selectedSessionId) break;
+      sink.write((state) => {
+        const messages = upsertById(state.messages, event.message, Infinity);
+        const cached = state.sessionDetailCache[event.message.sessionId];
+        const base = { ...cached,
+          runs: state.runs, steps: state.steps, toolCalls: state.toolCalls,
+          events: state.events, permissions: state.permissions, messages,
+          sessionStats: state.sessionStats, sessionTodos: state.sessionTodos,
+          sessionInvocationUsage: state.sessionInvocationUsage, cachedAt: cached?.cachedAt ?? 0,
+          ...(cached?.timelineMessages ? {
+            timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
+          } : {}),
+        };
+        const entry = isSessionHistoryReading(event.message.sessionId) || base.historyPagesLoaded
+          ? base : compactSessionTail(base);
+        return {
+          messages: entry.messages, runs: entry.runs, steps: entry.steps,
+          toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
+          sessionDetailCache: { ...state.sessionDetailCache, [event.message.sessionId]: entry },
+          streamingCompletedSteps: retireSnapshots(
+            state.streamingCompletedSteps, state.steps, messages, state.toolCalls, false,
+          ),
+        };
+      });
+      break;
+    }
+    case "event": {
+      if (!streamVisible || event.event.sessionId !== sink.read().selectedSessionId) break;
+      sink.write((state) => ({ events: upsertById(state.events, event.event, 256) }));
+      sink.write((state) =>
+        detailCachePatch(state, event.event.sessionId, { events: state.events }),
+      );
+      break;
+    }
+    case "permission_updated": {
+      if (!streamVisible || event.permission.sessionId !== sink.read().selectedSessionId) break;
+      sink.write((state) => ({ permissions: upsertById(state.permissions, event.permission) }));
+      sink.write((state) =>
+        detailCachePatch(state, event.permission.sessionId, { permissions: state.permissions }),
+      );
+      break;
+    }
+    case "input_queue_changed": {
+      sink.defer(() => void useAgentSessionStore.getState().loadInputQueue(event.sessionId));
+      break;
+    }
+    case "runtime_snapshot": {
+      if (!streamVisible || sink.read().selectedSessionId !== event.sessionId)
+        break;
+      const previousStatus = sink.read().sessions.find(
+        (session) => session.id === event.sessionId,
+      )?.status;
+      const next = projectRuntimeSnapshot(sink.read(), event);
+      const runtimeActive = [
+        "running",
+        "queued",
+        "waiting_permission",
+        "waiting_input",
+      ].includes(event.session.status);
+      clearStreamingBuffers();
+      sink.write((state) => {
+        const index = state.sessions.findIndex(
+          (session) => session.id === event.sessionId,
+        );
+        if (index < 0) return state;
+        const sessions = [...state.sessions];
+        sessions[index] = patchAgentSession(
+          sessions[index],
+          event.session,
+        );
+        return {
+          sessions,
+          ...(event.run?.sessionId === event.sessionId
+            ? { runs: upsertById(state.runs, event.run) }
+            : {}),
+          steps: next.steps,
+          toolCalls: next.toolCalls,
+          streamingStepId: runtimeActive ? next.streamingStepId : null,
+          streamingLive: runtimeActive
+            ? next.streamingLive
+            : EMPTY_STREAMING_BUFFERS,
+          streamingRetry: runtimeActive ? next.streamingRetry : null,
+        };
+      });
+      sink.defer(() =>
+        scheduleSessionListRefreshOnSettle(
+          event.sessionId,
+          previousStatus,
+          event.session.status,
+        ),
+      );
+      // The snapshot repairs the visible stream immediately. Reconcile
+      // persisted messages and stats in the background without clearing the
+      // just-hydrated turn again.
+      // A live run already pushes its steps and messages; only the
+      // lightweight counters need a background reconcile mid-run.
+      sink.defer(() => scheduleLiveRefreshDetail(runtimeActive ? "usage" : "detail"));
+      break;
+    }
+    case "media_job":
+      // Asset progress lands on the fast ring; rebuilding the whole
+      // transcript for every media tick is what kept history hot.
+      if (streamVisible) sink.defer(() => scheduleLiveRefreshDetail("usage"));
+      break;
+    case "runtime_state": {
+      sink.immediate(() =>
+        useAgentSessionStore.getState().patchSession(event.sessionId, event.patch),
+      );
+      if (sink.read().selectedSessionId !== event.sessionId) break;
+      // Lifecycle chunks carry the authoritative run even when the latest
+      // history page contains only messages. Do not leave the first send
+      // tied to its queued POST receipt until the user reloads the chat.
+      if (event.run?.sessionId === event.sessionId) {
+        const run = event.run;
+        sink.write((state) => ({ runs: upsertById(state.runs, run) }));
+      }
+      const terminal = [
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+      ].includes(event.patch.status ?? "");
+      if (event.reset) {
+        if (terminal) {
+          clearFinalReplyRetry();
+          const pending = takeBufferedDeltas();
+          sink.write((state) => {
+            const settled = {
+              ...state,
+              streamingLive: applyBufferedDeltas(
+                state.streamingLive,
+                pending,
+              ),
+            };
+            return {
+              streamingRetry: null,
+              streamingCompletedSteps: retireSnapshots(
+                snapshotCurrentStep(settled), state.steps, state.messages, state.toolCalls, false,
+              ),
+              streamingStepId: null,
+              streamingLive: EMPTY_STREAMING_BUFFERS,
+            };
+          });
+        } else {
+          clearFinalReplyRetry();
+          clearStreamingBuffers();
+          sink.write({
+            streamingRetry: null,
+            streamingStepId: null,
+            streamingLive: EMPTY_STREAMING_BUFFERS,
+            streamingCompletedSteps: [],
+          });
+        }
+      }
+      if (event.refresh) sink.defer(() => scheduleLiveRefreshDetail());
+      if (terminal) sink.defer(() => scheduleInvocationUsageRefresh());
+      break;
+    }
+    case "step_started": {
+      if (!streamVisible) break;
+      const pending = takeBufferedDeltas();
+      sink.write((state) => {
+        const settled = {
+          ...state,
+          streamingLive: applyBufferedDeltas(
+            state.streamingLive,
+            pending,
+          ),
+        };
+        const completedSteps = snapshotCurrentStep(settled);
+        return {
+          streamingRetry: null,
+          streamingStepId: event.stepId,
+          streamingLive: EMPTY_STREAMING_BUFFERS,
+          streamingCompletedSteps: retireSnapshots(
+            completedSteps, state.steps, state.messages, state.toolCalls, false,
+          ).slice(-8),
+          ...(event.step
+            ? { steps: upsertById(state.steps, event.step) }
+            : {}),
+        };
+      });
+      break;
+    }
+    case "retry_status": {
+      if (!streamVisible) break;
+      if (sink.read().streamingStepId !== event.stepId) break;
+      const reset =
+        event.retry.phase === "waiting" ||
+        event.retry.phase === "group_wait";
+      if (reset) clearStreamingBuffers();
+      sink.write({
+        streamingRetry:
+          event.retry.phase === "recovered" ? null : event.retry,
+        ...(reset ? { streamingLive: EMPTY_STREAMING_BUFFERS } : {}),
+      });
+      break;
+    }
+    case "message_delta":
+      if (!streamVisible) break;
+      if (sink.read().streamingStepId !== event.stepId) break;
+      bufferStreamingDelta("text", event.delta);
+      break;
+    case "thought_delta":
+      if (!streamVisible) break;
+      if (sink.read().streamingStepId !== event.stepId) break;
+      bufferStreamingDelta("thinking", event.delta);
+      break;
+    case "tool_call": {
+      if (!streamVisible) break;
+      if (sink.read().streamingStepId !== event.stepId) break;
+      const isNewCall = !sink.read().toolCalls.some(
+        (call) => call.id === event.toolCall.id,
+      );
+      const pending = takeBufferedDeltas();
+      sink.write((s) => {
+        const streamingLive = applyBufferedDeltas(
+          s.streamingLive,
+          pending,
+        );
+        return {
+          streamingLive: applyToolCall(streamingLive, event.toolCall),
+          toolCalls: upsertById(s.toolCalls, event.toolCall),
+        };
+      });
+      if (isNewCall) sink.defer(() => scheduleInvocationUsageRefresh());
+      break;
+    }
+    case "tool_result":
+      if (!streamVisible) break;
+      if (sink.read().streamingStepId !== event.stepId) break;
+      const pending = takeBufferedDeltas();
+      sink.write((s) => {
+        const streamingLive = applyBufferedDeltas(
+          s.streamingLive,
+          pending,
+        );
+        return {
+          streamingLive: applyToolResult(streamingLive, event.toolCall),
+          toolCalls: upsertById(s.toolCalls, event.toolCall),
+        };
+      });
+      break;
+    case "context_compaction_state": {
+      if (
+        !streamVisible ||
+        event.message.sessionId !== sink.read().selectedSessionId
+      )
+        break;
+      const session = sink.read().sessions.find(
+        (item) => item.id === event.message.sessionId,
+      );
+      sink.immediate(() =>
+        useAgentSessionStore.getState().patchSession(event.message.sessionId, {
+          sessionMetadata: {
+            ...session?.sessionMetadata,
+            contextCompaction: event.state,
+          },
+        }),
+      );
+      sink.write((state) => ({
+        contextCompactionNotice: contextCompactionNotice(event.state),
+        messages: upsertById(state.messages, event.message),
+      }));
+      sink.defer(() => void useAgentSessionStore.getState().fetchSessionStats());
+      sink.defer(() => scheduleLiveRefreshDetail());
+      break;
+    }
+    case "context_compaction_started":
+      if (!streamVisible) break;
+      sink.write({ contextCompactionNotice: { status: "running" } });
+      break;
+    case "context_compacted":
+      if (!streamVisible) break;
+      sink.write({
+        contextCompactionNotice: {
+          status: "completed",
+          originalTokens: event.originalTokens,
+          compressedTokens: event.compressedTokens,
+          messageCount: event.messageCount,
+        },
+      });
+      sink.defer(() => void useAgentSessionStore.getState().fetchSessionStats());
+      sink.defer(() => scheduleLiveRefreshDetail());
+      break;
+    case "context_compaction_failed":
+      if (!streamVisible) break;
+      sink.write({
+        contextCompactionNotice: { status: "failed", error: event.error },
+      });
+      break;
+  }
 }
 
 export interface AgentSessionStoreState {
@@ -1007,9 +1550,9 @@ export interface AgentSessionStoreState {
   ) => Promise<void>;
   /**
    * Paint a workspace's list the first time it is opened. Every later visit
-   * reuses the remembered snapshot: the list is never reconciled on its own,
-   * rows arrive through live callbacks, and explicit actions still call
-   * `refreshSessions`.
+   * reuses the remembered snapshot: rows arrive through live callbacks, a
+   * session that settles schedules one coalesced list read, and explicit
+   * actions still call `refreshSessions`.
    */
   ensureSessionsLoaded: () => Promise<void>;
   refreshSessions: (options?: { joinPending?: boolean }) => Promise<void>;
@@ -1040,12 +1583,14 @@ export interface AgentSessionStoreState {
   paintPersistedDetail: (sessionId: string) => Promise<void>;
   closePanel: () => void;
   compactHistoryTail: () => void;
-  loadOlderHistory: () => Promise<void>;
+  loadOlderHistory: (options?: { retainViewport?: boolean }) => Promise<void>;
   loadTimelineIndex: () => Promise<void>;
   loadHistoryUntil: (entryId: string) => Promise<boolean>;
   refreshDetail: (options?: {
     joinPending?: boolean;
     forceFresh?: boolean;
+    /** Selection may reuse a valid page restored from disk without a request. */
+    reuseCache?: boolean;
     /** Live events own a loaded active transcript; background work only refreshes its profile. */
     background?: boolean;
   }) => Promise<void>;
@@ -1090,6 +1635,12 @@ export interface AgentSessionStoreState {
   /** Upsert server-persisted native task anchors/receipts into their owner's cache. */
   ingestConversationMessages: (sessionId: string, messages: AgentRuntimeMessage[]) => void;
   applyLiveEvent: (event: SessionLiveEvent, streamSessionId?: string) => void;
+  /**
+   * Commit a frame of live records as one state transition. Records are folded
+   * in arrival order, so a burst that describes one moment reaches subscribers
+   * — and React — once instead of once per record.
+   */
+  applyLiveEvents: (items: LiveEventInput[]) => void;
   patchSession: (sessionId: string, patch: Partial<AgentSession>) => boolean;
   markSessionRead: (sessionId: string) => void;
 }
@@ -1252,14 +1803,18 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           get().selectedSessionId !== sessionId
         )
           return;
+        const items = mergeInteractions(interactions);
         set({
           interactionState: {
             sessionId,
-            items: interactions,
+            items,
             loading: false,
             error: null,
           },
         });
+        // The form list is the authoritative record of unanswered requests, so
+        // it also decides whether this row is still parked on one.
+        unparkAnsweredSession(sessionId, items, get().patchSession);
       } catch (error) {
         if (
           version !== interactionRefreshVersion ||
@@ -1283,11 +1838,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         interactionId,
         body,
       );
-      if (body.action === "submit") {
+      if (body.action === "submit" || body.action === "skip") {
         set((state) => ({
           sessions: state.sessions.map((session) =>
             session.id === sessionId && session.status === "waiting_input"
-              ? { ...session, status: "running" }
+              ? {
+                  ...session,
+                  status: "running",
+                  // The reply replaced the checkpoint the row parked on.
+                  pendingResumeToken: null,
+                  blockedReason: null,
+                }
               : session,
           ),
         }));
@@ -1309,6 +1870,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ),
           },
         });
+        unparkAnsweredSession(
+          sessionId,
+          get().interactionState?.items ?? [],
+          get().patchSession,
+        );
       }
       void get().refreshSessions();
     },
@@ -1339,6 +1905,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     setProjectId: (projectId) => {
       if (projectId === get().projectId) return;
+      // Commit the outgoing workspace's frame before its transcript is parked;
+      // nothing collected for it can belong to the workspace being opened.
+      flushLiveEvents();
+      rememberSelectedTranscript();
       const previous = get();
       // Park the workspace being left so a return visit paints its list and its
       // last conversation instead of paying for the same reads again.
@@ -1382,6 +1952,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           : {},
         ...emptySessionDetailState(),
       });
+      // Nothing collected for the workspace we just left may be applied here.
+      discardQueuedLiveEvents();
       // A first visit loads right away; a remembered workspace paints and only
       // reconciles once its snapshot is stale, so switching back never blocks.
       void get().ensureSessionsLoaded();
@@ -1430,7 +2002,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               const added = state.sessions.filter(
                 (session) =>
                   (!before.has(session.id) ||
-                    session.sessionMetadata?.sideChat === true ||
                     session.id === state.selectedSessionId ||
                     (items.length === SESSION_PAGE_SIZE &&
                       (Number(session.sessionMetadata?.pinned === true) <
@@ -1450,6 +2021,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                 .filter((session) => !isRuntimeResourceGone(session.id))
                 .map((session) => {
                   const live = current.get(session.id);
+                  // A settle is durable. A read that still reports an active
+                  // status at the same timestamp was taken before the write
+                  // landed, so it must not resurrect the running row this
+                  // client just watched finish.
+                  if (
+                    live &&
+                    isTerminalSessionStatus(live.status) &&
+                    !isTerminalSessionStatus(session.status) &&
+                    live.updatedAt >= session.updatedAt
+                  )
+                    return live;
                   // A response snapshot must not overwrite a newer title/live patch.
                   return live &&
                     (live.updatedAt > session.updatedAt ||
@@ -1506,12 +2088,26 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         // must not surface as a list error.
         return;
       }
+      // Collection counts and cursors describe primary conversations. Child
+      // summaries arrive on the same global bus, but are owned by their scoped
+      // controller and parent child cache, not the root list.
+      if (session.parentSessionId) {
+        if (session.projectId === get().projectId && session.sessionMetadata?.subagentKind !== "side-chat") {
+          set(state => ({ childSessions: { ...state.childSessions,
+            [session.parentSessionId!]: upsertById(state.childSessions[session.parentSessionId!] ?? [], session),
+          } }));
+        }
+        return;
+      }
       if (session.projectId !== get().projectId) {
         // Another workspace's row: keep its remembered copy current only.
         updateSessionListRows((row) => (row.id === session.id ? session : row));
         return;
       }
-      if (isRuntimeResourceGone(sessionId)) return;
+      const previous = get().sessions.find(item => item.id === session.id);
+      if (previous && session.updatedAt >= previous.updatedAt &&
+          (previous.status !== session.status || previous.activeRunId !== session.activeRunId))
+        invalidateSessionTranscript(session.id);
       set((state) => {
         const index = state.sessions.findIndex((item) => item.id === session.id);
         if (index === -1)
@@ -1520,7 +2116,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             sessionListTotal:
               state.sessionListTotal === null
                 ? null
-                : state.sessionListTotal + (session.sessionMetadata?.sideChat === true ? 0 : 1),
+                : state.sessionListTotal + 1,
           };
         const live = state.sessions[index];
         // A read must not overwrite a patch that landed later.
@@ -1586,6 +2182,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     resetSessionDetailForDraft: () => {
+      // The selected detail context is being discarded; profile freshness is
+      // scoped to that context and must not suppress the next session's first
+      // profile read.
+      profileFetchedAt.clear();
+      rememberSelectedTranscript();
       ++detailRefreshEpoch;
       clearInvocationUsageRefresh();
       clearFinalReplyRetry();
@@ -1741,7 +2342,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     discardRemovedSessions: (deletedSessionIds, projectId) => {
-      const newlyRemoved = new Set(deletedSessionIds.filter((id) => !isRuntimeResourceRemoved(id)));
       markRuntimeResourcesRemoved(deletedSessionIds);
       // A deleted or archived row must not repaint from disk on the next start.
       scheduleDeletePersistedDetail(deletedSessionIds);
@@ -1767,9 +2367,6 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       if (shouldClosePanel) get().resetSessionDetailForDraft();
       const nextCache = { ...get().sessionDetailCache };
       for (const id of deleted) delete nextCache[id];
-      const temporaryIds = new Set(get().sessions
-        .filter((session) => deleted.has(session.id) && session.sessionMetadata?.sideChat === true)
-        .map((session) => session.id));
       set({
         sessions: get().sessions.filter((session) => !deleted.has(session.id)),
         childSessions: Object.fromEntries(
@@ -1784,11 +2381,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         sessionListTotal:
           get().sessionListTotal === null
             ? null
-            : Math.max(0, get().sessionListTotal! - [...newlyRemoved].filter((id) => !temporaryIds.has(id)).length),
+            : Math.max(0, get().sessionListTotal! - deleted.size),
         sessionListOffset: Math.max(
           0,
           get().sessionListOffset -
-            get().sessions.filter((session) => deleted.has(session.id) && !temporaryIds.has(session.id)).length,
+            get().sessions.filter((session) => deleted.has(session.id)).length,
         ),
       });
     },
@@ -1821,6 +2418,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         if (previous) {
           cache[sessionId] = {
             ...previous,
+            live: undefined,
             cachedAt: 0,
             historyPagesLoaded: false,
             timelineIndexLoaded: false,
@@ -1853,28 +2451,17 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     openPanel: (sessionId, options) => {
       if (isRuntimeResourceGone(sessionId)) return;
+      if (get().selectedSessionId !== sessionId) rememberSelectedTranscript();
       const { panelOpen, selectedSessionId: prev } = get();
       const session = get().sessions.find((s) => s.id === sessionId);
       const liveSession = isActiveSessionStatus(session?.status);
       const forceFresh = options?.forceFresh === true;
       const existingCache = get().sessionDetailCache[sessionId];
-      // A copy saved mid-run cannot answer for a session that has since settled;
-      // a copy saved after completion is the finished transcript, so reopening
-      // it inside the trust window costs nothing.
-      const needsTailUpgrade = existingCache?.historyWindow?.generation !== undefined &&
-        existingCache.historyWindow.hasEarlier && (existingCache.historyWindow.messageLimit ?? 0) < SESSION_TAIL_RETAIN &&
-        existingCache.messages.length < SESSION_TAIL_RETAIN;
-      const cacheFresh = !needsTailUpgrade && (
-        existingCache?.restored === "active"
-          ? false
-          : existingCache?.restored === "terminal"
-            ? isFreshInactivePageCache(
-                existingCache,
-                RESTORED_TERMINAL_TRUST_MS,
-              )
-            : isFreshInactivePageCache(existingCache));
+      const cacheFresh = isReusableInactivePageCache(existingCache);
       if (panelOpen && prev === sessionId) {
-        if (!forceFresh && !liveSession && cacheFresh) return;
+        // A cached running transcript is already kept current by its live
+        // stream. Re-selecting it must not start a full history refresh.
+        if (!forceFresh && cacheFresh) return;
         if (
           forceFresh &&
           (activeDetailRefresh?.sessionId === sessionId ||
@@ -1896,28 +2483,27 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       // Paint the last complete page immediately, including active sessions.
       // Live events and the change cursor reconcile it in the background.
       const cached = existingCache;
+      const cachedLive = !forceFresh && liveSession && cached?.live && cached.live.runId === session?.activeRunId
+        ? cached.live : undefined;
       // refreshDetail restores the persisted window before choosing its sync
       // cursor, avoiding a simultaneous uncursored history request on restart.
-      const needsRefresh =
-        forceFresh ||
-        !cacheFresh ||
-        isActiveSessionStatus(session?.status);
+      const needsRefresh = forceFresh || !cacheFresh;
       set((state) => ({
         panelOpen: true,
-        detailLoading: !cached?.cachedAt,
-        detailRefreshing: needsRefresh && Boolean(cached?.cachedAt),
+        detailLoading: !cached?.cachedAt && !cachedLive,
+        detailRefreshing: needsRefresh && Boolean(cached?.cachedAt || cachedLive),
         detailError: null,
         selectedSessionId: sessionId,
         sessionDetailCache: trimSessionDetailCache(cached
-          ? { ...state.sessionDetailCache, [sessionId]: { ...cached, lastVisitedAt: Date.now() } }
+          ? { ...state.sessionDetailCache, [sessionId]: { ...cached, live: forceFresh ? undefined : cached.live, lastVisitedAt: Date.now() } }
           : state.sessionDetailCache, sessionId),
         ...(isSwitch ? { interactionState: null } : {}),
         ...(isSwitch
           ? {
-              streamingRetry: null,
-              streamingStepId: null,
-              streamingLive: EMPTY_STREAMING_BUFFERS,
-              streamingCompletedSteps: [],
+              streamingRetry: cachedLive?.streamingRetry ?? null,
+              streamingStepId: cachedLive?.streamingStepId ?? null,
+              streamingLive: cachedLive?.streamingLive ?? EMPTY_STREAMING_BUFFERS,
+              streamingCompletedSteps: cachedLive?.streamingCompletedSteps ?? [],
               contextCompactionNotice: null,
             }
           : {}),
@@ -1951,19 +2537,19 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         void get().loadInputQueue(sessionId);
       }
 
-      // Completed/failed/cancelled pages are immutable from the transcript
-      // perspective for a short TTL. Reuse their cached payload immediately,
-      // then refresh stale pages in the background; runtime mutations still
-      // invalidate them immediately. Active pages keep polling/live updates.
+      // Settled pages stay hot until a content change. Merely selecting a page
+      // never invalidates it; active sessions continue to reconcile live work.
       if (needsRefresh) {
         void get().refreshDetail({
           joinPending: true,
           forceFresh,
+          reuseCache: true,
         });
       }
     },
 
     closePanel: () => {
+      rememberSelectedTranscript();
       releaseSessionLiveSubscription();
       clearInvocationUsageRefresh();
       clearFinalReplyRetry();
@@ -2026,7 +2612,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
         sessionDetailCache: { ...state.sessionDetailCache, [id]: entry } });
     },
-    loadOlderHistory: async () => {
+    loadOlderHistory: async (options) => {
       const sessionId = get().selectedSessionId;
       if (!sessionId) return;
       const initial = get().sessionDetailCache[sessionId];
@@ -2113,6 +2699,11 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             prependHistory,
             base,
           );
+          if (options?.retainViewport) {
+            entry.historyViewportRetain = { ...current.historyViewportRetain };
+            for (const name of ["messages", "runs", "steps", "toolCalls", "events", "permissions"] as const)
+              entry.historyViewportRetain[name] = Math.max(entry[name].length, entry.historyViewportRetain[name] ?? 0);
+          }
           return {
             messages: entry.messages,
             runs: entry.runs,
@@ -2177,7 +2768,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         return;
       }
       const promise = (async () => {
-        let cursor = initial.historyWindow!.olderCursor;
+        let cursor = initial.timelineIndexCursor ?? initial.historyWindow!.olderCursor;
+        const visited = new Set<string>();
         let revision = initial.historyWindow!.revision;
         let epoch = initial.historyWindow!.epoch;
         let restarts = 0;
@@ -2190,6 +2782,8 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         try {
 
           while (cursor && get().selectedSessionId === sessionId) {
+            if (visited.has(cursor)) throw new Error("History cursor did not advance");
+            visited.add(cursor);
             let older: HistoryWindowResponse;
             try {
               older = initial.historyWindow?.generation !== undefined
@@ -2207,6 +2801,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               revision = latest.historyWindow.revision;
               epoch = latest.historyWindow.epoch;
               cursor = latest.historyWindow.olderCursor;
+              visited.clear();
               const seed = seedTimelineIndex(latest);
               timelineMessages = seed.timelineMessages ?? [];
               timelineRuns = seed.timelineRuns ?? [];
@@ -2224,6 +2819,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               revision = latest.historyWindow.revision;
               epoch = latest.historyWindow.epoch;
               cursor = latest.historyWindow.olderCursor;
+              visited.clear();
               const seed = seedTimelineIndex(latest);
               timelineMessages = seed.timelineMessages ?? [];
               timelineRuns = seed.timelineRuns ?? [];
@@ -2255,7 +2851,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               if (!current || state.selectedSessionId !== sessionId || current.historyWindow?.epoch !== epoch) return state;
               return { sessionDetailCache: { ...state.sessionDetailCache, [sessionId]: {
                 ...current, ...extendTimelineIndex(current, {messages:timelineMessages,runs:timelineRuns,steps:timelineSteps,toolCalls:timelineToolCalls,events:[],permissions:[],historyWindow:current.historyWindow!}),
-                timelineIndexLoaded: !cursor, timelineIndexError: undefined,
+                timelineIndexLoaded: !cursor, timelineIndexError: undefined, timelineIndexCursor: cursor,
               } } };
             });
           }
@@ -2277,10 +2873,13 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                   ...extendTimelineIndex(current, {messages:timelineMessages,runs:timelineRuns,steps:timelineSteps,toolCalls:timelineToolCalls,events:[],permissions:[],historyWindow:current.historyWindow!}),
                   timelineIndexLoaded: true,
                   timelineIndexError: undefined,
+                  timelineIndexCursor: undefined,
                 },
               },
             };
           });
+          schedulePersistDetail(sessionId, get().projectId, get().sessionDetailCache[sessionId],
+            isActiveSessionStatus(get().sessions.find(session => session.id === sessionId)?.status) ? "active" : "terminal");
         } catch (error) {
           set((state) => {
             const current = state.sessionDetailCache[sessionId];
@@ -2437,6 +3036,15 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
               forceFresh
                 ? undefined
                 : get().sessionDetailCache[targetSessionId];
+            // A cold memory slot may have just restored a complete disk page.
+            // Only the selection path may skip its refresh; explicit refresh
+            // and runtime recovery retain their normal semantics.
+            if (options?.reuseCache && !forceFresh &&
+                !isActiveSessionStatus(get().sessions.find(item => item.id === targetSessionId)?.status) &&
+                isReusableInactivePageCache(cachedEntry)) {
+              set({ detailLoading: false, detailRefreshing: false });
+              return;
+            }
             const versioned =
               get().sessions.find((session) => session.id === targetSessionId)
                 ?.sessionMetadata?.historyStorage;
@@ -2673,6 +3281,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
                         // This response was reconciled against the runtime, so the
                         // entry no longer carries a restore-time provenance.
                         merged.restored = undefined;
+                        merged.invalidated = moreChanges;
                         const incremental = Boolean(cacheEntry.historyWindow?.incremental);
                         const currentStatus = s.sessions.find(
                           (item) => item.id === targetSessionId,
@@ -2827,14 +3436,38 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
       try {
         const parent = get().sessions.find((session) => session.id === parentId);
         const children = childIds?.length
-          ? (await Promise.allSettled(childIds.map((childId) => agentRuntimeApi.getSessionSummary(childId))))
+          ? (await Promise.allSettled([...new Set(childIds)]
+              .filter((childId) => !isRuntimeResourceGone(childId))
+              .map(async (childId) => {
+                try {
+                  // Background hydration owns missing-child handling. The HTTP
+                  // layer must not toast before we classify this response.
+                  return await agentRuntimeApi.getSessionSummary(childId, { silent: true });
+                } catch (error) {
+                  if (isMissingSession(error, childId)) {
+                    // Otherwise each new live step/remount retries the same
+                    // dead reference from the persisted tool history.
+                    markRuntimeResourcesRemoved([childId]);
+                  } else handleError(error);
+                  throw error;
+                }
+              })))
               .flatMap((result) => result.status === "fulfilled" ? [result.value.session] : [])
               .filter((session) => session.parentSessionId === parentId && !isRuntimeResourceRemoved(session.id))
-          : (await agentRuntimeApi.listSessions({ projectId: parent?.projectId, limit: 100 })).items.filter(
+          : (await agentRuntimeApi.listSessions({ projectId: parent?.projectId, limit: 100, includeChildren: true })).items.filter(
               (session) => session.parentSessionId === parentId && !isRuntimeResourceRemoved(session.id),
             );
+        // A targeted read answers only for the ids it was asked about; merging
+        // keeps the card of an already-known child instead of dropping it. A
+        // full list is authoritative and replaces the set.
+        const byId = new Map(
+          childIds?.length
+            ? (get().childSessions[parentId] ?? []).map((child) => [child.id, child] as const)
+            : [],
+        );
+        for (const child of children) byId.set(child.id, child);
         set({
-          childSessions: { ...get().childSessions, [parentId]: children },
+          childSessions: { ...get().childSessions, [parentId]: [...byId.values()].filter(child => !isRuntimeResourceRemoved(child.id) && child.sessionMetadata?.subagentKind !== "side-chat") },
         });
       } catch {
         /* silent */
@@ -2849,6 +3482,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
         crypto.randomUUID(),
         "continue",
       );
+      flushLiveEvents();
       void get().refreshSessions();
       void get().refreshDetail();
     },
@@ -2939,64 +3573,27 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     sendSessionMessage: async (sessionId, body) => {
-      const requestId = crypto.randomUUID();
-      const pending = usePendingSubmissionStore.getState();
-      pending.begin(sessionId, {
-        requestId,
-        message: {
-          id: `pending:${requestId}`,
-          sessionId,
-          runId: null,
-          stepId: null,
-          role: "user",
-          content: body.message,
-          contentParts: body.contentParts,
-          metadata: {
-            requestId,
-            source: body.messageSource ?? "user",
-            references: body.references,
-          },
-          createdAt: new Date().toISOString(),
-        },
-      });
-      try {
-        ensureLiveStream(sessionId);
-        const session = get().sessions.find((s) => s.id === sessionId);
-        const mode =
-          session &&
-          ["interrupted", "cancelled", "failed", "completed", "paused"].includes(
-            session.status,
-          )
-            ? "continue"
-            : "turn";
-        const result = await agentRuntimeApi.submitRun(
-          sessionId,
-          {
-            message: body.message,
-            contentParts: body.contentParts,
-            messageSource: body.messageSource,
-            references: body.references,
-            model: body.model ?? undefined,
-            reasoningEffort: body.reasoningEffort ?? undefined,
-            permissionTier: body.permissionTier,
-            locale: useShellStore.getState().preferences.locale,
-          },
-          requestId,
-          mode,
-        );
-        pending.accept(sessionId, requestId, result.run);
-        void get().refreshSessions();
-        if (get().selectedSessionId === sessionId) void get().refreshDetail();
-      } catch (error) {
-        pending.clear(sessionId, requestId);
-        throw error;
-      }
+      ensureLiveStream(sessionId);
+      const payload = withSkillReferences(body);
+      await submitConversationMessage(sessionId, {
+        message: payload.message, contentParts: payload.contentParts,
+        messageSource: payload.messageSource,
+        references: payload.references,
+        model: payload.model ?? undefined, reasoningEffort: payload.reasoningEffort ?? undefined,
+        permissionTier: payload.permissionTier,
+        locale: useShellStore.getState().preferences.locale,
+      }, conversationTurnMode(get().sessions.find((s) => s.id === sessionId)));
+      // The records this send provoked are already queued; commit them before
+      // the action resolves so the composer never paints a stale status.
+      flushLiveEvents();
+      void get().refreshSessions();
+      if (get().selectedSessionId === sessionId) void get().refreshDetail();
     },
 
     submitOrEnqueueSessionInput: async (sessionId, body) => {
       const session = get().sessions.find((s) => s.id === sessionId);
       if (canEnqueueSessionInput(session)) {
-        await get().enqueueSessionInput(sessionId, body);
+        await get().enqueueSessionInput(sessionId, withSkillReferences(body));
         return "queued";
       }
       await get().sendSessionMessage(sessionId, body);
@@ -3073,6 +3670,7 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
             ?.activeRunId,
         );
       } finally {
+        flushLiveEvents();
         void get().refreshSessions();
         void get().refreshDetail();
       }
@@ -3102,316 +3700,57 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
     },
 
     applyLiveEvent: (event, streamSessionId) => {
-      // Deltas, steps, retries and tool records carry no session id of their
-      // own: they belong to the session whose live stream delivered them. The
-      // subscription singleton can still be attached to a previous session
-      // while selection already moved (its releasing effect runs later), so a
-      // stale stream must never render into the newly selected transcript.
-      const streamVisible =
-        streamSessionId === undefined ||
-        streamSessionId === get().selectedSessionId;
-      switch (event.type) {
-        case "conversation_git_messages": {
-          if (streamSessionId) get().ingestConversationMessages(streamSessionId, event.messages);
-          break;
-        }
-        case "execution_status": {
-          if (!streamVisible || event.sessionId !== get().selectedSessionId) break;
-          set(state => ({ runs: state.runs.map(run => run.id === event.runId && run.sessionId === event.sessionId
-            ? { ...run, execution: event.execution } : run) }));
-          break;
-        }
-        case "message": {
-          if (!streamVisible || event.message.sessionId !== get().selectedSessionId) break;
-          set((state) => {
-            const messages = upsertById(state.messages, event.message, Infinity);
-            const cached = state.sessionDetailCache[event.message.sessionId];
-            const base = { ...cached,
-              runs: state.runs, steps: state.steps, toolCalls: state.toolCalls,
-              events: state.events, permissions: state.permissions, messages,
-              sessionStats: state.sessionStats, sessionTodos: state.sessionTodos,
-              sessionInvocationUsage: state.sessionInvocationUsage, cachedAt: cached?.cachedAt ?? 0,
-              ...(cached?.timelineMessages ? {
-                timelineMessages: upsertById(cached.timelineMessages, previewTimelineMessage(event.message), Infinity),
-              } : {}),
-            };
-            const entry = isSessionHistoryReading(event.message.sessionId) || base.historyPagesLoaded
-              ? base : compactSessionTail(base);
-            return {
-              messages: entry.messages, runs: entry.runs, steps: entry.steps,
-              toolCalls: entry.toolCalls, events: entry.events, permissions: entry.permissions,
-              sessionDetailCache: { ...state.sessionDetailCache, [event.message.sessionId]: entry },
-              streamingCompletedSteps: retireSnapshots(
-                state.streamingCompletedSteps, state.steps, messages, state.toolCalls, false,
-              ),
-            };
-          });
-          break;
-        }
-        case "event": {
-          if (!streamVisible || event.event.sessionId !== get().selectedSessionId) break;
-          set((state) => ({ events: upsertById(state.events, event.event, 256) }));
-          patchSessionDetailCache(event.event.sessionId, { events: get().events });
-          break;
-        }
-        case "permission_updated": {
-          if (!streamVisible || event.permission.sessionId !== get().selectedSessionId) break;
-          set((state) => ({ permissions: upsertById(state.permissions, event.permission) }));
-          patchSessionDetailCache(event.permission.sessionId, { permissions: get().permissions });
-          break;
-        }
-        case "input_queue_changed": {
-          void get().loadInputQueue(event.sessionId);
-          break;
-        }
-        case "runtime_snapshot": {
-          if (!streamVisible || get().selectedSessionId !== event.sessionId)
-            break;
-          const next = projectRuntimeSnapshot(get(), event);
-          const runtimeActive = [
-            "running",
-            "queued",
-            "waiting_permission",
-            "waiting_input",
-          ].includes(event.session.status);
-          clearStreamingBuffers();
-          set((state) => {
-            const index = state.sessions.findIndex(
-              (session) => session.id === event.sessionId,
-            );
-            if (index < 0) return state;
-            const sessions = [...state.sessions];
-            sessions[index] = patchAgentSession(
-              sessions[index],
-              event.session,
-            );
-            return {
-              sessions,
-              ...(event.run?.sessionId === event.sessionId
-                ? { runs: upsertById(state.runs, event.run) }
-                : {}),
-              steps: next.steps,
-              toolCalls: next.toolCalls,
-              streamingStepId: runtimeActive ? next.streamingStepId : null,
-              streamingLive: runtimeActive
-                ? next.streamingLive
-                : EMPTY_STREAMING_BUFFERS,
-              streamingRetry: runtimeActive ? next.streamingRetry : null,
-            };
-          });
-          // The snapshot repairs the visible stream immediately. Reconcile
-          // persisted messages and stats in the background without clearing the
-          // just-hydrated turn again.
-          // A live run already pushes its steps and messages; only the
-          // lightweight counters need a background reconcile mid-run.
-          scheduleLiveRefreshDetail(runtimeActive ? "usage" : "detail");
-          break;
-        }
-        case "media_job":
-          // Asset progress lands on the fast ring; rebuilding the whole
-          // transcript for every media tick is what kept history hot.
-          if (streamVisible) scheduleLiveRefreshDetail("usage");
-          break;
-        case "runtime_state": {
-          get().patchSession(event.sessionId, event.patch);
-          if (get().selectedSessionId !== event.sessionId) break;
-          // Lifecycle chunks carry the authoritative run even when the latest
-          // history page contains only messages. Do not leave the first send
-          // tied to its queued POST receipt until the user reloads the chat.
-          if (event.run?.sessionId === event.sessionId) {
-            const run = event.run;
-            set((state) => ({ runs: upsertById(state.runs, run) }));
-          }
-          const terminal = [
-            "completed",
-            "failed",
-            "cancelled",
-            "interrupted",
-          ].includes(event.patch.status ?? "");
-          if (event.reset) {
-            if (terminal) {
-              clearFinalReplyRetry();
-              const pending = takeBufferedDeltas();
-              set((state) => {
-                const settled = {
-                  ...state,
-                  streamingLive: applyBufferedDeltas(
-                    state.streamingLive,
-                    pending,
-                  ),
-                };
-                return {
-                  streamingRetry: null,
-                  streamingCompletedSteps: retireSnapshots(
-                    snapshotCurrentStep(settled), state.steps, state.messages, state.toolCalls, false,
-                  ),
-                  streamingStepId: null,
-                  streamingLive: EMPTY_STREAMING_BUFFERS,
-                };
-              });
-            } else {
-              clearFinalReplyRetry();
-              clearStreamingBuffers();
-              set({
-                streamingRetry: null,
-                streamingStepId: null,
-                streamingLive: EMPTY_STREAMING_BUFFERS,
-                streamingCompletedSteps: [],
-              });
-            }
-          }
-          if (event.refresh) scheduleLiveRefreshDetail();
-          if (terminal) scheduleInvocationUsageRefresh();
-          break;
-        }
-        case "step_started": {
-          if (!streamVisible) break;
-          const pending = takeBufferedDeltas();
-          set((state) => {
-            const settled = {
-              ...state,
-              streamingLive: applyBufferedDeltas(
-                state.streamingLive,
-                pending,
-              ),
-            };
-            const completedSteps = snapshotCurrentStep(settled);
-            return {
-              streamingRetry: null,
-              streamingStepId: event.stepId,
-              streamingLive: EMPTY_STREAMING_BUFFERS,
-              streamingCompletedSteps: retireSnapshots(
-                completedSteps, state.steps, state.messages, state.toolCalls, false,
-              ).slice(-8),
-              ...(event.step
-                ? { steps: upsertById(state.steps, event.step) }
-                : {}),
-            };
-          });
-          break;
-        }
-        case "retry_status": {
-          if (!streamVisible) break;
-          if (get().streamingStepId !== event.stepId) break;
-          const reset =
-            event.retry.phase === "waiting" ||
-            event.retry.phase === "group_wait";
-          if (reset) clearStreamingBuffers();
-          set({
-            streamingRetry:
-              event.retry.phase === "recovered" ? null : event.retry,
-            ...(reset ? { streamingLive: EMPTY_STREAMING_BUFFERS } : {}),
-          });
-          break;
-        }
-        case "message_delta":
-          if (!streamVisible) break;
-          if (get().streamingStepId !== event.stepId) break;
-          bufferStreamingDelta("text", event.delta);
-          break;
-        case "thought_delta":
-          if (!streamVisible) break;
-          if (get().streamingStepId !== event.stepId) break;
-          bufferStreamingDelta("thinking", event.delta);
-          break;
-        case "tool_call": {
-          if (!streamVisible) break;
-          if (get().streamingStepId !== event.stepId) break;
-          const isNewCall = !get().toolCalls.some(
-            (call) => call.id === event.toolCall.id,
-          );
-          const pending = takeBufferedDeltas();
-          set((s) => {
-            const streamingLive = applyBufferedDeltas(
-              s.streamingLive,
-              pending,
-            );
-            return {
-              streamingLive: applyToolCall(streamingLive, event.toolCall),
-              toolCalls: upsertById(s.toolCalls, event.toolCall),
-            };
-          });
-          if (isNewCall) scheduleInvocationUsageRefresh();
-          break;
-        }
-        case "tool_result":
-          if (!streamVisible) break;
-          if (get().streamingStepId !== event.stepId) break;
-          const pending = takeBufferedDeltas();
-          set((s) => {
-            const streamingLive = applyBufferedDeltas(
-              s.streamingLive,
-              pending,
-            );
-            return {
-              streamingLive: applyToolResult(streamingLive, event.toolCall),
-              toolCalls: upsertById(s.toolCalls, event.toolCall),
-            };
-          });
-          break;
-        case "context_compaction_state": {
-          if (
-            !streamVisible ||
-            event.message.sessionId !== get().selectedSessionId
-          )
-            break;
-          const session = get().sessions.find(
-            (item) => item.id === event.message.sessionId,
-          );
-          get().patchSession(event.message.sessionId, {
-            sessionMetadata: {
-              ...session?.sessionMetadata,
-              contextCompaction: event.state,
-              ...(event.state.contextUsage
-                ? { contextUsage: event.state.contextUsage }
-                : {}),
-            },
-          });
-          set((state) => ({
-            contextCompactionNotice: contextCompactionNotice(event.state),
-            messages: upsertById(state.messages, event.message),
-          }));
-          void get().fetchSessionStats();
-          scheduleLiveRefreshDetail();
-          break;
-        }
-        case "context_compaction_started":
-          if (!streamVisible) break;
-          set({ contextCompactionNotice: { status: "running" } });
-          break;
-        case "context_compacted":
-          if (!streamVisible) break;
-          if (event.contextUsage) {
-            const session = get().sessions.find(
-              (item) => item.id === get().selectedSessionId,
-            );
-            if (session) {
-              get().patchSession(session.id, {
-                sessionMetadata: {
-                  ...session.sessionMetadata,
-                  contextUsage: event.contextUsage,
-                },
-              });
-            }
-          }
-          set({
-            contextCompactionNotice: {
-              status: "completed",
-              originalTokens: event.originalTokens,
-              compressedTokens: event.compressedTokens,
-              messageCount: event.messageCount,
-            },
-          });
-          void get().fetchSessionStats();
-          scheduleLiveRefreshDetail();
-          break;
-        case "context_compaction_failed":
-          if (!streamVisible) break;
-          set({
-            contextCompactionNotice: { status: "failed", error: event.error },
-          });
-          break;
+      get().applyLiveEvents([{ event, streamSessionId }]);
+    },
+
+    applyLiveEvents: (items) => {
+      if (items.length === 0) return;
+      // One transition for the whole frame: the commit at the end is what
+      // re-renders the conversation, instead of one render per record.
+      let working = get();
+      let staged: Partial<AgentSessionStoreState> = {};
+      let dirty = false;
+      const effects: Array<() => void> = [];
+      const commit = () => {
+        if (!dirty) return;
+        const patch = staged;
+        staged = {};
+        dirty = false;
+        set(patch);
+        working = get();
+      };
+      const sink: LiveEventSink = {
+        read: () => working,
+        write: (next) => {
+          const patch = typeof next === "function" ? next(working) : next;
+          if (!patch || patch === working) return;
+          staged = { ...staged, ...patch };
+          dirty = true;
+          working = { ...working, ...patch } as AgentSessionStoreState;
+        },
+        immediate: (run) => {
+          commit();
+          run();
+          working = get();
+        },
+        defer: (run) => {
+          effects.push(run);
+        },
+      };
+      // Buffered text belongs to the same transition while a batch is folding.
+      const outerSink = bufferedDeltaSink;
+      bufferedDeltaSink = (pending) =>
+        sink.write((state) => ({
+          streamingLive: applyBufferedDeltas(state.streamingLive, pending),
+        }));
+      try {
+        for (const item of items)
+          foldLiveEvent(sink, item.event, item.streamSessionId);
+      } finally {
+        bufferedDeltaSink = outerSink;
       }
+      commit();
+      for (const effect of effects) effect();
     },
 
     markSessionRead: (sessionId) => {
@@ -3428,6 +3767,10 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
 
     patchSession: (sessionId, patch) => {
       let patched = false;
+      const previous = get().sessions.find(session => session.id === sessionId);
+      if ((patch.status !== undefined && patch.status !== previous?.status) ||
+          (patch.activeRunId !== undefined && patch.activeRunId !== previous?.activeRunId))
+        invalidateSessionTranscript(sessionId);
       set((s) => {
         const index = s.sessions.findIndex((sess) => sess.id === sessionId);
         if (index === -1) return s;
@@ -3444,6 +3787,12 @@ export const useAgentSessionStore = create<AgentSessionStoreState>(
           session.id === sessionId
             ? patchAgentSession(session, patch)
             : session,
+        );
+      if (patched)
+        scheduleSessionListRefreshOnSettle(
+          sessionId,
+          previous?.status,
+          patch.status,
         );
       const terminal =
         patch.status === "completed" ||
@@ -3498,6 +3847,13 @@ export function resetWorkspaceSessionCache(): void {
   resetSessionListCache();
   inactiveProjectDetails.clear();
 }
+
+// The queue decides when a frame of live records is complete; the store owns
+// the commit. Registering here keeps the queue free of store imports, so live
+// ingress never depends on this module being loaded first.
+setLiveEventDispatcher((items) =>
+  useAgentSessionStore.getState().applyLiveEvents(items),
+);
 
 // Live chunks mutate the cache entry outside any refresh transaction, so the
 // moment the reader leaves a session is the cheapest point to make its

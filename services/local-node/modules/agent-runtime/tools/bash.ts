@@ -12,6 +12,7 @@ import type {
 import { recordBashFileReads } from "../read-tracker.js";
 import { isUnrestrictedSession, hasToolApproval } from "../sandbox/index.js";
 import { DATA_ROOT } from "../../../infrastructure/runtime/env.js";
+import { logger } from "../../../infrastructure/runtime/logger.js";
 import {
   bashPermissionSummary,
   parseBashInvocations,
@@ -19,7 +20,7 @@ import {
 } from "./bash-command-policy.js";
 import { resolveWorkspacePath, workspaceRoot } from "./workspace.js";
 import { parseWslUncPath } from "../../workspace-location.js";
-import { sessionHomeDir } from "./session-home.js";
+import { sessionCommandEnvironment, sessionHomeDir } from "./session-home.js";
 import { EXEC_TIMEOUT_MS, MIN_EXEC_TIMEOUT_MS, MAX_EXEC_TIMEOUT_MS, resolveExecTimeoutMs } from "./command-timeout.js";
 export { resolveExecTimeoutMs } from "./command-timeout.js";
 
@@ -190,7 +191,7 @@ export const bashTool: RegisteredTool = {
   id: "bash",
   label: "Bash",
   description:
-    "Executes a bash command in the workspace. Set async:true to return a commandTaskId immediately after setup and continue independent work; completion is automatically queued into the next step. Use command.manage wait or cancel to control the task. Foreground and async commands run non-interactively with CI=1, so test runners such as Vitest use one-shot mode instead of watch mode. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible.",
+    "Executes a bash command in the workspace. Set async:true to return a commandTaskId before setup/resource waiting and continue independent work; completion is automatically queued into the next step. Use command.manage status, wait or cancel to control the task. Prefer async:true for tests/builds when other work is independent. Foreground and async commands run non-interactively with CI=1, so test runners such as Vitest use one-shot mode instead of watch mode. Permission is enforced per command and subcommand (e.g. git:diff vs git:push). File redirections are blocked except to /dev/null, /dev/stdout, and /dev/stderr unless the session is unrestricted. Prefer dedicated tools (file.read, rg, file.list) when possible. Use installed project executables or package scripts; avoid nested npx wrappers.",
   category: "shell",
   internalGate: "shell",
   mutability: "read",
@@ -200,7 +201,7 @@ export const bashTool: RegisteredTool = {
       .string()
       .min(1)
       .max(4000)
-      .describe("The shell command to execute; no NUL bytes. Runs in the execution host shell reported by the runtime environment."),
+      .describe("The shell command to execute; no NUL bytes. Runs in the execution host shell reported by the runtime environment. For tests and builds, keep live output (or tee to a log); piping into tail hides progress until exit. Run the smallest relevant tests first; rerun only after changes or to investigate a specific failure, and run a broad suite once for final verification. Reuse pending commandTaskId results instead of launching duplicate builds/tests. Prefer rg/file.read for inspection during builds. Split large suites or use runner shards to fit the command deadline."),
     workdir: z
       .string()
       .optional()
@@ -218,7 +219,7 @@ export const bashTool: RegisteredTool = {
         "Run a long-lived server in the background. Returns a process ID; the user can stop it from the session sidebar. Use async:true for finite command tasks with automatic completion delivery. Cannot combine with async:true.",
       ),
     async: z.boolean().optional().describe(
-      "Return a commandTaskId immediately after setup and execute asynchronously using the shared completion queue. Default false waits for the command, with dependency assessment at 120s. timeoutMs still applies. Use command.manage wait before dependent work, or cancel to stop. Cannot combine with background:true or shell background operators (&).",
+      "Return a commandTaskId before setup and resource admission, then execute asynchronously using the shared completion queue. Default false waits for the command, with dependency assessment at 120s. timeoutMs still applies. Use command.manage status for nonblocking progress, wait before dependent work, or cancel to stop. Cannot combine with background:true or shell background operators (&).",
     ),
     timeoutMs: z
       .number()
@@ -324,6 +325,7 @@ export function executeBash(
   // serialize parallel tool calls, live stream forwarding and side-channel
   // requests (profile panels, stats) for the whole lifetime of the command.
   return executeBashCommand({
+    toolCallId: input.toolCallId,
     onStarted: input.onCommandStarted,
     // A version-bound verification receipt requires all writers to be gone.
     waitForCleanup: input.toolId === "verification.run",
@@ -338,6 +340,7 @@ export function executeBash(
 }
 
 interface BashExecutionInput {
+  toolCallId: string;
   onStarted?: () => void;
   waitForCleanup?: boolean;
   background?: boolean;
@@ -368,11 +371,12 @@ async function executeBashCommand(
     ],
   });
 
-  // 4. Syntax validation (bash -n on non-Windows)
+  // 4. Use the same shell for validation and execution.
   const isWindowsHostShell =
     process.platform === "win32" && !parseWslUncPath(cwd);
-  if (!isWindowsHostShell) {
-    const syntaxCheck = await runCommand("/bin/sh", ["-n", "-c", command], {
+  const inlineValidation = process.platform !== "win32" && !parseWslUncPath(cwd) && !input.background;
+  if (!isWindowsHostShell && !inlineValidation) {
+    const syntaxCheck = await runCommand("/bin/bash", ["-n", "-c", command], {
       cwd,
       maxBufferBytes: MAX_OUTPUT_BYTES,
       timeoutMs: 10_000,
@@ -410,10 +414,7 @@ async function executeBashCommand(
   if (input.background) {
     const process = await runBackgroundShellCommand(input.sessionId, command, {
       cwd,
-      env: {
-        ...globalThis.process.env,
-        HOME: await sessionHomeDir(DATA_ROOT, input.sessionId),
-      },
+      env: sessionCommandEnvironment(await sessionHomeDir(DATA_ROOT, input.sessionId), globalThis.process.env, !parseWslUncPath(cwd)),
       stdin: input.stdin,
       waitForJobs: hasBackgroundBashOperator(command),
     });
@@ -427,22 +428,30 @@ async function executeBashCommand(
   // 5. Execute
   const home = await sessionHomeDir(DATA_ROOT, input.sessionId);
   const startedAtMs = Date.now();
-  input.onStarted?.();
-  const result = await runShellCommand(command, {
+  if (!inlineValidation) input.onStarted?.();
+  const options = {
     cwd,
     waitForCleanup: input.waitForCleanup,
     maxBufferBytes: MAX_OUTPUT_BYTES * 2,
     timeoutMs: input.timeoutMs,
     // Agent shell commands have no interactive terminal. Force CI mode so
     // runners such as Vitest do one pass instead of entering watch mode.
-    env: {
-      ...process.env,
-      CI: "1",
-      HOME: home,
-    },
+    env: { ...sessionCommandEnvironment(home, process.env, !parseWslUncPath(cwd)), CI: "1" },
     stdin: input.stdin ?? undefined,
-  });
+    validateBash: inlineValidation,
+    onStarted: inlineValidation ? input.onStarted : undefined,
+  };
+  // Preserve an upstream compiler/test failure when the command pipes through
+  // tee or tail. The process owner and cancellation signal still cover the tree.
+  const result = isWindowsHostShell
+    ? await runShellCommand(command, options)
+    : await runCommand("/bin/bash", ["-o", "pipefail", "-c", command], options);
   const elapsedMs = Date.now() - startedAtMs;
+  logger.info({ event: "command.completed", sessionId: input.sessionId, toolCallId: input.toolCallId,
+    timings: result.timings, exitCode: result.status, timedOut: result.timedOut,
+    syntaxError: result.syntaxError, setupTimedOut: result.setupTimedOut }, "Command execution timing");
+  if (result.setupTimedOut) return stop("Syntax validation or process registration timed out.", "Bash setup timed out");
+  if (result.syntaxError) return stop(result.stderr, "bash syntax error");
 
   // 6. Handle spawn/timeout errors. A timeout is partial evidence, not an empty
   // failure: what the command printed before the kill is exactly what tells the

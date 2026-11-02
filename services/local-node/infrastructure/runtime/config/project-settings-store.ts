@@ -239,6 +239,8 @@ function normalizeSettings(settings: ProjectSettings, includeSecrets: boolean): 
   return {
     ...settings,
     schemaVersion: 3,
+    // Built-in servers are shipped with Synax, so every project sees them
+    // without importing anything; a project file only overrides the enable flag.
     mcpServers: settings.mcpServers ?? [],
     codeMode: { mcpTools: settings.codeMode?.mcpTools ?? [] },
     computerUse: settings.computerUse ?? createDefaultProjectSettings(settings.projectId).computerUse,

@@ -14,6 +14,7 @@ const STATES: Record<string, { icon: typeof Check; label: I18nKey; tone: string 
   waiting_input: { icon: Clock3, label: 'activityStatusInput', tone: 'warning' },
   interrupted: { icon: Ban, label: 'activityStatusInterrupted', tone: 'warning' },
   cancelled: { icon: Ban, label: 'activityStatusCancelled', tone: 'muted' },
+  blocked: { icon: Clock3, label: 'activityStatusBlocked', tone: 'muted' },
   compacted: { icon: Archive, label: 'activityStatusCompacted', tone: 'muted' },
   queued: { icon: Clock3, label: 'activityStatusQueued', tone: 'muted' },
   pending: { icon: Circle, label: 'activityStatusPending', tone: 'muted' },

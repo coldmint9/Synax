@@ -182,3 +182,24 @@ it("uses cursor pages of lightweight previews without fetching full older window
   expect(store.getState().sessionDetailCache.session.timelineMessages?.map(message => message.id)).toEqual(["m1","m2","m3","m4"]);
   expect(store.getState().messages.map(message => message.id)).toEqual(["m3","m4"]);
 });
+
+it("does not rebuild an initialized rail when switching back or applying live messages", async () => {
+  const latest = page(["m3", "m4"], "older");
+  latest.historyWindow.generation = 1;
+  loaded(latest);
+  vi.mocked(agentRuntimeApi.historyIndexPage).mockResolvedValueOnce(page(["m1", "m2"]));
+  await store.getState().loadTimelineIndex();
+  store.setState({ selectedSessionId: "other" });
+  store.setState({ selectedSessionId: "session" });
+  store.getState().applyLiveEvent({ type: "message", message: page(["m5"]).messages[0] }, "session");
+  await store.getState().loadTimelineIndex();
+  expect(agentRuntimeApi.historyIndexPage).toHaveBeenCalledTimes(1);
+  expect(store.getState().sessionDetailCache.session.timelineMessages?.map(message => message.id)).toEqual(["m1", "m2", "m3", "m4", "m5"]);
+});
+
+it("remembers the size needed by automatic viewport prefills", async () => {
+  loaded();
+  vi.mocked(agentRuntimeApi.historyWindow).mockResolvedValueOnce(page(["m1", "m2"]));
+  await store.getState().loadOlderHistory({ retainViewport: true });
+  expect(store.getState().sessionDetailCache.session.historyViewportRetain?.messages).toBe(4);
+});

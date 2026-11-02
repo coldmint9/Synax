@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   GitCommitHorizontal,
+  GitMerge,
   GitPullRequest,
   LoaderCircle,
 } from "lucide-react";
@@ -20,14 +21,16 @@ import {
   type SessionEnvironmentRoot,
 } from "../../../adapters/transport/agentRuntime";
 import LocalGitPanel from "./LocalGitPanel";
-import RemotePrPanel from "./RemotePrPanel";
+import MergeRequestPanel from "./MergeRequestPanel";
+import { mergeRequestTerms } from "./mrTerms";
+import type { PrProvider } from "../../../adapters/transport/remotePr";
 export default function GitActionDialog({
   intent,
   session,
   onClose,
   onTaskReady,
 }: {
-  intent: "commit" | "pr";
+  intent: "commit" | "mr";
   session: AgentSession;
   onClose: () => void;
   onTaskReady: () => void;
@@ -37,6 +40,8 @@ export default function GitActionDialog({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [provider, setProvider] = useState<PrProvider | null>(null);
+  const terms = mergeRequestTerms(provider ?? undefined);
   useEffect(() => {
     let current = true;
     void agentRuntimeApi
@@ -67,22 +72,24 @@ export default function GitActionDialog({
           <DialogHeader>
             {intent === "commit" ? (
               <GitCommitHorizontal size={19} />
+            ) : terms.short === "MR" ? (
+              <GitMerge size={19} />
             ) : (
               <GitPullRequest size={19} />
             )}
             <DialogTitle>
               {intent === "commit"
                 ? "Commit · 本地工作区"
-                : "PR · 远程合并与同步"}
+                : `${terms.short} · ${terms.platform} ${terms.request}`}
             </DialogTitle>
           </DialogHeader>
           <DialogCloseButton disabled={busy} aria-label="关闭 Git 面板" />
           <DialogBody>
-            <p className="git-actions-description">
-              {intent === "commit"
-                ? "提交当前改动、切换分支，或在对话中分析本地合并。"
-                : "连接已配置的 GitHub / GitLab remote，将远程请求带入当前对话。"}
-            </p>
+            {intent === "commit" && (
+              <p className="git-actions-description">
+                提交当前改动，或在本地分支之间合并。
+              </p>
+            )}
             {loading ? (
               <div className="git-actions-loading">
                 <LoaderCircle size={16} className="git-actions-spin" />
@@ -120,12 +127,13 @@ export default function GitActionDialog({
                       onTaskReady={onTaskReady}
                     />
                   ) : (
-                    <RemotePrPanel
+                    <MergeRequestPanel
                       key={rootId}
                       sessionId={session.id}
                       rootId={rootId}
                       onBusy={setBusy}
                       onTaskReady={onTaskReady}
+                      onProvider={setProvider}
                     />
                   ))}
               </>

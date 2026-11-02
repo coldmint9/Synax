@@ -4,7 +4,18 @@ import type { ComponentProps } from "react";
 import type { SessionGroup, SessionTreeNode } from "../useSessionList";
 import { SessionTimeGroups } from "../SessionTimeGroups";
 
-vi.mock("../../../shared/hooks/useLocale", () => ({ useLocale: () => ({ locale: "zh" }) }));
+vi.mock("../../../shared/hooks/useLocale", () => ({
+  useLocale: () => ({
+    locale: "zh",
+    t: (key: string) =>
+      ({
+        sessionGroupStatusWaiting: "等待你处理",
+        activityStatusFailed: "失败",
+        activityStatusRunning: "进行中",
+        activityStatusCompleted: "已完成",
+      })[key] ?? key,
+  }),
+}));
 vi.mock("../SessionTreeItem", () => ({ SessionTreeItem: ({ node }: { node: SessionTreeNode }) => <button className="session-list-item" data-session={node.session.id}>{node.session.id}</button> }));
 vi.mock("../SynaxWordmark", () => ({ SynaxWordmark: () => <span>Synax</span> }));
 
@@ -118,8 +129,23 @@ it("renders expansion immediately without animation or clipped shadows under red
   } finally { spy.mockRestore(); }
 });
 
+it("collapses a section that owns a toggle", () => {
+  const input = props({
+    groups: [
+      { ...group(2, "intent:缺陷修复"), collapsible: true, collapsed: true },
+    ],
+  });
+  const { container } = render(<SessionTimeGroups {...input} />);
+
+  const toggle = container.querySelector(".session-list-section-toggle")!;
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const content = container.querySelector(".session-list-section-content")!;
+  expect(content).toHaveAttribute("data-collapsed", "true");
+  expect(content).toHaveAttribute("inert");
+});
+
 it("never collapses ordinary sessions, even with a stale collapsed flag", () => {
-  const input = props({ groups: [{ ...group(1, "pinned:sessions"), collapsed: true }, { ...group(25), collapsed: true }] });
+  const input = props({ groups: [{ ...group(1, "pinned:sessions"), collapsible: true, collapsed: true }, { ...group(25), collapsed: true }] });
   const { container } = render(<SessionTimeGroups {...input} />);
   expect(container.querySelectorAll(".session-list-section-toggle")).toHaveLength(1);
   const label = container.querySelector(".session-list-section-label")!;
@@ -132,4 +158,39 @@ it("never collapses ordinary sessions, even with a stale collapsed flag", () => 
   expect(ordinary).not.toHaveAttribute("inert");
   expect(expand()).toBeEnabled();
   expect(container.querySelector(".lucide-pin")).toBeNull();
+});
+
+it("draws the run-state mix of a group most urgent first", () => {
+  const input = props({
+    groups: [
+      {
+        ...group(4, "intent:缺陷修复"),
+        collapsible: true,
+        statusCounts: { warning: 2, danger: 1, running: 3, success: 1 },
+      },
+    ],
+  });
+  const { container } = render(<SessionTimeGroups {...input} />);
+
+  const dots = Array.from(
+    container.querySelectorAll(".session-list-group-status-dot"),
+  );
+  expect(dots.map((dot) => dot.className)).toEqual([
+    expect.stringContaining("bg-warning"),
+    expect.stringContaining("bg-destructive"),
+    expect.stringContaining("bg-run"),
+    expect.stringContaining("bg-success"),
+  ]);
+  expect(container.querySelector(".session-list-group-status")).toHaveAttribute(
+    "aria-label",
+    "等待你处理 2 · 失败 1 · 进行中 3 · 已完成 1",
+  );
+});
+
+it("omits the dot row for a group without run-state counts", () => {
+  const { container } = render(
+    <SessionTimeGroups {...props({ groups: [group(3)] })} />,
+  );
+
+  expect(container.querySelector(".session-list-group-status")).toBeNull();
 });

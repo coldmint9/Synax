@@ -30,10 +30,21 @@ Reuse it for HTML file previews, full-screen previews and embedded prototypes:
 pass id/html/title plus optional maxHeight, timeoutMs, stateKey and callbacks.
 Feature code must not rebuild the shell, CSP or handshake.
 
-The wrapper has no visible toolbar, header, border or controls; product chrome
-belongs to the generated fragment. Icons are serialized during the app build,
-not per reply. The accepted demo lives only in __tests__/fixtures, not in
+The host owns exactly two controls, revealed on hover or keyboard focus at the
+card's top-right corner: collapse (the card becomes one small placeholder with
+blurred artwork and its title, click to restore) and open in viewer
+(VisualizationViewer mounts a second sandboxed instance full screen; the
+transcript frame is never re-parented). Everything else inside the card stays
+product chrome from the generated fragment. Icons are serialized during the app
+build, not per reply. The accepted demo lives only in __tests__/fixtures, not in
 product rendering code.
+
+The viewer toolbar exports the preview as one standalone .html file: document
+shell, CSP, runtime, icons and the current theme are baked in, so the file opens
+offline in any browser. Desktop builds save through the main-process dialog
+(IPC dialog:save-text, so the renderer never holds a writable path); the browser
+uses the File System Access picker when available and a plain download
+otherwise. Nothing is written until the user picks a location.
 
 Security boundaries:
 - sandbox="allow-scripts", no same-origin, navigation/download/permission grants.

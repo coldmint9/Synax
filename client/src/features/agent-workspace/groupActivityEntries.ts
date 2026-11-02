@@ -1,13 +1,24 @@
+import type { TurnContentBlock } from "./buildInterleavedTurns";
 import type { ConversationTimelineEntry } from "./buildConversationTimeline";
+
+type AgentTimelineEntry = Extract<ConversationTimelineEntry, { kind: "agent" }>;
+type BuildingAgentEntry = Omit<AgentTimelineEntry, "turn"> & {
+  turn: Omit<AgentTimelineEntry["turn"], "blocks"> & {
+    blocks: TurnContentBlock[];
+  };
+};
+type BuildingEntry =
+  | Exclude<ConversationTimelineEntry, { kind: "agent" }>
+  | BuildingAgentEntry;
 
 /** Replies and user/system events end an activity group; model steps do not. */
 export function groupActivityEntries(
   entries: ConversationTimelineEntry[],
 ): ConversationTimelineEntry[] {
-  const result: ConversationTimelineEntry[] = [];
-  let pending:
-    | Extract<ConversationTimelineEntry, { kind: "agent" }>
-    | undefined;
+  // Every agent row and its block array are owned by this call until return.
+  // Block objects and non-agent entries are shared with the input, never edited.
+  const result: BuildingEntry[] = [];
+  let pending: BuildingAgentEntry | undefined;
   const flush = () => {
     if (pending) result.push(pending);
     pending = undefined;
@@ -29,15 +40,14 @@ export function groupActivityEntries(
         block.type === "tool_call_group";
       if (block.type === "text" && !block.content.trim()) return;
       if (activity) {
-        if (!pending)
+        if (!pending) {
           pending = {
             ...entry,
             id: `${entry.id}:activity:${index}`,
             turn: { ...entry.turn, blocks: [] },
           };
-        // A group grows across model steps, so it is rebuilt instead of
-        // mutated: `TurnContentBlock[]` is readonly once it reaches a row.
-        pending.turn.blocks = [...pending.turn.blocks, block];
+        }
+        pending.turn.blocks.push(block);
         pending.turn.status = entry.turn.status;
       } else {
         flush();
@@ -54,7 +64,7 @@ export function groupActivityEntries(
           "messageId" in previousBlock &&
           previousBlock.messageId === messageId
         ) {
-          previous.turn.blocks = [...previous.turn.blocks, block];
+          previous.turn.blocks.push(block);
           return;
         }
         result.push({

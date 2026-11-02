@@ -2,7 +2,7 @@ import { apiFetch } from "./origin";
 
 export type CommitMessageStreamEvent =
   | { type: "delta"; text: string }
-  | { type: "final"; message: string };
+  | { type: "final"; message: string; warning?: string };
 
 /** A generation is complete only after both a final message and the SSE sentinel. */
 export async function streamCommitMessage(
@@ -70,7 +70,13 @@ export async function streamCommitMessage(
       item.message.trim()
     ) {
       final = true;
-      onEvent({ type: "final", message: item.message });
+      onEvent({
+        type: "final",
+        message: item.message,
+        ...(typeof item.warning === "string" && item.warning
+          ? { warning: item.warning }
+          : {}),
+      });
     } else throw new Error("Invalid commit message stream response.");
   };
   try {

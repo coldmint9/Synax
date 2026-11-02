@@ -1,6 +1,6 @@
 import type { HistoryWindowResponse } from "../../../adapters/transport/agentRuntime";
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
-import { previewTimelineMessage, seedTimelineIndex } from "./timelineHistoryIndex";
+import { previewTimelineMessage, previewTimelineRun, previewTimelineStep, previewTimelineToolCall, seedTimelineIndex } from "./timelineHistoryIndex";
 
 type Transcript = Pick<
   SessionDetailCacheEntry,
@@ -15,6 +15,10 @@ function byId<T extends { id: string }>(first: T[], second: T[]): T[] {
     if (records.get(record.id) !== record) { records.set(record.id, record); changed = true; }
   }
   return changed ? [...records.values()] : first;
+}
+
+function withoutDeleted<T extends { id: string }>(items: T[], deleted: Set<string>): T[] {
+  return deleted.size ? items.filter(item => !deleted.has(item.id)) : items;
 }
 
 const COLLECTIONS = ["messages", "runs", "steps", "toolCalls", "events", "permissions"] as const;
@@ -67,10 +71,11 @@ function applyChanges(previous: SessionDetailCacheEntry, latest: SessionDetailCa
     ...previous, ...latest, ...combined,
     historyDeleted: deleted,
     historyPagesLoaded: previous.historyPagesLoaded,
-    timelineMessages: byId(previous.timelineMessages ?? previous.messages.map(previewTimelineMessage), retained.messages.map(previewTimelineMessage)).filter(item => !removed.messages.has(item.id)),
-    timelineRuns: byId(previous.timelineRuns ?? previous.runs, retained.runs).filter(item => !removed.runs.has(item.id)),
-    timelineSteps: byId(previous.timelineSteps ?? previous.steps, retained.steps).filter(item => !removed.steps.has(item.id)),
-    timelineToolCalls: byId(previous.timelineToolCalls ?? previous.toolCalls, retained.toolCalls).filter(item => !removed.toolCalls.has(item.id)),
+    // Older body rows stay paged, but their edits/deletions still update the rail.
+    timelineMessages: withoutDeleted(byId(previous.timelineMessages ?? previous.messages.map(previewTimelineMessage), latest.messages.map(previewTimelineMessage)), removed.messages),
+    timelineRuns: withoutDeleted(byId(previous.timelineRuns ?? previous.runs.map(previewTimelineRun), latest.runs.map(previewTimelineRun)), removed.runs),
+    timelineSteps: withoutDeleted(byId(previous.timelineSteps ?? previous.steps.map(previewTimelineStep), latest.steps.map(previewTimelineStep)), removed.steps),
+    timelineToolCalls: withoutDeleted(byId(previous.timelineToolCalls ?? previous.toolCalls.map(previewTimelineToolCall), latest.toolCalls.map(previewTimelineToolCall)), removed.toolCalls),
     timelineIndexLoaded: previous.timelineIndexLoaded, timelineIndexError: previous.timelineIndexError,
     historyWindow: {
       ...previous.historyWindow!, ...latest.historyWindow!,
@@ -119,6 +124,7 @@ export function mergeRefreshedHistory(
       timelineToolCalls: previous.timelineToolCalls,
       timelineIndexLoaded: true,
       timelineIndexError: undefined,
+      historyViewportRetain: previous.historyViewportRetain,
     };
   }
   // Without an overlapping row we cannot prove there is no gap between the
@@ -135,6 +141,7 @@ export function mergeRefreshedHistory(
       timelineToolCalls: previous.timelineToolCalls,
       timelineIndexLoaded: true,
       timelineIndexError: undefined,
+      historyViewportRetain: previous.historyViewportRetain,
     };
   }
   const olderCursor = previous.historyWindow.olderCursor;
@@ -156,6 +163,7 @@ export function mergeRefreshedHistory(
     events: latest.events,
     permissions: latest.permissions,
     historyPagesLoaded: true,
+    historyViewportRetain: previous.historyViewportRetain,
     historyWindow: {
       ...latest.historyWindow!,
       olderCursor,
@@ -187,13 +195,13 @@ export function prependHistory(
       older.messages.map(previewTimelineMessage),
       current.timelineMessages ?? current.messages.map(previewTimelineMessage),
     ).filter(item => !tombstones.messages.has(item.id)),
-    timelineRuns: byId(older.runs, current.timelineRuns ?? current.runs).filter(item => !tombstones.runs.has(item.id)),
-    timelineSteps: byId(older.steps, current.timelineSteps ?? current.steps).filter(item => !tombstones.steps.has(item.id)),
+    timelineRuns: byId(older.runs.map(previewTimelineRun), current.timelineRuns ?? current.runs.map(previewTimelineRun)).filter(item => !tombstones.runs.has(item.id)),
+    timelineSteps: byId(older.steps.map(previewTimelineStep), current.timelineSteps ?? current.steps.map(previewTimelineStep)).filter(item => !tombstones.steps.has(item.id)),
     timelineToolCalls: byId(
-      older.toolCalls,
-      current.timelineToolCalls ?? current.toolCalls,
+      older.toolCalls.map(previewTimelineToolCall),
+      current.timelineToolCalls ?? current.toolCalls.map(previewTimelineToolCall),
     ).filter(item => !tombstones.toolCalls.has(item.id)),
-    timelineIndexLoaded: current.timelineIndexLoaded,
+    timelineIndexLoaded: current.timelineIndexLoaded || !older.historyWindow.olderCursor,
     timelineIndexError: current.timelineIndexError,
     events: older.historyWindow.generation === undefined ? current.events : combined.events,
     permissions: older.historyWindow.generation === undefined ? current.permissions : combined.permissions,

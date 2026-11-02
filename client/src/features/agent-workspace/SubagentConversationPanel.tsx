@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
 import { BotMessageSquare, Maximize2, Minimize2, X } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { SubagentReadonlyView } from "./SubagentReadonlyView";
+import { sessionRuntimeSelection } from "./sessionRuntimeSelection";
+import { useConversationState } from "./state/useConversationState";
 import { useSessionWorkspace, useSessionWorkspaceStore } from "./state/sessionWorkspaceStore";
+import { formatModelDisplayName, useProviderNames } from "./useProviderNames";
 
 export function SubagentConversationPanel({
   ownerSessionId,
@@ -17,8 +21,15 @@ export function SubagentConversationPanel({
   const closeRef = useRef<HTMLButtonElement>(null);
   const fullscreenRef = useRef<HTMLButtonElement>(null);
   const { subagent } = useSessionWorkspace(ownerSessionId);
+  const runtime = useConversationState(sessionId, useShallow(state =>
+    sessionRuntimeSelection(state.session ?? undefined, state.history.runs, state.history.steps),
+  ));
+  const providers = useProviderNames();
+  const modelLabel = formatModelDisplayName(runtime.model, providers) ?? "—";
   const fullscreen = Boolean(subagent?.fullscreen);
   const zh = locale === "zh";
+  const modelDescription = `${zh ? "供应商/模型" : "Provider/model"}: ${modelLabel}`;
+  const effortDescription = `${zh ? "推理强度" : "Reasoning effort"}: ${runtime.reasoningEffort ?? "—"}`;
   useEffect(() => { closeRef.current?.focus(); }, [sessionId]);
   useEffect(() => {
     if (!fullscreen) return;
@@ -35,10 +46,14 @@ export function SubagentConversationPanel({
   return (
     <section className="subagent-conversation" aria-label={zh ? `子代理对话：${title}` : `Subagent conversation: ${title}`}>
       <header className="subagent-conversation-header">
-        <BotMessageSquare size={16} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <strong className="block truncate text-xs" title={title}>{title}</strong>
-          <span className="text-[10px] text-muted-foreground">{fullscreen ? (zh ? "子对话 · Esc 返回分栏" : "Subagent · Esc to return to split view") : (zh ? "子对话 · 主对话保持可见" : "Subagent · parent conversation stays open")}</span>
+        <BotMessageSquare size={16} className="shrink-0" aria-hidden="true" />
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <strong className="max-w-[30%] shrink-0 truncate text-xs" title={title}>{title}</strong>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span className="truncate" aria-label={modelDescription} title={modelDescription}>{modelLabel}</span>
+            <span aria-hidden="true">·</span>
+            <span className="shrink-0" aria-label={effortDescription} title={effortDescription}>{runtime.reasoningEffort ?? "—"}</span>
+          </div>
         </div>
         <button ref={fullscreenRef} type="button" className="subagent-conversation-close" aria-label={fullscreen ? (zh ? "退出子代理全屏" : "Exit subagent fullscreen") : (zh ? "全屏查看子代理对话" : "View subagent fullscreen")} title={fullscreen ? (zh ? "退出全屏（Esc）" : "Exit fullscreen (Esc)") : (zh ? "全屏" : "Fullscreen")} aria-pressed={fullscreen} onClick={() => useSessionWorkspaceStore.getState().setSubagentFullscreen(ownerSessionId, !fullscreen)}>
           {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}

@@ -65,12 +65,8 @@ fn path(change: &Change) -> &[String] {
 fn apply(root: &Path, document: &mut Value, changes: Vec<Change>) -> JsonlResult<()> {
     for change in changes {
         let keys = path(&change);
-        if keys.starts_with(&[
-            "projection".into(),
-            "session".into(),
-            "sessionMetadata".into(),
-            "latestSystemPrompt".into(),
-        ]) {
+        if keys.starts_with(&["projection".into(), "session".into(), "sessionMetadata".into()])
+            && keys.get(3).is_some_and(|key| super::list_projection::detail_metadata(key)) {
             continue;
         }
         if keys.starts_with(&["projection".into(), "session".into()])
@@ -226,7 +222,7 @@ pub(super) fn read(root: &Path, id: &str) -> JsonlResult<ListRecord> {
     Ok(ListRecord {
         s: id.into(),
         u: header["updatedAt"].as_str().unwrap_or_default().into(),
-        h: header,
+        h: super::list_projection::summary(&header),
         del: false,
     })
 }

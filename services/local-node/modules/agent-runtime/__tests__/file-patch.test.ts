@@ -148,4 +148,15 @@ describe("patchTool", () => {
     expect(call.permission?.action).toBe("ask");
     expect(call.permission?.internalGate).toBe("write");
   });
+
+  it("rejects relative and absolute aliases of one file before any write", () => {
+    const { sessionId, dir } = setupWorkspace("Synax-file-patch-alias-");
+    const file = path.join(dir, "same.ts");
+    fs.writeFileSync(file, "old\n");
+    expect(() => patchTool.execute(input(sessionId, [
+      "*** Begin Patch", "*** Update File: same.ts", "@@", "-old", "+first",
+      `*** Update File: ${file}`, "@@", "-old", "+second", "*** End Patch",
+    ].join("\n")))).toThrow(/PATCH_INVALID_FORMAT/);
+    expect(fs.readFileSync(file, "utf8")).toBe("old\n");
+  });
 });

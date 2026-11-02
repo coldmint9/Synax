@@ -3,6 +3,7 @@ import {
   SessionNotifications,
   isTrustedNotificationSender,
 } from "./lib/session-notifications.js";
+import { SessionNotificationBridge } from "./lib/session-notification-bridge.js";
 import { isTerminalSystemShortcut } from "./lib/terminal-shortcuts.js";
 import fs from "node:fs/promises";
 import {
@@ -19,8 +20,16 @@ import {
 import path from "node:path";
 import { nativeTemplate, parseContextMenu, resolveRevealTarget, textContextTemplate } from "./lib/context-menu.js";
 import { copyFileToSystemClipboard } from "./lib/file-clipboard.js";
+import { normalizeSaveTextRequest, saveTextFile } from "./lib/save-text-file.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { startSidecar, stopSidecarGracefully, setSidecarCuaConnection } from "./lib/node-sidecar.js";
+import {
+  onSidecarMessage,
+  onSidecarReady,
+  sendSidecarMessage,
+  startSidecar,
+  stopSidecarGracefully,
+  setSidecarCuaConnection,
+} from "./lib/node-sidecar.js";
 import { CuaRuntimeManager } from "./lib/cua-runtime.js";
 import { getDataRoot, getResourcePath } from "./lib/data-paths.js";
 import { loadWindowState, saveWindowState } from "./lib/window-state.js";
@@ -28,13 +37,16 @@ import { alignMacWindowButtons, DEFAULT_TRAFFIC_LIGHT_POSITION } from "./lib/win
 import {
   buildAppMenu,
   setUiUpdateAction,
+  setMenuLocale,
   updateMenuState,
   updateProjectsMenu,
 } from "./menu.js";
+import { resolveMenuLocale } from "./menu-copy.js";
 import { handleSquirrelEvent } from "./lib/squirrel-startup.js";
 import { UiUpdates } from "./lib/ui-updates.js";
 import { DesktopUpdates } from "./lib/desktop-updates.js";
-import { configureUpdateNetwork } from "./lib/update-network.js";
+import { onlineUpdatesEnabled, requireOnlineUpdates } from "./updater/update-policy.js";
+import { configureUpdateSettings } from "./updater/update-settings.js";
 import { UpdateSettingsStore } from "./lib/update-settings-store.js";
 import {
   applyMacWindowAppearance,
@@ -48,6 +60,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isDev = !app.isPackaged;
+app.setName("Synax");
 // Token reads and ticket handshakes share one cached broker so reconnects and
 // every authenticated request stop paying a disk read on the main loop.
 const runtimeConnectionBroker = createRuntimeConnectionBroker(getDataRoot());
@@ -71,6 +84,22 @@ const sessionNotifications = new SessionNotifications(
     ? getResourcePath("electron", "resources", "synax-icon.png")
     : getResourcePath("synax-icon.png"),
 );
+// A closed window on macOS leaves the app running: the runtime detects the
+// settled session and this bridge delivers it exactly where the renderer would.
+const sessionNotificationBridge = new SessionNotificationBridge(
+  sendSidecarMessage,
+  {
+    show: (payload) => sessionNotifications.show(payload),
+  },
+);
+onSidecarMessage((message) => sessionNotificationBridge.receive(message));
+onSidecarReady(() => sessionNotificationBridge.publish());
+
+/** One owner at a time: the renderer while loaded, the main process otherwise. */
+function setRendererNotificationReady(ready: boolean): void {
+  sessionNotifications.setRendererReady(ready);
+  sessionNotificationBridge.configure({ rendererReady: ready });
+}
 let terminalFocused = false;
 let uiUpdates: UiUpdates | null = null;
 let desktopUpdates: DesktopUpdates | null = null;
@@ -115,6 +144,7 @@ function createWindow(): BrowserWindow {
 
   const win = new BrowserWindow({
     ...state,
+    title: "Synax",
     minWidth: 800,
     minHeight: 600,
     icon: isDev
@@ -159,9 +189,9 @@ function createWindow(): BrowserWindow {
   });
 
   win.webContents.on("did-start-loading", () =>
-    sessionNotifications.setRendererReady(false),
+    setRendererNotificationReady(false),
   );
-  win.on("closed", () => sessionNotifications.setRendererReady(false));
+  win.on("closed", () => setRendererNotificationReady(false));
   win.on("focus", () => sessionNotifications.clearBadge());
 
   const publishWindowState = () => {
@@ -258,13 +288,15 @@ function registerIPC(): void {
     (event, payload) =>
       trustedNotificationSender(event) && sessionNotifications.show(payload),
   );
-  ipcMain.on("notifications:enabled", (event, enabled) => {
-    if (trustedNotificationSender(event) && typeof enabled === "boolean")
-      sessionNotifications.setEnabled(enabled);
+  ipcMain.on("notifications:enabled", (event, enabled, locale) => {
+    if (!trustedNotificationSender(event) || typeof enabled !== "boolean") return;
+    sessionNotifications.setEnabled(enabled);
+    // Locale is known only here; the background runtime formats with it.
+    sessionNotificationBridge.configure({ enabled, locale });
   });
   ipcMain.on("notifications:renderer-ready", (event, ready) => {
     if (trustedNotificationSender(event) && typeof ready === "boolean")
-      sessionNotifications.setRendererReady(ready);
+      setRendererNotificationReady(ready);
   });
   ipcMain.on("notifications:dismiss", (event, sessionId) => {
     if (trustedNotificationSender(event) && typeof sessionId === "string")
@@ -321,6 +353,20 @@ function registerIPC(): void {
     return parent ? dialog.showSaveDialog(parent, options) : dialog.showSaveDialog(options);
   });
   ipcMain.handle("app:version", () => app.getVersion());
+  ipcMain.handle("dialog:save-text", async (event, value: unknown) => {
+    if (!trustedNotificationSender(event)) throw new Error("Untrusted dialog request");
+    const request = normalizeSaveTextRequest(value);
+    if (!request) throw new Error("Invalid save request");
+    return saveTextFile(request, {
+      dialogs: {
+        showSaveDialog: (options) => dialog.showSaveDialog(options),
+        showSaveDialogWithParent: (parent, options) =>
+          dialog.showSaveDialog(parent as BrowserWindow, options),
+      },
+      writeFile: (filePath, contents) => fs.writeFile(filePath, contents, "utf8"),
+      parent: BrowserWindow.fromWebContents(event.sender),
+    });
+  });
   ipcMain.handle("window:minimize", (event) => {
     if (!trustedNotificationSender(event) || !mainWindow || mainWindow.isDestroyed())
       return false;
@@ -361,16 +407,17 @@ function registerIPC(): void {
     }
     return macWindowAppearance;
   });
-  ipcMain.handle("updates:get-network", (event) => {
+  ipcMain.handle("updates:get-settings", (event) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update settings sender");
     return updateSettings.settings;
   });
-  ipcMain.handle("updates:set-network", async (event, value: unknown) => {
+  ipcMain.handle("updates:set-settings", async (event, value: unknown) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update settings sender");
     const settings = await updateSettings.save(value);
-    configureUpdateNetwork(settings);
+    configureUpdateSettings(settings);
+    syncDesktopUpdates();
     return settings;
   });
   ipcMain.handle("updates:state", (event) => {
@@ -381,6 +428,7 @@ function registerIPC(): void {
   ipcMain.handle("updates:check", async (event) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update sender");
+    requireOnlineUpdates();
     if (!desktopUpdates)
       throw new Error("Desktop updates are unavailable in this build");
     await desktopUpdates.check(true);
@@ -388,6 +436,7 @@ function registerIPC(): void {
   ipcMain.handle("updates:install", async (event) => {
     if (!trustedNotificationSender(event))
       throw new Error("Untrusted update sender");
+    requireOnlineUpdates();
     if (!desktopUpdates)
       throw new Error("Desktop updates are unavailable in this build");
     await desktopUpdates.install();
@@ -501,6 +550,7 @@ function registerIPC(): void {
       hasViewer: state.hasViewer === true,
       inWork: state.inWork === true,
       dark: state.dark === true,
+      locale: resolveMenuLocale(state.locale),
     });
   });
 }
@@ -515,9 +565,32 @@ function armUiReadyTimer(): void {
   uiReadyTimer.unref?.();
 }
 
+/** Rebuilds the desktop updater so a settings change takes effect without a restart. */
+function syncDesktopUpdates(): void {
+  const wasEnabled = desktopUpdates !== null;
+  desktopUpdates?.stop();
+  desktopUpdates = null;
+  if (
+    onlineUpdatesEnabled() &&
+    app.isPackaged &&
+    ["darwin", "win32"].includes(process.platform)
+  ) {
+    desktopUpdates = new DesktopUpdates(
+      () => uiUpdates?.store.currentVersion ?? null,
+    );
+    setUiUpdateAction(() => void desktopUpdates?.check(true));
+    if (mainWindow && !mainWindow.isDestroyed())
+      desktopUpdates.start(mainWindow);
+  } else if (wasEnabled) setUiUpdateAction(null);
+}
+
 async function bootstrap(): Promise<void> {
   registerIPC();
+  // Match the menu bar to the OS language until the renderer reports the
+  // language the user picked in settings.
+  setMenuLocale(app.getLocale?.());
   if (
+    onlineUpdatesEnabled() &&
     !uiUpdates &&
     app.isPackaged &&
     (process.platform === "darwin" || process.platform === "win32")
@@ -539,12 +612,8 @@ async function bootstrap(): Promise<void> {
     !desktopUpdates &&
     app.isPackaged &&
     ["darwin", "win32"].includes(process.platform)
-  ) {
-    desktopUpdates = new DesktopUpdates(
-      () => uiUpdates?.store.currentVersion ?? null,
-    );
-    setUiUpdateAction(() => void desktopUpdates?.check(true));
-  }
+  )
+    syncDesktopUpdates();
 
   // Register custom protocol to serve frontend assets over app:// scheme.
   // This is required because <script type="module"> does not work with file:// protocol.
@@ -605,7 +674,7 @@ if (gotLock)
         path.join(app.getPath("userData"), "update-network.json"),
       );
       await updateSettings.initialize();
-      configureUpdateNetwork(updateSettings.settings);
+      configureUpdateSettings(updateSettings.settings);
     })
     .then(ensureMainWindow)
     .catch((err) => {

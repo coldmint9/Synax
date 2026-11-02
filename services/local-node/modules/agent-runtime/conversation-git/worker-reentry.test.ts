@@ -46,7 +46,8 @@ beforeEach(() => {
   mocks.service.get.mockImplementation(async () => structuredClone(mocks.snapshot));
   mocks.service.workerSnapshot.mockImplementation(async () => structuredClone(mocks.snapshot));
   mocks.service.setWorkerExecution.mockImplementation(async (_parent, _id, patch) => {
-    mocks.snapshot.execution = { ...mocks.snapshot.execution, ...patch, revision: mocks.snapshot.execution.revision + 1 };
+    const previous = mocks.snapshot.execution;
+    mocks.snapshot.execution = { ...(previous ?? { revision: 0 }), ...patch, revision: (previous?.revision ?? 0) + 1 };
     return mocks.snapshot.execution;
   });
   mocks.service.store.exclusive.mockImplementation(async (_key, action) => action());
@@ -93,8 +94,33 @@ it('does not reopen a failed user stop and rejects a stopped parent', async () =
   Object.assign(mocks.snapshot.execution, { status: 'recovery_required', stopRequested: 'pause' });
   await startConversationMergeWorker('parent', objectId);
   expect(mocks.coordinator.submitAsync).not.toHaveBeenCalled();
-  mocks.sessions.get('parent').sessionMetadata.manualStop = true;
+  Object.assign(mocks.sessions.get('parent'), { status: 'paused' });
+  mocks.sessions.get('parent').sessionMetadata.manualStop = { at: new Date().toISOString(), reason: 'Stopped by user.' };
   await expect(resumeConversationMergeWorker('parent', objectId)).rejects.toMatchObject({ code: 'PARENT_STOPPED' });
+});
+
+it('starts from a running parent that still carries a stale stop marker', async () => {
+  mocks.snapshot.execution = undefined;
+  mocks.sessions.get('parent').sessionMetadata.manualStop = { at: new Date().toISOString(), reason: 'Stopped by user.' };
+  mocks.create.mockReturnValue({ id: 'child' });
+  const started = await startConversationMergeWorker('parent', objectId);
+  expect(mocks.create).toHaveBeenCalledTimes(1);
+  expect(started.execution).toMatchObject({ status: 'running', childSessionId: 'child' });
+});
+
+it('re-enters from a running parent that still carries a stale stop marker', async () => {
+  mocks.snapshot.execution.status = 'recovery_required';
+  mocks.sessions.get('parent').sessionMetadata.manualStop = { at: new Date().toISOString(), reason: 'Stopped by user.' };
+  const resumed = await resumeConversationMergeWorker('parent', objectId);
+  expect(resumed.execution).toMatchObject({ status: 'running', epoch: 2, childSessionId: 'child' });
+});
+
+it('records a recoverable execution when the parent conversation is stopped', async () => {
+  mocks.snapshot.execution = undefined;
+  mocks.sessions.get('parent').status = 'interrupted';
+  await expect(startConversationMergeWorker('parent', objectId)).rejects.toMatchObject({ code: 'PARENT_STOPPED' });
+  expect(mocks.create).not.toHaveBeenCalled();
+  expect(mocks.snapshot.execution).toMatchObject({ status: 'failed', phase: 'settled' });
 });
 
 it('returns a stopped task without waiting again on its consumed mailbox', async () => {

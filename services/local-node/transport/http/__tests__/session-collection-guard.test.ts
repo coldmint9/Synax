@@ -21,7 +21,7 @@ it.each([
     .mockRejectedValue(new Error("execution index must stay lazy"));
   const history = vi.spyOn(agentRuntimeStore, "hydrateSession")
     .mockRejectedValue(new Error("session history must stay lazy"));
-  const list = vi.spyOn(runtimeFacade, "listSessionProjection").mockResolvedValue([]);
+  const list = vi.spyOn(runtimeFacade, url.startsWith("/sessions/badges") ? "listSessionBadges" : "listSessionProjection").mockResolvedValue([]);
   const response = await agentRuntimeRoutes.request(`http://localhost${url}`);
   expect(response.status).toBe(200);
   expect(list).toHaveBeenCalledTimes(1);

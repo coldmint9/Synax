@@ -37,10 +37,12 @@ export class LoopComposition {
       if (op.state !== "running" && op.state !== "pending") continue;
       const record = op.recordId ? this.store.getToolCall(sessionId, op.recordId) :
         this.store.listToolCalls(sessionId).find((item) => item.stepId === stepId && item.modelToolCallId === op.call.id);
-      if (record && ["completed", "compacted", "failed", "denied", "cancelled"].includes(record.status)) {
+      if (record && ["completed", "compacted", "failed", "denied", "cancelled", "blocked"].includes(record.status)) {
         op.recordId = record.id;
         op.state = "settled";
-        if (["failed", "denied", "cancelled"].includes(record.status)) this.cancelTail(program);
+        if (["failed", "denied", "cancelled", "blocked"].includes(record.status)) this.cancelTail(program);
+        // Return the saved precondition result for projection, never retry the action.
+        if (record.status === "blocked") output.push({ call: op.call, exec: { record } });
       } else if (record?.status === "pending") {
         op.recordId = record.id;
         op.state = "pending";
@@ -94,6 +96,7 @@ export class LoopComposition {
         });
         entry.recordId = exec.record.id;
         entry.state = exec.record.status === "pending" ? "pending" : "settled";
+        if (exec.record.status === "blocked") this.cancelTail(program);
         this.save(stepId, program);
         output.push({ call: entry.call, exec });
         return null;
@@ -116,7 +119,7 @@ export class LoopComposition {
         break;
       }
       if (receipts.some(({ exec }) => exec.record.status === "pending" || exec.interactionId || exec.toolResult?.suspend)) break;
-      if (receipts.some(({ exec }) => ["failed", "denied", "cancelled"].includes(exec.record.status))) {
+      if (receipts.some(({ exec }) => ["failed", "denied", "cancelled", "blocked"].includes(exec.record.status))) {
         this.cancelTail(program);
         this.save(stepId, program);
         break;

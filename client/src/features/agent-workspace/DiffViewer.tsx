@@ -1,13 +1,14 @@
 import { useWorkspaceRefresh } from "./workspaceRefresh";
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { FileDiff, FilePenLine, RefreshCw } from "lucide-react";
+import { FileDiff, SquarePen } from "lucide-react";
 import { parsePatch } from "diff";
 
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
+import { useLocale } from "../../shared/hooks/useLocale";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { renderLines } from "../../shared/ui/file-viewer/UnifiedDiffContent";
 import { MonacoTextEditor } from "../../shared/ui/file-viewer/MonacoTextEditor";
-import { replaceWorkspaceDiffWithFile } from "./state/sessionWorkspaceStore";
+import { openWorkspaceFile } from "./state/sessionWorkspaceStore";
 
 const MonacoDiffEditor = lazy(() =>
   import("../../shared/ui/file-viewer/MonacoDiffEditor"),
@@ -20,6 +21,8 @@ interface DiffSnapshot {
   removed: number;
   raw: string | null;
   fileLabel?: string;
+  /** A deleted file has nothing for the editor to open. */
+  fileExists: boolean;
 }
 
 const EMPTY_SNAPSHOT: DiffSnapshot = {
@@ -28,6 +31,7 @@ const EMPTY_SNAPSHOT: DiffSnapshot = {
   added: 0,
   removed: 0,
   raw: null,
+  fileExists: true,
 };
 
 /** Reconstructs the text sides when an older runtime only returns a patch. */
@@ -68,6 +72,7 @@ function snapshotFromPatch(raw: string): DiffSnapshot {
       added,
       removed,
       raw: null,
+      fileExists: true,
     };
   } catch {
     return { ...EMPTY_SNAPSHOT, raw };
@@ -91,6 +96,7 @@ export const DiffViewer = memo(function DiffViewer({
   path: string;
   rootId?: string;
 }) {
+  const { t } = useLocale();
   const [snapshot, setSnapshot] = useState<DiffSnapshot>(EMPTY_SNAPSHOT);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +131,7 @@ export const DiffViewer = memo(function DiffViewer({
         removed,
         raw: fallback.raw,
         fileLabel,
+        fileExists: !/^\+\+\+ \/dev\/null\s*$/m.test(result.content ?? ""),
       });
       setLoading(false);
     } catch (err) {
@@ -147,10 +154,10 @@ export const DiffViewer = memo(function DiffViewer({
 
   return (
     <div className="diff-viewer flex min-h-0 flex-1 flex-col">
-      <div className="file-viewer-toolbar flex shrink-0 items-center gap-1.5 border-b border-border/30 bg-secondary/20 px-2.5 py-1.5">
+      <div className="file-viewer-toolbar flex shrink-0 items-center gap-2 border-b border-border/30 bg-secondary/20 px-3 py-1.5">
         <FileTypeIcon path={path} />
         <span
-          className="min-w-0 flex-1 truncate font-mono text-[10px] text-foreground"
+          className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground"
           title={path}
         >
           {path}
@@ -166,24 +173,18 @@ export const DiffViewer = memo(function DiffViewer({
             <span className="diff-stat diff-stat--del">-{snapshot.removed}</span>
           </span>
         ) : null}
-        <button
-          type="button"
-          className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          onClick={() => replaceWorkspaceDiffWithFile(sessionId, path, rootId)}
-          aria-label="打开文件"
-          title="打开文件"
-        >
-          <FilePenLine size={11} />
-        </button>
-        <button
-          type="button"
-          className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
-          onClick={() => void load()}
-          aria-label="刷新 diff"
-          title="刷新 diff"
-        >
-          <RefreshCw size={11} className={loading ? "animate-spin" : ""} />
-        </button>
+        {snapshot.fileExists ? (
+          <button
+            type="button"
+            className="diff-open-editor"
+            onClick={() => openWorkspaceFile(sessionId, path, null, rootId)}
+            aria-label={t("workspaceOpenInEditor")}
+            title={t("workspaceOpenInEditor")}
+          >
+            <SquarePen size={11} aria-hidden />
+            <span>{t("workspaceOpenInEditor")}</span>
+          </button>
+        ) : null}
       </div>
       <div className="diff-viewer-body session-workspace-scroll min-h-0 flex-1 overflow-auto">
         {loading ? (
@@ -191,6 +192,13 @@ export const DiffViewer = memo(function DiffViewer({
         ) : error ? (
           <div role="alert" className="file-viewer-status file-viewer-status--error">
             {error}
+            <button
+              type="button"
+              className="diff-retry"
+              onClick={() => void load()}
+            >
+              {t("workspaceRetry")}
+            </button>
           </div>
         ) : snapshot.raw !== null ? (
           <Suspense fallback={<LoadingSurface label="加载 Monaco…" />}>

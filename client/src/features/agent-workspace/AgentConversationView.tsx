@@ -5,6 +5,7 @@ import { memo } from "react";
 import { Badge, Card } from "@/shared/ui/ui/Display";
 import { XCircle, Zap } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
+import { describeRunFailure } from "../../shared/lib/runFailure";
 import type {
   AgentRun,
   AgentRunStep,
@@ -17,6 +18,8 @@ import { getSessionCategory } from "./sessionGrouping";
 import { resolveSynaxRouteReason, isSynaxSession } from "./synaxDisplay";
 import { SessionStaticTimeline } from "./SessionStaticTimeline";
 import { MarkdownRenderer } from "../../shared/ui/markdown/MarkdownRenderer";
+import type { ConversationController } from "./state/conversationController";
+import { useScopedConversationValue } from "./state/useConversationState";
 
 interface Props {
   session: AgentSession | undefined;
@@ -35,6 +38,7 @@ interface Props {
   taskDescription?: string;
   /** Scroll container, forwarded so transcript entries can lazy-mount by viewport. */
   scrollRootRef?: React.RefObject<HTMLElement | null>;
+  scopedConversation?: ConversationController;
 }
 
 export const AgentConversationView = memo(function AgentConversationView({
@@ -53,9 +57,12 @@ export const AgentConversationView = memo(function AgentConversationView({
   unifiedLive = false,
   submitting = false,
   scrollRootRef,
+  scopedConversation,
 }: Props) {
   const { t, locale } = useLocale();
-  const historyWindow = useAgentSessionStore(s => session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
+  const globalHistoryWindow = useAgentSessionStore(s => !scopedConversation && session ? s.sessionDetailCache[session.id]?.historyWindow : undefined);
+  const scopedHistoryWindow = useScopedConversationValue(scopedConversation, s => s.history.historyWindow);
+  const historyWindow = scopedConversation ? scopedHistoryWindow : globalHistoryWindow;
   const historicalPage = historyWindow?.latest === false;
   const failureInTimeline = runs.some(
     run => run.sessionId === session?.id && run.status === "failed",
@@ -139,6 +146,7 @@ export const AgentConversationView = memo(function AgentConversationView({
           : null}
 
         <SessionStaticTimeline
+          scopedConversation={scopedConversation}
           unifiedLive={unifiedLive}
           session={session}
           runs={runs}
@@ -173,7 +181,7 @@ export const AgentConversationView = memo(function AgentConversationView({
                   : t("activityStatusInterrupted")}
               </Badge>
               <div className="text-[13px] leading-relaxed text-muted-foreground">
-                {session?.blockedReason ?? t("sessionResumeHint")}
+                {describeRunFailure(session?.blockedReason, locale) ?? t("sessionResumeHint")}
               </div>
             </div>
           </Card>

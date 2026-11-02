@@ -32,7 +32,7 @@ import {
   snapshotRuntimeReminder,
 } from "./runtime-request-snapshot.js";
 import { measureContextComposition } from "./context-composition.js";
-import { compactedContextUsageSnapshot, contextUsageSnapshot, readContextUsage } from "./analytics-projection.js";
+import { persistMeasuredContextUsage } from "./measured-context-usage.js";
 import {
   normalizeInput,
   hasInput,
@@ -44,6 +44,7 @@ import {
 } from "./turn-reference-state.js";
 import { prepareTurnReferences } from "./turn-references.js";
 import { resolveSessionUserRequest } from "./session-user-request.js";
+import { buildSessionContinuationPrompt } from "./session-continuation.js";
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { assertRuntimeExecutionCurrent, isExecutionSuperseded } from "../../infrastructure/runtime/execution-context.js";
 import type { AgentSession } from "./contracts.js";
@@ -73,6 +74,7 @@ import {
   type PlanExecutionBoundary,
 } from "./control-runtime.js";
 import { getGoalState, initializeGoal } from "./goal-control.js";
+import { buildGoalCompletionReport } from "./goal-completion-report.js";
 import type {
   AgentContextBundle,
   AgentRun,
@@ -102,6 +104,7 @@ import {
   buildTaskProgressReminder,
 } from "./loop-prompt.js";
 import { buildRuntimeEnvironment } from "./prompt-environment.js";
+import { ensureHostFacts } from "./host-facts.js";
 import { synaxAgent } from "./synax/index.js";
 import { loadProjectRulesSection } from "./synax/synax-instructions.js";
 import { resolvePromptLocale } from "../prompts/locale-infer.js";
@@ -122,6 +125,7 @@ import { toolRegistry, type ToolRegistry } from "./tool-registry.js";
 import { modelCanUseTool } from "./tool-mount-policy.js";
 import { rebuildSessionFileReads } from "./read-tracker.js";
 import { skillAgentBridge } from "../skills/agent-bridge.js";
+import { signedInAccountTags } from "./signed-in-accounts.js";
 import { countMessagesTokens, countTokens } from "./context-tokenizer.js";
 import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { buildProjectBuildInstructions } from "./project-build-instructions.js";
@@ -308,7 +312,8 @@ export class AgentLoopRuntime {
           return;
         }
       }
-      const continuationPrompt = this.buildContinuationPrompt(
+      const continuationPrompt = buildSessionContinuationPrompt(
+        this.store,
         sessionId,
         session.status,
       );
@@ -699,16 +704,8 @@ export class AgentLoopRuntime {
       }
       workRuntime.attach(sessionId, run);
       run = this.store.getRun(run.id);
-      if (
-        !resume &&
-        input.messageSource !== "system_injection" &&
-        synaxAgent.isSynaxSession(session)
-      ) {
-        const routed = synaxAgent.maybeAutoRoute(sessionId, prompt);
-        if (routed) {
-          session = this.store.getSession(sessionId);
-        }
-      }
+      // Task focus comes from the user's request; only explicit agent.adapt
+      // selections persist a specialized variant across turns.
 
       try {
         // Keep maxSteps readable for existing clients/profiles; it now controls only the prompt.
@@ -993,17 +990,6 @@ export class AgentLoopRuntime {
                   contextComposition: event.composition,
                 },
               });
-              // Persist the latest measured request context once per request so
-              // the composer ring and analytics never rescan session history.
-              const usageSnapshot = contextUsageSnapshot(
-                event.composition,
-                step.id,
-                runContextLimit,
-              );
-              if (usageSnapshot)
-                this.store.updateSessionMetadata(sessionId, {
-                  contextUsage: usageSnapshot,
-                });
               const contextEvent = this.events.append({
                 sessionId,
                 type: "progress_updated",
@@ -1060,6 +1046,14 @@ export class AgentLoopRuntime {
                   usage: event.usage,
                 },
               });
+              // Only the provider's own usage becomes displayed occupancy.
+              persistMeasuredContextUsage(
+                this.store,
+                sessionId,
+                step.id,
+                event.usage,
+                runContextLimit,
+              );
             }
             if (event.type === "thought_delta") {
               streamedThought += event.delta;
@@ -1121,14 +1115,6 @@ export class AgentLoopRuntime {
               modelResult = { model: event.model, step: event.step };
             }
             if (event.type === "context_compacted") {
-              const priorUsage = readContextUsage(this.store.getSession(sessionId).sessionMetadata?.contextUsage);
-              const contextUsage = compactedContextUsageSnapshot(
-                priorUsage,
-                event.compressedTokens,
-                step?.id ?? run.id,
-                this.store.getSessionStats(sessionId).contextLimit,
-              );
-              if (contextUsage) this.store.updateSessionMetadata(sessionId, { contextUsage });
               const compactEvt = this.events.append({
                 sessionId,
                 type: "progress_updated",
@@ -1155,7 +1141,6 @@ export class AgentLoopRuntime {
                 originalTokens: event.originalTokens,
                 compressedTokens: event.compressedTokens,
                 messageCount: event.messageCount,
-                ...(contextUsage ? { contextUsage } : {}),
               });
             }
           }
@@ -2164,18 +2149,15 @@ export class AgentLoopRuntime {
     const goalSummaryText = acceptedGoal
       ? withoutVisualizationDeclarations(baseSummary) || "交互预览已生成。"
       : baseSummary;
-    const goalPrefix = [
-      "目标已完成",
-      "",
-      `结论：${goalSummaryText}`,
-      "",
-      "验证结果：",
-      ...(work.evidence.length
-        ? work.evidence.map((item) => `- ${item.criterion}：${item.summary}`)
-        : ["- 服务端验收证据已通过。"]),
-      "",
-      "未完成项：无",
-    ].join("\n");
+    const goalPrefix = buildGoalCompletionReport({
+      conclusion: goalSummaryText,
+      objective: work.objective,
+      criteria: work.acceptanceCriteria,
+      evidence: work.evidence,
+      changedPaths: work.changedPaths,
+      verifications: work.verifications,
+      remaining: work.remaining,
+    });
     const goalSummary = acceptedGoal
       ? `${goalPrefix}${visualizationAppendix.content}`
       : baseSummary;
@@ -2327,18 +2309,15 @@ export class AgentLoopRuntime {
     }
     const fallbackEvidence = completed ? (goal?.acceptanceEvidence ?? []) : [];
     const content = completed
-      ? [
-          "目标已完成",
-          "",
-          `结论：${reason}`,
-          "",
-          "验证结果：",
-          ...fallbackEvidence.map(
-            (item) => `- ${item.criterion}：${item.summary}`,
-          ),
-          "",
-          "未完成项：无",
-        ].join("\n")
+      ? buildGoalCompletionReport({
+          conclusion: reason,
+          objective: goal?.objective ?? work?.objective,
+          criteria: work?.acceptanceCriteria,
+          evidence: fallbackEvidence,
+          changedPaths: work?.changedPaths,
+          verifications: work?.verifications,
+          remaining: work?.remaining,
+        })
       : reason;
     let message!: AgentRuntimeMessage;
     runtimeTransaction(() => {
@@ -2696,7 +2675,7 @@ export class AgentLoopRuntime {
       (tool) => !(webSearchDisabled && tool.id === "webSearch"),
     );
     markPreparation("toolPolicy");
-    const capabilityProjection = this.tools.capabilities.project(input.sessionId, allowedTools);
+    const capabilityProjection = await this.tools.capabilities.project(input.sessionId, allowedTools);
     const modelTools = capabilityProjection.tools.filter((tool) =>
       !["code.run", "code.tools"].includes(tool.id),
     );
@@ -2746,10 +2725,14 @@ export class AgentLoopRuntime {
         ...(selectedReferences?.skillIds ?? []),
       ]),
     ];
+    // Login-gated skills and guidance appear only while their account scope is
+    // signed in; both read the same cached presence probe.
+    const signedInAccounts = signedInAccountTags();
     const skillCandidates = skillAgentBridge.listForPrompt({
       profileId: input.profile.id,
       projectId: session.projectId,
       activeSkillIds: turnSkillIds,
+      signedInAccounts,
     });
     markPreparation("skillCatalog");
     const autoVisualizeSkill = visualizationIntent
@@ -2794,6 +2777,9 @@ export class AgentLoopRuntime {
 
     const contextForPrompt = input.context;
 
+    // Host toolchain facts are probed off the turn path; a cold process renders
+    // without them for one step instead of delaying the request.
+    void ensureHostFacts();
     const systemPromptContent = [
       this.tools.commandTasks.stepContext(input.sessionId, session.activeRunId, input.stepIndex),
       presentationDecision(input.sessionId)?.repairMessage ?? "",
@@ -3607,43 +3593,6 @@ export class AgentLoopRuntime {
     } catch {
       return null;
     }
-  }
-
-  private buildContinuationPrompt(sessionId: string, status: string): string {
-    if (status === "failed") {
-      return "Session previously failed. Review the error and previous context, then retry the task from where it left off.";
-    }
-
-    const runs = this.store.listRuns(sessionId);
-    const lastRun = runs.sort((a, b) =>
-      b.startedAt.localeCompare(a.startedAt),
-    )[0];
-    if (!lastRun) {
-      return "Session was interrupted. Continue working on the original task using tools.";
-    }
-
-    const incompleteTools = this.store
-      .listRunToolCalls(lastRun.id).filter((call) => !isCodeNestedCall(call))
-      .filter((tc) => tc.status === "running" || tc.status === "pending");
-
-    const parts: string[] = [
-      "Execution was interrupted. Reconcile the current Work checkpoint and existing results first. If the task is already done, deliver the result; otherwise perform only the remaining necessary action.",
-    ];
-
-    if (incompleteTools.length > 0) {
-      const toolList = incompleteTools
-        .map((tc) => `- ${tc.toolId}(${tc.inputSummary?.slice(0, 80) ?? ""})`)
-        .join("\n");
-      parts.push(
-        `The following tool calls were interrupted and did not complete:\n${toolList}\nRetry these operations as needed to continue the task.`,
-      );
-    } else {
-      parts.push(
-        "Review your previous tool calls and results. If the task is not fully complete, continue using tools. Only produce a final summary if ALL objectives from the original prompt have been achieved.",
-      );
-    }
-
-    return parts.join("\n\n");
   }
 
   private assertSessionNotBusy(sessionId: string): void {

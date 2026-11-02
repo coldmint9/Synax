@@ -1,5 +1,14 @@
 import { AgentRuntimeError } from "../runtime-errors.js";
+import {
+  decodeCharacterFile,
+  looksLikeTextFile,
+} from "./text-decoding.js";
 export { isVisualDocument } from "./document-types.js";
+export {
+  decodeCharacterFile,
+  looksLikeTextFile,
+  type CharacterDecodeOptions,
+} from "./text-decoding.js";
 
 export interface FileParserInput {
   filename: string;
@@ -52,17 +61,6 @@ export function isNativeVisual(mediaType: string): boolean {
     mediaType.startsWith("video/")
   );
 }
-export function decodeCharacterFile(bytes: Uint8Array): string | undefined {
-  let encoding = "utf-8";
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
-  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
-  try {
-    const text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
-    return /[\x00-\x08\x0b\x0e-\x1f\x7f]/.test(text) ? undefined : text;
-  } catch {
-    return undefined;
-  }
-}
 function finiteNonNegative(value: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
@@ -99,7 +97,10 @@ export async function parseFileInput(
   try {
     const result = parser
       ? await parser.parse(normalizedInput)
-      : decodeCharacterFile(normalizedInput.bytes);
+      : decodeCharacterFile(normalizedInput.bytes, {
+          filename: input.filename,
+          mediaType: input.mediaType,
+        });
     document = typeof result === "object" ? result : undefined;
     text = document ? document.text : (result as string | undefined);
   } catch (error) {
@@ -112,7 +113,9 @@ export async function parseFileInput(
   }
   if (text === undefined)
     throw new AgentRuntimeError(
-      `不支持二进制文件 ${input.filename}。请注册文件解析器，或通过 skill/tool 转换为文字后输入。`,
+      looksLikeTextFile(input)
+        ? `${input.filename} 的文字编码无法识别，请另存为 UTF-8 后重试，或通过 skill/tool 转换为文字后输入。`
+        : `不支持二进制文件 ${input.filename}。请注册文件解析器，或通过 skill/tool 转换为文字后输入。`,
       "UNSUPPORTED_FILE",
       422,
     );

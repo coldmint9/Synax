@@ -16,7 +16,41 @@ interface ScrollAnchor {
   entryTop?: number;
 }
 
-/** Load on an upward reading gesture only, preserving the reader's position. */
+const BUFFER_SCREENS = 2;
+/** Frame ceiling for waiting on a prepended page to stop moving the layout. */
+const SETTLE_MAX_FRAMES = 24;
+
+/**
+ * Resolve once the prepended page is genuinely in the DOM: its rows have
+ * mounted (no height reservations left) and the scroll height held still for
+ * two frames. A request resolving is not the same event as the page landing —
+ * reporting the page as loaded while rows are still mounting is what makes the
+ * indicator flicker.
+ */
+function whenPageSettled(
+  element: HTMLElement,
+  headChanged: () => boolean,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const before = element.scrollHeight;
+    let frames = 0;
+    let stable = 0;
+    let height = before;
+    const step = () => {
+      frames += 1;
+      const next = element.scrollHeight;
+      const pending = element.querySelector("[data-entry-pending='true']");
+      stable = !pending && next === height ? stable + 1 : 0;
+      height = next;
+      const arrived = next !== before || headChanged();
+      if ((arrived && stable >= 2) || frames >= SETTLE_MAX_FRAMES) resolve();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/** Keep two screens of history warm, preserving the reader's position on prepend. */
 export function useOlderTranscriptHistory(
   scrollRef: RefObject<HTMLDivElement | null>,
   sessionId: string | null,
@@ -29,7 +63,9 @@ export function useOlderTranscriptHistory(
     state.selectedSessionId === sessionId ? state.messages[0]?.id : undefined,
   );
   const [loading, setLoading] = useState(false);
+  const [settling, setSettling] = useState(false);
   const [error, setError] = useState("");
+  const [prepared, setPrepared] = useState<{ sessionId: string; epoch: number } | null>(null);
   const pending = useRef<ScrollAnchor | null>(null);
   const busy = useRef(false);
   const blockedCursor = useRef<string | null>(null);
@@ -41,7 +77,9 @@ export function useOlderTranscriptHistory(
     pending.current = null;
     blockedCursor.current = null;
     setLoading(false);
+    setSettling(false);
     setError("");
+    setPrepared(null);
     return () => {
       generation.current++;
       pending.current = null;
@@ -65,14 +103,16 @@ export function useOlderTranscriptHistory(
     pending.current = null;
   }, [firstId, page?.olderCursor, page?.epoch, scrollRef, sessionId]);
 
-  const loadOlder = useCallback(async (manual = false) => {
+  const loadOlder = useCallback(async (manual = false, prefill = false) => {
     const element = scrollRef.current;
     if (!active || !sessionId || !element || element.clientHeight === 0 || !page?.olderCursor || busy.current ||
         useAgentSessionStore.getState().selectedSessionId !== sessionId) return;
     if (!manual && blockedCursor.current === page.olderCursor) return;
     blockedCursor.current = null;
-    setSessionHistoryReading(sessionId, true);
-    element.dispatchEvent(new Event("transcript-history-reading"));
+    if (!prefill) {
+      setSessionHistoryReading(sessionId, true);
+      element.dispatchEvent(new Event("transcript-history-reading"));
+    }
     busy.current = true;
     const token = ++generation.current;
     const cursor = page.olderCursor;
@@ -93,7 +133,7 @@ export function useOlderTranscriptHistory(
     setLoading(true);
     setError("");
     try {
-      await useAgentSessionStore.getState().loadOlderHistory();
+      await useAgentSessionStore.getState().loadOlderHistory(prefill ? { retainViewport: true } : undefined);
     } catch (cause) {
       if (generation.current === token) {
         pending.current = null;
@@ -112,9 +152,48 @@ export function useOlderTranscriptHistory(
           pending.current = null;
         busy.current = false;
         setLoading(false);
+        // Hold the indicator through the mount that follows the request, so it
+        // never clears on a half-rendered page and never re-appears a frame later.
+        if (element.isConnected && state.messages[0]?.id !== firstId) {
+          setSettling(true);
+          void whenPageSettled(
+            element,
+            () => useAgentSessionStore.getState().messages[0]?.id !== firstId,
+          ).then(() => {
+            if (generation.current === token) setSettling(false);
+          });
+        } else {
+          setSettling(false);
+        }
       }
     }
   }, [active, firstId, page?.olderCursor, page?.epoch, scrollRef, sessionId]);
+
+  // A page can collapse into a single work-log row. Measure the rendered height
+  // rather than assuming a fixed message count fills a viewport. Recheck after
+  // every page and resize, without waiting for another wheel/touch gesture.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!active || !element || !sessionId || !page || loading) return;
+    let frame = 0;
+    const check = () => {
+      frame = 0;
+      if (!element.clientHeight || busy.current) return;
+      const needsBuffer = element.scrollHeight - element.clientHeight < element.clientHeight * BUFFER_SCREENS;
+      if (needsBuffer && page.olderCursor && blockedCursor.current !== page.olderCursor) {
+        void loadOlder(false, true);
+      } else {
+        setPrepared(previous => previous?.sessionId === sessionId && previous.epoch === page.epoch
+          ? previous : { sessionId, epoch: page.epoch });
+      }
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(check); };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(element);
+    if (element.firstElementChild) observer?.observe(element.firstElementChild);
+    schedule();
+    return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
+  }, [active, loading, loadOlder, page, scrollRef, sessionId]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -128,7 +207,7 @@ export function useOlderTranscriptHistory(
       frame = 0;
       if (!upwardIntent || element.clientHeight === 0) return;
       upwardIntent = false;
-      if (element.scrollTop <= Math.max(96, element.clientHeight)) void loadOlder();
+      if (element.scrollTop <= Math.max(96, element.clientHeight * BUFFER_SCREENS)) void loadOlder();
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(check); };
     const onScroll = () => {
@@ -179,5 +258,9 @@ export function useOlderTranscriptHistory(
     };
   }, [active, loadOlder, page?.olderCursor, scrollRef, sessionId]);
 
-  return { loading, error, hasEarlier: Boolean(page?.olderCursor), retry: () => loadOlder(true) };
+  return {
+    loading, settling, error, hasEarlier: Boolean(page?.olderCursor),
+    retry: () => loadOlder(true),
+    ready: !page?.olderCursor || (prepared?.sessionId === sessionId && prepared.epoch === page?.epoch),
+  };
 }

@@ -92,7 +92,9 @@ impl AppendFile {
         &self.path
     }
     /// A staged file already has its validated open handle before atomic rename.
-    pub(crate) fn relocate(&mut self, path: PathBuf) { self.path = path; }
+    pub(crate) fn relocate(&mut self, path: PathBuf) {
+        self.path = path;
+    }
 
     pub fn len(&self) -> u64 {
         self.len

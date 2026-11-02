@@ -288,3 +288,6 @@ export const BUILTIN_THEMES: readonly NormalizedTheme[] = [
 export function getBuiltinTheme(id: string): NormalizedTheme | null {
   return BUILTIN_THEMES.find((theme) => theme.id === id) ?? null;
 }
+
+/** New installations and resets start on the branded Synax Default theme. */
+export const DEFAULT_APP_THEME = DEFAULT_THEME;

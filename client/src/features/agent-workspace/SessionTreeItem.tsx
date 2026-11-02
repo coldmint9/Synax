@@ -2,6 +2,11 @@ import { useApiConnectivityStore } from "../../shared/lib/apiConnectivity";
 import { SearchHighlight } from "./SearchHighlight";
 import { SessionListTitle } from "./SessionListTitle";
 import { PixelLoader } from "./LoadingState";
+import { SessionAutoResumeIndicator } from "./SessionAutoResumeIndicator";
+import {
+  useAutoResumeStore,
+  useSessionAutoResume,
+} from "./state/autoResumeStore";
 import { memo, useMemo } from "react";
 import { ChevronDown, ChevronRight, MoreHorizontal, WifiOff } from "lucide-react";
 import { copyTextToClipboard } from "../../adapters/electron/clipboard";
@@ -9,7 +14,9 @@ import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useContextMenu } from "../../shared/ui/context-menu/ContextMenuProvider";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useShellStore } from "../../shared/state/shellStore";
+import { describeRunFailure } from "../../shared/lib/runFailure";
 import type { SessionTreeNode } from "./useSessionList";
+import { sessionStatusDot } from "./sessionStatusDot";
 import {
   isSessionUnread,
   useAgentSessionStore,
@@ -46,6 +53,7 @@ interface Props {
 }
 
 function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
+  const { locale } = useLocale();
   // Subscribe to the message array only. Computing the preview inside the
   // selector made every live delta scan every cached transcript, even when
   // that row could not change.
@@ -64,8 +72,8 @@ function SessionPreview({ session }: { session: SessionTreeNode["session"] }) {
   }, [messages, session.id]);
   const preview = (
     latestMessage ||
-    session.resultSummary?.trim() ||
-    session.blockedReason?.trim() ||
+    describeRunFailure(session.resultSummary, locale) ||
+    describeRunFailure(session.blockedReason, locale) ||
     resolveSessionUserInput(session) ||
     session.prompt
   )
@@ -102,8 +110,14 @@ export const SessionTreeItem = memo(function SessionTreeItem({
   const unread = useAgentSessionStore((state) =>
     isSessionUnread(session, state.readSessionMarkers),
   );
-  const showStatusDot = session.status !== "completed" || unread;
+  // Read state decides a finished result's dot, not its status alone: a read
+  // success or failure has no news left, while waiting and running states last.
+  const showStatusDot =
+    sessionStatusDot({ status: session.status, unread }) !== null;
   const needsUserInput = session.status === "waiting_input";
+  // The runtime may be continuing this row without the user: a restart, or a
+  // network failure waiting for connectivity.
+  const autoResume = useSessionAutoResume(session.id);
   const menu = useContextMenu(() => ({
     label: title,
     entries: [
@@ -129,6 +143,17 @@ export const SessionTreeItem = memo(function SessionTreeItem({
             });
         },
       },
+      ...(autoResume
+        ? [
+            {
+              type: "action",
+              id: "dismiss-auto-resume",
+              label: t("sessionAutoResumeDismiss"),
+              restoreFocus: false,
+              run: () => void useAutoResumeStore.getState().dismiss(session.id),
+            } as const,
+          ]
+        : []),
       ...(onSessionAction ? [
         { type: "action", id: "fork-full", label: locale === "zh" ? "全量 Fork 新会话" : "Fork entire conversation", restoreFocus: false,
           run: () => onSessionAction("fork", session) } as const,
@@ -201,11 +226,18 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         onClick={() => onSelect(session.id)}
         aria-current={isSelected ? "true" : undefined}
       >
-        <span className="session-list-indicator" aria-hidden="true">
+        <span
+          className="session-list-indicator"
+          // Decorative for ordinary rows; an automatic continuation is state the
+          // reader should still hear, so that row keeps its accessible name.
+          aria-hidden={!isRunning && autoResume ? undefined : "true"}
+        >
           {isRunning && !connected ? (
             <WifiOff size={14} aria-label={locale === "zh" ? "连接中断，状态待确认" : "Disconnected; status unconfirmed"} />
           ) : isRunning ? (
             <PixelLoader />
+          ) : autoResume ? (
+            <SessionAutoResumeIndicator item={autoResume} />
           ) : showStatusDot ? (
             <span
               className={`session-list-dot ${DOT[session.status] ?? "bg-muted-foreground/50"}`}
@@ -215,6 +247,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
         <SessionListTitle
           title={title}
           query={node.searchQuery}
+          terms={node.searchTerms}
           suffix={needsUserInput ? (
             <span className="session-list-needs-input">
               {t("sessionNeedsUserInput")}
@@ -236,6 +269,7 @@ export const SessionTreeItem = memo(function SessionTreeItem({
                   <SearchHighlight
                     text={node.searchSnippet}
                     query={node.searchQuery}
+                    terms={node.searchTerms}
                   />
                 </span>
               ) : (

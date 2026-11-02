@@ -32,14 +32,6 @@ const completed = {
     originalTokens: 10000,
     compressedTokens: 2000,
     messageCount: 4,
-    contextUsage: {
-      version: 1 as const,
-      stepId: "cmp-step",
-      total: 2000,
-      limit: 200000,
-      composition: { version: 2 as const, messages: 1500, tools: 200, mcp: 100, skills: 50, system: 150, total: 2000, measuredAt: "" },
-      measuredAt: "",
-    },
   },
   message: {
     id: "msg-1",
@@ -103,9 +95,10 @@ describe("manual compaction", () => {
       messageCount: 4,
     });
   });
-  it("applies the post-compaction usage snapshot to the composer session", () => {
+  it("never publishes a locally estimated context occupancy after compaction", () => {
     act(() => useAgentSessionStore.getState().applyLiveEvent(completed, "s"));
-    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata?.contextUsage).toMatchObject({ total: 2000, stepId: "cmp-step" });
+    expect(useAgentSessionStore.getState().sessions[0].sessionMetadata?.contextUsage).toBeUndefined();
+    expect(useAgentSessionStore.getState().contextCompactionNotice?.status).toBe("completed");
   });
   it("keeps a running state after refresh data is applied", () => {
     render(

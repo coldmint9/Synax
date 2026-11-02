@@ -198,6 +198,41 @@ describe("local merge requests (real git)", { timeout: 60000 }, () => {
     expect(fs.readFileSync(path.join(repo, "a.ts"), "utf8")).toContain("a = 1");
     expect(git("status", "--porcelain")).toBe("");
   });
+  it("reports whether the checked-out target can receive a merge on its own", async () => {
+    const location = { kind: "host" as const, path: repo };
+    // Not checked out anywhere: the target ref update path needs no authorization.
+    await expect(service.targetCheckout(location, "integration")).resolves.toBeNull();
+
+    git("checkout", "integration");
+    await expect(service.targetCheckout(location, "integration")).resolves.toEqual(
+      // Git reports the resolved worktree path (`/var` is a symlink on macOS).
+      { directory: fs.realpathSync(repo) },
+    );
+
+    // A dirty checkout is reported so nothing is merged behind its owner's back.
+    fs.writeFileSync(path.join(repo, "app.ts"), "user draft");
+    await expect(
+      service.targetCheckout(location, "integration"),
+    ).rejects.toMatchObject({ code: "DIRTY_WORKTREE" });
+    git("checkout", "--", "app.ts");
+
+    // Two checkouts of one branch are ambiguous, so automation must not pick one.
+    const second = path.join(directory, "second");
+    git("worktree", "add", "--force", second, "integration");
+    await expect(
+      service.targetCheckout(location, "integration"),
+    ).rejects.toMatchObject({ code: "TARGET_BUSY" });
+    git("worktree", "remove", "--force", second);
+
+    // A worktree an agent is using stays off limits.
+    const busy = new GitMrService(
+      new GitMrStore(path.join(directory, "state")),
+      async () => true,
+    );
+    await expect(
+      busy.targetCheckout(location, "integration"),
+    ).rejects.toMatchObject({ code: "TARGET_BUSY" });
+  });
   it("never overwrites dirty target files", async () => {
     let mr = await create({ target: "main", allowCheckedOutTarget: true });
     mr = await service.prepare("project", mr.id, mr.version);

@@ -83,10 +83,12 @@ describe("read-only commit message context", () => {
     expect(context.projectId).toBe("p1");
     expect(context.branch).toBe("main");
     expect(context.subjects).toEqual(["fix(ui): 修复按钮"]);
-    expect(context.changedFiles).toContain("new.txt");
+    expect(context.files.map((file) => file.path)).toContain("new.txt");
     expect(context.stagedSummary).toContain("file.txt");
     expect(context.unstagedSummary).toContain("file.txt");
-    expect(context.diffExcerpt).toContain("working");
+    expect(context.files.find((file) => file.path === "file.txt")?.patch).toContain(
+      "+working",
+    );
     expect(state(root)).toEqual(before);
     expect(state(roots[1])).toEqual(other);
   });
@@ -98,7 +100,7 @@ describe("read-only commit message context", () => {
     const before = git(root, 'status', '--porcelain=v1', '-uall');
     const context = await collectCommitMessageContext('s1', root.id);
     expect(context.subjects).toEqual([]);
-    expect(context.changedFiles).toContain('file.txt');
+    expect(context.files.map((file) => file.path)).toContain('file.txt');
     expect(git(root, 'status', '--porcelain=v1', '-uall')).toBe(before);
   });
   it("bounds large diffs and historical subjects", async () => {
@@ -116,6 +118,32 @@ describe("read-only commit message context", () => {
     const context = await collectCommitMessageContext("s1", root.id);
     expect(context.subjects).toHaveLength(20);
     expect(context.subjects[0]).toBe("chore: sample 22");
-    expect(context.diffExcerpt.length).toBeLessThanOrEqual(8_000);
-  });
+    const tracked = context.files.find((file) => file.path === "file.txt");
+    expect(tracked?.patch.length).toBeLessThanOrEqual(1_200);
+  }, 30_000);
+
+  it("carries a bounded diff for every changed path", async () => {
+    const root = roots[0];
+    fs.writeFileSync(path.join(root.path, "file.txt"), "working\n");
+    for (let index = 0; index < 20; index += 1)
+      fs.writeFileSync(
+        path.join(root.path, `big-${index}.txt`),
+        `${"x".repeat(3_000 - index * 100)}\n`,
+      );
+    fs.writeFileSync(path.join(root.path, ".DS_Store"), "junk");
+    const context = await collectCommitMessageContext("s1", root.id);
+    expect(context.totals.files).toBe(21);
+    expect(context.files).toHaveLength(21);
+    expect(context.files.map((file) => file.path)).not.toContain(".DS_Store");
+    const tracked = context.files.find((file) => file.path === "file.txt");
+    expect(tracked).toMatchObject({ status: "M", additions: 1, deletions: 1 });
+    // Every path carries its own bounded diff; batching happens later.
+    expect(context.files.filter((file) => file.patch)).toHaveLength(21);
+    expect(
+      context.files.find((file) => file.path === "big-0.txt")?.patch,
+    ).toContain("diff --git a/big-0.txt b/big-0.txt");
+    expect(context.files.find((file) => file.path === "big-19.txt")?.status).toBe("??");
+    for (const item of context.files)
+      expect(item.patch.length).toBeLessThanOrEqual(1_200);
+  }, 30_000);
 });

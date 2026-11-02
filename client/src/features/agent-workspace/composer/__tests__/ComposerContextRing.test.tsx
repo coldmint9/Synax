@@ -7,6 +7,7 @@ import { useShellStore } from "../../../../shared/state/shellStore";
 
 const usage: ContextUsageSnapshot = {
   version: 1,
+  source: "provider",
   stepId: "step-1",
   total: 1200,
   limit: 2400,
@@ -35,7 +36,7 @@ describe("ComposerContextRing", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("shows the used window on the ring and category counts on hover", async () => {
+  it("shows only the provider-measured usage on hover", async () => {
     const user = userEvent.setup();
     render(<ComposerContextRing usage={usage} />);
     const button = screen.getByRole("button", { name: /上下文占用 50%/ });
@@ -43,13 +44,15 @@ describe("ComposerContextRing", () => {
 
     await user.hover(button);
     const panel = await screen.findByRole("tooltip");
-    await waitFor(() => expect(within(panel).getByText("消息")).toBeInTheDocument());
-    expect(within(panel).getByText("工具")).toBeInTheDocument();
-    expect(within(panel).getByText("系统提示词")).toBeInTheDocument();
-    expect(within(panel).getByText("600")).toBeInTheDocument();
-    expect(within(panel).getByText("50.0%")).toBeInTheDocument();
-    expect(within(panel).getByText("1.2K / 2400")).toBeInTheDocument();
-    expect(within(panel).getByText(/本地分类估算/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(panel).getByText("1.2K / 2400")).toBeInTheDocument(),
+    );
+    expect(within(panel).getByText("50%")).toBeInTheDocument();
+    expect(within(panel).getByText(/服务商实测输入/)).toBeInTheDocument();
+    // No locally estimated category numbers are presented as context usage.
+    expect(within(panel).queryByText("消息")).toBeNull();
+    expect(within(panel).queryByText("工具")).toBeNull();
+    expect(within(panel).queryByText("600")).toBeNull();
     expect(within(panel).queryByText(/tokens\/s/)).toBeNull();
   });
 
@@ -63,4 +66,5 @@ describe("ComposerContextRing", () => {
         ?.getAttribute("data-tone"),
     ).toBe("danger");
   });
+
 });

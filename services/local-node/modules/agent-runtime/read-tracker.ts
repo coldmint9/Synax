@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolCallRecord } from "./contracts.js";
-import { resolveWorkspacePath } from "./tools/workspace.js";
+import { isWorkspaceEntryVisible, resolveWorkspacePath } from "./tools/workspace.js";
 import { parseApplyPatchEnvelope } from "./tools/patch-format.js";
+import { probeReadPath, type ReadPathMiss } from "./tools/read-path-probe.js";
 
 interface ReadRecord {
   mtimeMs: number;
@@ -167,7 +168,7 @@ function suggestFilePaths(
         if (!ignored.has(entry.name)) queue.push(path.join(current, entry.name));
         continue;
       }
-      if (!entry.isFile()) continue;
+      if (!entry.isFile() || !isWorkspaceEntryVisible(entry.name, sessionId)) continue;
       const name = entry.name.toLowerCase();
       const distance = editDistance(requestedName, name);
       const sameExtension = path.extname(requestedName) === path.extname(name);
@@ -199,28 +200,18 @@ function toWorkspaceRelativeForSuggestion(absPath: string, sessionId: string): s
 export function ensureSessionFileReadable(
   sessionId: string,
   workspacePath: string,
-): void {
-  const filePath = resolveTrackedPath(sessionId, workspacePath);
-  if (filePath && sessionDiscoveredFiles.get(sessionId)?.has(filePath)) return;
-  if (filePath) {
-    try {
-      const stat = fs.statSync(filePath);
-      if (stat.isFile()) {
-        recordSessionFileDiscovery(sessionId, filePath);
-        return;
-      }
-    } catch {
-      // Fall through to the bounded suggestion scan below.
-    }
-    const suggestions = suggestFilePaths(sessionId, filePath);
-    const hint = suggestions.length
-      ? ` Possible matches: ${suggestions.join(", ")}.`
-      : " No close workspace matches were found.";
-    throw new Error(
-      `File not found: "${normalizePath(workspacePath)}".${hint} Use one of the suggested paths or search the workspace.`,
-    );
+): ReadPathMiss | undefined {
+  const probe = probeReadPath(workspacePath, sessionId);
+  if (probe.kind === "missing") {
+    return {
+      ...probe,
+      suggestions: suggestFilePaths(sessionId, resolveWorkspacePath(workspacePath, sessionId)),
+    };
   }
-  throw new Error(`File path "${normalizePath(workspacePath)}" is outside the session workspace.`);
+  if (!probe.stat.isFile()) throw new Error("path must point to a file. Use file.list to inspect directories.");
+  // Discovery is advisory and may be stale; always probe the current target.
+  recordSessionFileDiscovery(sessionId, probe.absolutePath);
+  return undefined;
 }
 
 function looksLikeFilePath(token: string): boolean {
@@ -270,6 +261,18 @@ export function recordSessionFileRead(
   const record = { mtimeMs: stat.mtimeMs, size: stat.size };
   reads.set(filePath, record);
   if (content !== undefined) cacheSnapshot(record, content);
+}
+
+/** Advisory comparison only: no content I/O, cache refresh or write authorization. */
+export function compareSessionFileRead(
+  sessionId: string,
+  workspacePath: string,
+  current: Buffer,
+): "changed" | "unchanged" | "unknown" {
+  const filePath = resolveTrackedPath(sessionId, workspacePath);
+  const record = filePath ? sessionReads.get(sessionId)?.get(filePath) : undefined;
+  const snapshot = record ? snapshots.get(record) : undefined;
+  return snapshot ? (snapshot.equals(current) ? "unchanged" : "changed") : "unknown";
 }
 
 /**
@@ -414,6 +417,9 @@ export function rebuildSessionFileReads(
     }
 
     if (call.toolId === "file.read") {
+      // A completed negative probe contains no file bytes, even if the target
+      // has appeared by the time this history is replayed.
+      if ((call.outputRef as { code?: string } | null)?.code === "READ_PATH_NOT_FOUND") continue;
       const path = (call.inputRef as { path?: string } | null)?.path;
       if (path) {
         try {

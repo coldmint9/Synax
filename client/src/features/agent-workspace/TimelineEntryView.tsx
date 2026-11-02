@@ -1,8 +1,7 @@
 import { ContextCompactionFeedback } from "./ContextCompactionFeedback";
 import { InteractionCard } from "./AgentInteractionPanel";
-import { MediaParts } from "../media/MediaParts";
 import { memo } from "react";
-import { AlertCircle, ChevronRight, ShieldPlus } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useLocale } from "../../shared/hooks/useLocale";
 import type { ConversationTimelineEntry } from "./buildConversationTimeline";
 import { TurnBody } from "./TurnBody";
@@ -19,33 +18,21 @@ function displayModelName(model: string): string {
   return separator < 0 ? model : model.slice(separator + 1);
 }
 
-function SystemInjectionChip({ content }: { content: string }) {
-  const chars = content.length;
-  return (
-    <details className="session-injection">
-      <summary className="session-injection-chip">
-        <ShieldPlus size={11} className="shrink-0" />
-        <span>已注入系统提示</span>
-        <span className="session-injection-size">
-          {chars.toLocaleString()} 字
-        </span>
-        <ChevronRight size={11} className="session-injection-caret shrink-0" />
-      </summary>
-      <pre className="session-injection-body">{content}</pre>
-    </details>
-  );
-}
-
 export const TimelineEntryView = memo(function TimelineEntryView({
   entry,
   onExpandChild,
   isStreaming = false,
   isWorking = isStreaming,
+  showsHiddenReasoning = false,
+  foldFrom,
 }: {
   entry: ConversationTimelineEntry;
   onExpandChild?: (sessionId: string) => void;
   isStreaming?: boolean;
   isWorking?: boolean;
+  showsHiddenReasoning?: boolean;
+  /** Height of the process rows a just-folded round replaced. */
+  foldFrom?: number;
 }) {
   const { locale } = useLocale();
   if (entry.kind === "compaction")
@@ -91,34 +78,31 @@ export const TimelineEntryView = memo(function TimelineEntryView({
       />
     );
   if (entry.kind === "user") {
-    // App-composed prompts (language directive + context + instructions)
-    // are scaffolding, not conversation: collapse them into an indicator the
-    // reader can expand if they actually want to inspect the payload.
-    if (entry.injected) {
-      return (
-        <>
-          <SystemInjectionChip content={entry.content} />
-          <MediaParts parts={entry.contentParts} />
-        </>
-      );
-    }
     return (
       <UserMessageBlock
         messageId={entry.id}
         content={entry.content}
         contentParts={entry.contentParts}
+        references={entry.references}
       />
     );
   }
 
   if (entry.kind === "work_log") {
-    return <WorkLogEntry entry={entry} onExpandChild={onExpandChild} />;
+    return (
+      <WorkLogEntry
+        entry={entry}
+        onExpandChild={onExpandChild}
+        foldFrom={foldFrom}
+      />
+    );
   }
 
   return (
     <TurnBody
       isStreaming={isStreaming}
       isWorking={isWorking}
+      showsHiddenReasoning={showsHiddenReasoning}
       turn={entry.turn}
       entryId={entry.id}
       showActions={entry.finalReply === true}

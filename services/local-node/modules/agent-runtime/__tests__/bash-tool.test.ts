@@ -117,6 +117,15 @@ describe('bashTool', () => {
   });
 
   describe('execute - basic commands', () => {
+    it.skipIf(process.platform === 'win32')('keeps a failing upstream command failure when output is piped to tail', async () => {
+      const result = await bashTool.execute({
+        sessionId: 's1', runId: null, stepId: null, toolCallId: 'pipe-failure',
+        toolId: 'bash', category: 'shell', mutability: 'read',
+        args: { command: "(printf 'test failed\\n'; exit 7) | tail -1" },
+      });
+      expect(result.result).toMatchObject({ exitCode: 7, stdout: 'test failed\n' });
+    });
+
     it('executes echo', async () => {
       const result = await bashTool.execute({
         sessionId: 's1',

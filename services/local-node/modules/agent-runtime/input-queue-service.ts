@@ -15,12 +15,19 @@ import { turnReferenceSchema } from "./contracts.js";
 import type { TurnReferenceContext } from "./turn-reference-state.js";
 import { z } from "zod";
 export const MAX_INPUT_QUEUE_SIZE = 20;
+/**
+ * Runtime scaffolding (goal continuation, healing, super node wake-ups) rides
+ * the same queue as typed input, so it also carries the marker that keeps it
+ * out of the transcript.
+ */
+export const queuedInputMessageSourceSchema = z.enum(["user", "system_injection"]);
 export const queuedInputSchema = z.object({
   contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
   referenceContext: z.custom<TurnReferenceContext>().optional(),
   id: z.string().min(1),
   message: z.string().max(100_000).default(""),
+  messageSource: queuedInputMessageSourceSchema.optional(),
   model: z.string().min(1).max(256).nullable().optional(),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
   enqueuedAt: z.string().min(1),
@@ -36,6 +43,7 @@ export const enqueueInputRequestSchema = z.object({
   contentParts: contentPartsSchema.optional(),
   references: z.array(turnReferenceSchema).max(20).optional(),
   message: z.string().max(100_000).default(""),
+  messageSource: queuedInputMessageSourceSchema.optional(),
   model: z.string().min(1).max(256).optional(),
   reasoningEffort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
 });

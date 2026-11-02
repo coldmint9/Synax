@@ -26,6 +26,9 @@ export function useSessionDetailPolling() {
   const apiReachable = useApiConnectivityStore((s) => s.apiReachable);
   const refreshDetail = useAgentSessionStore((s) => s.refreshDetail);
   const syncSessionSummary = useAgentSessionStore((s) => s.syncSessionSummary);
+  const fetchSessionStats = useAgentSessionStore((s) => s.fetchSessionStats);
+  const fetchSessionTodos = useAgentSessionStore((s) => s.fetchSessionTodos);
+  const fetchSessionInvocationUsage = useAgentSessionStore((s) => s.fetchSessionInvocationUsage);
   const panelOpen = useAgentSessionStore((s) => s.panelOpen);
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const selectedStatus = useAgentSessionStore((s) => {
@@ -75,10 +78,20 @@ export function useSessionDetailPolling() {
 
     function startRefresh() {
       inFlight = true;
+      const cache = useAgentSessionStore.getState().sessionDetailCache[sessionId];
+      const needsDetail =
+        !cache?.cachedAt ||
+        cache.invalidated === true ||
+        cache.restored === "active";
+      const requests: Promise<unknown>[] = [syncSessionSummary(sessionId)];
+      if (needsDetail)
+        requests.push(refreshDetail({ joinPending: true, background: true }));
+      else
+        requests.push(fetchSessionStats(), fetchSessionTodos(), fetchSessionInvocationUsage());
       void Promise.allSettled([
-        // A single row: the page itself is never re-read here.
-        syncSessionSummary(sessionId),
-        refreshDetail({ joinPending: true, background: true }),
+        // A single row remains cheap; transcript detail only runs when the
+        // cache is cold or has been invalidated by a content change.
+        ...requests,
       ]).finally(() => {
         inFlight = false;
         schedule();
@@ -130,5 +143,8 @@ export function useSessionDetailPolling() {
     selectedStatus,
     refreshDetail,
     syncSessionSummary,
+    fetchSessionStats,
+    fetchSessionTodos,
+    fetchSessionInvocationUsage,
   ]);
 }

@@ -16,9 +16,15 @@ export const CORE_TOOL_IDS = new Set([
   "agent.execute",
   "code.result",
   "file.read", "file.list", "rg", "context.read", "diff.read",
-  "file.write", "file.patch", "file.generate", "bash", "command.manage", "subagent.delegate",
+  // A question with an external answer should not cost a discovery round trip.
+  "webSearch",
+  "file.write", "file.patch", "file.generate", "bash", "run", "python.run", "command.manage", "subagent.delegate",
   "task.create", "task.update", "task.get", "task.list",
   "human.ask", "plan.propose", "plan.execute", "mode.switch",
   "goal.finish", "work.checkpoint", "skill.load", "presentation.select", "tools.invalid",
+  // The active workflow's own control tools must never need a discovery round
+  // trip: mounting still limits them to their mode (super.* is only mounted on
+  // a super-mode primary session).
+  "super.plan", "super.message", "super.close",
   "git.pr.read", "git.merge.create", "git.merge.analyze", "git.merge.read", "git.merge.propose", "git.merge.configure",
 ]);

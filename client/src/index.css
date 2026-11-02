@@ -497,19 +497,19 @@
   --cx-text: #1a1c1f;
   --cx-text-hsl: 216 9% 11%;
 
-  /* App accent — deep Morandi green, used by every selection control */
-  --cx-accent-soft: #ebeeec;
-  --cx-accent-soft-hsl: 140 8.11% 92.75%;
-  --cx-accent-top: #859989;
-  --cx-accent-bottom: #66806c;
-  --cx-accent-strong: #607865;
-  --cx-accent-ink: #000000;
-  --cx-accent-muted: #607865;
-  --cx-accent-top-hsl: 132 8.93% 56.08%;
-  --cx-accent-bottom-hsl: 133.85 11.3% 45.1%;
-  --cx-accent-strong-hsl: 132.5 11.11% 42.35%;
-  --cx-accent-ink-hsl: 0 0% 0%;
-  --cx-accent-muted-hsl: 132.5 11.11% 42.35%;
+  /* App accent — Synax blue, used by every selection control */
+  --cx-accent-soft: #e3ecf8;
+  --cx-accent-soft-hsl: 214.29 60% 93.14%;
+  --cx-accent-top: #548cd5;
+  --cx-accent-bottom: #296fcb;
+  --cx-accent-strong: #296fcb;
+  --cx-accent-ink: #ffffff;
+  --cx-accent-muted: #296fcb;
+  --cx-accent-top-hsl: 213.95 60.56% 58.24%;
+  --cx-accent-bottom-hsl: 214.07 66.39% 47.84%;
+  --cx-accent-strong-hsl: 214.07 66.39% 47.84%;
+  --cx-accent-ink-hsl: 0 0% 100%;
+  --cx-accent-muted-hsl: 214.07 66.39% 47.84%;
 
   --radio-accent-top: var(--cx-accent-top);
   --radio-accent-bottom: var(--cx-accent-bottom);
@@ -1123,6 +1123,26 @@
      Section headings sit outside one shared card, and rows are separated by
      hairlines. Controls stay on the existing Morandi accent instead of
      importing the blue palette from the reference. */
+  .settings-page__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    margin-bottom: 18px;
+    padding: 0 2px;
+  }
+  .settings-page__title {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .settings-page__sections {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
   .settings-section {
     display: flex;
     flex-direction: column;
@@ -1147,6 +1167,7 @@
     color: hsl(var(--muted-foreground));
   }
   .settings-section__title {
+    margin: 0;
     overflow: hidden;
     color: hsl(var(--foreground-hsl));
     font-size: 1rem;
@@ -1177,13 +1198,38 @@
     display: flex;
     flex-direction: column;
   }
+  /* Dense groups pair two settings per line on wide windows. */
+  .settings-rows--split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .settings-rows--split > .settings-row {
+    border-top: 1px solid hsl(var(--border-hsl) / 0.55);
+  }
+  .settings-rows--split > .settings-row:nth-child(even) {
+    border-left: 1px solid hsl(var(--border-hsl) / 0.55);
+  }
+  .settings-rows--split > .settings-row:nth-child(-n + 2) {
+    border-top: 0;
+  }
+  @media (max-width: 860px) {
+    .settings-rows--split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .settings-rows--split > .settings-row:nth-child(even) {
+      border-left: 0;
+    }
+    .settings-rows--split > .settings-row:nth-child(2) {
+      border-top: 1px solid hsl(var(--border-hsl) / 0.55);
+    }
+  }
   .settings-row {
     display: flex;
-    min-height: 68px;
+    min-height: 54px;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
-    padding: 15px 16px;
+    gap: 16px;
+    padding: 12px 16px;
   }
   .settings-row + .settings-row,
   .settings-action-row {
@@ -1206,6 +1252,16 @@
   }
   .settings-action-row {
     padding: 14px 16px;
+  }
+  .settings-open-config {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .settings-open-config [role="alert"] {
+    flex-basis: 100%;
   }
   .settings-note {
     padding: 12px 16px;
@@ -2413,9 +2469,35 @@
 .feed-prose hr {
   @apply my-3 border-border/40;
 }
+.feed-prose .markdown-table-scroll {
+  min-width: 0;
+  max-width: 100%;
+  margin-block: 0.625rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.feed-prose .markdown-table-scroll:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
 .feed-prose table {
   @apply w-full border-separate border-spacing-0 border-0 my-2.5 text-[0.92em];
   border-radius: var(--theme-radius-lg);
+}
+.feed-prose .markdown-table-scroll table {
+  table-layout: auto;
+  margin-block: 0;
+}
+/* Wrap long prose/paths within the available width, but scroll rather than
+   compressing any column to a few Chinese characters. Scale with chat text. */
+.feed-prose .markdown-table-scroll :is(th, td) {
+  min-width: 8em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  vertical-align: top;
 }
 .feed-prose th,
 .feed-prose td {
@@ -3430,64 +3512,6 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
 }
 
 /* Session chat — floating message timeline navigator */
-/* App-composed prompt injection: a single quiet chip instead of echoing the
-   whole scaffolding block back into the transcript. */
-.session-injection {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.session-injection-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px dashed hsl(var(--border-hsl) / 0.9);
-  background: hsl(var(--secondary) / 0.35);
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  line-height: 1.4;
-  cursor: pointer;
-  list-style: none;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    border-color 140ms ease;
-}
-.session-injection-chip::-webkit-details-marker {
-  display: none;
-}
-.session-injection-chip:hover {
-  background: hsl(var(--secondary) / 0.6);
-  color: hsl(var(--foreground-hsl));
-}
-.session-injection-size {
-  font-size: 10px;
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
-}
-.session-injection-caret {
-  transition: transform 180ms cubic-bezier(0.22, 0.9, 0.28, 1);
-}
-.session-injection[open] .session-injection-caret {
-  transform: rotate(90deg);
-}
-.session-injection-body {
-  width: 100%;
-  max-height: 22rem;
-  overflow: auto;
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid hsl(var(--border-hsl) / 0.75);
-  background: hsl(var(--card));
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
 /* ───────────────────────────────────────────────────────────────────────────
    Conversation turn rail (session minimap)
@@ -3503,6 +3527,7 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
   top: 50%;
   z-index: 20;
   transform: translateY(-50%);
+  height: min(72%, 34rem, calc(var(--session-nav-turns) * 8.5px + 6px));
   pointer-events: none;
   opacity: 0.85;
   transition: opacity 260ms cubic-bezier(0.22, 0.9, 0.28, 1);
@@ -3518,20 +3543,21 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
   display: flex;
   align-items: center;
   padding: 3px 4px;
-  max-height: min(72vh, 34rem);
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .session-nav-float-list {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  /* Mark boxes are 6px tall and the ticks sit on a tight 8.5px pitch so a long
-     session still reads as one ruler. */
-  gap: 2.5px;
+  /* Compress the pitch for long conversations so every turn stays on the ruler. */
+  height: 100%;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
-  overflow-y: auto;
+  overflow: visible;
   scrollbar-width: none;
 }
 .session-nav-float-list::-webkit-scrollbar {
@@ -3540,6 +3566,8 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
 
 .session-nav-float-item {
   display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .session-nav-float-mark {
@@ -3548,7 +3576,8 @@ html.dark .agent-conversation-copy .md-shiki-block .shiki span {
   align-items: center;
   justify-content: flex-end;
   min-width: 21px;
-  height: 6px;
+  height: 100%;
+  min-height: 0;
   padding: 0;
   border: none;
   background: transparent;
@@ -3707,12 +3736,12 @@ input[type="radio"] {
 :root {
   --agent-chat-font-size: 14px;
   /* A prompt or a reply is the lane's content; a call record is its annotation.
-     Message ink therefore sits well above the dimmed activity record (dark:
-     #797979, ~4.2:1 on the canvas), so a short reply never reads like another
-     work-log line. Light mode already carries its contrast in --foreground. */
+     Message ink is the theme's own text color, so narration and the final
+     reply share one ink in every theme instead of one of them drifting towards
+     a hard-coded white. Weight, not a second color, is what lifts a short reply
+     above the dimmed activity record (dark: #797979). */
   --message-ink: var(--foreground);
 }
-.dark { --message-ink: #e9e7e1; }
 .agent-conversation-copy {
   font-family: var(--font-interface);
   font-size: var(--agent-chat-font-size, 14px) !important;
@@ -3787,8 +3816,11 @@ input[type="radio"] {
 .agent-conversation-copy.feed-prose :is(h1, h2, h3, h4, h5, h6) + :is(p, ul, ol) {
   margin-top: 0;
 }
-.agent-conversation-copy.feed-prose :is(table, blockquote, .markdown-code-block) {
+.agent-conversation-copy.feed-prose :is(.markdown-table-scroll, table, blockquote, .markdown-code-block) {
   margin-block: 1em;
+}
+.agent-conversation-copy.feed-prose .markdown-table-scroll table {
+  margin-block: 0;
 }
 .agent-conversation-copy.feed-prose table {
   font-size: 0.95em;
@@ -3918,26 +3950,6 @@ input[type="radio"] {
 
 .session-chat-scroll {
   padding-bottom: 4.5rem;
-}
-
-/* Position the transcript before paint, then reveal the complete bottom view. */
-.session-transcript-content {
-  animation: session-transcript-enter 240ms ease-out both;
-}
-@keyframes session-transcript-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .session-transcript-content {
-    animation: none;
-  }
 }
 
 /* ───────────────────────────────────────────────────────────────────────────
@@ -4396,6 +4408,61 @@ input[type="radio"] {
   color: var(--diff-del-fg);
 }
 
+/* The diff itself is read-only, so its toolbar carries one action: leave for
+   the editor. Retry only appears where a failed read needs a way back. */
+.diff-open-editor {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid hsl(var(--primary) / 0.28);
+  border-radius: 6px;
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--primary));
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.diff-open-editor:hover {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--primary) / 0.16);
+}
+
+.diff-open-editor:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.diff-retry {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid hsl(var(--destructive) / 0.4);
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.diff-retry:hover {
+  background: hsl(var(--destructive) / 0.12);
+}
+
+.diff-retry:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .diff-table {
   width: 100%;
   border-collapse: collapse;
@@ -4516,6 +4583,19 @@ input[type="radio"] {
 .session-list-section-chevron {
   transition: transform 200ms ease;
 }
+/* Run-state dots on a group heading: one per state present, most urgent first. */
+.session-list-group-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+}
+.session-list-group-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  opacity: 0.85;
+}
 .session-list-section-toggle[aria-expanded="false"] .session-list-section-chevron {
   transform: rotate(-90deg);
 }
@@ -4622,6 +4702,18 @@ input[type="radio"] {
   height: 7px;
   border-radius: 50%;
   opacity: 0.7;
+}
+.session-list-auto-resume {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+}
+.session-list-auto-resume[data-phase="waiting_network"] {
+  color: var(--warning);
+}
+.session-list-auto-resume[data-phase="retrying"] {
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
 }
 .session-list-item[data-unread] .session-list-dot {
   opacity: 1;
@@ -4785,6 +4877,10 @@ input[type="radio"] {
 }
 .session-list-display-mode-button:hover {
   color: var(--foreground);
+}
+.session-list-display-mode-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 .dark .session-list-display-mode-button[aria-pressed="true"] {
   color: var(--theme-accent);
@@ -5107,13 +5203,13 @@ input[type="radio"] {
   height: 34px;
   flex: 1 1 auto;
   align-items: center;
-  gap: 3px;
-  padding: 3px;
+  gap: 2px;
+  padding: 2px;
   overflow-x: auto;
   overflow-y: hidden;
-  border: 1px solid hsl(var(--border-hsl) / 0.65);
-  border-radius: 12px;
-  background: hsl(var(--secondary) / 0.38);
+  border-radius: 10px;
+  background: hsl(var(--secondary) / 0.42);
+  box-shadow: inset 0 0 0 1px hsl(var(--border-hsl) / 0.28);
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   scrollbar-width: none;
@@ -5123,6 +5219,14 @@ input[type="radio"] {
   display: none;
 }
 
+.workspace-tab-separator {
+  width: 1px;
+  height: 14px;
+  flex: 0 0 1px;
+  border-radius: 1px;
+  background: hsl(var(--border-hsl) / 0.55);
+}
+
 .workspace-tab-item {
   display: flex;
   min-width: 96px;
@@ -5130,19 +5234,24 @@ input[type="radio"] {
   height: 28px;
   flex: 1 1 160px;
   align-items: center;
-  border: 1px solid hsl(var(--border-hsl) / 0.48);
-  border-radius: 9px;
-  background: hsl(var(--card) / 0.56);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   color: hsl(var(--muted-foreground));
   scroll-snap-align: nearest;
   transition:
     background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.workspace-tab-item:hover {
+  background: hsl(var(--foreground-hsl) / 0.055);
+  color: hsl(var(--foreground-hsl) / 0.88);
 }
 
 .workspace-tab-item[data-project-color]:not([data-project-color="default"]) {
-  box-shadow: inset 3px 0 0 var(--workspace-project-color);
+  box-shadow: inset 2px 0 0 var(--workspace-project-color);
 }
 
 .workspace-tab-item[data-project-color="blue"] {
@@ -5169,19 +5278,22 @@ input[type="radio"] {
   --workspace-project-color: hsl(145 62% 38%);
 }
 
-.workspace-tab-item--active {
-  border-color: hsl(var(--primary) / 0.65);
-  background:
-    linear-gradient(hsl(var(--primary) / 0.16), hsl(var(--primary) / 0.16)),
-    hsl(var(--card));
+/* The selected tab is a lifted surface, not a ring: the rail stays quiet and
+   only the document you are reading steps forward. */
+.workspace-tab-item--active,
+.workspace-tab-item--active:hover {
+  background: var(--surface);
   color: hsl(var(--foreground-hsl));
-  box-shadow: inset 0 -2px 0 hsl(var(--primary) / 0.75);
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--border-hsl) / 0.5),
+    0 1px 2px hsl(0 0% 0% / 0.18);
 }
 
 .workspace-tab-item--active[data-project-color]:not([data-project-color="default"]) {
   box-shadow:
-    inset 3px 0 0 var(--workspace-project-color),
-    inset 0 -2px 0 hsl(var(--primary) / 0.75);
+    inset 2px 0 0 var(--workspace-project-color),
+    inset 0 0 0 1px hsl(var(--border-hsl) / 0.5),
+    0 1px 2px hsl(0 0% 0% / 0.18);
 }
 
 .workspace-tab-item--active .workspace-tab-main {
@@ -5195,7 +5307,7 @@ input[type="radio"] {
   flex: 1 1 auto;
   align-items: center;
   gap: 5px;
-  padding: 0 7px 0 9px;
+  padding: 0 6px 0 8px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -5205,25 +5317,42 @@ input[type="radio"] {
   cursor: pointer;
 }
 
-.workspace-tab-main > span {
+.workspace-tab-main:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.workspace-tab-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.workspace-tab-kind {
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 12px;
+}
+
 .workspace-tab-close {
   display: inline-flex;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
   align-items: center;
   justify-content: center;
-  margin-right: 2px;
+  margin-right: 4px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
-  color: hsl(var(--muted-foreground));
+  color: inherit;
   cursor: pointer;
   opacity: 0;
   transition:
@@ -5239,8 +5368,13 @@ input[type="radio"] {
 }
 
 .workspace-tab-close:hover {
-  background: hsl(var(--secondary) / 0.72);
+  background: hsl(var(--foreground-hsl) / 0.1);
   color: hsl(var(--foreground-hsl));
+}
+
+.workspace-tab-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
 .workspace-tab-actions {
@@ -5258,7 +5392,7 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
@@ -5270,7 +5404,7 @@ input[type="radio"] {
 }
 
 .workspace-chrome-icon:hover:not(:disabled) {
-  background: hsl(var(--secondary) / 0.72);
+  background: hsl(var(--foreground-hsl) / 0.07);
   color: hsl(var(--foreground-hsl));
 }
 
@@ -6001,7 +6135,10 @@ input[type="radio"] {
   .agent-command-rail,
   .workspace-tab-item,
   .workspace-tab-rail,
-  .workspace-chrome-icon {
+  .workspace-tab-close,
+  .workspace-chrome-icon,
+  .workspace-back-conversation,
+  .diff-open-editor {
     transition: none !important;
   }
 

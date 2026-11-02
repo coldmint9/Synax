@@ -10,7 +10,20 @@ export type SessionNotificationKind =
   | "completed"
   | "input"
   | "approval"
-  | "failed";
+  | "failed"
+  | "paused"
+  | "interrupted"
+  | "cancelled";
+/** Suspended and settled states all interrupt the user the same way. */
+const NOTIFICATION_KINDS = new Set<string>([
+  "completed",
+  "input",
+  "approval",
+  "failed",
+  "paused",
+  "interrupted",
+  "cancelled",
+]);
 export interface SessionNotificationTarget {
   projectId: string;
   sessionId: string;
@@ -32,7 +45,7 @@ function parseNotification(value: unknown): SessionNotification | null {
     typeof item.id !== "string" ||
     !item.id ||
     item.id.length > 512 ||
-    !["completed", "input", "approval", "failed"].includes(String(item.kind)) ||
+    !NOTIFICATION_KINDS.has(String(item.kind)) ||
     typeof item.title !== "string" ||
     !item.title.trim() ||
     typeof item.body !== "string"
@@ -128,24 +141,27 @@ export class SessionNotifications {
       !payload ||
       !this.enabled ||
       !Notification.isSupported() ||
-      this.seen.has(payload.id) ||
-      !window ||
-      window.isDestroyed()
+      this.seen.has(payload.id)
     )
       return false;
-    // visibilityState alone is insufficient: a visible Electron window may be behind another app.
-    if (window.isFocused() && window.isVisible() && !window.isMinimized())
-      return false;
+    // A suspended or settled session must reach the user even with the window
+    // closed (macOS keeps the app running), and focus is not evidence that the
+    // user is watching this session: another session or project may own it.
     this.dismiss(payload.sessionId);
     try {
       const notification = new Notification({
         title: payload.title,
         body: payload.body,
+        // A suspended or settled session is the one moment worth a sound.
+        silent: false,
         // macOS already supplies the app identity for native notifications.
         // Passing the app icon here creates a second logo in the expanded banner.
         // Keep the explicit icon on Windows and Linux.
         ...(process.platform === "darwin"
-          ? { actions: [{ type: "button" as const, text: "回复" }] }
+          ? {
+              actions: [{ type: "button" as const, text: "回复" }],
+              sound: "default",
+            }
           : { icon: this.icon }),
       });
       const target: SessionNotificationTarget = {
@@ -179,7 +195,10 @@ export class SessionNotifications {
         console.warn("[notifications] Native notification delivery failed");
       });
       this.active.set(payload.sessionId, notification);
-      this.unread.add(payload.sessionId);
+      // The Dock badge counts results the user has not come back for; a banner
+      // shown while the app is frontmost has already been seen.
+      if (!window || window.isDestroyed() || !window.isFocused())
+        this.unread.add(payload.sessionId);
       this.updateBadge();
       this.seen.add(payload.id);
       if (this.seen.size > 512)

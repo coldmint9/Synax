@@ -40,6 +40,36 @@ export function setSidecarCuaConnection(connection: CuaRuntimeConnection | null)
   cuaConnection = connection;
   if (sidecar && assignedPort) sendCuaConnection(sidecar);
 }
+
+/** Optional channels (session notifications) observe the runtime process here. */
+const messageListeners = new Set<(message: unknown) => void>();
+const readyListeners = new Set<() => void>();
+
+export function onSidecarMessage(listener: (message: unknown) => void): () => void {
+  messageListeners.add(listener);
+  return () => messageListeners.delete(listener);
+}
+
+/** Fires after every (re)start, so a supervisor keeps its channels configured. */
+export function onSidecarReady(listener: () => void): () => void {
+  readyListeners.add(listener);
+  return () => readyListeners.delete(listener);
+}
+
+export function sendSidecarMessage(message: unknown): boolean {
+  const child = sidecar as UtilityProcess | ChildProcess | null;
+  if (!child) return false;
+  try {
+    if ('postMessage' in child && typeof child.postMessage === 'function') child.postMessage(message);
+    else if ('send' in child && typeof child.send === 'function')
+      (child.send as (message: unknown) => boolean)(message);
+    else return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function sendCuaConnection(child: UtilityProcess | ChildProcess): void {
   const message = { type: 'synax:cua-connection', connection: cuaConnection
     ? { generation: cuaConnection.generation, ...cuaConnection.mcp } : null };
@@ -70,6 +100,9 @@ async function launchSidecar(expectedGeneration: number): Promise<number> {
     PORT: String(recoveryPort),
     SYNAX_DESKTOP_SIDECAR: "1",
     ...(app.isPackaged ? { SYNAX_PYTHON_RUNTIME: getResourcePath("python-runtime", `${process.platform}-${process.arch}`, ...(process.platform === "win32" ? ["python.exe"] : ["bin", "python3"])) } : {}),
+    // Bundled MCP server sources: extras are copied to resources/mcp, the dev
+    // tree keeps them under electron/resources/mcp.
+    SYNAX_MCP_RESOURCES: app.isPackaged ? getResourcePath("mcp") : getResourcePath("electron", "resources", "mcp"),
     SYNAX_RUNTIME_SIDECAR_SUPERVISOR: "1",
     SYNAX_RUNTIME_SIDECAR_STREAM: "authoritative",
     DATA_ROOT: getDataRoot(),
@@ -99,6 +132,15 @@ async function launchSidecar(expectedGeneration: number): Promise<number> {
   child.stderr?.on("data", (data: Buffer) => process.stderr.write(data));
   const events: EventEmitter = child;
   const lines = createInterface({ input: child.stdout! });
+  events.on("message", (message: unknown) => {
+    for (const listener of messageListeners) {
+      try {
+        listener(message);
+      } catch (error) {
+        console.error("[sidecar] message listener failed", error);
+      }
+    }
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onError!: (error: Error) => void;
   let onExit!: (code: number) => void;
@@ -139,6 +181,13 @@ async function launchSidecar(expectedGeneration: number): Promise<number> {
     assignedPort = recoveryPort = port;
     readyAt = Date.now() || 1;
     sendCuaConnection(child);
+    for (const listener of readyListeners) {
+      try {
+        listener();
+      } catch (error) {
+        console.error("[sidecar] ready listener failed", error);
+      }
+    }
     return port;
   } catch (error) {
     if (sidecar === child) { sidecar = null; assignedPort = 0; }

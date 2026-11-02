@@ -17,6 +17,7 @@ import { readSessionPermissionConfig } from './session-permissions.js';
 export function profileCanUseTool(profile: AgentProfile, tool: { id: string }): boolean {
   if (tool.id === 'command.manage') return profile.allowedCapabilities.includes('command.manage') ||
     profile.allowedCapabilities.includes('bash') ||
+    profile.allowedCapabilities.includes('run') ||
     (Boolean(profile.mountAllTools) && !['subagent', 'git-merge-worker'].includes(profile.id));
   if (profile.id === 'subagent' || profile.id === 'git-merge-worker') return profile.allowedCapabilities.includes(tool.id);
   if (tool.id === 'presentation.select') return profile.id !== 'git-manager' && profile.allowedCapabilities.includes('skill.load');
@@ -46,6 +47,8 @@ const PLAN_TOOLS = new Set([
   'agent.discover', 'agent.execute',
   'code.run', 'code.tools', 'code.result', 'context.read', 'file.read', 'file.list', 'rg', 'diff.read',
   'webSearch',
+  'portal.search',
+  'session.list', 'session.status', 'session.search',
   'task.create', 'task.update', 'task.get', 'task.list', 'skill.load', 'presentation.select', 'agent.adapt',
   'subagent.delegate', 'human.ask', 'plan.propose', 'plan.execute', 'mode.switch',
   'work.checkpoint', 'goal.finish', 'tools.invalid',
@@ -72,6 +75,21 @@ export function isToolMountedForSession(session: AgentSession, tool: { id: strin
     try { assertGitMrBinding(session.id); } catch { return false; }
     return (GIT_MANAGER_TOOL_IDS as readonly string[]).includes(tool.id);
   }
+  // Super mode has exactly one child-creation path: super.plan. Ad-hoc
+  // delegation would let the planner bypass the graph it is supposed to run,
+  // so both delegation tools stay undiscoverable for the primary session.
+  if (
+    tool.id.startsWith('subagent.') &&
+    !session.parentSessionId &&
+    workflowMode(session) === 'super'
+  ) {
+    return false;
+  }
+  // Only the primary session writes the graph. A child inherits the root's
+  // workflow mode, so it is excluded before the root lookup: mode alone would
+  // expose super.* inside a child run.
+  if (tool.id.startsWith('super.'))
+    return !session.parentSessionId && workflowMode(session) === 'super';
   const root = controlRoot(session);
   const mode = workflowMode(session);
   if (['work.checkpoint', 'goal.finish', 'verification.run'].includes(tool.id)) {

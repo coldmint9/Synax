@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import * as z from "zod/v4";
 import type { RegisteredTool } from "../contracts.js";
 import {
@@ -6,6 +5,8 @@ import {
   recordSessionFileRead,
 } from "../read-tracker.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "./workspace.js";
+import { readFilePage } from "./file-read-page.js";
+import { readPathMissResult } from "./read-path-probe.js";
 
 const MAX_READ_BYTES = 64_000;
 
@@ -61,35 +62,49 @@ function isBinaryPath(filePath: string): boolean {
   return BINARY_EXTENSIONS.has(ext);
 }
 
-function hasBinaryContent(buffer: Buffer): boolean {
-  const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
-  let nullCount = 0;
-  for (let i = 0; i < sample.length; i++) {
-    if (sample[i] === 0) nullCount++;
-  }
-  return nullCount > sample.length * 0.01;
-}
-
 export const fileReadTool: RegisteredTool = {
   id: "file.read",
   label: "Read File",
   description:
-    "Read an existing text file. Exact existing paths are accepted even when discovery state is cold; missing guessed paths return close workspace matches. Rejects directories and binary files. Large files are truncated with a notice. Use rg first when you do not know the exact path; use media.read for images, audio, video or documents.",
+    "Read a bounded UTF-8 page from an existing text file. Exact existing paths are accepted even when discovery state is cold; missing guessed paths return close workspace matches. Rejects directories and binary files. Large files return nextByteOffset and revision for safe continuation. Use rg first when you do not know the exact path; use media.read for images, audio, video or documents.",
   category: "read",
   mutability: "read",
   resumeBehavior: "auto",
   internalGate: "none",
   progressiveDetails:
-    "Accepts { path: string, maxBytes?: number }. Prefer larger reads over many tiny slices when you need more context from the same file.",
+    "Accepts { path: string, maxBytes?: number, byteOffset?: number, expectedRevision?: string, startLine?: number, lineCount?: number }. startLine is 1-based; lineCount defaults to 40 (effective cap 1000). Line mode cannot be combined with byteOffset; lineCount requires startLine. Line lookup scans at most 16 MiB; use byte pagination beyond that. Line results report startLine/endLine/lineCount and lineComplete; a false lineComplete means the last line is partial and cannot be copied into a patch yet. maxBytes is a requested page size with an effective cap of 64000; use nextByteOffset and expectedRevision for the next page. content contains only file text. Pages preserve UTF-8 boundaries; maxBytes values below 4 use an effective budget of 4 to guarantee progress. Byte-page I/O is bounded to the page plus a small binary sample; line mode additionally scans the bounded prefix.",
   inputSchema: z.object({
     path: z.string().min(1).describe("Existing file path relative to the session working directory, or an absolute path permitted by the sandbox. External paths may require approval."),
     maxBytes: z
       .number()
       .int()
       .positive()
-      .max(MAX_READ_BYTES)
       .optional()
-      .describe(`Maximum bytes to read (default and maximum ${MAX_READ_BYTES}); larger files are truncated. No offset parameter; use bash for a bounded slice beyond this limit.`),
+      .describe(`Requested bytes per page (default ${MAX_READ_BYTES}; effective range 4–${MAX_READ_BYTES}). Larger requests are bounded, not rejected.`),
+    byteOffset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Byte offset for a later page; use the previous result's nextByteOffset."),
+    startLine: z.number().int().positive().optional()
+      .describe("1-based first line for a bounded source excerpt; mutually exclusive with byteOffset."),
+    lineCount: z.number().int().positive().optional()
+      .describe("Requested lines when startLine is set (default 40, effective cap 1000); maxBytes still bounds the returned content."),
+    expectedRevision: z
+      .string()
+      .min(1)
+      .max(256)
+      .optional()
+      .describe("Revision returned by the previous page; required when byteOffset is non-zero so changed files are rejected."),
+  }).superRefine((value, context) => {
+    if (value.startLine !== undefined && value.byteOffset !== undefined)
+      context.addIssue({ code: "custom", path: ["byteOffset"], message: "Cannot combine startLine and byteOffset." });
+    if (value.lineCount !== undefined && value.startLine === undefined)
+      context.addIssue({ code: "custom", path: ["startLine"], message: "Required when lineCount is supplied." });
+    if (value.byteOffset !== undefined && value.byteOffset > 0 && !value.expectedRevision) {
+      context.addIssue({ code: "custom", path: ["expectedRevision"], message: "Required when byteOffset is non-zero." });
+    }
   }),
   getPattern(args) {
     return typeof args === "object" &&
@@ -100,48 +115,61 @@ export const fileReadTool: RegisteredTool = {
       : undefined;
   },
   execute(input) {
-    const args = input.args as { path?: string; maxBytes?: number };
+    const args = input.args as {
+      path?: string;
+      maxBytes?: number;
+      byteOffset?: number;
+      expectedRevision?: string;
+      startLine?: number;
+      lineCount?: number;
+    };
     if (!args?.path) throw new Error("path is required.");
-    ensureSessionFileReadable(input.sessionId, args.path);
+    if (args.startLine !== undefined && args.byteOffset !== undefined)
+      throw new Error("Cannot combine startLine and byteOffset.");
+    if (args.lineCount !== undefined && args.startLine === undefined)
+      throw new Error("startLine is required when lineCount is supplied.");
+    const byteOffset = args.byteOffset ?? 0;
+    if (byteOffset > 0 && !args.expectedRevision) {
+      throw new Error("expectedRevision is required when byteOffset is non-zero. Use the revision returned by the previous file.read page.");
+    }
+    const miss = ensureSessionFileReadable(input.sessionId, args.path);
+    if (miss) return readPathMissResult(miss);
     const filePath = resolveWorkspacePath(args.path, input.sessionId);
-    const stat = fs.statSync(filePath);
-    if (!stat.isFile()) throw new Error("path must point to a file.");
-
     if (isBinaryPath(filePath)) {
       throw new Error(
         `Refused: "${args.path}" appears to be a binary file. file.read only supports text files.`,
       );
     }
 
-    const buffer = fs.readFileSync(filePath);
-
-    if (hasBinaryContent(buffer)) {
-      throw new Error(
-        `Refused: "${args.path}" contains binary content. file.read only supports text files.`,
-      );
-    }
-
-    const maxBytes = Math.min(
-      Math.max(args.maxBytes ?? MAX_READ_BYTES, 1),
-      MAX_READ_BYTES,
-    );
-    const truncated = buffer.length > maxBytes;
-    const content = buffer.subarray(0, maxBytes).toString("utf8");
+    const effectiveMaxBytes = Math.min(Math.max(args.maxBytes ?? MAX_READ_BYTES, 4), MAX_READ_BYTES);
+    const effectiveLineCount = args.startLine === undefined ? undefined : Math.min(args.lineCount ?? 40, 1000);
+    const page = readFilePage(filePath, byteOffset, effectiveMaxBytes, args.expectedRevision,
+      args.startLine === undefined ? undefined : { startLine: args.startLine, lineCount: effectiveLineCount! });
     const relPath = toWorkspaceRelative(filePath, input.sessionId);
-    recordSessionFileRead(input.sessionId, relPath, buffer, stat);
-
-    const truncationNotice = truncated
-      ? `\n\n[FILE TRUNCATED: showing ${maxBytes} of ${buffer.length} bytes. maxBytes is capped at ${MAX_READ_BYTES}; use bash to read a bounded slice beyond this limit. file.read has no offset parameter.]`
-      : "";
+    // A page is not a whole-file snapshot. Metadata-only tracking fails closed
+    // after metadata changes; full reads still support identical resaves.
+    const completeRead = page.byteOffset === 0 && page.eof;
+    recordSessionFileRead(input.sessionId, relPath, completeRead ? page.bytes : undefined, page.stat);
+    const truncated = !page.eof;
 
     return {
       result: {
         path: relPath,
-        content: content + truncationNotice,
+        content: page.content,
         truncated,
-        totalBytes: buffer.length,
+        totalBytes: page.stat.size,
+        byteOffset: page.byteOffset,
+        nextByteOffset: page.eof ? null : page.byteOffset + page.bytes.length,
+        ...(page.startLine === undefined ? {} : {
+          startLine: page.startLine, endLine: page.endLine, lineCount: page.lineCount,
+          lineComplete: page.lineComplete, effectiveLineCount,
+        }),
+        eof: page.eof,
+        bytesRead: page.bytes.length,
+        revision: page.revision,
+        effectiveMaxBytes,
       },
-      displaySummary: `Read ${Math.min(buffer.length, maxBytes)} of ${buffer.length} bytes from ${relPath}${truncated ? " (truncated)" : ""}.`,
+      displaySummary: `Read ${page.bytes.length} bytes at offset ${page.byteOffset} of ${page.stat.size} from ${relPath}${truncated ? " (more pages available)" : ""}.`,
       artifacts: [
         {
           kind: "evidence",

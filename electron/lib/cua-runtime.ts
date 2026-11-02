@@ -301,7 +301,7 @@ export class CuaRuntimeManager {
     const found = /\bsynax-cua\s+(\d+\.\d+\.\d+)\b/.exec(stdout)?.[1];
     if (found !== CUA_SDK_VERSION)
       throw new Error(
-        `Synax CUA helper ${found ?? 'unknown'} is incompatible with Synax ${CUA_SDK_VERSION}`,
+        `Synax CUA helper ${found ?? 'unknown'} is incompatible with the bundled CUA SDK ${CUA_SDK_VERSION}`,
       );
   }
 

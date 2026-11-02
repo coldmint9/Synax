@@ -24,6 +24,48 @@ it('writes ordered Rust batches and never selects the retired disabled transport
   expect(transport.persistStreamHistory).toHaveBeenCalledTimes(2);
 });
 
+it("reads current state only when the previous batch and its history have completed", async () => {
+  let release!: () => void;
+  transport.persistStreamHistory.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  transport.authoritativeRecordState
+    .mockResolvedValueOnce({
+      status: "running",
+      activeRunId: "r",
+      pendingResumeToken: null,
+      blockedReason: null,
+      updatedAt: "first",
+    })
+    .mockResolvedValueOnce({
+      status: "waiting_permission",
+      activeRunId: "r",
+      pendingResumeToken: null,
+      blockedReason: null,
+      updatedAt: "second",
+    });
+  const writer = new RuntimeStreamWriter("s", "r");
+  writer.write({ type: "run_started", run });
+  writer.write({ type: "step_started", step });
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  expect(transport.authoritativeRecordState).toHaveBeenCalledTimes(1);
+  expect(transport.appendStreamAuthoritative).toHaveBeenCalledTimes(1);
+  release();
+  await writer.settled();
+  expect(transport.streamFence).toHaveBeenCalledTimes(1);
+  expect(transport.authoritativeRecordState).toHaveBeenCalledTimes(2);
+  expect(
+    transport.appendStreamAuthoritative.mock.calls.map(
+      ([input]) =>
+        (input as unknown as { state: { status: string } }).state.status,
+    ),
+  ).toEqual(["running", "waiting_permission"]);
+  expect(transport.persistStreamHistory).toHaveBeenCalledTimes(2);
+});
+
 it('coalesces eight deltas and flushes them before the next boundary', async () => {
   vi.useFakeTimers();
   const writer = new RuntimeStreamWriter('s', 'r');

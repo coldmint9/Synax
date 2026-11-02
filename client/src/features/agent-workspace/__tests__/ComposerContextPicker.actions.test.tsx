@@ -34,12 +34,26 @@ describe("unified composer plus menu", () => {
       screen.getByRole("button", { name: /添加附件.*图片/ }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "项目文件" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "Chat" })).toBeChecked();
-    await userEvent.click(screen.getByRole("radio", { name: "Goal" }));
+    expect(screen.getByRole("radio", { name: "Auto" })).toBeChecked();
+    await userEvent.click(screen.getByRole("radio", { name: "Goal Beta" }));
     expect(props.onModeChange).toHaveBeenCalledWith("goal");
     await waitFor(() =>
       expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument(),
     );
+  });
+
+  it("tags goal and super as beta while the automatic default reads Auto", async () => {
+    render(<ComposerContextPicker {...props} />);
+    await open();
+    expect(screen.getByRole("radio", { name: "Auto" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Auto" })).not.toHaveTextContent("Beta");
+    for (const name of ["Goal Beta", "Super Beta"]) {
+      expect(
+        screen
+          .getByRole("radio", { name })
+          .querySelector(".session-composer-mode-beta"),
+      ).toHaveTextContent("Beta");
+    }
   });
 
   it("uses the native multi-file chooser, resets it and preserves media attachments", async () => {
@@ -66,6 +80,15 @@ describe("unified composer plus menu", () => {
     expect(input.value).toBe("");
   });
 
+  it("opens a side chat from the current session plus menu", async () => {
+    const openSideChat = vi.fn();
+    render(<ComposerContextPicker {...props} onOpenSideChat={openSideChat} />);
+    await open();
+    await userEvent.click(screen.getByRole("button", { name: /在侧边聊天/ }));
+    expect(openSideChat).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: /在侧边聊天/ })).not.toBeInTheDocument();
+  });
+
   it("keeps file references functional in the combined menu", async () => {
     vi.spyOn(agentRuntimeApi, "listReferenceOptions").mockResolvedValue({
       items: [{ kind: "file", id: "README.md", label: "README.md" }],
@@ -82,18 +105,10 @@ describe("unified composer plus menu", () => {
     ]);
   });
 
-  it("starts temporary side chat from the plus menu", async () => {
-    const start = vi.fn();
-    render(<ComposerContextPicker {...props} onOpenSideChat={start} />);
-    await open();
-    await userEvent.click(screen.getByRole("button", { name: /在侧边聊天/ }));
-    expect(start).toHaveBeenCalledOnce();
-  });
-
   it("locks mode switching independently from attachment/context actions", async () => {
     render(<ComposerContextPicker {...props} mode="goal" modeDisabled />);
     await open();
-    expect(screen.getByRole("radio", { name: "Goal" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Goal Beta" })).toBeChecked();
     const change = props.onModeChange.mock.calls.length;
     for (const radio of screen.getAllByRole("radio")) {
       expect(radio).toHaveAttribute("aria-disabled", "true");

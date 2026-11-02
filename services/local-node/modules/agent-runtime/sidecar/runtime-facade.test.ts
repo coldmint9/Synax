@@ -7,6 +7,172 @@ const snapshot = { session: { id: 's', status: 'completed' }, run: null, cursor:
 const remote = (overrides: object) => overrides as unknown as RuntimeSidecarClient;
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
+it.each([
+  "running",
+  "waiting_permission",
+  "waiting_input",
+  "paused",
+  "cancelled",
+  "interrupted",
+  "completed",
+  "failed",
+])(
+  "reads the same five %s state fields through new and legacy sidecars",
+  async (status) => {
+    const state = {
+      status,
+      activeRunId:
+        status === "running" || status.startsWith("waiting_") ? "run" : null,
+      pendingResumeToken: status.startsWith("waiting_") ? "resume" : null,
+      blockedReason: status === "failed" ? "failed reason" : null,
+      updatedAt: "2026-10-28T00:00:00.000Z",
+    };
+    const uiSnapshot = vi.fn(async () =>
+      encode({
+        ...snapshot,
+        session: {
+          ...snapshot.session,
+          ...state,
+          sessionMetadata: { large: "unused" },
+        },
+      }),
+    );
+    const recordState = vi.fn(async () => encode(state));
+    const modern = remote({
+      connect: vi.fn(async () => ({ capabilities: ["record_state_v1"] })),
+      recordState,
+      uiSnapshot,
+    });
+    const modernFacade = new RuntimeFacade(() => modern);
+    await expect(modernFacade.authoritativeRecordState("s")).resolves.toEqual(
+      state,
+    );
+    expect(recordState).toHaveBeenCalledExactlyOnceWith("s");
+    expect(uiSnapshot).not.toHaveBeenCalled();
+    const legacy = remote({
+      connect: vi.fn(async () => ({ capabilities: [] })),
+      recordState,
+      uiSnapshot,
+    });
+    await expect(
+      new RuntimeFacade(() => legacy).authoritativeRecordState("s"),
+    ).resolves.toEqual(state);
+    expect(recordState).toHaveBeenCalledTimes(1);
+    expect(uiSnapshot).toHaveBeenCalledExactlyOnceWith("s");
+  },
+);
+
+it("reads fresh record state on every batch and renegotiates for a replacement client", async () => {
+  const state = {
+    status: "running",
+    activeRunId: "run",
+    pendingResumeToken: null,
+    blockedReason: null,
+    updatedAt: "first",
+  };
+  const recordState = vi.fn(async () => encode(state));
+  const uiSnapshot = vi.fn(async () =>
+    encode({ ...snapshot, session: { ...snapshot.session, ...state } }),
+  );
+  let client = remote({
+    connect: vi.fn(async () => ({ capabilities: ["record_state_v1"] })),
+    recordState,
+    uiSnapshot,
+  });
+  const facade = new RuntimeFacade(() => client);
+  expect((await facade.authoritativeRecordState("s")).updatedAt).toBe("first");
+  state.status = "paused";
+  state.updatedAt = "second";
+  expect(await facade.authoritativeRecordState("s")).toMatchObject({
+    status: "paused",
+    updatedAt: "second",
+  });
+  expect(recordState).toHaveBeenCalledTimes(2);
+  client = remote({
+    connect: vi.fn(async () => ({ capabilities: [] })),
+    recordState,
+    uiSnapshot,
+  });
+  expect(await facade.authoritativeRecordState("s")).toMatchObject({
+    status: "paused",
+    updatedAt: "second",
+  });
+  expect(recordState).toHaveBeenCalledTimes(2);
+  expect(uiSnapshot).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  "PROJECTION_MISSING",
+  "FORBIDDEN",
+  "REVISION_CONFLICT",
+  "STORAGE_UNAVAILABLE",
+  "INVALID_COMMAND",
+])("does not mask %s with a legacy UI read", async (code) => {
+  const failure = new RuntimeSidecarError({
+    type: "error",
+    code,
+    message: "read failed",
+  });
+  const recordState = vi.fn().mockRejectedValue(failure);
+  const uiSnapshot = vi.fn();
+  const client = remote({
+    connect: vi.fn(async () => ({ capabilities: ["record_state_v1"] })),
+    recordState,
+    uiSnapshot,
+  });
+  await expect(
+    new RuntimeFacade(() => client).authoritativeRecordState("s"),
+  ).rejects.toBe(failure);
+  expect(uiSnapshot).not.toHaveBeenCalled();
+});
+
+it("keeps legacy missing-session errors and rejects malformed new state without fallback", async () => {
+  const failure = new RuntimeSidecarError({
+    type: "error",
+    code: "PROJECTION_MISSING",
+    message: "missing",
+  });
+  const uiSnapshot = vi.fn().mockRejectedValue(failure);
+  const recordState = vi.fn(async () => encode({ status: "running" }));
+  const legacy = remote({
+    connect: vi.fn(async () => ({ capabilities: [] })),
+    recordState,
+    uiSnapshot,
+  });
+  await expect(
+    new RuntimeFacade(() => legacy).authoritativeRecordState("missing"),
+  ).rejects.toBe(failure);
+  expect(recordState).not.toHaveBeenCalled();
+  uiSnapshot.mockClear();
+  const modern = remote({
+    connect: vi.fn(async () => ({ capabilities: ["record_state_v1"] })),
+    recordState,
+    uiSnapshot,
+  });
+  await expect(
+    new RuntimeFacade(() => modern).authoritativeRecordState("s"),
+  ).rejects.toThrow("Invalid persisted runtime record state");
+  expect(uiSnapshot).not.toHaveBeenCalled();
+});
+
+it("normalizes omitted optional fields from a compact legacy projection", async () => {
+  const client = remote({
+    connect: vi.fn(async () => ({ capabilities: ["record_state_v1"] })),
+    recordState: vi.fn(async () => encode({ status: "queued", updatedAt: "now" })),
+    uiSnapshot: vi.fn(),
+  });
+  await expect(
+    new RuntimeFacade(() => client).authoritativeRecordState("s"),
+  ).resolves.toEqual({
+    status: "queued",
+    activeRunId: null,
+    pendingResumeToken: null,
+    blockedReason: null,
+    updatedAt: "now",
+  });
+  expect(client.uiSnapshot).not.toHaveBeenCalled();
+});
+
 it('coalesces concurrent list and summary refreshes but fetches fresh mutable state after completion', async () => {
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -139,6 +305,56 @@ it('projects cache, aggregate usage, and context composition from sidecar histor
   expect((stats.cache as { session: { weightedRatio: number } }).session.weightedRatio).toBe(0.5);
   expect((stats.usage as { self: { input: number; output: number } }).self).toMatchObject({ input: 100, output: 20 });
   expect(stats.contextComposition).toMatchObject({ total: 40 });
+});
+
+it('reports execution time without human waits or unfinished steps', async () => {
+  const step = (overrides: Record<string, unknown>) => ({
+    sessionId: 's',
+    runId: 'run-1',
+    model: null,
+    finishReason: 'stop',
+    metadata: {},
+    ...overrides,
+  });
+  const data: Record<string, unknown[]> = {
+    list_runs: [{
+      id: 'run-1', sessionId: 's', status: 'completed',
+      startedAt: '2026-10-17T00:00:00.000Z', completedAt: '2026-10-17T03:00:00.000Z',
+    }],
+    list_steps: [
+      step({ id: 'step-quick', index: 0, status: 'completed',
+        startedAt: '2026-10-17T00:00:00.000Z', completedAt: '2026-10-17T00:00:30.000Z' }),
+      // Parked on a form for 2h48m50s of its 2h59m span.
+      step({ id: 'step-asked', index: 1, status: 'completed', finishReason: 'human_input_resolved',
+        startedAt: '2026-10-17T00:01:00.000Z', completedAt: '2026-10-17T03:00:00.000Z' }),
+      step({ id: 'step-open', index: 2, status: 'running',
+        startedAt: '2026-10-17T04:00:00.000Z', completedAt: null }),
+    ],
+    list_tool_calls: [],
+    list_work: [],
+    list_aux_usage: [],
+    list_messages: [],
+    list_interactions: [{
+      id: 'hitl-1', sessionId: 's', stepId: 'step-asked', status: 'answered',
+      createdAt: '2026-10-17T00:01:10.000Z', resolvedAt: '2026-10-17T02:50:00.000Z',
+    }],
+    list_permissions: [],
+  };
+  const client = remote({
+    uiSnapshot: vi.fn(async () => encode({
+      session: { id: 's', status: 'completed', parentSessionId: null },
+      run: null, cursor: 1, liveChunks: [], completedStepIds: ['step-quick', 'step-asked'],
+    })),
+    sessionList: vi.fn(async () => encode({
+      items: [{ id: 's', parentSessionId: null }],
+    })),
+    historyCommand: vi.fn(async (input: { operation: string }) =>
+      encode({ items: data[input.operation] ?? [] })),
+  });
+
+  const stats = await new RuntimeFacade(() => client).sessionStatsAuthoritative('s');
+  // 30s of the quick step plus the 10m10s the asked step actually ran.
+  expect(stats.runningDuration).toBe(30_000 + 610_000);
 });
 
 it('awaits the store commit before reading the created projection', async () => {
@@ -345,4 +561,13 @@ it('requests a 100-message tail and resumes client eviction boundaries within th
   expect(result.historyWindow.messageLimit).toBe(100);
   await expect(facade.historyWindowAuthoritative('s', undefined, undefined, false, '{')).rejects.toMatchObject({ code: 'INVALID_COMMAND' });
   expect(historyCommand).toHaveBeenCalledTimes(1);
+});
+
+it('reads badges from the sparse IPC view without a full list and shares only concurrent reads', async () => {
+  const sessionList = vi.fn(async () => encode({ items: [{ id: 's', status: 'running' }] }));
+  const facade = new RuntimeFacade(() => remote({ sessionList }));
+  await Promise.all([facade.listSessionBadges(), facade.listSessionBadges()]);
+  expect(sessionList).toHaveBeenCalledExactlyOnceWith(undefined, 'badges');
+  sessionList.mockResolvedValue(encode({ items: [{ id: 's', status: 'completed' }] }));
+  expect((await facade.listSessionBadges())[0].status).toBe('completed');
 });

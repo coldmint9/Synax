@@ -1,10 +1,9 @@
 import { PageLoading } from "./layouts/CachedWorkbenchPage";
 import { GlobalSessionSearch } from "../features/agent-workspace/GlobalSessionSearch";
-import { SideChatLifecycle } from "../features/agent-workspace/SideChatLifecycle";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import WorkbenchLayout from "./layouts/WorkbenchLayout";
-import { WelcomeView } from "./layouts/WelcomeView";
+const HomePage = lazy(() => import("../features/home/HomePage"));
 const AgentLoopTestPage = lazy(() => import("./pages/AgentLoopTestPage"));
 const GitWorkbenchPage = lazy(() => import("../features/git/GitWorkbenchPage"));
 const AboutPage = lazy(() => import("./pages/AboutPage"));
@@ -20,9 +19,9 @@ import { DesktopUpdatePanel } from "../features/updates/DesktopUpdateStatus";
 import { configApi } from "../adapters/transport/config";
 import { applyMacWindowAppearance, DEFAULT_MAC_WINDOW_APPEARANCE } from "../adapters/electron/mac-window-appearance";
 import "../features/settings/components/appearance.css";
+import { startProjectRecovery } from '../shared/state/shellStore';
 
 export default function App() {
-  useTabKeyBehavior();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,11 +41,16 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  return <WorkbenchApp />;
+}
+
+function WorkbenchApp() {
+  useTabKeyBehavior();
   useElectronMenu();
+  useEffect(() => startProjectRecovery(), []);
 
   return (
     <ContextMenuProvider>
-    <SideChatLifecycle />
     <WorkspaceFileMutationHost />
     <DesktopUpdateProvider>
       <GlobalSessionSearch />
@@ -55,7 +59,7 @@ export default function App() {
         <div className="min-h-0 flex-1">
           <Routes>
             <Route element={<WorkbenchLayout />}>
-              <Route path="/" element={<WelcomeView />} />
+              <Route path="/" element={<Suspense fallback={<PageLoading />}><HomePage /></Suspense>} />
               <Route path="/settings" element={<Suspense fallback={<PageLoading />}><GlobalSettingsPage /></Suspense>} />
               <Route path="/about" element={<Suspense fallback={<PageLoading />}><AboutPage /></Suspense>} />
               <Route path="/workspaces/:workspaceId/manage" element={<Suspense fallback={<PageLoading />}><WorkspaceManagementPage /></Suspense>} />

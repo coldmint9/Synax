@@ -1,4 +1,5 @@
 import type { MediaAdapter, MediaCapabilities, MediaModelSelection, ModelCapability } from "./media-generation";
+import type { SuperCodingConfig } from "../../../../packages/contracts/super-coding";
 export type ProviderStatus = "live" | "experimental" | "inactive";
 export type ProviderKind = "api";
 export type ApiFormat = "openai" | "openai-responses" | "anthropic" | "jev";
@@ -61,6 +62,7 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   cwd?: string;
   enabled?: boolean;
+  builtin?: boolean;
 }
 
 export type WebSearchRouting = "auto" | "remote" | "local" | "disabled";
@@ -170,6 +172,8 @@ export interface GlobalConfig {
   computerUse?: GlobalComputerUseSettings;
   gitLab?: GitLabConfig;
   webSearch: WebSearchConfig;
+  /** Super coding mode: subagent model pool, ordered routes and node budget. */
+  superCoding?: SuperCodingConfig;
   sessionArchiveRetentionDays?: number | null;
   limits: {
     maxAgentsPerProject: number;
@@ -258,6 +262,62 @@ export interface EffectiveConfigResponse {
 
 export interface ProviderListResponse {
   providers: ProviderDef[];
+}
+
+/** Providers found in CC Switch's local store, ready to be imported. */
+export type CcSwitchConflictKind = "none" | "duplicate-id" | "same-endpoint";
+export type CcSwitchConflictPolicy = "skip" | "replace" | "copy";
+
+export interface CcSwitchImportItem {
+  key: string;
+  appType: string;
+  label: string;
+  baseUrl: string;
+  apiFormat: ApiFormat;
+  apiKeyMasked: string;
+  declaredModels: string[];
+  defaultModel: string;
+  conflict: CcSwitchConflictKind;
+  conflictProviderId?: string;
+  selectable: boolean;
+  reason?: string;
+  warnings: string[];
+}
+
+export interface CcSwitchSkippedProvider {
+  key: string;
+  appType: string;
+  label: string;
+  reason: string;
+}
+
+export interface CcSwitchPreviewResponse {
+  available: boolean;
+  sourcePath: string;
+  items: CcSwitchImportItem[];
+  unsupported: CcSwitchSkippedProvider[];
+  skipped: CcSwitchSkippedProvider[];
+  warnings: string[];
+}
+
+export interface CcSwitchImportAction {
+  providerId: string;
+  label: string;
+  action: "created" | "updated" | "skipped";
+  reason?: string;
+}
+
+export interface CcSwitchImportRequest {
+  keys: string[];
+  onConflict?: CcSwitchConflictPolicy;
+  validate?: boolean;
+}
+
+export interface CcSwitchImportResponse {
+  config: GlobalConfig;
+  imported: CcSwitchImportAction[];
+  skipped: CcSwitchImportAction[];
+  warnings: string[];
 }
 
 export interface AiApiValidateRequest {

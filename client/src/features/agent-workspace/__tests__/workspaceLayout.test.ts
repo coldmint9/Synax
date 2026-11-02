@@ -116,4 +116,48 @@ describe("workspace layout constraints", () => {
   it("does not reserve a retired standalone navigation rail", () => {
     expect(globalCss).not.toContain(".workspace-navigation-rail");
   });
+
+  it("gives a resized Git changes card its own list height", () => {
+    const sized =
+      ':is(.work-page, .work-details-dialog) .workspace-dashboard--custom .dashboard-panel[data-sized="true"]';
+    // The standalone changes panel has no repository header, so the height the
+    // user drags has to reach the list through the card body, its sections and
+    // the scrollport instead of stopping at the measured eight-row budget.
+    expect(
+      declaration(
+        `${sized} > .dashboard-panel-content > .ws-card > .ws-card-body:has(.ws-changes-viewport)`,
+        "display",
+      ),
+    ).toBe("flex");
+    expect(
+      declaration(
+        `${sized} > .dashboard-panel-content > .ws-card > .ws-card-body:has(.ws-changes-viewport)`,
+        "overflow",
+      ),
+    ).toBe("hidden");
+    expect(declaration(`${sized} .ws-changes-viewport`, "flex")).toBe(
+      "1 1 auto",
+    );
+    expect(declaration(`${sized} .ws-changes-viewport`, "min-height")).toBe(
+      "0",
+    );
+    expect(declaration(`${sized} .ws-changes-scroll`, "flex")).toBe("1 1 auto");
+    expect(declaration(`${sized} .ws-changes-scroll`, "max-height")).toBe(
+      "none",
+    );
+  });
+
+  it("only drops the row budget inside height-managed cards", () => {
+    const dropping: string[] = [];
+    stylesheet.walkRules((rule) => {
+      if (!rule.selector.includes(".ws-changes-scroll")) return;
+      rule.walkDecls("max-height", (decl) => {
+        if (decl.value.replace(/\s*!important$/, "") === "none")
+          dropping.push(rule.selector.replace(/\s+/g, " ").trim());
+      });
+    });
+    expect(dropping.length).toBeGreaterThan(0);
+    for (const selector of dropping)
+      expect(selector).toMatch(/\.ws-project-card|\[data-sized="true"\]/);
+  });
 });

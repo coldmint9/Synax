@@ -128,7 +128,7 @@ export function useSessionRouteSync(
 
     if (listView === "workflow") {
       if (sessionIdFromUrl) {
-        openPanel(sessionIdFromUrl, { forceFresh: true });
+        openPanel(sessionIdFromUrl);
         return;
       }
       closePanel();
@@ -153,7 +153,7 @@ export function useSessionRouteSync(
           sessionId: sessionIdFromUrl,
         });
       }
-      openPanel(sessionIdFromUrl, { forceFresh: true });
+      openPanel(sessionIdFromUrl);
       return;
     }
 

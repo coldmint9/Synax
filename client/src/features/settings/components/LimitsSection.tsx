@@ -54,6 +54,7 @@ export function LimitsSection({ config, onUpdate }: LimitsSectionProps) {
           <input
             type="number"
             className={`settings-input ${fieldError('maxAgentsPerProject') ? 'settings-input--invalid' : ''}`}
+            aria-label={t('settingsMaxAgents')}
             value={maxAgents}
             min={1}
             max={100}
@@ -64,6 +65,7 @@ export function LimitsSection({ config, onUpdate }: LimitsSectionProps) {
           <input
             type="number"
             className={`settings-input ${fieldError('agentTimeoutSeconds') ? 'settings-input--invalid' : ''}`}
+            aria-label={t('settingsAgentTimeout')}
             value={timeout}
             min={10}
             max={3600}

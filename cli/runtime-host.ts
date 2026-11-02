@@ -25,7 +25,7 @@ function packageRoot(): string {
 }
 
 function dataRoot(): string {
-  return path.resolve(process.env.DATA_ROOT ?? path.join(os.homedir(), '.synax'));
+  return path.resolve(process.env.DATA_ROOT ?? path.join(os.homedir(), '.synax', 'v2'));
 }
 
 function requestedPort(): { port: number; explicit: boolean } {

@@ -109,6 +109,7 @@ function createMockChild(sessionId: string) {
 
 describe("sessionProcessManager idle child release", () => {
   beforeEach(() => {
+    vi.stubEnv("SYNAX_IDLE_WORKER_MAX", "0");
     forkMock.mockReset();
     hydrateSessionMock.mockReset().mockResolvedValue(undefined);
     getSessionMock.mockReset();
@@ -131,6 +132,57 @@ describe("sessionProcessManager idle child release", () => {
       ["sess-release-a", "sess-release-b", "sess-release-c"],
       "test cleanup",
     );
+    vi.unstubAllEnvs();
+  });
+
+  it('warms a viewed session once and reuses its idle worker across turns', async () => {
+    vi.stubEnv("SYNAX_IDLE_WORKER_MAX", "3");
+    vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+    const id = "sess-release-a";
+    tryGetSessionMock.mockReturnValue({ id, projectId: "proj-test", status: "completed" });
+    const child = createMockChild(id);
+    forkMock.mockImplementation(() => {
+      queueMicrotask(() => child.emit("message", { type: "session:ready", sessionId: id }));
+      return child;
+    });
+    sessionProcessManager.warmSession(id);
+    sessionProcessManager.warmSession(id);
+    await vi.waitFor(() => expect(forkMock).toHaveBeenCalledOnce());
+    for (let index = 0; index < 2; index++) {
+      for await (const _ of sessionProcessManager.streamSession(id, "turn", {})) { /* drain */ }
+    }
+    expect(forkMock).toHaveBeenCalledOnce();
+    expect(child.kill).not.toHaveBeenCalled();
+    sessionProcessManager.interruptSessions([id]);
+    await sessionProcessManager.waitForIdleSessions([id]);
+  });
+
+  it('a send arriving before warm-up begins starts only one worker', async () => {
+    vi.stubEnv("SYNAX_IDLE_WORKER_MAX", "3");
+    vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+    const id = "sess-release-a";
+    tryGetSessionMock.mockReturnValue({ id, projectId: "proj-test", status: "completed" });
+    const child = createMockChild(id);
+    forkMock.mockImplementation(() => {
+      queueMicrotask(() => child.emit("message", { type: "session:ready", sessionId: id }));
+      return child;
+    });
+    sessionProcessManager.warmSession(id);
+    for await (const _ of sessionProcessManager.streamSession(id, "turn", {})) { /* drain */ }
+    expect(forkMock).toHaveBeenCalledOnce();
+    sessionProcessManager.interruptSessions([id]);
+    await sessionProcessManager.waitForIdleSessions([id]);
+  });
+
+  it('cancels speculative startup before a deleted session can spawn a worker', async () => {
+    vi.stubEnv("SYNAX_IDLE_WORKER_MAX", "3");
+    vi.stubEnv("SYNAX_AGENT_SESSION_IN_PROCESS", "0");
+    const id = "sess-release-a";
+    tryGetSessionMock.mockReturnValue({ id, projectId: "proj-test", status: "completed" });
+    sessionProcessManager.warmSession(id);
+    sessionProcessManager.interruptSessions([id]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(forkMock).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(
@@ -356,7 +408,7 @@ describe("sessionProcessManager idle child release", () => {
         type: "runtime:event",
         event: { type: "session_process_changed", sessionId: id },
       });
-      expect(child.kill).toHaveBeenCalled();
+      await vi.waitFor(() => expect(child.kill).toHaveBeenCalled());
       await sessionProcessManager.waitForIdleSessions([id]);
     } finally {
       releaseOwnedProcess(receipt.id);

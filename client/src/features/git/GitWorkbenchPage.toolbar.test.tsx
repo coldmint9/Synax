@@ -1,44 +1,34 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { gitMrApi } from "../../adapters/transport/gitMr";
 import { projectApi } from "../../adapters/transport/project";
+import { quickMergeApi } from "../../adapters/transport/quickMerge";
 import { ToolbarPill } from "../../app/layouts/ToolbarPill";
 import { GitToolbarProvider, GitToolbarTarget } from "./GitToolbarPortal";
 import { clearStaleResourceCache } from "../../shared/lib/staleResource";
 import GitWorkbenchPage from "./GitWorkbenchPage";
 
-vi.mock("../../adapters/transport/gitMr", () => ({
-  gitMrApi: { list: vi.fn(), presets: vi.fn() },
-}));
 vi.mock("../../adapters/transport/project", () => ({
   projectApi: {
     getWorkspace: vi.fn(),
     listGitWorkspaces: vi.fn(),
-    gitHistory: vi
-      .fn()
-      .mockResolvedValue({
-        commits: [],
-        refs: [],
-        snapshot: "s",
-        nextOffset: null,
-      }),
-    gitState: vi
-      .fn()
-      .mockResolvedValue({
-        head: "",
-        branch: "main",
-        operation: null,
-        conflicts: [],
-        output: "",
-      }),
-    gitAssociations: vi
-      .fn()
-      .mockResolvedValue({ epics: [], branches: [], refs: [], sessions: [] }),
+    gitHistory: vi.fn(),
+    gitState: vi.fn(),
+    gitAssociations: vi.fn(),
   },
 }));
-vi.mock("./MergeRequestForm", () => ({
-  MergeRequestForm: () => <div role="dialog">新建合并请求</div>,
+vi.mock("../../adapters/transport/quickMerge", () => ({
+  quickMergeApi: {
+    board: vi.fn(),
+    createGroup: vi.fn(),
+    renameGroup: vi.fn(),
+    deleteGroup: vi.fn(),
+    createRule: vi.fn(),
+    updateRule: vi.fn(),
+    deleteRule: vi.fn(),
+    merge: vi.fn(),
+    push: vi.fn(),
+  },
 }));
 
 beforeEach(() => {
@@ -51,18 +41,48 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  vi.mocked(gitMrApi.list).mockResolvedValue([]);
-  vi.mocked(gitMrApi.presets).mockResolvedValue([]);
   vi.mocked(projectApi.getWorkspace).mockResolvedValue({
-    roots: [
-      { id: "root", role: "primary", status: "available", name: "Synax" },
-    ],
+    roots: [{ id: "root", role: "primary", status: "available", name: "Synax" }],
   } as Awaited<ReturnType<typeof projectApi.getWorkspace>>);
   vi.mocked(projectApi.listGitWorkspaces).mockResolvedValue({
     repositoryRoot: "/repo",
     branches: [],
     worktrees: [],
   } as Awaited<ReturnType<typeof projectApi.listGitWorkspaces>>);
+  vi.mocked(projectApi.gitHistory).mockResolvedValue({
+    commits: [],
+    refs: [],
+    snapshot: "s",
+    nextOffset: null,
+  } as Awaited<ReturnType<typeof projectApi.gitHistory>>);
+  vi.mocked(projectApi.gitState).mockResolvedValue({
+    head: "",
+    branch: "main",
+    operation: null,
+    conflicts: [],
+    output: "",
+  } as Awaited<ReturnType<typeof projectApi.gitState>>);
+  vi.mocked(projectApi.gitAssociations).mockResolvedValue({
+    epics: [],
+    branches: [],
+    refs: [],
+    sessions: [],
+  } as Awaited<ReturnType<typeof projectApi.gitAssociations>>);
+  vi.mocked(quickMergeApi.board).mockResolvedValue({
+    groups: [{ id: "g1", projectId: "p", name: "发布到测试", order: 0, createdAt: "2026-01-01T00:00:00.000Z" }],
+    rules: [
+      {
+        id: "r1",
+        projectId: "p",
+        groupId: "g1",
+        source: "feature/login",
+        target: "test",
+        order: 0,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        status: "idle",
+      },
+    ],
+  });
 });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -75,10 +95,8 @@ function mount(path = "/projects/p/git") {
           <GitToolbarTarget />
         </ToolbarPill>
         <Routes>
-          <Route
-            path="/projects/:projectId/git"
-            element={<GitWorkbenchPage />}
-          />
+          <Route path="/projects/:projectId/git" element={<GitWorkbenchPage />} />
+          <Route path="/projects/:projectId/git/mr/:mrId" element={<div>detail</div>} />
         </Routes>
       </GitToolbarProvider>
     </MemoryRouter>,
@@ -86,99 +104,81 @@ function mount(path = "/projects/p/git") {
 }
 
 describe("Git secondary island", () => {
-  it("opens worktree management in the existing Island and keeps repository selection", async () => {
+  it("keeps repository selection and exposes no manual MR entry", async () => {
     const { container } = mount("/projects/p/git?view=worktrees&rootId=root");
     await screen.findByRole("table", { name: "Git 工作树列表" });
-    expect(container.querySelector('.git-island-views [data-island-option="worktrees"]')).toHaveAttribute("aria-current", "page");
-    expect(container.querySelector(".git-worktree-island")).not.toBeNull();
+    expect(
+      container.querySelector('.git-island-views [data-island-option="worktrees"]'),
+    ).toHaveAttribute("aria-current", "page");
     expect(screen.queryByRole("button", { name: "新建 MR" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "合并请求" })).toBeNull();
     expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", "root", "inventory");
   });
-  it("hosts views and actions without duplicating them in the page", async () => {
+
+  it("offers exactly history, worktrees and quick merge", async () => {
     const { container } = mount();
-    const island = container.querySelector(".wh-pill-slot")!;
-    const page = container.querySelector(".git-workbench")!;
-    expect(island.querySelector('nav[aria-label="Git 视图"]')).not.toBeNull();
-    expect(page.querySelector('nav[aria-label="Git 视图"]')).toBeNull();
-    expect(page.querySelector(".mr-root-tabs")).not.toBeNull();
+    await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalled());
+    const options = Array.from(
+      container.querySelectorAll("[data-island-option]"),
+    ).map((node) => node.textContent?.trim());
+    expect(options).toEqual(["历史树", "工作树", "快捷合并"]);
+    expect(screen.queryByRole("button", { name: "预设" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "新建 MR" })).toBeNull();
+  });
 
-    const create = screen.getByRole("button", { name: "新建 MR" });
-    expect(create).toBeDisabled();
-    await waitFor(() => expect(create).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "历史树" }));
-    expect(page).toHaveTextContent("历史树");
-    fireEvent.change(island.querySelector(".git-island-view-select")!, {
-      target: { value: "presets" },
+  it("renders the quick-merge board and runs a rule", async () => {
+    mount("/projects/p/git?view=quick");
+    expect(
+      await screen.findByRole("heading", { name: "快捷合并", level: 1 }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("发布到测试")).toBeInTheDocument();
+    expect(screen.getByText("feature/login")).toBeInTheDocument();
+    expect(quickMergeApi.board).toHaveBeenCalledWith("p");
+
+    vi.mocked(quickMergeApi.merge).mockResolvedValue({
+      id: "r1",
+      projectId: "p",
+      groupId: "g1",
+      source: "feature/login",
+      target: "test",
+      order: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "merged",
+      message: "已合并 · 待推送 2",
+      ahead: 2,
+      steps: [{ command: "git fetch origin --prune", status: "ok", detail: "远端引用已同步" }],
     });
-    expect(page).not.toHaveTextContent("运行记录");
-    expect(
-      screen.queryByRole("option", { name: "运行记录" }),
-    ).not.toBeInTheDocument();
-
-    // The workbench toolbar no longer exposes a manual refresh action.
-    expect(
-      screen.queryByRole("button", { name: "刷新 Git 工作台" }),
-    ).toBeNull();
-    fireEvent.click(create);
-    expect(screen.getByRole("dialog")).toHaveTextContent("新建合并请求");
+    fireEvent.click(screen.getByRole("button", { name: "合并" }));
+    await waitFor(() => expect(quickMergeApi.merge).toHaveBeenCalledWith("p", "r1", "root"));
+    expect(await screen.findByText("已合并 · 待推送 2")).toBeInTheDocument();
+    expect(screen.getByText("git fetch origin --prune")).toBeInTheDocument();
   });
-});
 
-it("opens the requested MR list when returning from a detail page", async () => {
-  mount("/projects/p/git?view=requests");
-  expect(
-    await screen.findByRole("heading", { name: "还没有本地合并请求" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("button", { name: "合并请求", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-  fireEvent.click(screen.getByRole("button", { name: "历史树", exact: true }));
-  expect(
-    screen.getByRole("button", { name: "历史树", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
-});
-
-// A slow secondary endpoint must not hold the repository views behind it.
-it("loads history while MR lists and presets are still pending", async () => {
-  vi.mocked(gitMrApi.list).mockReturnValue(new Promise(() => {}));
-  vi.mocked(gitMrApi.presets).mockReturnValue(new Promise(() => {}));
-  mount();
-  await waitFor(() => expect(projectApi.gitHistory).toHaveBeenCalled());
-  expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", "root", "inventory");
-  expect(projectApi.listGitWorkspaces).toHaveBeenCalledTimes(1);
-  expect(screen.queryByText("正在加载 Git 工作台…")).not.toBeInTheDocument();
-});
-
-it("renders worktree inventory before status inspection finishes", async () => {
-  vi.mocked(projectApi.listGitWorkspaces).mockImplementation((_id, _root, mode) => mode === "inventory"
-    ? Promise.resolve({ repositoryRoot: "/repo", defaultPath: "/repo", branches: [], commits: [], worktrees: [
-      { path: "/repo", branch: "main", head: "a".repeat(40), primary: true, managed: false, locked: false, prunable: false, detached: false, dirty: false, statusKnown: false, sessionCount: 0 },
-    ] }) : new Promise(() => {}));
-  mount("/projects/p/git?view=worktrees");
-  expect(await screen.findByRole("table", { name: "Git 工作树列表" })).toBeInTheDocument();
-  expect(screen.getAllByText("/repo").length).toBeGreaterThan(0);
-  await waitFor(() => expect(projectApi.listGitWorkspaces).toHaveBeenCalledWith("p", "root"));
-});
-
-it("keeps a refreshed worktree snapshot when an earlier background scan returns late", async () => {
-  type Workspace = Awaited<ReturnType<typeof projectApi.listGitWorkspaces>>;
-  const inventory: Workspace = { repositoryRoot: "/repo", defaultPath: "/repo", branches: [], commits: [], worktrees: [
-    { path: "/repo", branch: "main", head: "a".repeat(40), primary: true, managed: false, locked: false, prunable: false, detached: false, dirty: false, statusKnown: false, sessionCount: 0 },
-  ] };
-  let resolveOld!: (workspace: Workspace) => void;
-  let scans = 0;
-  const updated = { ...inventory, worktrees: inventory.worktrees.map(tree => ({ ...tree, dirty: true, statusKnown: true })) };
-  vi.mocked(projectApi.listGitWorkspaces).mockImplementation((_id, _root, mode) => {
-    if (mode === "inventory") return Promise.resolve(inventory);
-    if (++scans === 1) return new Promise(resolve => { resolveOld = resolve; });
-    return Promise.resolve(updated);
+  it("reverses a rule in place without disabling the control", async () => {
+    mount("/projects/p/git?view=quick");
+    const swap = await screen.findByRole("button", {
+      name: "对调方向：变为 test → feature/login",
+    });
+    expect(swap).toBeEnabled();
+    vi.mocked(quickMergeApi.updateRule).mockResolvedValue({
+      id: "r1",
+      projectId: "p",
+      groupId: "g1",
+      source: "test",
+      target: "feature/login",
+      order: 0,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      status: "idle",
+    });
+    fireEvent.click(swap);
+    await waitFor(() =>
+      expect(quickMergeApi.updateRule).toHaveBeenCalledWith("p", "r1", {
+        source: "test",
+        target: "feature/login",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "对调方向：变为 feature/login → test" }),
+    ).toBeInTheDocument();
   });
-  const { container } = mount("/projects/p/git?view=worktrees");
-  await screen.findByRole("table", { name: "Git 工作树列表" });
-  await waitFor(() => expect(scans).toBe(1));
-  fireEvent.click(within(container.querySelector(".git-worktree-island") as HTMLElement).getByRole("button", { name: "刷新", exact: true }));
-  await waitFor(() => expect(container.querySelector("tbody")).toHaveTextContent("有未提交修改"));
-  await act(async () => { resolveOld({ ...inventory, worktrees: inventory.worktrees.map(tree => ({ ...tree, statusKnown: true })) }); });
-  expect(container.querySelector("tbody")).toHaveTextContent("有未提交修改");
-  expect(scans).toBe(2);
 });

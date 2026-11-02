@@ -20,11 +20,15 @@ import {
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useAgentDockStore } from "../state/agentDockStore";
 import { SessionComposer } from "../SessionComposer";
+import { ConversationController } from "../state/conversationController";
+import { InteractionSessionProvider } from "../AgentInteractionPanel";
 import { SessionModeSummary } from "../SessionWorkspace";
 import { useSessionComposerSelections } from "../useSessionComposerSelection";
+import type { QuickAction } from "../../quick-actions/quickActions";
 
+const testLocale = vi.hoisted(() => ({ value: "en" }));
 vi.mock("../../../shared/hooks/useLocale", () => ({
-  useLocale: () => ({ locale: "en", t: (key: string) => key }),
+  useLocale: () => ({ locale: testLocale.value, t: (key: string) => key }),
 }));
 vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
   subscribe: () => vi.fn(),
@@ -48,6 +52,9 @@ vi.mock("../composer/AgentComposer", () => ({
     commands?: ComposerCommands;
     modeControl?: ReactNode;
     content: string;
+    placeholder?: string;
+    quickActions?: readonly QuickAction[];
+    onQuickActionSelect?: (action: QuickAction) => void;
     onContentChange: (value: string) => void;
     onSubmit: () => void;
     disabled: boolean;
@@ -65,6 +72,7 @@ vi.mock("../composer/AgentComposer", () => ({
       <textarea
         ref={props.commands?.inputRef}
         aria-label="Message"
+        placeholder={props.placeholder}
         value={props.content}
         disabled={props.disabled}
         onKeyDown={(event) => props.commands?.onKeyDown(event)}
@@ -76,6 +84,21 @@ vi.mock("../composer/AgentComposer", () => ({
           );
         }}
       />
+      {props.quickActions?.some((action) => action.kind === "launch" && action.policy === "compose") ? (
+        <button type="button" onClick={() => {
+          const action = props.quickActions!.find(
+            (item) => item.kind === "launch" && item.policy === "compose",
+          );
+          if (action) props.onQuickActionSelect?.(action);
+        }}>
+          Attach quick action
+        </button>
+      ) : null}
+      {props.quickActions?.[0] ? (
+        <button type="button" onClick={() => props.onQuickActionSelect?.(props.quickActions![0]!)}>
+          Run quick action
+        </button>
+      ) : null}
       <button type="submit" disabled={props.disabled} aria-busy={props.submitting}>
         Send
       </button>
@@ -108,6 +131,7 @@ const session: AgentSession = {
 };
 
 beforeEach(() => {
+  testLocale.value = "en";
   resetSessionComposerDrafts();
   mediaDraftItems.reset();
   vi.restoreAllMocks();
@@ -141,6 +165,129 @@ const renderComposer = (existing?: AgentSession) =>
     </MemoryRouter>,
   );
 
+it("starts a session from a home shortcut with its skill stack and keeps typed text as context", async () => {
+  const user = userEvent.setup();
+  const created = { ...session, id: "new-session", status: "running" as const };
+  const submit = vi.fn().mockResolvedValue(created);
+  const send = vi.fn().mockResolvedValue(undefined);
+  useAgentSessionStore.setState({ submitSessionDraft: submit, sendSessionMessage: send });
+  const { container } = render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(input, { target: { value: "Keep my notes" } });
+  await user.click(screen.getByRole("button", { name: "More" }));
+  await user.click(screen.getByRole("button", { name: /Explore project/ }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith("new-session", expect.objectContaining({
+    message: expect.stringContaining("Keep my notes"),
+  })));
+  const [, body] = submit.mock.calls[0]!;
+  expect(body.skillIds).toEqual(["synax-builtin/project-onboarding", "synax-builtin/visualize"]);
+  expect(body.mode).toBe("chat");
+  expect(body.prompt).toContain("## Additional context\n\nKeep my notes");
+  expect(body.prompt).toContain("Treat this session as project onboarding");
+  expect(container.querySelector(".home-feature-panel")!.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByRole("link", { name: /Task board/ })).not.toBeInTheDocument();
+});
+
+it("attaches a shortcut that needs input, waits for the details and then sends the procedure", async () => {
+  const user = userEvent.setup();
+  const created = { ...session, id: "new-compose", status: "running" as const };
+  const submit = vi.fn().mockResolvedValue(created);
+  const send = vi.fn().mockResolvedValue(undefined);
+  useAgentSessionStore.setState({ submitSessionDraft: submit, sendSessionMessage: send });
+  render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: /Investigate a bug/ }));
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: /Remove quick action: Investigate a bug/ })).toBeInTheDocument();
+  const input = screen.getByRole("textbox", { name: "Message" });
+  expect(input).toHaveAttribute("placeholder", "Describe the symptom, then the steps to reproduce and expected behavior…");
+
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(/Add observed behavior/);
+
+  fireEvent.change(input, { target: { value: "Crash when saving" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+  const [, body] = submit.mock.calls[0]!;
+  expect(body.skillIds).toEqual([
+    "synax-builtin/systematic-debugging",
+    "synax-builtin/synax-explore",
+  ]);
+  expect(body.prompt).toContain("Crash when saving");
+  expect(body.prompt).toContain("Investigate the issue below");
+  expect(body.mode).toBe("chat");
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: /Remove quick action/ })).not.toBeInTheDocument(),
+  );
+});
+
+it("dismisses an attached shortcut without touching typed text", async () => {
+  const user = userEvent.setup();
+  const created = { ...session, id: "new-dismiss", status: "running" as const };
+  const submit = vi.fn().mockResolvedValue(created);
+  useAgentSessionStore.setState({ submitSessionDraft: submit, sendSessionMessage: vi.fn().mockResolvedValue(undefined) });
+  render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: /Investigate a bug/ }));
+  const input = screen.getByRole("textbox", { name: "Message" });
+  fireEvent.change(input, { target: { value: "Keep this" } });
+  await user.click(screen.getByRole("button", { name: /Remove quick action: Investigate a bug/ }));
+
+  expect(screen.queryByRole("button", { name: /Remove quick action/ })).not.toBeInTheDocument();
+  expect(input).toHaveValue("Keep this");
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+  const [, body] = submit.mock.calls[0]!;
+  expect(body.prompt).toBe("Keep this");
+  expect(body.skillIds).toBeUndefined();
+});
+
+it("switches to another shortcut by replacing the attachment instead of sending", async () => {
+  const user = userEvent.setup();
+  const submit = vi.fn();
+  useAgentSessionStore.setState({ submitSessionDraft: submit });
+  render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: /Investigate a bug/ }));
+  await user.click(screen.getByRole("button", { name: /Review changes/ }));
+
+  expect(submit).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: /Remove quick action: Investigate a bug/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Remove quick action: Review changes/ })).toBeInTheDocument();
+});
+
+it("attaches a plus-menu shortcut that needs input instead of sending it immediately", async () => {
+  const user = userEvent.setup();
+  const submit = vi.fn();
+  useAgentSessionStore.setState({ submitSessionDraft: submit });
+  render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Attach quick action" }));
+
+  expect(submit).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: /Remove quick action: Plan a feature/ }),
+  ).toBeInTheDocument();
+});
+
+it("runs a no-input plus-menu shortcut immediately", async () => {
+  const user = userEvent.setup();
+  const created = { ...session, id: "new-plus", status: "running" as const };
+  const submit = vi.fn().mockResolvedValue(created);
+  const send = vi.fn().mockResolvedValue(undefined);
+  useAgentSessionStore.setState({ submitSessionDraft: submit, sendSessionMessage: send });
+  render(<MemoryRouter><SessionComposer projectId="p1" layout="centered" /></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Run quick action" }));
+
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+  const [, body] = submit.mock.calls[0]!;
+  expect(body.skillIds).toEqual(["synax-builtin/project-onboarding", "synax-builtin/visualize"]);
+  expect(body.prompt).toContain("Treat this session as project onboarding");
+  expect(screen.queryByRole("button", { name: /Remove quick action/ })).not.toBeInTheDocument();
+});
+
 it("keeps the interaction panel mounted when its state refreshes beside the input queue", async () => {
   const original = useAgentSessionStore.getState().refreshInteractions;
   const refresh = vi.fn((id: string) => {
@@ -168,34 +315,54 @@ it("keeps the interaction panel mounted when its state refreshes beside the inpu
 it("keeps the direct mode selector and plus-menu mode controls synchronized", async () => {
   const { container } = renderComposer();
   const controls = container.querySelector(".agent-session-controls")!;
+  const modeFrame = () => container.querySelector("[data-composer-mode-frame]");
   expect(controls).toHaveAttribute("data-composer-mode", "chat");
-  expect(container.querySelector("[data-flame-wrap]")).toBeNull();
+  expect(modeFrame()).toBeNull();
   expect(screen.queryByRole("img", { name: "Goal mode" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("img", { name: "Super mode" })).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Session mode" }),
   ).not.toBeInTheDocument();
   for (const [label, mode] of [
-    ["Goal", "goal"],
-    ["Chat", "chat"],
-  ]) {
+    ["Goal Beta", "goal"],
+    ["Super Beta", "super"],
+    ["Auto", "chat"],
+  ] as const) {
     await userEvent.click(
       screen.getByRole("button", {
         name: "Add attachments, context or change mode",
       }),
     );
+    if (mode === "super") {
+      expect(screen.getByRole("radio", { name: "Super Beta", exact: true }).querySelector(".lucide-zap"))
+        .toHaveAttribute("aria-hidden", "true");
+    }
     await userEvent.click(
       screen.getByRole("radio", { name: label, exact: true }),
     );
     await waitFor(() =>
       expect(controls).toHaveAttribute("data-composer-mode", mode),
     );
-    expect(container.querySelector("[data-flame-wrap]")).toBeNull();
-    if (mode === "goal") {
-      expect(screen.getByRole("img", { name: "Goal mode" })).toBeInTheDocument();
-    } else {
-      expect(screen.queryByRole("img", { name: "Goal mode" })).not.toBeInTheDocument();
-    }
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    if (mode === "chat") {
+      // Chat stays quiet: no mode frame.
+      expect(modeFrame()).toBeNull();
+      expect(
+        screen.queryByRole("img", { name: "Goal mode" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("img", { name: "Super mode" }),
+      ).not.toBeInTheDocument();
+      continue;
+    }
+    expect(modeFrame()).toBeNull();
+    expect(
+      screen.getByRole("img", { name: mode === "goal" ? "Goal mode" : "Super mode" }),
+    ).toBeInTheDocument();
+    if (mode === "super") {
+      expect(screen.getByRole("img", { name: "Super mode" }).querySelector(".lucide-zap"))
+        .toHaveAttribute("aria-hidden", "true");
+    }
   }
 });
 
@@ -280,7 +447,7 @@ async function expectModeUnavailable() {
     return;
   }
   await userEvent.click(trigger);
-  const goal = screen.queryByRole("radio", { name: "Goal", exact: true });
+  const goal = screen.queryByRole("radio", { name: "Goal Beta", exact: true });
   if (goal) expect(goal).toHaveAttribute("aria-disabled", "true");
 }
 
@@ -368,6 +535,24 @@ describe("SessionComposer input queue", () => {
 });
 
 describe("SessionComposer mode controls", () => {
+  it.each([
+    ["zh", "Close or stop the current orchestration before switching mode.", "请先结束或停止当前编排，再切换模式。"],
+    ["en", "Close or stop the current orchestration before switching mode.", "Close or stop the current orchestration before switching mode."],
+    ["zh", "Unknown failure: request=abc123", "Unknown failure: request=abc123"],
+    ["en", "Unknown failure: request=abc123", "Unknown failure: request=abc123"],
+  ])("presents %s mode errors without changing the draft or mode: %s", async (locale, message, expected) => {
+    testLocale.value = locale;
+    const update = vi.spyOn(agentRuntimeApi, "updateSessionMode").mockRejectedValue(new Error(message));
+    const { container } = renderComposer(session);
+    await waitFor(() => expect(useAgentSessionStore.getState().interactionState?.loading).toBe(false));
+    await selectMode("goal", "Keep my draft ");
+    await waitFor(() => expect(container.querySelector(".agent-composer-notice")).toHaveTextContent(expected));
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".agent-composer-notice")).toHaveAttribute("role", "alert");
+    expect(container.querySelector(".agent-session-controls")).toHaveAttribute("data-composer-mode", "chat");
+    expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue("Keep my draft /goal");
+  });
+
   it("no longer offers an execution backend selector for new sessions", async () => {
       renderComposer();
     expect(
@@ -754,4 +939,28 @@ it.each(["codex", "codex-acp", "claude-code"])("prevents submission for the reti
   expect(screen.getByRole("alert")).toHaveTextContent("execution backend has been removed");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   expect(screen.queryByRole("button", { name: /Native model|原生模型/ })).not.toBeInTheDocument();
+});
+
+
+it("sends from the child composer while the parent stays selected and unmodified", async () => {
+  const child: AgentSession = { ...session, id: "side-child", parentSessionId: session.id,
+    sessionMetadata: { mode: "chat", subagentKind: "side-chat" } };
+  const controller = new ConversationController(child.id);
+  controller.seedSession(child);
+  vi.spyOn(controller, "refresh").mockResolvedValue();
+  const submit = vi.spyOn(agentRuntimeApi, "submitRun").mockResolvedValue({
+    run: { id: "child-run", sessionId: child.id, status: "queued" } as never, reused: false,
+  });
+  const refreshList = vi.fn(async () => {});
+  useAgentSessionStore.setState({ refreshSessions: refreshList });
+  render(<MemoryRouter><InteractionSessionProvider controller={controller}>
+    <SessionComposer session={child} projectId="p1" scopedConversation={controller} />
+  </InteractionSessionProvider></MemoryRouter>);
+  fireEvent.change(screen.getByRole("textbox", { name: "Message" }), { target: { value: "Remember our earlier decision?" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(child.id,
+    expect.objectContaining({ message: "Remember our earlier decision?" }), expect.any(String), "continue"));
+  expect(refreshList).not.toHaveBeenCalled();
+  expect(useAgentSessionStore.getState().selectedSessionId).toBe(session.id);
+  expect(useAgentSessionStore.getState().sessions).toEqual([session]);
 });

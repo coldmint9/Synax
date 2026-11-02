@@ -327,4 +327,28 @@ describe("composer primary action surface", () => {
     expect(send).toHaveClass("agent-dock-composer-action");
     expect(send.closest(".glass-button-surface")).toBeNull();
   });
+
+  it("offers the super workflow next to chat and goal", async () => {
+    const onChange = vi.fn();
+    render(
+      <SessionModePicker
+        mode="chat"
+        disabled={false}
+        description=""
+        onChange={onChange}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Session mode" }));
+    expect(await screen.findByRole("option", { name: /Super/ })).toBeTruthy();
+    expect(screen.getByRole("option", { name: /Super/ }).querySelector(".lucide-zap"))
+      .toBeTruthy();
+    await userEvent.click(screen.getByRole("option", { name: /Super/ }));
+    expect(onChange).toHaveBeenCalledWith("super");
+  });
+
+  it("uses the lightning mark for the selected Super mode", () => {
+    render(<SessionModePicker mode="super" disabled={false} description="" onChange={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Session mode" }).querySelector(".lucide-zap"))
+      .toHaveAttribute("aria-hidden", "true");
+  });
 });

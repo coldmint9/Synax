@@ -1,6 +1,12 @@
+import "./nextInputSuggestion.css";
 import { Button } from "@/shared/ui/ui/Button";
 import { WelcomeTypewriter } from "../WelcomeTypewriter";
 import { useInputOptimization } from "./useInputOptimization";
+import { useNextInputSuggestion } from "./useNextInputSuggestion";
+import {
+  IDLE_LIFECYCLE,
+  type SessionLifecycleSnapshot,
+} from "../state/sessionLifecycle";
 import {
   composerHistoryScope,
   EMPTY_HISTORY_CURSOR,
@@ -30,7 +36,7 @@ import {
   Square,
   ArrowUp,
   Play,
-  Sparkles,
+  WandSparkles,
   LoaderCircle,
   Undo2,
 } from "lucide-react";
@@ -38,6 +44,7 @@ import type { ProviderDef } from "../../../shared/contracts/config";
 import type { GlobalConfig } from "../../../shared/contracts/config";
 import type { ReasoningEffort } from "../../../shared/contracts/config";
 import { useLocale } from "../../../shared/hooks/useLocale";
+import type { QuickAction } from "../../quick-actions/quickActions";
 import { ComposerAttachMenu } from "./ComposerAttachMenu";
 import { ComposerModelPicker } from "./ComposerModelPicker";
 import { ComposerContextRing } from "./ComposerContextRing";
@@ -71,6 +78,9 @@ export interface ComposerCommands {
   activeId?: string;
 }
 
+/** Pastes longer than this attach as a text file instead of inline content. */
+const LARGE_PASTE_CHARS = 4000;
+
 interface Props {
   optimizationScope?: string;
   media?: MediaDraft;
@@ -97,6 +107,14 @@ interface Props {
   /** Resumable session: the action key becomes a play control that resumes. */
   isResumable?: boolean;
   onResume?: () => void;
+  /**
+   * Live reply activity of the open transcript. Without it the composer shows
+   * no next-input hint: a draft or a session-less composer has nothing to guess.
+   */
+  replyActivity?: {
+    snapshot: SessionLifecycleSnapshot;
+    text: string;
+  };
   providerId: string | null;
   modelId: string | null;
   capability?: ModelCapability;
@@ -105,12 +123,18 @@ interface Props {
   globalConfig: GlobalConfig | null;
   skillIds: string[];
   onSkillIdsChange: (ids: string[]) => void;
+  /** Skill procedures available from the plus menu. */
+  quickActions?: readonly QuickAction[];
+  onQuickActionSelect?: (action: QuickAction, availableSkillIds?: readonly string[]) => void;
+  /** An attached procedure supplies the message, so an empty input can send. */
+  attachedActionReady?: boolean;
   subagentsEnabled: boolean;
   onSubagentsEnabledChange: (enabled: boolean) => void;
   reasoningEffort: ComposerReasoningEffort;
   onReasoningEffortChange: (effort: ComposerReasoningEffort) => void;
   /** Effort levels the currently selected provider allows. */
   allowedReasoningEfforts?: ReasoningEffort[];
+  permissionControl?: ReactNode;
   permissionTier: SynaxPermissionTier;
   onPermissionTierChange: (tier: SynaxPermissionTier) => void | Promise<void>;
   disabled?: boolean;
@@ -144,6 +168,7 @@ export function AgentComposer({
   isGenerating = false,
   isResumable = false,
   onResume,
+  replyActivity,
   providerId,
   modelId,
   capability = "chat",
@@ -152,12 +177,16 @@ export function AgentComposer({
   globalConfig,
   skillIds,
   onSkillIdsChange,
+  quickActions,
+  onQuickActionSelect,
+  attachedActionReady = false,
   subagentsEnabled,
   onSubagentsEnabledChange,
   reasoningEffort,
   onReasoningEffortChange,
   allowedReasoningEfforts,
   permissionTier,
+  permissionControl,
   onPermissionTierChange,
   disabled,
   submitting = false,
@@ -296,6 +325,20 @@ export function AgentComposer({
     backendId: backendId ?? "native",
     onContentChange,
   });
+  const nextInput = useNextInputSuggestion({
+    projectId,
+    sessionId,
+    enabled: Boolean(sessionId) && mediaMode === "chat",
+    // The reply streams while the composer is locked; the guess must start
+    // then and only become visible once the turn hands the draft back.
+    locked: Boolean(disabled),
+    activity: replyActivity?.snapshot ?? IDLE_LIFECYCLE,
+    replyText: replyActivity?.text ?? "",
+    content,
+    model: formatModelReference(providerId, modelId),
+    backendId: backendId ?? "native",
+    onContentChange,
+  });
   const localTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = commands?.inputRef ?? localTextareaRef;
   const isComposingRef = useRef(false);
@@ -414,13 +457,35 @@ export function AgentComposer({
         e.keyCode === 229
       )
         return;
+      // The pre-filled guess is accepted before focus traversal: a visible
+      // hint only exists on an empty draft, so Tab has nothing else to do.
+      // The editor carries `data-composer-suggestion` so the app-wide Tab
+      // handler stops indenting and lets this handler run.
+      if (
+        nextInput.suggestion &&
+        e.key === "Tab" &&
+        !e.shiftKey &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        historyCaretRef.current = nextInput.suggestion.length;
+        nextInput.accept();
+        commands?.onInput(
+          nextInput.suggestion,
+          nextInput.suggestion.length,
+        );
+        return;
+      }
       if (commands?.onKeyDown(e)) return;
       if (handleHistoryKeyDown(e)) return;
       if (e.key !== "Enter" || e.shiftKey) return;
       e.preventDefault();
       if (disabled && !queueWhileGenerating) return;
       if (
-        (!content.trim() && !media?.parts.length) ||
+        (!content.trim() && !media?.parts.length && !attachedActionReady) ||
         Boolean(media?.blocked) ||
         (mediaMode === "chat" && inputCapability.blocked) ||
         (mediaMode !== "chat" && (!selectedMediaModel || submittingMedia || Boolean(mediaJob && !['succeeded', 'failed', 'cancelled', 'unknown'].includes(mediaJob.status))))
@@ -440,8 +505,11 @@ export function AgentComposer({
       content,
       commands,
       disabled,
+      attachedActionReady,
       handleHistoryKeyDown,
       isGenerating,
+      nextInput.accept,
+      nextInput.suggestion,
       queueWhileGenerating,
       submitFromComposer,
     ],
@@ -502,7 +570,7 @@ export function AgentComposer({
   const resumeMode = mediaMode === "chat" && !isGenerating && isResumable && Boolean(onResume);
   // Pending uploads count as input: the send waits for them rather than
   // making the button unusable until they land.
-  const hasInput = Boolean(content.trim() || media?.items.length);
+  const hasInput = Boolean(content.trim() || media?.items.length || attachedActionReady);
   const queueMode = mediaMode === "chat" && isGenerating && queueWhileGenerating && hasInput;
   const stopMode = mediaMode === "chat" && isGenerating && !queueMode;
   const sendDisabled =
@@ -602,7 +670,7 @@ export function AgentComposer({
         {optimization.pending ? (
           <LoaderCircle size={15} className="animate-spin" />
         ) : (
-          <Sparkles size={15} />
+          <WandSparkles size={15} />
         )}
       </button>
     </>
@@ -622,6 +690,8 @@ export function AgentComposer({
             projectId={projectId}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
+            quickActions={quickActions}
+            onQuickActionSelect={onQuickActionSelect}
             subagentsEnabled={subagentsEnabled}
             onSubagentsEnabledChange={onSubagentsEnabledChange}
             disabled={disabled && !(isSessionComposer && queueWhileGenerating)}
@@ -629,11 +699,11 @@ export function AgentComposer({
           />
         )}
 
-        <ComposerPermissionPicker
+        {permissionControl ?? <ComposerPermissionPicker
           sessionId={sessionId}
           value={permissionTier}
           onChange={onPermissionTierChange}
-        />
+        />}
         {mediaInput}
         {modeControl}
       </div>
@@ -683,7 +753,10 @@ export function AgentComposer({
       onPaste={(e) => {
         const pastedText = e.clipboardData.getData("text/plain");
         const hasFiles = e.clipboardData.files.length > 0;
-        if (media && pastedText.length > 4000 && !hasFiles) {
+        // A wall of pasted text would otherwise become the user's visible
+        // message; it attaches as a .txt file instead and stays an attachment
+        // through the send.
+        if (media && pastedText.length > LARGE_PASTE_CHARS && !hasFiles) {
           e.preventDefault();
           media.addText(pastedText);
           return;
@@ -714,7 +787,7 @@ export function AgentComposer({
             className={
               welcomePlaceholderDelay !== undefined
                 ? "welcome-editor"
-                : "contents"
+                : "composer-editor-host"
             }
           >
             <textarea
@@ -746,11 +819,21 @@ export function AgentComposer({
               onKeyDown={handleKeyDown}
               {...compositionProps}
               placeholder={
-                welcomePlaceholderDelay !== undefined
+                // The ghost suggestion occupies the same line as the native
+                // placeholder; showing both would print two sentences.
+                nextInput.suggestion || welcomePlaceholderDelay !== undefined
                   ? undefined
                   : inputPlaceholder
               }
               aria-label={t("agentPlaceholder")}
+              aria-describedby={
+                nextInput.suggestion
+                  ? "composer-next-input-suggestion"
+                  : undefined
+              }
+              data-composer-suggestion={
+                nextInput.suggestion ? "true" : undefined
+              }
               disabled={disabled && !queueWhileGenerating}
               rows={
                 isSessionComposer
@@ -767,6 +850,24 @@ export function AgentComposer({
                     : "min-h-[1.5rem] max-h-32"
               }`}
             />
+            {nextInput.suggestion && !content && (
+              <>
+                <div className="composer-suggestion" aria-hidden="true">
+                  <span className="composer-suggestion-text">
+                    {nextInput.suggestion}
+                  </span>
+                  <kbd className="composer-suggestion-key">Tab</kbd>
+                </div>
+                <span
+                  id="composer-next-input-suggestion"
+                  className="sr-only"
+                >
+                  {t("nextInputSuggestionAccept", {
+                    text: nextInput.suggestion,
+                  })}
+                </span>
+              </>
+            )}
             {welcomePlaceholderDelay !== undefined && (
               <div
                 className="welcome-editor-hint"
@@ -793,16 +894,18 @@ export function AgentComposer({
             projectId={projectId}
             skillIds={skillIds}
             onSkillIdsChange={onSkillIdsChange}
+            quickActions={quickActions}
+            onQuickActionSelect={onQuickActionSelect}
             subagentsEnabled={subagentsEnabled}
             onSubagentsEnabledChange={onSubagentsEnabledChange}
             disabled={disabled && !queueWhileGenerating}
             onOverlayOpenChange={onOverlayOpenChange}
           />
-          <ComposerPermissionPicker
+          {permissionControl ?? <ComposerPermissionPicker
             sessionId={sessionId}
             value={permissionTier}
             onChange={onPermissionTierChange}
-          />
+          />}
           {mediaInput}
         {modeControl}
           {/* The keyed editor keeps the same parent and DOM node in either layout. */}

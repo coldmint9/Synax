@@ -43,7 +43,7 @@ it("shows waiting/retrying in the conversation and removes the notice before the
   expect(screen.getByText("第 1/10 次重试 · 2 秒后重试")).toBeVisible();
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
   act(() => emit({ ...retry, phase: "retrying" }));
-  expect(screen.getByText("第 1/10 次重试 · 正在重试…")).toBeVisible();
+  expect(screen.getByText("第 1/10 次重试 · 正在重试 · 已等待 0 秒")).toBeVisible();
   act(() => emit({ ...retry, phase: "recovered" }));
   expect(screen.queryByTestId("retry-indicator")).not.toBeInTheDocument();
   expect(store.getState().sessions[0].status).toBe("running");

@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   GitBranch,
   GitCommitHorizontal,
-  GitMerge,
   RefreshCw,
 } from "lucide-react";
 import {
@@ -11,13 +10,24 @@ import {
   type AgentSession,
   type SessionGitBranches,
 } from "../../../adapters/transport/agentRuntime";
-import { conversationGitApi } from "../../../adapters/transport/conversationGit";
 import { Button } from "../../../shared/ui/ui/Button";
 import { Field, Label, Input, TextArea } from "../../../shared/ui/ui/Field";
 import { Select } from "../../../shared/ui/ui/Select";
 import { Checkbox } from "../../../shared/ui/ui/Toggle";
-import { useAgentSessionStore } from "../state/agentSessionStore";
 import { refreshWorkspace } from "../workspaceRefresh";
+/** Keep the branch a user picked while the branch list reloads. */
+export function keepBranchSelection(
+  selected: string | null,
+  next: SessionGitBranches,
+): string | null {
+  if (
+    selected &&
+    selected !== next.current &&
+    next.branches.some((branch) => branch.name === selected)
+  )
+    return selected;
+  return next.current || null;
+}
 export default function LocalGitPanel({
   session,
   rootId,
@@ -34,24 +44,13 @@ export default function LocalGitPanel({
   const [includeUntracked, setIncludeUntracked] = useState(true);
   const [newBranch, setNewBranch] = useState("");
   const [switchTo, setSwitchTo] = useState<string | null>(null);
-  const [target, setTarget] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState("");
-  const [allowTarget, setAllowTarget] = useState(false);
   const load = async () => {
     const next = await agentRuntimeApi.listSessionBranches(session.id, rootId);
     setData(next);
-    setSwitchTo(next.current || null);
-    setTarget(
-      (current) =>
-        current ??
-        (next.branches.some((b) => b.name === "main")
-          ? "main"
-          : next.branches.some((b) => b.name === "master")
-            ? "master"
-            : null),
-    );
+    setSwitchTo((selected) => keepBranchSelection(selected, next));
   };
   useEffect(() => {
     let active = true;
@@ -60,11 +59,7 @@ export default function LocalGitPanel({
       .then((next) => {
         if (active) {
           setData(next);
-          setSwitchTo(next.current || null);
-          setTarget(
-            next.branches.find((b) => b.name === "main" || b.name === "master")
-              ?.name ?? null,
-          );
+          setSwitchTo((selected) => keepBranchSelection(selected, next));
         }
       })
       .catch((e) => {
@@ -127,7 +122,7 @@ export default function LocalGitPanel({
           </div>
           {locked && !busy && (
             <p className="git-actions-description">
-              Agent 正在使用工作区，请等待当前操作结束后处理分支。
+              Agent 正在使用工作区：提交与切换分支暂不可用，新建并签出分支不受影响。
             </p>
           )}
           <Field>
@@ -229,13 +224,11 @@ export default function LocalGitPanel({
                   value={newBranch}
                   onChange={(e) => setNewBranch(e.target.value)}
                   placeholder="feature/my-change"
-                  disabled={locked}
+                  disabled={busy}
                 />
               </Field>
               <Button
-                disabled={
-                  locked || !newBranch.trim() || data.dirtyFileCount > 0
-                }
+                disabled={busy || !newBranch.trim()}
                 onClick={() =>
                   void perform(async () => {
                     await agentRuntimeApi.createSessionBranch(
@@ -251,68 +244,8 @@ export default function LocalGitPanel({
                 创建并切换
               </Button>
               {data.dirtyFileCount > 0 && (
-                <small>请先提交改动，再切换或创建分支。</small>
+                <small>请先提交改动，再切换分支。</small>
               )}
-            </div>
-          </details>
-          <details className="git-actions-details">
-            <summary>分析本地合并</summary>
-            <div className="git-actions-fields">
-              <p className="git-actions-description">
-                将当前分支作为来源，在隔离工作树中分析；最后由你确认更新目标。
-              </p>
-              <Select
-                label="目标分支"
-                value={target}
-                onChange={setTarget}
-                disabled={locked}
-                options={data.branches
-                  .filter((branch) => branch.name !== data.current)
-                  .map((branch) => ({
-                    value: branch.name,
-                    label: branch.name,
-                  }))}
-              />
-              <label className="git-actions-checkbox">
-                <Checkbox
-                  checked={allowTarget}
-                  onChange={setAllowTarget}
-                  disabled={locked}
-                />
-                允许最终确认后更新已检出的干净目标工作树
-              </label>
-              <Button
-                disabled={
-                  locked || !target || !data.current || target === data.current
-                }
-                onClick={() =>
-                  void perform(async () => {
-                    const snapshot = await conversationGitApi.create(
-                      session.id,
-                      {
-                        requestId: crypto.randomUUID(),
-                        rootId,
-                        title: `合并 ${data.current} 到 ${target}`,
-                        target: target!,
-                        sources: [data.current],
-                        strategy: "merge_commit",
-                        checks: [],
-                        allowCheckedOutTarget: allowTarget,
-                      },
-                    );
-                    useAgentSessionStore
-                      .getState()
-                      .ingestConversationMessages(
-                        session.id,
-                        snapshot.messages,
-                      );
-                    onTaskReady();
-                  })
-                }
-              >
-                <GitMerge size={14} />
-                创建可视化合并任务
-              </Button>
             </div>
           </details>
         </>

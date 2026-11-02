@@ -165,6 +165,7 @@ export function WebSearchSettings({
               }
             >
               <Switch
+                aria-label={zh ? "实时外网访问" : "Live web access"}
                 size="sm"
                 checked={draft.remote.externalWebAccess}
                 onChange={(value) =>

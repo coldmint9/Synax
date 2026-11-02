@@ -9,8 +9,6 @@ import type { ContextCompactionState } from "./context-compaction-types.js";
 import type { AgentRuntimeMessage } from "./contracts.js";
 import { currentExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
-import { agentRuntimeStore } from "./session-store.js";
-import { compactedContextUsageSnapshot, readContextUsage, type ContextUsageSnapshot } from "./analytics-projection.js";
 
 export interface CheckpointHead {
   checkpoint: ContextCheckpoint | null;
@@ -86,25 +84,6 @@ function notify(sessionId: string, active: NonNullable<CheckpointHead["active"]>
   emitSessionLive(sessionId, { type: "context_compaction_state", state, message });
 }
 
-export function persistCompactedContextUsage(
-  sessionId: string,
-  stepId: string,
-  compressedTokens: number,
-  limit: number,
-): ContextUsageSnapshot | null {
-  try {
-    const session = agentRuntimeStore.getSession(sessionId);
-    const previous = readContextUsage(session.sessionMetadata?.contextUsage);
-    const snapshot = compactedContextUsageSnapshot(previous, compressedTokens, stepId, limit);
-    if (!snapshot) return null;
-    agentRuntimeStore.updateSessionMetadata(sessionId, { contextUsage: snapshot });
-    return snapshot;
-  } catch (error) {
-    logger.warn({ sessionId, error: String(error) }, "Post-compaction context usage persistence skipped");
-    return null;
-  }
-}
-
 export async function runSessionCheckpoint(input: {
   sessionId: string;
   projectId: string;
@@ -119,7 +98,6 @@ export async function runSessionCheckpoint(input: {
    * complete next request, including required context and native media. */
   validate(checkpoint: ContextCheckpoint): Promise<boolean> | boolean;
   /** Called after the durable commit to persist derived UI usage metadata. */
-  onCommitted?: (checkpoint: ContextCheckpoint) => Promise<ContextUsageSnapshot | null> | ContextUsageSnapshot | null;
 }): Promise<ContextCheckpoint | null> {
   const timeout = AbortSignal.timeout(300_000);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
@@ -201,11 +179,9 @@ export async function runSessionCheckpoint(input: {
     signal.throwIfAborted();
     await commandWithRetry(input.sessionId, "context_commit", { checkpoint, ...authority }, `commit:${runId}`);
     committed = true;
-    const contextUsage = await input.onCommitted?.(checkpoint);
     notify(input.sessionId, active, "completed", {
       compacted: true,
       checkpointId: checkpoint.id,
-      ...(contextUsage ? { contextUsage } : {}),
     });
     return checkpoint;
   } catch (error) {

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { externalCommandEnvironment } from "../runtime/command-environment.js";
 
 export interface WslDistribution {
   name: string;
@@ -123,31 +124,31 @@ export async function assertWslDistribution(
 }
 
 const WSL_ENV_BLOCKED = new Set(["PATH", "HOME", "SHELL", "COMSPEC"]);
-const WSL_ENV_INTERNAL = new Set([
-  "AGENT_SESSION_INIT",
-  "SYNAX_AGENT_SESSION_CHILD",
-  "SYNAX_RUNTIME_HOST_ID",
-  "SYNAX_RUNTIME_DATA_ROOT",
-]);
 
 /** Keep the Windows launcher environment, but forward only explicit overrides through WSLENV. */
 export function wslLauncherEnvironment(
   overrides?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env = externalCommandEnvironment();
+  const cleanOverrides = externalCommandEnvironment(overrides, false);
   const forwarded: string[] = [];
-  for (const [key, value] of Object.entries(overrides ?? {})) {
+  for (const [key, value] of Object.entries(cleanOverrides)) {
     if (
       value === undefined ||
-      WSL_ENV_BLOCKED.has(key.toUpperCase()) ||
-      WSL_ENV_INTERNAL.has(key)
+      WSL_ENV_BLOCKED.has(key.toUpperCase())
     )
       continue;
     if (process.env[key] === value) continue;
     env[key] = value;
     forwarded.push(key);
   }
-  const existing = (process.env.WSLENV ?? "").split(":").filter(Boolean);
+  const existing = (process.env.WSLENV ?? "").split(":").filter(
+    entry => {
+      const key = entry.split("/")[0];
+      return key && !key.startsWith("SYNAX_RUNTIME_") &&
+        (!(key in process.env) || env[key] !== undefined);
+    },
+  );
   env.WSLENV = [...new Set([...existing, ...forwarded])].join(":");
   return env;
 }

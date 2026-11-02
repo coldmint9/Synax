@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /**
  * Tool subprocesses run with a per-session HOME so caches stay out of the
- * repository without exposing the real user HOME.
+ * repository. Installed Rust toolchains use explicit environment paths below.
  *
  * That directory name has to stay short. On macOS a unix socket path is capped
  * at 104 bytes (`sun_path`) and the Cua driver binds its daemon socket at
@@ -49,4 +51,22 @@ export async function sessionHomeDir(
   const directory = path.join(dataRoot, "agent-home", sessionHomeName(sessionId));
   await mkdir(directory, { recursive: true, mode: 0o700 });
   return directory;
+}
+
+/** Keep installed Rust toolchains and dependency caches stable when assigning
+ * the session HOME. Explicit project/toolchain overrides always take priority. */
+export function sessionCommandEnvironment(
+  home: string,
+  inherited: NodeJS.ProcessEnv = process.env,
+  hostToolchains = true,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...inherited, HOME: home };
+  // A WSL command resolves its toolchains inside Linux, not in the Windows home.
+  if (!hostToolchains) return env;
+  const originalHome = inherited.HOME || os.homedir();
+  for (const [key, directory] of [["CARGO_HOME", ".cargo"], ["RUSTUP_HOME", ".rustup"]]) {
+    const candidate = path.join(originalHome, directory);
+    if (!env[key] && existsSync(candidate)) env[key] = candidate;
+  }
+  return env;
 }

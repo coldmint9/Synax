@@ -20,6 +20,7 @@ import type { AgentRuntimeStore } from "./session-store.js";
 import { makeRuntimeId } from "./runtime-ids.js";
 import { subagentContextMessage } from "./subagent-context.js";
 import { conversationGitContextMessage } from "./conversation-git/context.js";
+import type { PatchDiagnostic } from "./tools/patch-diagnostics.js";
 
 const MAX_TOOL_OUTPUT_TEXT = 4_000;
 const MAX_TOOL_OUTPUT_JSON = 4_000;
@@ -663,6 +664,16 @@ function toToolResultOutput(
   record: ToolCallRecord,
   savedReceipt?: unknown,
 ): ToolResultOutput {
+  // The patch producer bounds this JSON. Keep recovery and suggestedRead intact,
+  // ahead of generic/saved excerpts (which can lose the actionable tail).
+  const patchDiagnostic = record.outputRef as Partial<PatchDiagnostic> | null;
+  if (
+    record.toolId === "file.patch" && record.status === "failed" &&
+    patchDiagnostic?.error === true && patchDiagnostic.applied === false &&
+    typeof patchDiagnostic.code === "string" && patchDiagnostic.code.startsWith("PATCH_") &&
+    typeof patchDiagnostic.recovery === "string"
+  ) return { type: "error-text", value: JSON.stringify(record.outputRef) };
+
   // Skills are instructions, not disposable read output. Truncating a successful
   // load silently loses requirements and forces the model to load it again.
   if (record.toolId === "skill.load" && record.status === "completed" && record.outputRef != null) {

@@ -23,13 +23,26 @@ export class AgentNotFoundError extends AgentRuntimeError {
 /** A model can request a stale or invented tool name. This is a tool result,
  * not evidence that its session (or any durable runtime resource) was lost. */
 export class AgentToolNotFoundError extends AgentRuntimeError {
-  constructor(public readonly toolId: string) {
-    super(
-      `Tool not found: ${toolId}. Use the exact names and argument schemas from the current tool definitions.`,
-      'TOOL_NOT_FOUND',
-      422,
-    );
+  constructor(
+    public readonly toolId: string,
+    public readonly suggestions: readonly string[] = [],
+  ) {
+    super(toolNotFoundMessage(toolId, suggestions), 'TOOL_NOT_FOUND', 422);
   }
+}
+
+/** Name the tools that do exist, so the model corrects the call instead of
+ *  guessing another name and burning a round trip on every attempt. */
+function toolNotFoundMessage(
+  toolId: string,
+  suggestions: readonly string[],
+): string {
+  const name = toolId.trim() || "(missing name)";
+  if (suggestions.length === 1)
+    return `Tool not found: ${name}. Did you mean ${suggestions[0]}? Call ${suggestions[0]} with its exact argument schema.`;
+  if (suggestions.length > 1)
+    return `Tool not found: ${name}. Closest available tools: ${suggestions.join(", ")}. Use one of these exact names.`;
+  return `Tool not found: ${name}. Use the exact names and argument schemas from the current tool definitions.`;
 }
 
 export function isToolResolutionError(error: unknown): error is AgentToolNotFoundError | AgentPermissionError {

@@ -59,10 +59,16 @@ export function useTranscriptScroll(
     if (!element || !sessionId || !ready) return;
     const content = element.firstElementChild;
     const previous = positions.get(sessionId);
-    const firstId = useAgentSessionStore.getState().sessionDetailCache[sessionId]?.messages[0]?.id;
+    let firstId = useAgentSessionStore.getState().sessionDetailCache[sessionId]?.messages[0]?.id;
     const saved = previous?.firstId === firstId ? previous : undefined;
     pinnedRef.current = saved?.pinned ?? true;
     readingRef.current = saved?.reading ?? false;
+    // Prefills change the window's first row during this visit. Remember the
+    // last visible window, not the one from mount (or a switch-away eviction).
+    const unsubscribe = useAgentSessionStore.subscribe(state => {
+      if (state.selectedSessionId === sessionId)
+        firstId = state.sessionDetailCache[sessionId]?.messages[0]?.id;
+    });
     let manualUntil = 0;
     let pointerDown = false;
     let lastHeight = element.scrollHeight;
@@ -159,6 +165,7 @@ export function useTranscriptScroll(
       observer.observe(element);
     }
     return () => {
+      unsubscribe();
       positions.delete(sessionId);
       positions.set(sessionId, {
         top: lastTopRef.current,

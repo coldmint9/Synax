@@ -1,3 +1,4 @@
+import { requireLegacyUpdateSource } from "../updater/update-source.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -39,74 +40,7 @@ export async function findDesktopRelease(
   platform: DesktopPlatform,
   arch: DesktopArch,
 ): Promise<DesktopRelease | null> {
-  if (!VERSION.test(current)) return null;
-  const releases: Release[] = [];
-  for (let page = 1; page <= 5; page++) {
-    const batch = JSON.parse(
-      (
-        await fetchLimited(
-          `https://api.github.com/repos/coldmint9/Synax/releases?per_page=100&page=${page}`,
-          5_000_000,
-        )
-      ).toString("utf8"),
-    );
-    if (!Array.isArray(batch))
-      throw new Error("Invalid GitHub release listing");
-    releases.push(...batch);
-    if (batch.length < 100) break;
-  }
-  const candidates = releases.filter(
-    (release) =>
-      !release.draft &&
-      !release.prerelease &&
-      typeof release.tag_name === "string" &&
-      release.tag_name.startsWith("v") &&
-      VERSION.test(release.tag_name.slice(1)) &&
-      compareVersions(release.tag_name.slice(1), current) > 0,
-  );
-  candidates.sort((a, b) =>
-    compareVersions(b.tag_name.slice(1), a.tag_name.slice(1)),
-  );
-  const newestEmptyCandidate =
-    candidates[0] && candidates[0].assets?.length === 0
-      ? candidates[0].tag_name.slice(1)
-      : null;
-  for (const release of candidates) {
-    const asset = release.assets?.find(
-      (item) => item.name === desktopManifestName(platform, arch),
-    );
-    // Older releases and platforms still being built have no update manifest.
-    if (!asset) continue;
-    const manifest = validateDesktopManifest(
-      JSON.parse(
-        (await fetchLimited(asset.browser_download_url, 100_000)).toString(
-          "utf8",
-        ),
-      ),
-    );
-    if (
-      manifest.version !== release.tag_name.slice(1) ||
-      manifest.platform !== platform ||
-      manifest.arch !== arch
-    )
-      throw new Error("Desktop update does not match its release or platform");
-    verifyDesktopManifestSignature(manifest);
-    const artifact = release.assets.find(
-      (item) => item.name === desktopUpdateArtifact(manifest).name,
-    );
-    if (artifact)
-      return {
-        manifest,
-        url: artifact.browser_download_url,
-        notes:
-          typeof release.body === "string" ? release.body.slice(0, 20_000) : "",
-      };
-  }
-  if (newestEmptyCandidate) {
-    throw new Error(
-      `Synax ${newestEmptyCandidate} has been published, but no downloadable ${platform}/${arch} update is available yet`,
-    );
-  }
+  requireLegacyUpdateSource();
   return null;
 }
 
@@ -120,6 +54,7 @@ export async function downloadDesktopRelease(
     onTransfer?: (transfer: DesktopTransfer) => void;
   },
 ): Promise<string> {
+  requireLegacyUpdateSource();
   const artifact = desktopUpdateArtifact(
     validateDesktopManifest(release.manifest),
   );

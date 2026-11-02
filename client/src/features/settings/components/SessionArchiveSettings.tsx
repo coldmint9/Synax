@@ -162,6 +162,7 @@ export function SessionArchiveSettings({
 
       <SettingsCard
         title={zh ? "自动清理" : "Automatic cleanup"}
+        descriptionMode="inline"
         description={
           zh
             ? "归档达到保留期限后将被彻底删除。"
@@ -199,6 +200,7 @@ export function SessionArchiveSettings({
               <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  aria-label={zh ? "保留天数" : "Retention days"}
                   className="settings-input w-24"
                   min={1}
                   max={3650}

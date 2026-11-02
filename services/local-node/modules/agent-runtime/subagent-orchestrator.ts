@@ -11,11 +11,19 @@ import { logger } from "../../infrastructure/runtime/logger.js";
 import { runtimeFacade } from "./sidecar/runtime-facade.js";
 import { outsideExecutionContext } from "../../infrastructure/runtime/execution-context.js";
 import { subagentCompletionBroker, subagentBlocksParent, listOwnedSubagentSessions } from "./subagent-control-broker.js";
+import { withDeadline } from "./managed-process.js";
+import { readSubagentProgressFacts, type SubagentProgressFacts } from "./subagent-progress-facts.js";
 /** A child is governed by execution progress, not a total wall-clock budget. */
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 5_000;
 export const SUBAGENT_LEASE_DURATION_MS = 30_000;
 /** Allow slow reasoning/tools, but never renew progress with a timer. */
 export const SUBAGENT_PROGRESS_TIMEOUT_MS = 10 * 60_000;
+/**
+ * A child's shutdown is evidence, never a prerequisite for the parent's result.
+ * Every stop/idle/hydrate wait is bounded so an unconfirmed stop can only cost
+ * this budget instead of parking the delegating tool call (and its run) forever.
+ */
+export const SUBAGENT_SHUTDOWN_TIMEOUT_MS = 30_000;
 /** Compatibility value for callers that still pass the old option. */
 export const DEFAULT_PER_CHILD_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
@@ -49,6 +57,11 @@ export function getSubagentLiveness(
     return "completed";
   if (metadata?.state === "waiting" || metadata?.phase === "waiting")
     return "waiting";
+  // The supervisor settles a child before its session row converges: a stop
+  // that is still unconfirmed keeps the row non-terminal behind a fence. A
+  // settled task is finished work from the parent's point of view.
+  if (["completed", "failed", "cancelled", "interrupted"].includes(metadata?.state ?? ""))
+    return "completed";
   const progress = metadata?.lastProgressAt ? Date.parse(metadata.lastProgressAt) : NaN;
   if (Number.isFinite(progress) && now - progress >= SUBAGENT_PROGRESS_TIMEOUT_MS)
     return "stale";
@@ -79,6 +92,12 @@ export interface SubagentResult {
   status: SubagentBatchStatus;
   summary: string | null;
   error: string | null;
+  /**
+   * Persisted facts about what the child already did. Present for every
+   * non-completed outcome so the delegating agent can continue instead of
+   * re-doing work, and absent on success where the summary is the result.
+   */
+  facts?: SubagentProgressFacts | null;
 }
 
 export interface RunBatchOptions {
@@ -151,8 +170,51 @@ const UNRESOLVABLE_CHILD_STATUSES = new Set([
   "interrupted",
 ]);
 
+/**
+ * Record the supervisor's settlement. This, not the session row, is the
+ * parent's authority: once it is written the child no longer blocks parent
+ * acceptance, even when its own row still trails behind an unconfirmed stop.
+ */
+function recordSubagentSettlement(
+  childSessionId: string,
+  state: "completed" | "waiting" | "failed",
+  deps: Pick<OrchestratorDeps, "store">,
+  lastProgressAt = Date.now(),
+): void {
+  let previous: Record<string, unknown> = {};
+  try {
+    previous =
+      (deps.store.tryGetSession(childSessionId)?.sessionMetadata?.subagentTask as
+        | Record<string, unknown>
+        | undefined) ?? {};
+  } catch {
+    /* store unavailable — still publish what the supervisor observed */
+  }
+  try {
+    deps.store.updateSessionMetadata?.(childSessionId, {
+      subagentTask: {
+        ...previous,
+        state,
+        phase: state,
+        lastHeartbeatAt: nowIso(),
+        lastProgressAt: new Date(lastProgressAt).toISOString(),
+        completedAt: nowIso(),
+      },
+    });
+  } catch (err) {
+    logger.warn(
+      { childSessionId, state, err },
+      "[subagent-orchestrator] failed to record child settlement",
+    );
+  }
+}
+
 /** Finalize a child that ended in a non-terminal, non-waiting status. Waiting
- *  children (permission/form) stay untouched — the user can still answer them. */
+ *  children (permission/form) stay untouched — the user can still answer them.
+ *
+ *  A pending stop fence is not a reason to leave the child pending: the fence
+ *  keeps admission safe while the (possibly never-confirmed) stop is retried, so
+ *  the row can become terminal for the parent without reopening execution. */
 function reapUnresolvableChild(
   childSessionId: string,
   timedOut: boolean,
@@ -167,17 +229,20 @@ function reapUnresolvableChild(
     /* store unavailable — leave the child as-is */
   }
   if (!child || !UNRESOLVABLE_CHILD_STATUSES.has(child.status)) return;
-  if (child.sessionMetadata?.runtimeControl) return;
+  const fenced = Boolean(child.sessionMetadata?.runtimeControl);
   const reason = failureReason ?? (timedOut
     ? `Subagent timed out after ${timeoutMs}ms.`
     : `Subagent ended as ${child.status} without a terminal result.`);
+  const completedAt = nowIso();
   try {
     deps.store.updateSession(childSessionId, {
       status: "failed",
-      updatedAt: nowIso(),
+      updatedAt: completedAt,
       blockedReason: reason,
-      activeRunId: null,
-      completedAt: nowIso(),
+      // Ownership of a fenced stop stays with its recovery path; the parent only
+      // needs the child to stop counting as in-flight.
+      ...(fenced ? {} : { activeRunId: null }),
+      completedAt,
     });
   } catch (err) {
     logger.warn(
@@ -185,6 +250,7 @@ function reapUnresolvableChild(
       "[subagent-orchestrator] failed to finalize child",
     );
   }
+  recordSubagentSettlement(childSessionId, "failed", deps);
 }
 
 /** Wait without spending model turns. Expired persisted leases have no live owner. */
@@ -256,6 +322,23 @@ export function runChildToCompletion(
   return outsideExecutionContext(() => executeChildToCompletion(childSessionId, spec, opts, deps));
 }
 
+/** Await bounded shutdown work. A stop that cannot prove itself is reported,
+ *  never rethrown: it must not replace the child's terminal result. */
+async function settleWithin(work: Promise<unknown>, label: string): Promise<void> {
+  try {
+    await withDeadline(
+      work,
+      SUBAGENT_SHUTDOWN_TIMEOUT_MS,
+      `Subagent shutdown did not settle within ${SUBAGENT_SHUTDOWN_TIMEOUT_MS}ms (${label}).`,
+    );
+  } catch (err) {
+    logger.warn(
+      { label, err },
+      "[subagent-orchestrator] child shutdown was not confirmed; settlement continues",
+    );
+  }
+}
+
 async function executeChildToCompletion(
   childSessionId: string,
   spec: SubagentSpec,
@@ -267,8 +350,21 @@ async function executeChildToCompletion(
     !existing ||
     existing.sessionMetadata?.runtimeControl ||
     existing.sessionMetadata?.manualStop
-  )
+  ) {
+    // A child that a stop already owns can never be driven here, so leaving its
+    // row `running` would register it as pending work forever. Settle what the
+    // supervisor can never resolve; the stop fence stays intact for admission.
+    // A user stop (manualStop) is left to its own cleanup path.
+    if (existing?.sessionMetadata?.runtimeControl)
+      reapUnresolvableChild(
+        childSessionId,
+        false,
+        0,
+        deps,
+        existing.blockedReason ?? "Subagent was already stopping when supervision began.",
+      );
     return mapChildToResult(childSessionId, spec, false, deps);
+  }
   const controller = new AbortController();
   const startedAt = nowIso();
   let lastProgressAt = Date.now();
@@ -360,12 +456,27 @@ async function executeChildToCompletion(
         controller.abort(error);
         throw error;
       } finally {
+        // A child that cannot be stopped is still a failed child. Each wait is
+        // bounded: an unconfirmed stop must cost this budget, never the parent's
+        // tool call (which would park the parent's run with no progress).
+        const stopReason = controller.signal.reason instanceof Error
+          ? controller.signal.reason.message
+          : "Subagent aborted.";
         if (controller.signal.aborted)
-          await runCoordinator.interrupt(childSessionId,
-            controller.signal.reason instanceof Error ? controller.signal.reason.message : "Subagent aborted.");
-        // Do not return/release the writer until its actual executor stops.
-        await runCoordinator.waitForSessionIdle(childSessionId);
-        await deps.store.hydrateSession(childSessionId, true);
+          await settleWithin(
+            runCoordinator.interrupt(childSessionId, stopReason),
+            `stop ${childSessionId}`,
+          );
+        // Do not return/release the writer before its actual executor stops,
+        // but never wait for that confirmation without a deadline.
+        await settleWithin(
+          runCoordinator.waitForSessionIdle(childSessionId),
+          `idle ${childSessionId}`,
+        );
+        await settleWithin(
+          deps.store.hydrateSession(childSessionId, true),
+          `hydrate ${childSessionId}`,
+        );
       }
     }
     lastProgressAt = Date.now();
@@ -390,15 +501,7 @@ async function executeChildToCompletion(
       : ["waiting_permission", "waiting_input", "paused"].includes(finalChild?.status ?? "")
         ? "waiting"
         : "failed";
-    deps.store.updateSessionMetadata?.(childSessionId, {
-      subagentTask: {
-        state: finalState,
-        phase: finalState,
-        lastHeartbeatAt: nowIso(),
-        lastProgressAt: new Date(lastProgressAt).toISOString(),
-        completedAt: nowIso(),
-      },
-    });
+    recordSubagentSettlement(childSessionId, finalState, deps, lastProgressAt);
   }
 
   return mapChildToResult(childSessionId, spec, timedOut, deps);
@@ -422,6 +525,7 @@ function mapChildToResult(
   }
   const summary = child.resultSummary ?? null;
   const latestRun = deps.store.listRuns(childSessionId)[0];
+  const facts = () => readSubagentProgressFacts(childSessionId, deps.store);
   if (timedOut && child.status !== "completed") {
     return {
       spec,
@@ -429,6 +533,7 @@ function mapChildToResult(
       status: "timeout",
       summary,
       error: child.blockedReason ?? "Timed out.",
+      facts: facts(),
     };
   }
   if (child.status === "completed") {
@@ -439,6 +544,7 @@ function mapChildToResult(
         status: "blocked",
         summary,
         error: child.blockedReason ?? latestRun.stopReason ?? "Blocked.",
+        facts: facts(),
       };
     }
     return { spec, childSessionId, status: "completed", summary, error: null };
@@ -449,6 +555,7 @@ function mapChildToResult(
     status: "failed",
     summary,
     error: child.blockedReason ?? `Ended as ${child.status}.`,
+    facts: facts(),
   };
 }
 

@@ -55,10 +55,19 @@ impl ContextCheckpoint {
         let valid_id = |s: &str| !s.is_empty() && s.len() <= MAX_ID_BYTES;
         if self.version != 1
             || self.through_revision > MAX_SAFE_REVISION
-            || ![&self.id, &self.session_id, &self.compaction_run_id, &self.through_step_id]
-                .iter().all(|id| valid_id(id))
+            || ![
+                &self.id,
+                &self.session_id,
+                &self.compaction_run_id,
+                &self.through_step_id,
+            ]
+            .iter()
+            .all(|id| valid_id(id))
             || self.source_fingerprint.len() != 64
-            || !self.source_fingerprint.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !self
+                .source_fingerprint
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             || chrono::DateTime::parse_from_rfc3339(&self.created_at).is_err()
         {
             return Err("invalid_checkpoint");
@@ -70,14 +79,26 @@ impl ContextCheckpoint {
             return Err("invalid_checkpoint_refs");
         }
         let s = &self.summary;
-        for entries in [&s.goal, &s.constraints, &s.decisions, &s.completed_work,
-            &s.evidence, &s.failures, &s.open_questions, &s.next_actions]
-        {
-            if entries.len() > 128 || entries.iter().any(|text| text.is_empty() || text.encode_utf16().count() > 16_384) {
+        for entries in [
+            &s.goal,
+            &s.constraints,
+            &s.decisions,
+            &s.completed_work,
+            &s.evidence,
+            &s.failures,
+            &s.open_questions,
+            &s.next_actions,
+        ] {
+            if entries.len() > 128
+                || entries
+                    .iter()
+                    .any(|text| text.is_empty() || text.encode_utf16().count() > 16_384)
+            {
                 return Err("invalid_checkpoint_summary");
             }
         }
-        let text = serde_json::to_string(&self.summary).map_err(|_| "invalid_checkpoint_summary")?;
+        let text =
+            serde_json::to_string(&self.summary).map_err(|_| "invalid_checkpoint_summary")?;
         if crate::llm::tokenizer::tokens(&text) > summary_budget {
             return Err("checkpoint_summary_exceeds_budget");
         }
@@ -115,8 +136,11 @@ mod tests {
 
     #[test]
     fn rejects_unbounded_or_duplicate_references() {
-        for refs in [json!(["step-10", "step-10"]), json!(["文".repeat(86)]),
-            json!((0..65).map(|n| format!("step-{n}")).collect::<Vec<_>>())] {
+        for refs in [
+            json!(["step-10", "step-10"]),
+            json!(["文".repeat(86)]),
+            json!((0..65).map(|n| format!("step-{n}")).collect::<Vec<_>>()),
+        ] {
             let mut value = fixture();
             value["sourceRefs"] = refs;
             assert_eq!(parse(&value), Err("invalid_checkpoint_refs"));
@@ -125,9 +149,18 @@ mod tests {
 
     #[test]
     fn encoded_and_token_limits_are_independent() {
-        assert_eq!(ContextCheckpoint::parse(&vec![b' '; MAX_CHECKPOINT_BYTES + 1], 100), Err("checkpoint_too_large"));
-        assert_eq!(ContextCheckpoint::parse(&serde_json::to_vec(&fixture()).unwrap(), 1), Err("checkpoint_summary_exceeds_budget"));
-        assert_eq!(ContextCheckpoint::parse(b"{}", 0), Err("invalid_checkpoint_budget"));
+        assert_eq!(
+            ContextCheckpoint::parse(&vec![b' '; MAX_CHECKPOINT_BYTES + 1], 100),
+            Err("checkpoint_too_large")
+        );
+        assert_eq!(
+            ContextCheckpoint::parse(&serde_json::to_vec(&fixture()).unwrap(), 1),
+            Err("checkpoint_summary_exceeds_budget")
+        );
+        assert_eq!(
+            ContextCheckpoint::parse(b"{}", 0),
+            Err("invalid_checkpoint_budget")
+        );
     }
 
     #[test]

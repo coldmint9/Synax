@@ -11,7 +11,10 @@ export function readSynaxSessionMode(
   metadata: Record<string, unknown> | null | undefined,
 ): SynaxSessionMode {
   const mode = metadata?.mode;
-  return mode === "plan" || mode === "goal" || mode === "plan_node"
+  return mode === "plan" ||
+    mode === "goal" ||
+    mode === "plan_node" ||
+    mode === "super"
     ? mode
     : "chat";
 }

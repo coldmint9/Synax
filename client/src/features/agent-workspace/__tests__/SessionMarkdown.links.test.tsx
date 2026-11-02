@@ -1,9 +1,22 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SessionMarkdown } from "../SessionMarkdown";
 import { TranscriptSessionProvider } from "../SessionTranscriptContext";
 import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
+import { useNotificationStore } from "../../../shared/state/notificationStore";
 import { parseFileLink, type FileLinkRoot } from "../fileLink";
+
+const entry = vi.hoisted(() => vi.fn());
+vi.mock("../../../adapters/transport/agentRuntime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../adapters/transport/agentRuntime")>();
+  return {
+    ...actual,
+    agentRuntimeApi: {
+      ...actual.agentRuntimeApi,
+      sessionEnvironmentFileEntry: entry,
+    },
+  };
+});
 
 function renderMarkdown(
   content: string,
@@ -26,11 +39,18 @@ function activeTabs(sessionId: string) {
 describe("SessionMarkdown file links", () => {
   beforeEach(() => {
     useSessionWorkspaceStore.setState({ sessions: {} });
+    useNotificationStore.setState({ notifications: [] });
+    entry.mockReset().mockImplementation(async (_sessionId: string, path: string) => ({
+      sessionId: "session-1",
+      path,
+      exists: true,
+      isFile: true,
+    }));
   });
 
   afterEach(cleanup);
 
-  it("opens the file viewer for a workspace path instead of navigating away", () => {
+  it("opens the file viewer for a workspace path instead of navigating away", async () => {
     const { container } = renderMarkdown(
       "见 [web/src/index.css](web/src/index.css)。",
     );
@@ -43,23 +63,28 @@ describe("SessionMarkdown file links", () => {
     fireEvent(link, event);
 
     expect(event.defaultPrevented).toBe(true);
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({
-        kind: "file",
-        path: "web/src/index.css",
-        line: null,
-      }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({
+          kind: "file",
+          path: "web/src/index.css",
+          line: null,
+        }),
+      ]),
+    );
+    expect(entry).toHaveBeenCalledWith("session-1", "web/src/index.css", undefined);
   });
 
-  it("carries a line anchor from the link into the opened tab", () => {
+  it("carries a line anchor from the link into the opened tab", async () => {
     renderMarkdown("[a.ts](src/a.ts#L42)");
 
     fireEvent.click(screen.getByRole("link", { name: "a.ts" }));
 
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({ kind: "file", path: "src/a.ts", line: 42 }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({ kind: "file", path: "src/a.ts", line: 42 }),
+      ]),
+    );
   });
 
   it("leaves ordinary URLs on their default anchor behaviour", () => {
@@ -72,52 +97,99 @@ describe("SessionMarkdown file links", () => {
     expect(event.defaultPrevented).toBe(false);
     expect(link.getAttribute("href")).toBe("https://example.com/guide");
     expect(activeTabs("session-1")).toEqual([]);
+    expect(useNotificationStore.getState().notifications).toEqual([]);
+  });
+
+  it("reports a missing target instead of opening a viewer for it", async () => {
+    entry.mockImplementation(async (_sessionId: string, path: string) => ({
+      sessionId: "session-1",
+      path,
+      exists: false,
+      isFile: false,
+    }));
+    renderMarkdown("见 [缺失文档](./missing.md)。");
+
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    fireEvent(screen.getByRole("link", { name: "缺失文档" }), event);
+
+    expect(event.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications).toEqual([
+        expect.objectContaining({ type: "error", message: "文件不存在：missing.md" }),
+      ]),
+    );
+    expect(activeTabs("session-1")).toEqual([]);
+  });
+
+  it("reports a directory instead of opening a viewer for it", async () => {
+    entry.mockImplementation(async (_sessionId: string, path: string) => ({
+      sessionId: "session-1",
+      path,
+      exists: true,
+      isFile: false,
+    }));
+    renderMarkdown("[docs](docs/index.md)");
+
+    fireEvent.click(screen.getByRole("link", { name: "docs" }));
+
+    await waitFor(() =>
+      expect(useNotificationStore.getState().notifications).toEqual([
+        expect.objectContaining({ message: "无法预览文件夹：docs/index.md" }),
+      ]),
+    );
+    expect(activeTabs("session-1")).toEqual([]);
   });
 
   it.each([
     "[index.page.tsx:237](index.page.tsx:237)",
     "[`index.page.tsx:237`](index.page.tsx:237)",
     "[代码位置](index.page.tsx:237:8)",
-  ])("opens a bare filename with a line suffix: %s", (content) => {
+  ])("opens a bare filename with a line suffix: %s", async (content) => {
     renderMarkdown(content);
     const link = screen.getByRole("link");
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     fireEvent(link, event);
     expect(event.defaultPrevented).toBe(true);
     expect(link.getAttribute("target")).toBeNull();
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({ path: "index.page.tsx", line: 237 }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({ path: "index.page.tsx", line: 237 }),
+      ]),
+    );
   });
 
   it.each([
     "/repo/frontend/src/index.page.tsx:237",
     "file:///repo/frontend/src/index.page.tsx#L237",
-  ])("opens an absolute reference-project link in its owning root: %s", (href) => {
+  ])("opens an absolute reference-project link in its owning root: %s", async (href) => {
     renderMarkdown(`[代码位置](${href})`, "session-1", "/repo/backend", [
       { rootId: "frontend", name: "frontend", workspacePath: "/repo/frontend" },
     ]);
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     fireEvent(screen.getByRole("link"), event);
     expect(event.defaultPrevented).toBe(true);
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({ path: "src/index.page.tsx", line: 237, rootId: "frontend" }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({ path: "src/index.page.tsx", line: 237, rootId: "frontend" }),
+      ]),
+    );
   });
 
-  it("preserves the full file URI rather than falling back to its basename label", () => {
+  it("preserves the full file URI rather than falling back to its basename label", async () => {
     renderMarkdown("[index.page.tsx:237](file:///repo/src/index.page.tsx#L237)", "session-1", "/repo");
     fireEvent.click(screen.getByRole("link"));
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({ path: "src/index.page.tsx", line: 237 }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({ path: "src/index.page.tsx", line: 237 }),
+      ]),
+    );
   });
 
   it.each([
     "../settlement/src/main/resources/mapper/RonghanSettlementMapper.xml:167",
     "../settlement/src/main/resources/mapper/RonghanSettlementMapper.xml#L167",
     "..%2Fsettlement%2Fsrc%2Fmain%2Fresources%2Fmapper%2FRonghanSettlementMapper.xml:167",
-  ])("opens a sibling project's relative link without losing its directory: %s", (href) => {
+  ])("opens a sibling project's relative link without losing its directory: %s", async (href) => {
     renderMarkdown(`[RonghanSettlementMapper.xml:167](${href})`, "session-1", "/repo/backend", [
       { rootId: "backend", name: "Backend", workspacePath: "/repo/backend" },
       { rootId: "settlement", name: "Settlement", workspacePath: "/repo/settlement" },
@@ -127,13 +199,15 @@ describe("SessionMarkdown file links", () => {
     fireEvent.click(link);
 
     expect(link).toHaveAttribute("title", "src/main/resources/mapper/RonghanSettlementMapper.xml:167");
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({
-        path: "src/main/resources/mapper/RonghanSettlementMapper.xml",
-        line: 167,
-        rootId: "settlement",
-      }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({
+          path: "src/main/resources/mapper/RonghanSettlementMapper.xml",
+          line: 167,
+          rootId: "settlement",
+        }),
+      ]),
+    );
   });
 
   it.each(["../outside/a.ts:12", "file:///outside/a.ts#L12", "javascript:alert(1)"])(
@@ -146,7 +220,7 @@ describe("SessionMarkdown file links", () => {
     },
   );
 
-  it("resolves the original destination when the session roots finish loading", () => {
+  it("resolves the original destination when the session roots finish loading", async () => {
     const content = "[a.ts:12](../frontend/src/a.ts#L12)";
     const { container, rerender } = renderMarkdown(content);
     expect(container.querySelector("[data-transcript-file-link]")).toBeNull();
@@ -159,9 +233,11 @@ describe("SessionMarkdown file links", () => {
       </TranscriptSessionProvider>,
     );
     fireEvent.click(screen.getByRole("link"));
-    expect(activeTabs("session-1")).toEqual([
-      expect.objectContaining({ path: "src/a.ts", line: 12, rootId: "frontend" }),
-    ]);
+    await waitFor(() =>
+      expect(activeTabs("session-1")).toEqual([
+        expect.objectContaining({ path: "src/a.ts", line: 12, rootId: "frontend" }),
+      ]),
+    );
   });
 
   it("renders a file link without opening anything when there is no session scope", () => {

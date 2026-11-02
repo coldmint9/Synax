@@ -33,6 +33,19 @@ describe('loop AI tool adapter', () => {
     expect(toolSet.resolveModelToolName('file.read')).toBe('file_read');
     expect(toolSet.tools).toHaveProperty('file_read');
   });
+
+  it('resolves the spellings a provider or model returns for an exposed name', () => {
+    const definition = (id: string) => ({ id, label: id, description: id,
+      category: 'read' as const, mutability: 'read' as const, resumeBehavior: 'none' as const,
+      inputSchema: z.object({}) });
+    const toolSet = buildLoopToolSet([definition('file.read'), definition('file.write')],
+      undefined, { stableNames: true });
+    expect(toolSet.activeTools).toEqual(['file_read', 'file_write']);
+    expect(toolSet.resolveToolId('file_write')).toBe('file.write');
+    expect(toolSet.resolveToolId('file_write__0123456789abcdef')).toBe('file.write');
+    expect(toolSet.resolveToolId('write')).toBe('file.write');
+    expect(toolSet.resolveToolId('unknown.tool')).toBeNull();
+  });
 });
 
 it('shares converted schemas across accounting and steps while preserving validation and updates', async () => {

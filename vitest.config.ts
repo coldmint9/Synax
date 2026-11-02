@@ -1,4 +1,7 @@
 import { configDefaults, defineConfig } from "vitest/config";
+import { prepareTestProcessEnvironment } from "./services/test-fixtures/environment.js";
+
+prepareTestProcessEnvironment();
 
 export default defineConfig({
   test: {
@@ -11,7 +14,9 @@ export default defineConfig({
       "scripts/**/*.test.ts",
     ],
     fileParallelism: false,
+    setupFiles: ["./services/test-fixtures/setup.ts"],
     env: {
+      NODE_ENV: "test",
       SYNAX_AGENT_SESSION_IN_PROCESS: "1",
       // Most fixtures explicitly opt into v3 history; keep ordinary fixture
       // sessions legacy so tests do not inherit production auto-native state.

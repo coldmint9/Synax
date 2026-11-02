@@ -18,6 +18,7 @@ export function useElectronMenu() {
   const location = useLocation();
   const projects = useShellStore((s) => s.projects);
   const currentProjectId = useShellStore((s) => s.currentProjectId);
+  const locale = useShellStore((s) => s.preferences.locale);
   const theme = useThemeStore((s) => s.resolvedTheme);
   const selectedSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const workspace = useSessionWorkspace(selectedSessionId);
@@ -41,8 +42,10 @@ export function useElectronMenu() {
         case "session:new":
           if (projectId) navigate(newSessionPath(projectId));
           break;
+        case "search:sessions":
+          document.dispatchEvent(new CustomEvent("menu:search-sessions"));
+          break;
         case "view:conversation":
-        case "view:sessions":
           if (sessionId)
             useSessionWorkspaceStore.getState().showDashboard(sessionId);
           if (projectId) navigate(resolveSessionsEntryPath(projectId));
@@ -74,6 +77,14 @@ export function useElectronMenu() {
       hasViewer: inWork && Boolean(workspace.activeTabId),
       inWork,
       dark: theme === "dark",
+      locale,
     });
-  }, [projectId, selectedSessionId, workspace.activeTabId, inWork, theme]);
+  }, [
+    projectId,
+    selectedSessionId,
+    workspace.activeTabId,
+    inWork,
+    theme,
+    locale,
+  ]);
 }

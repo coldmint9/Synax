@@ -15,20 +15,22 @@
     <script>
       // Resolve appearance before the stylesheet paints; preserve explicit choices.
       try {
-        const saved = JSON.parse(
-          localStorage.getItem("rumbling-shell-preferences") || "{}",
-        );
-        const dark =
-          saved?.theme === "dark" ||
-          (saved?.theme !== "light" &&
-            matchMedia("(prefers-color-scheme: dark)").matches);
+        const read = (key) => {
+          try { return JSON.parse(localStorage.getItem(key) || "{}"); }
+          catch { return {}; }
+        };
+        const saved = read("synax-theme-preferences");
+        const legacy = read("rumbling-shell-preferences");
+        const validMode = (value) => ["light", "dark", "system"].includes(value);
+        const mode = validMode(saved?.mode) ? saved.mode
+          : validMode(legacy?.theme) ? legacy.theme : "dark";
+        const dark = mode === "dark" ||
+          (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
       } catch {
-        document.documentElement.classList.toggle(
-          "dark",
-          matchMedia("(prefers-color-scheme: dark)").matches,
-        );
+        document.documentElement.classList.add("dark");
+        document.documentElement.style.colorScheme = "dark";
       }
       if (navigator.userAgent.includes("Electron"))
         document.documentElement.classList.add("electron");

@@ -14,7 +14,7 @@ export class AuthenticatedEventSource {
   private readonly listeners = new Map<string, Set<(event: MessageEvent) => void>>()
   private stopped = false
   private release?: () => void
-  constructor(readonly url: string) {
+  constructor(readonly url: string, options?: { cursor?: string }) {
     queueMicrotask(() => {
       if (this.stopped) return
       try {
@@ -36,7 +36,7 @@ export class AuthenticatedEventSource {
             // Observation failures are not proof that every HTTP endpoint is offline.
             this.onerror?.(new Event('error'))
           }
-        })
+        }, options?.cursor)
       } catch {
         this.close()
         this.onerror?.(new Event('error'))

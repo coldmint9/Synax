@@ -329,6 +329,8 @@ impl SessionShardRouter {
         // A retry after a failed sync must cross the barrier as well.
         self.make_durable(Durability::Sync, &durable_session)
             .await?;
+        // Summary publication is already coalesced by the durable flush path.
+        // Completion must not wait on a disposable list-cache write.
         Ok(receipt.snapshot)
     }
 
@@ -436,6 +438,11 @@ impl SessionShardRouter {
         spawn_store(move || hot.queue_read(&session_id)).await
     }
 
+    pub async fn record_state(&self, session_id: String) -> Result<Vec<u8>, RuntimeError> {
+        let hot = self.store()?.clone();
+        spawn_store(move || hot.record_state(&session_id)).await
+    }
+
     pub async fn queue_mutation(
         &self,
         session_id: String,
@@ -476,7 +483,8 @@ impl SessionShardRouter {
     ) -> Result<ControlCommandReceipt, RuntimeError> {
         let hot = self.store()?.clone();
         let durable_session = session_id.clone();
-        let readonly = crate::storage::jsonl::hot::control::RECEIPT_FREE.contains(&operation.as_str());
+        let readonly =
+            crate::storage::jsonl::hot::control::RECEIPT_FREE.contains(&operation.as_str());
         let process_lease = operation == "lease_update";
         let receipt = spawn_store(move || {
             hot.control(
@@ -493,9 +501,15 @@ impl SessionShardRouter {
         // after an uncertain ACK, still cross the durability barrier.
         if process_lease {
             let hot = self.store()?.clone();
-            spawn_store(move || hot.store().flush_process_leases(&durable_session).map_err(RuntimeError::from)).await?;
+            spawn_store(move || {
+                hot.store()
+                    .flush_process_leases(&durable_session)
+                    .map_err(RuntimeError::from)
+            })
+            .await?;
         } else if !readonly {
-            self.make_durable(Durability::Sync, &durable_session).await?;
+            self.make_durable(Durability::Sync, &durable_session)
+                .await?;
         }
         Ok(receipt)
     }

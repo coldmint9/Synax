@@ -264,6 +264,9 @@ export function rustLoopMessageId(): string {
 export async function sendRustStepContext(input: {
   loopId: string; contextId: string; systemPrompt: string; tools: unknown[];
   prompt?: unknown[];
+  beforeModelTools?: Array<{ id: string; name: string; input: unknown }>;
+  completionCheck?: boolean;
+  completion?: { content: string; retry?: string };
   executionContext?: RuntimeExecutionContext;
 }, signal?: AbortSignal): Promise<void> {
   const response = await bridgeRequest("/agent-loop/context", {

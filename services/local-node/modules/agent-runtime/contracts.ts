@@ -181,6 +181,7 @@ export const toolCallStatusSchema = z.enum([
   "failed",
   "denied",
   "cancelled",
+  "blocked",
   "compacted",
 ]);
 export type ToolCallStatus = z.infer<typeof toolCallStatusSchema>;
@@ -510,6 +511,7 @@ export const listSessionsQuerySchema = z.object({
   status: sessionStatusSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
+  includeChildren: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
 });
 export type ListSessionsQuery = z.infer<typeof listSessionsQuerySchema>;
 
@@ -630,8 +632,8 @@ export interface ToolExecutionArtifactInput {
 }
 
 export interface ToolExecutionResult {
-  /** Logical failure with a structured output retained for audit and projection. */
-  outcome?: "failed" | "denied";
+  /** Terminal non-success outcome. blocked is a state precondition, not an execution failure. */
+  outcome?: "failed" | "denied" | "blocked";
   contentParts?: RuntimeContentPart[];
   suspend?: { interactionId: string };
   result: unknown;

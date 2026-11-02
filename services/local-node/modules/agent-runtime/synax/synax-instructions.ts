@@ -3,8 +3,6 @@ import path from "node:path";
 import {
   SYNAX_DIR,
   SYNAX_RULES_DIR,
-  CLAUDE_MD_FILENAME,
-  AGENTS_MD_FILENAME,
   PROJECT_RULE_FILES,
   type LoadedInstructions,
 } from "./synax-context-types.js";
@@ -69,32 +67,39 @@ export function loadProjectInstructions(
   return loadInstructionFile(primary, resolved);
 }
 
-const PROJECT_RULE_FILE_BUDGETS: Record<string, number> = {
-  [CLAUDE_MD_FILENAME]: 8_000,
-  [AGENTS_MD_FILENAME]: 4_000,
-};
-
-const TOTAL_PROJECT_RULES_CAP = 18_000;
-
-export function stripPromptBloat(body: string): string {
-  return body
-    .replace(
-      /<!-- HEROUI-REACT-AGENTS-MD-START -->[\s\S]*?<!-- HEROUI-REACT-AGENTS-MD-END -->/g,
-      "",
-    )
-    .trim();
-}
-
 function prepareRuleBody(body: string): string {
-  return stripPromptBloat(stripFrontmatter(body).trim());
+  return stripFrontmatter(body).trim();
 }
 
-/** All project rule files for system-prompt injection (CLAUDE → AGENTS; AGENTS.md takes precedence). */
+/** Hard cap for each rule file hard-written into the system prompt. Text past the
+ * cap stays in the repository and is reached through the truncation notice. */
+export const PROJECT_RULE_FILE_MAX_CHARS = 8_000;
+
+/** Long rule files are injected head-only; the notice names the full path so the
+ * model can read the remainder on demand instead of receiving it up front. */
+function truncateRuleFileForPrompt(
+  body: string,
+  absolutePath: string,
+  maxChars: number,
+): string {
+  if (!Number.isFinite(maxChars) || body.length <= maxChars) return body;
+  if (maxChars <= 0) return "";
+  const notice = `\n\n[...truncated to the first ${maxChars} of ${body.length} characters. Read the complete rule file with file.read path=${JSON.stringify(absolutePath)}.]`;
+  if (maxChars <= notice.length) return body.slice(0, maxChars);
+  return body.slice(0, maxChars - notice.length).trimEnd() + notice;
+}
+
+/** Inject each project rule file up to PROJECT_RULE_FILE_MAX_CHARS, with an
+ * explicit notice for what was left out. The actual model request budget is
+ * authoritative; callers requesting a bounded preview receive further omissions. */
 export function loadProjectRulesSection(
   workDir: string,
-  options: { maxChars?: number } = {},
+  options: { maxChars?: number; maxCharsPerFile?: number } = {},
 ): string | null {
-  const { maxChars = TOTAL_PROJECT_RULES_CAP } = options;
+  const {
+    maxChars = Number.POSITIVE_INFINITY,
+    maxCharsPerFile = PROJECT_RULE_FILE_MAX_CHARS,
+  } = options;
   let directories: string[];
   try {
     directories = instructionDirectories(workDir);
@@ -130,7 +135,11 @@ export function loadProjectRulesSection(
         } else if (!fs.statSync(realPath).isFile()) {
           body = "[Rule unavailable: not a regular file.]";
         } else {
-          body = prepareRuleBody(fs.readFileSync(realPath, "utf8"));
+          body = truncateRuleFileForPrompt(
+            prepareRuleBody(fs.readFileSync(realPath, "utf8")),
+            realPath,
+            maxCharsPerFile,
+          );
         }
       } catch (error) {
         body = `[Rule unavailable: ${(error as NodeJS.ErrnoException).code ?? "read error"}]`;
@@ -138,18 +147,21 @@ export function loadProjectRulesSection(
       if (body)
         parts.push({
           heading: `### ${JSON.stringify(source).replace(/</g, "\\u003c")}\n\n`,
-          body: truncateForPrompt(body, PROJECT_RULE_FILE_BUDGETS[name]),
+          body,
         });
     }
   }
   if (parts.length === 0) return null;
-  const precedence = `Project rule order: root to cwd; within each directory CLAUDE.md, then AGENTS.md. Later rules take precedence within user authorization and runtime limits.\n\n`;
+  const truncationPolicy = Number.isFinite(maxCharsPerFile)
+    ? ` Each rule file is written up to ${maxCharsPerFile} characters; a longer file ends with a truncation notice naming the full path, which you must read before work governed by the omitted rules.`
+    : "";
+  const precedence = `Project rule order: root to cwd; within each directory CLAUDE.md, then AGENTS.md. Later rules take precedence within user authorization and runtime limits.${truncationPolicy}\n\n`;
   const full =
     precedence + parts.map(({ heading, body }) => heading + body).join("\n\n");
   if (full.length <= maxChars) return full;
 
   const omitted =
-    "[...lower-priority rules omitted or truncated for context budget...]\n\n";
+    "[Project rules are incomplete: lower-priority rules omitted or truncated for this preview budget. Read the source files before work governed by omitted rules.]\n\n";
   let remaining = maxChars - precedence.length - omitted.length;
   const kept: string[] = [];
   for (const { heading, body } of parts.toReversed()) {

@@ -67,24 +67,45 @@ fn foreign_session(cursor_session: &str, session: &str) -> bool {
 
 /// Exact identity lookup and byte slicing; never page through the transcript
 /// or serialize the full message again for each content continuation.
-pub(super) fn message_content(index: &SessionIndex, session: &str, value: &serde_json::Value) -> Result<serde_json::Value, HistoryError> {
+pub(super) fn message_content(
+    index: &SessionIndex,
+    session: &str,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value, HistoryError> {
     let revision = index.head.revision;
-    if value["revision"].as_u64().is_some_and(|expected| expected != revision)
-        || value["offset"].as_u64().unwrap_or(0) > 0 && value["revision"].as_u64().is_none() {
+    if value["revision"]
+        .as_u64()
+        .is_some_and(|expected| expected != revision)
+        || value["offset"].as_u64().unwrap_or(0) > 0 && value["revision"].as_u64().is_none()
+    {
         return Err(HistoryError::StaleCursor);
     }
     let id = super::required_string(value, "messageId")?;
-    let message = index.identity.get(&super::identity_key("message", session, id))
-        .and_then(|key| index.order.get(key)).ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
+    let message = index
+        .identity
+        .get(&super::identity_key("message", session, id))
+        .and_then(|key| index.order.get(key))
+        .ok_or_else(|| HistoryError::ObjectMissing(id.into()))?;
     let content = message.value["content"].as_str().unwrap_or("");
     let offset = value["offset"].as_u64().unwrap_or(0) as usize;
-    if offset > content.len() || !content.is_char_boundary(offset) { return Err(invalid("invalid content offset")); }
+    if offset > content.len() || !content.is_char_boundary(offset) {
+        return Err(invalid("invalid content offset"));
+    }
     let mut end = offset.saturating_add(8192).min(content.len());
-    while !content.is_char_boundary(end) { end -= 1; }
-    Ok(serde_json::json!({"text":&content[offset..end],"next":if end < content.len() {Some(end)} else {None},"revision":revision}))
+    while !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    Ok(
+        serde_json::json!({"text":&content[offset..end],"next":if end < content.len() {Some(end)} else {None},"revision":revision}),
+    )
 }
 
-fn wire_value(value: &serde_json::Value, id: &str, limit: usize, transcript: bool) -> serde_json::Value {
+fn wire_value(
+    value: &serde_json::Value,
+    id: &str,
+    limit: usize,
+    transcript: bool,
+) -> serde_json::Value {
     let original = value;
     // Provider replay data duplicates message text and may embed media bytes.
     // The transcript uses content/contentParts; execution reads keep the raw object.
@@ -93,15 +114,28 @@ fn wire_value(value: &serde_json::Value, id: &str, limit: usize, transcript: boo
     let value = if has_projection {
         let mut fields = serde_json::Map::new();
         for (key, field) in value.as_object().into_iter().flatten() {
-            fields.insert(key.clone(), if key == "metadata" {
-                serde_json::Value::Object(field.as_object().into_iter().flatten()
-                    .filter(|(key, _)| key.as_str() != "rustMessage")
-                    .map(|(key, value)| (key.clone(), value.clone())).collect())
-            } else { field.clone() });
+            fields.insert(
+                key.clone(),
+                if key == "metadata" {
+                    serde_json::Value::Object(
+                        field
+                            .as_object()
+                            .into_iter()
+                            .flatten()
+                            .filter(|(key, _)| key.as_str() != "rustMessage")
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect(),
+                    )
+                } else {
+                    field.clone()
+                },
+            );
         }
         projected = serde_json::Value::Object(fields);
         &projected
-    } else { value };
+    } else {
+        value
+    };
     let size = serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .unwrap_or(0);
@@ -110,9 +144,135 @@ fn wire_value(value: &serde_json::Value, id: &str, limit: usize, transcript: boo
     }
     object(&[
         ("$historyObject", text(id)),
-        ("bytes", number(if has_projection { serde_json::to_vec(original).map(|bytes| bytes.len()).unwrap_or(0) } else { size } as u64)),
+        (
+            "bytes",
+            number(if has_projection {
+                serde_json::to_vec(original)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or(0)
+            } else {
+                size
+            } as u64),
+        ),
         ("id", value["id"].clone()),
     ])
+}
+
+/// Navigation needs identities and short labels, never replay/tool output bodies.
+/// Project before wire budgeting so initializing the rail does not hydrate every
+/// large historical object through a transfer reference.
+fn timeline_value(value: &serde_json::Value, kind: &str) -> serde_json::Value {
+    let fields: &[&str] = match kind {
+        "message" => &[
+            "id",
+            "sessionId",
+            "runId",
+            "stepId",
+            "sequence",
+            "role",
+            "createdAt",
+        ],
+        "run" => &[
+            "id",
+            "sessionId",
+            "sequence",
+            "status",
+            "startedAt",
+            "completedAt",
+            "triggerMessageId",
+            "currentStep",
+            "stopReason",
+            "model",
+        ],
+        "step" => &[
+            "id",
+            "sessionId",
+            "runId",
+            "sequence",
+            "index",
+            "status",
+            "startedAt",
+            "completedAt",
+            "finishReason",
+            "model",
+        ],
+        "tool" => &[
+            "id",
+            "sessionId",
+            "runId",
+            "stepId",
+            "sequence",
+            "toolId",
+            "category",
+            "mutability",
+            "status",
+            "startedAt",
+            "endedAt",
+        ],
+        _ => &[],
+    };
+    let mut result = object(&[]);
+    for field in fields {
+        if let Some(item) = value.get(*field) {
+            result[*field] = item.clone();
+        }
+    }
+    let short = |field: &str| {
+        text(
+            &value[field]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(240)
+                .collect::<String>(),
+        )
+    };
+    match kind {
+        "message" => {
+            let user = value["role"] == "user";
+            result["content"] = if user {
+                value["content"].clone()
+            } else {
+                short("content")
+            };
+            if user && value["content"].as_str().unwrap_or("").trim().is_empty() {
+                if let Some(parts) = value.get("contentParts") {
+                    result["contentParts"] = parts.clone();
+                }
+            }
+            result["metadata"] = object(&[]);
+            for field in [
+                "source",
+                "type",
+                "kind",
+                "partial",
+                "forkedFromMessageId",
+                "gitMergeTask",
+                "gitMergeTimeline",
+                "contextCompaction",
+            ] {
+                if let Some(item) = value["metadata"].get(field) {
+                    result["metadata"][field] = item.clone();
+                }
+            }
+        }
+        "step" => {
+            result["metadata"] = object(&[]);
+            for field in ["kind", "contextCompaction"] {
+                if let Some(item) = value["metadata"].get(field) {
+                    result["metadata"][field] = item.clone();
+                }
+            }
+        }
+        "run" => result["metadata"] = object(&[]),
+        "tool" => {
+            result["inputSummary"] = short("inputSummary");
+            result["outputSummary"] = short("outputSummary");
+            result["error"] = short("error");
+        }
+        _ => {}
+    }
+    result
 }
 
 fn window_page(
@@ -145,19 +305,35 @@ fn window_page(
         if before["generation"].as_u64() != Some(generation) {
             return Err(HistoryError::StaleCursor);
         }
-        let rows = before["rows"].as_object().ok_or_else(|| invalid("invalid history boundary"))?;
-        if rows.iter().any(|(name, id)| !COLLECTIONS.iter().any(|(_, collection)| name == collection) || !id.is_string()) {
+        let rows = before["rows"]
+            .as_object()
+            .ok_or_else(|| invalid("invalid history boundary"))?;
+        if rows.iter().any(|(name, id)| {
+            !COLLECTIONS.iter().any(|(_, collection)| name == collection) || !id.is_string()
+        }) {
             return Err(invalid("invalid history boundary collection"));
         }
     }
     let mut after = BTreeMap::new();
     for (kind, name) in COLLECTIONS {
+        if value["preview"] == true && matches!(kind, "event" | "permission") {
+            after.insert(kind.into(), None);
+            continue;
+        }
         let boundary = before.and_then(|before| before["rows"][name].as_str());
         let start = if let Some(id) = boundary {
-            Some(index.identity.get(&super::identity_key(kind, session, id))
-                .ok_or(HistoryError::StaleCursor)?.clone())
+            Some(
+                index
+                    .identity
+                    .get(&super::identity_key(kind, session, id))
+                    .ok_or(HistoryError::StaleCursor)?
+                    .clone(),
+            )
         } else {
-            cursor.as_ref().and_then(|cursor| cursor.after.get(kind).cloned()).flatten()
+            cursor
+                .as_ref()
+                .and_then(|cursor| cursor.after.get(kind).cloned())
+                .flatten()
         };
         if (cursor.is_some() || before.is_some()) && start.is_none() {
             after.insert(kind.into(), None);
@@ -180,7 +356,24 @@ fn window_page(
                 more = true;
                 break;
             }
-            let item = wire_value(&entity.value, &entity.object_id, INLINE_BYTES.min(WINDOW_COLLECTION_BYTES / limit - 1), value["transcript"] == true);
+            let preview;
+            let source = if value["preview"] == true {
+                preview = timeline_value(&entity.value, kind);
+                &preview
+            } else {
+                &entity.value
+            };
+            let inline_limit = if value["preview"] == true {
+                INLINE_BYTES
+            } else {
+                INLINE_BYTES.min(WINDOW_COLLECTION_BYTES / limit - 1)
+            };
+            let item = wire_value(
+                source,
+                &entity.object_id,
+                inline_limit,
+                value["transcript"] == true,
+            );
             let size = serde_json::to_vec(&item)
                 .map(|bytes| bytes.len())
                 .unwrap_or(0)
@@ -289,7 +482,12 @@ fn change_page(
         let item = if entity.kind == "runtime.tombstone" {
             object(&[("collection", text(name)), ("id", text(&id))])
         } else {
-            wire_value(&entity.value, &entity.object_id, INLINE_BYTES, value["transcript"] == true)
+            wire_value(
+                &entity.value,
+                &entity.object_id,
+                INLINE_BYTES,
+                value["transcript"] == true,
+            )
         };
         let size = serde_json::to_vec(&item)
             .map(|bytes| bytes.len())

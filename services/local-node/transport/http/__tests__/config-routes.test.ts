@@ -70,6 +70,52 @@ describe('config routes', () => {
     expect(res.status).toBe(200)
     expect(body.config.macWindowAppearance).toEqual(appearance)
   })
+
+  it('persists the super coding pool and task routes', async () => {
+    const { configRoutes } = await import('../config.js')
+    const superCoding = {
+      models: [
+        {
+          id: 'openai/gpt-4o-mini',
+          label: 'OpenAI · GPT-4o mini',
+          enabled: true,
+          tags: ['fast-edit', 'tool-use'],
+        },
+      ],
+      routes: [{ taskTypes: ['implement'], model: 'openai/gpt-4o-mini' }],
+      defaultModel: 'openai/gpt-4o-mini',
+      maxNodes: 10,
+      maxConcurrent: 4,
+    }
+    const saved = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ superCoding }),
+    })
+    expect(saved.status).toBe(200)
+    expect((await saved.json()).config.superCoding).toEqual(superCoding)
+
+    const read = await configRoutes.request('http://localhost/global')
+    expect((await read.json()).config.superCoding).toEqual(superCoding)
+  })
+
+  it('rejects a super node budget outside the contract', async () => {
+    const { configRoutes } = await import('../config.js')
+    const res = await configRoutes.request('http://localhost/global', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        superCoding: {
+          models: [],
+          routes: [],
+          defaultModel: '',
+          maxNodes: 3,
+          maxConcurrent: 4,
+        },
+      }),
+    })
+    expect(res.status).toBe(400)
+  })
 })
 
 it.each([

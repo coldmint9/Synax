@@ -1,7 +1,9 @@
 import path from "node:path";
 import {
   attachDetachedGitBranch,
+  fetchGitRemote,
   GitWorkspaceError,
+  mergeGitUpstream,
 } from "../git-workspaces.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import {
@@ -33,7 +35,8 @@ export { resolveConflictText } from "./session-git-conflict-text.js";
 const MAX_BUFFER = 8 * 1024 * 1024;
 const COMMIT_TIMEOUT_MS = 120_000;
 const MAX_COMMIT_SUBJECT_LEN = 200;
-const MAX_COMMIT_MESSAGE_LEN = 2_000;
+/** One bullet per changed file; huge commits still need every path listed. */
+export const MAX_COMMIT_MESSAGE_LEN = 64_000;
 const FENCE_RE = /^\s*(?:```|~~~)/;
 /**
  * macOS Finder metadata must never be staged. The `glob` magic is required:
@@ -167,6 +170,66 @@ export async function listSessionWorkspaceCommits(
   };
 }
 
+/**
+ * Publish only after the checkout already contains what the remote has.
+ *
+ * Safe text conflicts are resolved automatically first; a conflict that cannot
+ * be resolved that way stops the push and leaves the merge in progress, exactly
+ * like a manual `git pull`, so the user can resolve it and push again.
+ */
+async function syncWithUpstream(
+  sessionId: string,
+  projectId: string,
+  workspacePath: string,
+  remote: string,
+  upstreamRef: string,
+): Promise<void> {
+  try {
+    // A merge commit would otherwise fold unrelated staged work into the merge.
+    const staged = (
+      await runGit(workspacePath, ["diff", "--cached", "--name-only", "-z"])
+    ).stdout.replace(/\0/g, "").trim();
+    if (staged)
+      throw new AgentRuntimeError(
+        "推送前需要先同步远程分支，但索引中还有已暂存未提交的改动。请先提交或取消暂存后再推送。 / Push must sync with the remote first; commit or unstage the staged changes, then push again.",
+        "GIT_PUSH_STAGED_CHANGES",
+        409,
+      );
+    if (remote) await fetchGitRemote(workspacePath, remote);
+    const sync = await mergeGitUpstream(workspacePath, upstreamRef);
+    if (sync.status !== "conflicted") return;
+    try {
+      await autoResolveWorkspaceConflicts(workspacePath, false, {
+        sessionId,
+        projectId,
+      });
+    } catch (error) {
+      throw new AgentRuntimeError(
+        `推送前需要先同步远程分支 ${upstreamRef}，但 ${sync.files
+          .slice(0, 12)
+          .map((file) => JSON.stringify(file))
+          .join(", ")} 存在无法安全自动合并的冲突，推送已终止。合并仍在进行中：解决冲突并提交后即可再次推送。 / Push stopped: pulling ${upstreamRef} conflicted in ${sync.files
+          .join(", ")}. Resolve the conflicts, commit the merge, then push again. ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        "GIT_PULL_CONFLICTS",
+        409,
+      );
+    }
+    const merge = await runGit(workspacePath, ["commit", "--no-edit"], true);
+    if (!merge.ok)
+      throw new AgentRuntimeError(
+        `已自动解决冲突，但未能完成合并提交${formatGitFailure(merge) ? `: ${formatGitFailure(merge)}` : ""}`,
+        "GIT_MERGE_COMMIT_FAILED",
+        502,
+      );
+  } catch (error) {
+    if (error instanceof GitWorkspaceError)
+      throw new AgentRuntimeError(error.message, "GIT_PULL_FAILED", error.status);
+    throw error;
+  }
+}
+
 export async function pushSessionWorkspace(
   sessionId: string,
   input: { rootId?: string; expectedHeadSha?: string; expectedBranch?: string; expectedUpstream?: string } = {},
@@ -192,10 +255,13 @@ export async function pushSessionWorkspace(
       throw new AgentRuntimeError("分支或待推送提交已变化，请刷新后重新审阅。", "GIT_PUSH_REVIEW_CHANGED", 409);
     }
   }
-  // Pin the checked commit and publish only this branch, even when Git is
-  // configured to push multiple refs or automatically include tags.
-  const pushHead = input.expectedHeadSha ?? (await runGit(workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
   const tracking = (await runGit(workspacePath, ["for-each-ref", "--format=%(upstream:remotename)%00%(upstream:remoteref)", `refs/heads/${branch}`])).stdout.trim().split("\0");
+  // Pull before publishing so the push can never drop commits the remote has.
+  if (upstreamRef)
+    await syncWithUpstream(sessionId, session.projectId, workspacePath, tracking[0] || "", upstreamRef);
+  // Pin the checked commit (including a merge the sync created) and publish only
+  // this branch, even when Git pushes multiple refs or includes tags by default.
+  const pushHead = (await runGit(workspacePath, ["rev-parse", "HEAD"])).stdout.trim();
   const pushArgs = ["push", "--no-follow-tags", "--", tracking[0] || "origin",
     `${pushHead}:${tracking[1] || `refs/heads/${branch}`}`];
   await assertNoStagedConflictMarkers(workspacePath);

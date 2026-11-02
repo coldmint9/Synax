@@ -12,6 +12,7 @@ import { GitMrStore, gitMrStore } from "./store.js";
 import { GitMrError } from "./errors.js";
 import {
   inspect,
+  type Repo,
   branchOid,
   assertBranchPolicy,
   git,
@@ -125,6 +126,33 @@ export class GitMrService {
     await this.checkBranchAncestry(mr);
     await this.store.write("requests", mr);
     return mr;
+  }
+  /** The worktree that already has `target` checked out, when that worktree can
+   * safely receive the merge result. Automated callers authorize application there
+   * instead of stopping at TARGET_BUSY; an ambiguous, busy or dirty checkout still
+   * stops, so no working tree is updated behind its owner's back. */
+  async targetCheckout(location: WorkspaceLocation, target: string) {
+    const repo = await inspect(location);
+    const checkedOut = await this.targetCheckouts(repo, target);
+    if (checkedOut.length > 1)
+      throw new GitMrError(
+        "Target is checked out in multiple worktrees.",
+        "TARGET_BUSY",
+      );
+    if (!checkedOut.length) return null;
+    const directory = checkedOut[0].path;
+    if (await this.worktreeBusy(hostPath(repo, directory)))
+      throw new GitMrError(
+        "An agent is using the target worktree.",
+        "TARGET_BUSY",
+      );
+    await ensureClean(repo, directory);
+    return { directory };
+  }
+  private async targetCheckouts(repo: Repo, target: string) {
+    return (await worktrees(repo)).filter(
+      (item) => item.branch === `refs/heads/${target}`,
+    );
   }
   private async checkBranchAncestry(mr: MergeRequest) {
     assertBranchPolicy(
@@ -717,9 +745,7 @@ export class GitMrService {
         "Candidate is not a descendant of the target.",
         "INVALID_CANDIDATE",
       );
-    const checkedOut = (await worktrees(mr)).filter(
-      (item) => item.branch === `refs/heads/${mr.target}`,
-    );
+    const checkedOut = await this.targetCheckouts(mr, mr.target);
     if (checkedOut.length > 1)
       throw new GitMrError(
         "Target is checked out in multiple worktrees.",
@@ -865,6 +891,10 @@ export class GitMrService {
           "preparing",
           "checking",
           "applying",
+          // A draft has no prepared worktree and no pending Git write, so there is
+          // nothing to recover; starting it is the merge worker's prepare step.
+          // Rejecting it here wrote "does not need recovery" onto the draft card.
+          "draft",
         ].includes(mr.status)
       )
         throw new GitMrError(
@@ -879,7 +909,9 @@ export class GitMrService {
       if (mr.status !== "merged") mr.checkResults = [];
       await this.store.save(
         mr,
-        "Reconciled the saved operation with actual Git state.",
+        mr.status === "draft"
+          ? "Merge draft has not started yet; its worker begins the merge."
+          : "Reconciled the saved operation with actual Git state.",
       );
     }, guard);
   }

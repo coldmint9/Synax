@@ -90,6 +90,12 @@ function asStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
+/** Accepts both `requires-account: enterprise` and the bracketed list form. */
+function asAccountScopes(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  return asStringArray(value).map((item) => item.trim()).filter(Boolean);
+}
+
 function asProfileKinds(value: unknown): AgentProfileKind[] {
   return asStringArray(value).filter((item): item is AgentProfileKind => PROFILE_KINDS.has(item as AgentProfileKind));
 }
@@ -128,6 +134,7 @@ export function parseSkillFile(installPath: string): ParsedSkillFile {
     profileIds: asStringArray(synax['profile-ids'] ?? synax.profileIds),
     injection: asInjectionMode(synax.injection),
     requiredCapabilities: asStringArray(synax['required-capabilities'] ?? synax.requiredCapabilities),
+    requiresAccounts: asAccountScopes(synax['requires-account'] ?? synax.requiresAccount),
     permissionHints: asInternalGates(synax['permission-hints'] ?? synax.permissionHints),
     content: body.trim(),
     installPath,

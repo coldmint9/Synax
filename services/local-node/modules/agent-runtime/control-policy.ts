@@ -10,6 +10,7 @@ import { isToolMountedForSession, isPlanningReadTool } from "./tool-mount-policy
 import { getStoredPlan } from './plan-execution.js';
 import { readSubagentControl } from './subagent-control-broker.js';
 import { gitMergeWorkflowSubcommands } from './tools/bash-command-policy.js';
+import { isInteractiveSideChat } from './side-chat-contract.js';
 
 export const CONTROL_TOOLS = new Set([
   "human.ask",
@@ -48,12 +49,18 @@ export function controlToolError(
   if (!isToolMountedForSession(session, tool)) {
     if (["work.checkpoint", "goal.finish", "verification.run"].includes(tool.id))
       return `Tool ${tool.id} is only available in goal mode.`;
-    if (inferSynaxSessionMode(controlRoot(session)) === "plan")
+    const mode = inferSynaxSessionMode(controlRoot(session));
+    if (tool.id.startsWith("subagent.") && !session.parentSessionId && mode === "super")
+      return "Super mode creates child work only through super.plan. Plan one node for that work instead of delegating ad hoc.";
+    if (mode === "plan")
       return "Planning is read-only. Approve a plan before executing changes.";
     return `Tool ${tool.id} is unavailable in the current workflow or requires an approved plan.`;
   }
   const workError = workRuntime.toolError(session.id, tool.id, args);
   if (workError) return workError;
+  if (isInteractiveSideChat(session))
+    return CONTROL_TOOLS.has(tool.id) && tool.id !== "human.ask"
+      ? "Side conversations cannot change the primary workflow." : null;
   const root = controlRoot(session);
   if (root.profileId === 'git-manager' && tool.id === 'human.ask' && !session.parentSessionId) return null;
   if (!isSynaxProfile(root.profileId))

@@ -13,7 +13,7 @@ beforeEach(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-it.each(["read", "file.glob", "grep.search", "mcp.disconnected.read"])(
+it.each(["file.glob", "mcp.disconnected.read", "flie.write"])(
   "records %s as a recoverable tool failure with the original provider identity",
   async (toolId) => {
     const session = agentSessionRuntime.create({ ...executorInput, permissionTier: "unrestricted" });
@@ -23,7 +23,9 @@ it.each(["read", "file.glob", "grep.search", "mcp.disconnected.read"])(
       toolId, modelToolCallId: "provider-call", inputRef: args,
       status: "failed", outputRef: { error: true, code: "TOOL_NOT_FOUND" },
     });
-    expect(result.record.error).toContain("current tool");
+    expect(result.record.error).toMatch(
+      /Did you mean|Use one of these exact names|current tool definitions/,
+    );
     expect(result.record.endedAt).toBeTruthy();
     expect(store.listToolCalls(session.id)).toHaveLength(1);
     expect(store.listEvents(session.id)).toContainEqual(expect.objectContaining({
@@ -36,6 +38,23 @@ it.each(["read", "file.glob", "grep.search", "mcp.disconnected.read"])(
     expect(corrected.record.status, corrected.record.error ?? "").toBe("completed");
   },
 );
+
+it("resolves the name models arrive with before recording the call", async () => {
+  const session = agentSessionRuntime.create({ ...executorInput, permissionTier: "unrestricted" });
+  const result = await registry.execute(session.id, "read", { path: "package.json" }, { modelToolCallId: "provider-call" });
+  expect(result.record).toMatchObject({
+    toolId: "file.read", modelToolCallId: "provider-call", status: "completed",
+  });
+  const providerSpelling = await registry.execute(session.id, "file_read", { path: "package.json" });
+  expect(providerSpelling.record.toolId).toBe("file.read");
+});
+
+it("names the closest real tool for a near miss", async () => {
+  const session = agentSessionRuntime.create({ ...executorInput, permissionTier: "unrestricted" });
+  const result = await registry.execute(session.id, "flie.write", { path: "unused.txt", content: "unused" });
+  expect(result.record.outputRef).toMatchObject({ code: "TOOL_NOT_FOUND" });
+  expect(result.record.error).toContain("Did you mean file.write?");
+});
 
 it("keeps a missing session and an unexpected provider failure fatal", async () => {
   await expect(registry.execute("ars_missing", "read", {})).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -95,7 +114,7 @@ it("serializes an unknown operation in a composed batch and leaves dependent wri
   registry.register({ ...registry.get("file.write"), execute });
   const results = await new LoopComposition(store, registry).execute(session.id, run.id, step.id, [
     { id: "valid-read", toolId: "file.read", args: { path: "package.json" } },
-    { id: "bad-read", toolId: "read", args: { file: "package.json" } },
+    { id: "bad-read", toolId: "flie.write", args: { file: "package.json" } },
     { id: "write", toolId: "file.write", args: { path: "unused.txt", content: "unused" } },
   ]);
   expect(results.map(result => result.exec.record.status)).toEqual(["completed", "failed"]);

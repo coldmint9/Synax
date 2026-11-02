@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useSessionWorkspaceStore } from "../state/sessionWorkspaceStore";
 
 const getSessionEnvironmentFile = vi.fn();
 
@@ -66,6 +67,7 @@ async function renderViewer(path = "src/app.ts") {
 describe("DiffViewer", () => {
   beforeEach(() => {
     getSessionEnvironmentFile.mockReset();
+    useSessionWorkspaceStore.setState({ sessions: {} });
   });
 
   afterEach(() => {
@@ -156,6 +158,59 @@ describe("DiffViewer", () => {
     await renderViewer();
 
     expect(screen.getByText("boom")).toBeTruthy();
+  });
+
+  it("retries a failed read from the error surface", async () => {
+    getSessionEnvironmentFile.mockRejectedValueOnce(new Error("boom"));
+    getSessionEnvironmentFile.mockResolvedValue(fileView(PATCH));
+    await renderViewer();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("monaco-diff-editor")).toBeTruthy(),
+    );
+    expect(getSessionEnvironmentFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the same file in the editor instead of offering a refresh", async () => {
+    getSessionEnvironmentFile.mockResolvedValue(fileView(PATCH));
+    await renderViewer();
+
+    expect(screen.queryByLabelText("刷新 diff")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑文件" }));
+
+    const workspace = useSessionWorkspaceStore.getState().sessions["sess-1"];
+    expect(workspace.activeTabId).toBe("file:src/app.ts");
+    expect(workspace.tabs).toEqual([
+      {
+        id: "file:src/app.ts",
+        kind: "file",
+        title: "app.ts",
+        path: "src/app.ts",
+        line: null,
+      },
+    ]);
+  });
+
+  it("does not offer the editor for a file the diff reports as deleted", async () => {
+    const deleted = [
+      "diff --git a/src/gone.ts b/src/gone.ts",
+      "deleted file mode 100644",
+      "--- a/src/gone.ts",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-export const gone = true",
+      "",
+    ].join("\n");
+    getSessionEnvironmentFile.mockResolvedValue(fileView(deleted));
+    await renderViewer();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("monaco-diff-editor")).toBeTruthy(),
+    );
+    expect(screen.queryByRole("button", { name: "编辑文件" })).toBeNull();
   });
 
   it("uses the shared Monaco text surface for an unparseable patch", async () => {

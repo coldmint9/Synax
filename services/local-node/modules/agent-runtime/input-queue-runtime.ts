@@ -40,7 +40,7 @@ export const inputQueueRuntime = {
     await bindAssets(sessionId, inputParts(input));
     if (input.references?.some(ref => ref.kind === 'subagent')) await businessStore.refresh(['subagent-templates']);
     const item = queuedInputSchema.parse({ id: makeRuntimeId('inq'), enqueuedAt: nowIso(), message: input.message.trim(), contentParts: input.contentParts,
-      model: input.model ?? null, reasoningEffort: input.reasoningEffort, references: input.references, referenceContext: prepareTurnReferences(sessionId, input.references) });
+      messageSource: input.messageSource, model: input.model ?? null, reasoningEffort: input.reasoningEffort, references: input.references, referenceContext: prepareTurnReferences(sessionId, input.references) });
     return (await mutate(sessionId, 'enqueue', item)).items;
   },
   async remove(sessionId: string, itemId: string): Promise<QueuedInput[]> {

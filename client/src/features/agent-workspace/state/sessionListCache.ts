@@ -8,10 +8,12 @@ import type { AgentSession } from "../../../adapters/transport/agentRuntime";
  * workspace now keeps its last painted rows, cursor and total in memory: a
  * return visit renders them synchronously and never re-reads the page.
  *
- * The list is not reconciled on its own. Rows change through the runtime's live
+ * The list is not re-read on its own. Rows change through the runtime's live
  * callbacks (`session_changed` / `session_created` / `session_deleted`), which
  * patch the exact row they name, and a session that was never loaded is read
- * when it is opened.
+ * when it is opened. The one active read is a row that still claims to be
+ * running when the callback stream resumes (`sessionStatusReconcile`), because
+ * a settle reported during a gap is never sent again.
  *
  * Invariants:
  * - Rows are already filtered by `isRuntimeResourceGone`, so a restored list

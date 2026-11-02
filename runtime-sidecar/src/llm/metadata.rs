@@ -1,4 +1,4 @@
-//! Preserve explicit cache boundaries through Rig's canonical message mapping.
+//! Preserve request metadata through Rig's canonical message mapping.
 //! Protocol bodies and HTTP/SSE transport remain owned by Rig.
 use crate::llm::contract::ProviderRequest;
 use bytes::Bytes;
@@ -7,12 +7,56 @@ use rig_core::{
     wasm_compat::WasmBoxedFuture,
 };
 use serde_json::{Value, json};
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+/// Signals that the upstream HTTP response has been established.
+///
+/// Rig's normalized stream intentionally hides response headers and lifecycle
+/// events from callers. Keep this transport-level signal alongside the
+/// middleware so the completion deadline can distinguish a connection that
+/// never got a response from a response whose first content event is slow.
+pub(crate) struct ResponseActivity {
+    ready: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl ResponseActivity {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self { ready: AtomicBool::new(false), notify: tokio::sync::Notify::new() })
+    }
+
+    fn mark_ready(&self) {
+        self.ready.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn wait(&self) {
+        if self.is_ready() {
+            return;
+        }
+        loop {
+            let notified = self.notify.notified();
+            if self.is_ready() {
+                return;
+            }
+            notified.await;
+            if self.is_ready() {
+                return;
+            }
+        }
+    }
+}
 
 pub(crate) struct RequestMetadata {
     headers: HeaderMap,
     protocol: String,
     boundaries: Vec<Boundary>,
     image_details: Vec<Option<String>>,
+    response_activity: Arc<ResponseActivity>,
 }
 struct Boundary {
     section: &'static str,
@@ -38,6 +82,7 @@ fn cache(value: &Value, protocol: &str) -> Option<Value> {
 impl RequestMetadata {
     pub(crate) fn new(
         input: &ProviderRequest,
+        response_activity: Arc<ResponseActivity>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let mut headers = HeaderMap::new();
         for (key, value) in &input.headers {
@@ -103,6 +148,7 @@ impl RequestMetadata {
             protocol: protocol.clone(),
             boundaries,
             image_details: image_details(&json!(input.prompt)),
+            response_activity,
         })
     }
 
@@ -241,6 +287,34 @@ fn paths(value: &Value, path: String, output: &mut Vec<(String, Value)>) {
         _ => {}
     }
 }
+
+fn responses_storage(body: &mut Value) -> Result<(), super::Error> {
+    // Full history is replayed locally. Some compatible providers cap stored
+    // requests at 1000 input items independently of their token context limit.
+    // Apply the default after Rig serializes history: its stateless encoder
+    // otherwise drops native plaintext reasoning returned by DeepSeek.
+    if body["store"].is_null()
+        && body["previous_response_id"].is_null()
+        && body["conversation"].is_null()
+        && body["background"] != true
+    {
+        body["store"] = json!(false);
+    }
+    if body["store"] == false {
+        // Future reasoning must remain replayable without upstream storage.
+        if body["include"].is_null() {
+            body["include"] = json!([]);
+        }
+        let includes = body["include"]
+            .as_array_mut()
+            .ok_or("Responses include must be an array")?;
+        if !includes.iter().any(|item| item == "reasoning.encrypted_content") {
+            includes.push(json!("reasoning.encrypted_content"));
+        }
+    }
+    Ok(())
+}
+
 impl HttpMiddleware for RequestMetadata {
     fn before_request_headers<'a>(
         &'a self,
@@ -264,11 +338,27 @@ impl HttpMiddleware for RequestMetadata {
             let mut value: Value = serde_json::from_slice(&body)
                 .map_err(|error| http_client::Error::Instance(Box::new(error)))?;
             self.apply(&mut value);
+            if self.protocol == "openai-responses" {
+                responses_storage(&mut value).map_err(http_client::Error::Instance)?;
+            }
             crate::llm::tool_names::validate_body(&value, &self.protocol)
                 .map_err(http_client::Error::Instance)?;
             Ok(Bytes::from(serde_json::to_vec(&value).map_err(
                 |error| http_client::Error::Instance(Box::new(error)),
             )?))
+        })
+    }
+
+    fn after_response<'a>(
+        &'a self,
+        _: &'a Method,
+        _: &'a Uri,
+        _: http::StatusCode,
+        _: &'a HeaderMap,
+    ) -> WasmBoxedFuture<'a, http_client::Result<()>> {
+        Box::pin(async move {
+            self.response_activity.mark_ready();
+            Ok(())
         })
     }
 }

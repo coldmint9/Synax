@@ -1,8 +1,122 @@
 import { describe, expect, it, vi } from "vitest";
 import { executeCode } from "./executor.js";
+import { CODE_WORKER_CAPACITY } from "./contracts.js";
 
 const callTool = vi.fn(async (id: string, args: unknown) => ({ id, args }));
 describe("Code Mode isolated executor", () => {
+  it("waits for a worker without consuming the execution deadline", async () => {
+    const held = Promise.withResolvers<void>();
+    const started = Array.from({ length: CODE_WORKER_CAPACITY.active }, () => Promise.withResolvers<void>());
+    const blockers = started.map(ready => executeCode({
+      code: 'return await tools.call("hold", {});',
+      callTool: async () => { ready.resolve(); await held.promise; return true; },
+    }));
+    await Promise.all(started.map(ready => ready.promise));
+    const host = vi.fn(async () => "admitted");
+    const queued = executeCode({
+      code: 'return await tools.call("next", {});', callTool: host,
+      limits: { timeoutMs: 1_000, queueTimeoutMs: 3_000 },
+    });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1_100));
+      expect(host).not.toHaveBeenCalled();
+    } finally { held.resolve(); }
+    const result = await queued;
+    await Promise.all(blockers);
+    expect(result).toMatchObject({ status: "completed", value: "admitted" });
+    expect(result.queueWaitMs).toBeGreaterThanOrEqual(1_000);
+    expect(result.durationMs).toBeGreaterThanOrEqual(result.queueWaitMs);
+  });
+
+  it("never starts cancelled, expired or overflowing queued programs", async () => {
+    const held = Promise.withResolvers<void>();
+    const started = Array.from({ length: CODE_WORKER_CAPACITY.active }, () => Promise.withResolvers<void>());
+    const blockers = started.map(ready => executeCode({
+      code: 'return await tools.call("hold", {});',
+      callTool: async () => { ready.resolve(); await held.promise; return true; },
+    }));
+    await Promise.all(started.map(ready => ready.promise));
+    const host = vi.fn(async () => true);
+    const controller = new AbortController();
+    const requests = Array.from({ length: CODE_WORKER_CAPACITY.waiting }, () => executeCode({
+      code: 'return await tools.call("never", {});', callTool: host, signal: controller.signal,
+    }));
+    try {
+      expect((await executeCode({ code: "return 1;", callTool: host })).status).toBe("unavailable");
+      controller.abort();
+      expect((await Promise.all(requests)).every(result => result.status === "cancelled")).toBe(true);
+      const expired = await executeCode({
+        code: 'return await tools.call("never", {});', callTool: host, limits: { queueTimeoutMs: 20 },
+      });
+      expect(expired.status).toBe("timed_out");
+      expect(expired.error).toContain("No code or tools were executed");
+      expect(host).not.toHaveBeenCalled();
+    } finally { controller.abort(); held.resolve(); await Promise.all(blockers); }
+    expect((await executeCode({ code: "return 42;", callTool: host })).value).toBe(42);
+  });
+
+  it("keeps writes exclusive between parallel read batches", async () => {
+    const firstReads = Promise.withResolvers<void>();
+    const events: string[] = [];
+    let readers = 0, writer = false;
+    const result = await executeCode({
+      code: 'return await Promise.all([tools.call("read",{id:1}),tools.call("read",{id:2}),tools.call("write",{id:3}),tools.call("read",{id:4})]);',
+      canParallelTool: id => id === "read",
+      callTool: async (id, args) => {
+        events.push(`start:${args.id}`);
+        if (id === "write") {
+          expect(readers).toBe(0);
+          writer = true;
+          await new Promise(resolve => setTimeout(resolve, 5));
+          writer = false;
+        } else {
+          expect(writer).toBe(false);
+          readers++;
+          if (args.id === 2) firstReads.resolve();
+          if ((args.id as number) < 3) await firstReads.promise;
+          readers--;
+        }
+        events.push(`end:${args.id}`);
+        return args.id;
+      },
+    });
+    expect(result).toMatchObject({ status: "completed", value: [1, 2, 3, 4] });
+    expect(events.indexOf("start:2")).toBeLessThan(events.indexOf("end:1"));
+    expect(events.indexOf("start:3")).toBeGreaterThan(events.indexOf("end:2"));
+    expect(events.indexOf("start:4")).toBeGreaterThan(events.indexOf("end:3"));
+  });
+
+  it("continues after a caught tool failure and treats unknown tools as exclusive", async () => {
+    let active = 0, peak = 0;
+    const result = await executeCode({
+      code: 'try { await tools.call("fail",{}); } catch {} return await Promise.all([tools.call("unknown",{}),tools.call("unknown",{})]);',
+      callTool: async id => {
+        if (id === "fail") throw new Error("expected");
+        active++; peak = Math.max(peak, active);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        active--;
+        return true;
+      },
+    });
+    expect(result).toMatchObject({ status: "completed", value: [true, true] });
+    expect(peak).toBe(1);
+  });
+
+  it("preserves Promise.all's original failure while cancelling its remaining reads", async () => {
+    let pendingSignal: AbortSignal | undefined;
+    const result = await executeCode({
+      code: 'return await Promise.all([tools.call("pending",{}),tools.call("fail",{})]);',
+      canParallelTool: () => true,
+      callTool: async (id, _args, signal) => {
+        if (id === "fail") throw new Error("source read failed");
+        pendingSignal = signal;
+        return new Promise(() => {});
+      },
+    });
+    expect(result).toMatchObject({ status: "failed", error: "source read failed" });
+    expect(pendingSignal?.aborted).toBe(true);
+  });
+
   it("preserves near-ceiling returns when diagnostic logs require JSON escaping", async () => {
     const result = await executeCode({
       code: 'console.log(String.fromCharCode(0).repeat(3999)); return "x".repeat(999000);',
@@ -18,6 +132,7 @@ describe("Code Mode isolated executor", () => {
     const result = await executeCode({
       code: 'return await Promise.all(Array.from({length:32}, (_,n) => tools.call("read",{n})));',
       limits: { maxConcurrentCalls: 2 },
+      canParallelTool: () => true,
       callTool: async (_, args) => {
         active++; peak = Math.max(peak, active);
         invoked.push(args.n as number);
@@ -49,6 +164,7 @@ describe("Code Mode isolated executor", () => {
 
   it("evaluates an async body and awaits JSON-only host calls in parallel", async () => {
     const result = await executeCode({
+      canParallelTool: () => true,
       code: 'return await Promise.all([tools.call("a", {n:1}), tools.call("b", {n:2})]);',
       callTool,
     });

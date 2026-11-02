@@ -128,8 +128,15 @@ pub(crate) fn final_answer(session: &Value, root: &Value, run: &Value, text: &st
     if !matches!(decision, Decision::Continue) {
         return decision;
     }
-    if run.pointer("/metadata/commandTasks").and_then(Value::as_array).is_some_and(|tasks|
-        tasks.iter().any(|task| task["state"] != "settled" || task["deliveredStep"].is_null())) {
+    if run
+        .pointer("/metadata/commandTasks")
+        .and_then(Value::as_array)
+        .is_some_and(|tasks| {
+            tasks
+                .iter()
+                .any(|task| task["state"] != "settled" || task["deliveredStep"].is_null())
+        })
+    {
         return Decision::Correct("Commands are still running or completion results are queued. Assess dependencies with command.manage, continue independent work after backgrounding, or wait. Aggregate completion results from the next step before finishing.".into());
     }
     if text.trim().is_empty() {
@@ -259,11 +266,24 @@ mod tests {
             json!({"state":"background"}),
             json!({"state":"settled"}),
         ] {
-            assert!(matches!(final_answer(&session, &session,
-                &json!({"metadata":{"commandTasks":[task]}}), "Done"), Decision::Correct(_)));
+            assert!(matches!(
+                final_answer(
+                    &session,
+                    &session,
+                    &json!({"metadata":{"commandTasks":[task]}}),
+                    "Done"
+                ),
+                Decision::Correct(_)
+            ));
         }
-        assert!(matches!(final_answer(&session, &session,
-            &json!({"metadata":{"commandTasks":[{"state":"settled","deliveredStep":3}]}}), "Done"),
-            Decision::Finish(_)));
+        assert!(matches!(
+            final_answer(
+                &session,
+                &session,
+                &json!({"metadata":{"commandTasks":[{"state":"settled","deliveredStep":3}]}}),
+                "Done"
+            ),
+            Decision::Finish(_)
+        ));
     }
 }

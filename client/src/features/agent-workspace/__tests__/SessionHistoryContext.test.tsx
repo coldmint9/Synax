@@ -7,8 +7,14 @@ import { TurnBody } from '../TurnBody';
 import { UserMessageBlock } from '../UserMessageBlock';
 import { conversationHistoryApi } from '../../../adapters/transport/conversationHistory';
 import { useShellStore } from '../../../shared/state/shellStore';
+import { useNotificationStore } from '../../../shared/state/notificationStore';
 import { useAgentSessionStore } from '../state/agentSessionStore';
 import type { AgentRuntimeMessage, AgentSession } from '../../../adapters/transport/agentRuntime';
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useNavigate: () => navigate,
+}));
 vi.mock('../useConversationHistoryVisit',()=>({useConversationHistoryVisit:vi.fn()}));
 vi.mock('../../../adapters/transport/runtimeEventBus',()=>({subscribe:()=>()=>{}}));
 vi.mock('../../../adapters/transport/conversationHistory',()=>({conversationHistoryApi:{list:vi.fn(),preview:vi.fn(),apply:vi.fn(),edit:vi.fn()}}));
@@ -141,6 +147,44 @@ describe('history impact confirmation',()=>{
    await waitFor(()=>expect(conversationHistoryApi.apply).toHaveBeenCalledWith('s','fork',expect.objectContaining({workspaceMode:mode,includeFiles:false})));
    expect(conversationHistoryApi.apply).toHaveBeenCalledOnce();
    await waitFor(()=>expect(useAgentSessionStore.getState().openPanel).toHaveBeenCalledWith('s'));
+ });
+ it('keeps the fork action on the newest reply while its rollback stays blocked', async () => {
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,
+     checkpoints:[{...cp,canRollback:false,hasLaterHistory:false,
+       reason:'HISTORY_LATEST_NODE: the latest history node cannot be rolled back.'}]});
+   render(<SessionHistoryProvider session={session} messages={[]}><Reply/></SessionHistoryProvider>);
+   const fork=await screen.findByRole('button',{name:'从此处分叉'});
+   expect(fork).not.toBeDisabled();
+   expect(screen.queryByRole('button',{name:'回滚到此处'})).not.toBeInTheDocument();
+   fireEvent.click(fork);
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在原工作空间中'}));
+   await waitFor(()=>expect(conversationHistoryApi.preview).toHaveBeenCalledWith('s','cp','fork',false,'reuse_worktree'));
+ });
+ it('moves the route to the fork it just created', async () => {
+   const source={...session,projectId:'p1'} as unknown as AgentSession;
+   render(<SessionHistoryProvider session={source} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在新的工作树上'}));
+   await waitFor(()=>expect(navigate).toHaveBeenCalledWith('/projects/p1/sessions?session=s'));
+ });
+ it('explains a compacted history instead of ignoring the fork click', async () => {
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,
+     readOnlyMessageIds:['msg'],checkpoints:[cp]});
+   render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在原工作空间中'}));
+   await waitFor(()=>expect(useNotificationStore.getState().notifications
+     .some(notification=>notification.message.includes('压缩'))).toBe(true));
+   expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
+ });
+ it('reports a checkpoint it cannot resolve instead of failing silently', async () => {
+   vi.mocked(conversationHistoryApi.list).mockResolvedValue({sessionId:'s',revision:0,reason:null,checkpoints:[]});
+   render(<SessionHistoryProvider session={session} messages={[]}><Trigger action="fork"/></SessionHistoryProvider>);
+   fireEvent.click(screen.getByRole('button',{name:'从此处分叉'}));
+   fireEvent.click(await screen.findByRole('menuitem',{name:'在新的工作树上'}));
+   await waitFor(()=>expect(useNotificationStore.getState().notifications
+     .some(notification=>notification.message.includes('检查点'))).toBe(true));
+   expect(conversationHistoryApi.preview).not.toHaveBeenCalled();
  });
  it('rejects an invalid preview without applying and allows a retry', async () => {
    vi.mocked(conversationHistoryApi.preview).mockResolvedValueOnce({checkpointId:'cp',revision:0,removedMessages:0,files:[],conflicts:[{root:'/project',path:'',reason:'Unavailable'}],exclusions:'',canApply:false});

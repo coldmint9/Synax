@@ -14,6 +14,7 @@ import { ContextMenuProvider } from "../../../shared/ui/context-menu/ContextMenu
 import type { AgentSession } from "../../../adapters/transport/agentRuntime";
 import { useAgentSessionStore } from "../state/agentSessionStore";
 import { useSessionList } from "../useSessionList";
+import { useShellStore } from "../../../shared/state/shellStore";
 
 function makeSession(overrides: Partial<AgentSession>): AgentSession {
   return {
@@ -301,5 +302,84 @@ describe("session row repeat clicks", () => {
     } finally {
       openPanel.mockRestore();
     }
+  });
+});
+
+function ClusteredList() {
+  const list = useSessionList("zh", "sessions", "p1");
+  return (
+    <SessionTimeGroups
+      groups={list.groups}
+      selectedId={null}
+      isLoadingMore={false}
+      hasMore={false}
+      onSelect={list.select}
+      onToggleGroup={list.toggleGroup}
+      onToggleExpand={list.toggleExpand}
+      onLoadMore={list.loadMore}
+      onDelete={list.deleteSession}
+      onTogglePin={list.togglePin}
+    />
+  );
+}
+
+describe("intent clustered sections", () => {
+  beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-03T12:00:00Z"));
+    useShellStore.setState((state) => ({
+      preferences: { ...state.preferences, sessionListClusterByIntent: true },
+    }));
+    useAgentSessionStore.setState({
+      projectId: "p1",
+      sessionListTotal: 3,
+      refreshSessions: vi.fn(async () => {}),
+      sessions: [
+        makeSession({
+          id: "fix",
+          title: "修复登录",
+          updatedAt: "2026-01-03",
+          sessionMetadata: { intentCategory: "缺陷修复" },
+        }),
+        makeSession({
+          id: "ask",
+          title: "澄清需求",
+          updatedAt: "2026-01-02",
+          sessionMetadata: { intentCategory: "需求澄清" },
+        }),
+        makeSession({ id: "loose", title: "杂项", updatedAt: "2026-01-01" }),
+      ],
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    act(() =>
+      useShellStore.setState((state) => ({
+        preferences: { ...state.preferences, sessionListClusterByIntent: false },
+      })),
+    );
+  });
+
+  it("gives every category its own collapse toggle", () => {
+    const { container } = render(<ClusteredList />, { wrapper });
+    const headers = () =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          ".session-list-section-toggle",
+        ),
+      );
+    expect(headers().map((button) => button.textContent)).toEqual([
+      "缺陷修复· 1",
+      "需求澄清· 1",
+      "未分类· 1",
+    ]);
+
+    fireEvent.click(headers()[1]);
+
+    expect(headers()[1]).toHaveAttribute("aria-expanded", "false");
+    expect(
+      document.getElementById(headers()[1].getAttribute("aria-controls")!),
+    ).toHaveAttribute("inert");
+    expect(headers()[0]).toHaveAttribute("aria-expanded", "true");
   });
 });

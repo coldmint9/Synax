@@ -5,7 +5,6 @@ import {
   openWorkspaceFile,
   openWorkspaceSubagent,
   openWorkspaceTab,
-  replaceWorkspaceDiffWithFile,
   useSessionWorkspaceStore,
 } from "../sessionWorkspaceStore";
 
@@ -39,6 +38,49 @@ describe("sessionWorkspaceStore", () => {
     useSessionWorkspaceStore.getState().removeSessions(["child-a"]);
     expect(useSessionWorkspaceStore.getState().sessions.parent.subagent).toBeUndefined();
     expect(useSessionWorkspaceStore.getState().sessions.other.subagent?.sessionId).toBe("child-b");
+  });
+
+  it("keeps the side chat layout per conversation and restores the collapsed pill", () => {
+    const store = useSessionWorkspaceStore.getState();
+    store.openSubagent("parent", "child-a", "林墨");
+    store.openSideChat("parent");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent,
+    ).toMatchObject({
+      subagent: undefined,
+      sideChat: { sessionId: null, open: true },
+    });
+
+    store.attachSideChat("parent", "side-a");
+    store.collapseSideChat("parent");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.sideChat,
+    ).toEqual({ sessionId: "side-a", open: false });
+    expect(useSessionWorkspaceStore.getState().sessions.other).toBeUndefined();
+
+    store.openSideChat("parent");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.sideChat,
+    ).toEqual({ sessionId: "side-a", open: true });
+  });
+
+  it("adopts a stored side chat only when the conversation has none", () => {
+    const store = useSessionWorkspaceStore.getState();
+    store.discoverSideChat("parent", "side-a");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.sideChat,
+    ).toEqual({ sessionId: "side-a", open: false });
+
+    store.openSideChat("parent");
+    store.discoverSideChat("parent", "side-b");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.sideChat,
+    ).toEqual({ sessionId: "side-a", open: true });
+
+    store.forgetSideChat("parent");
+    expect(
+      useSessionWorkspaceStore.getState().sessions.parent.sideChat,
+    ).toBeUndefined();
   });
 
   it("keeps tabs isolated per session and restores the prior active tab", () => {
@@ -82,21 +124,6 @@ describe("sessionWorkspaceStore", () => {
         rootId: "web",
       }),
     ]);
-  });
-
-  it("replaces the active diff tab with the file tab in the same position", () => {
-    openWorkspaceFile("session-a", "README.md");
-    openWorkspaceDiff("session-a", "src/index.ts", "api");
-
-    replaceWorkspaceDiffWithFile("session-a", "src/index.ts", "api");
-
-    const workspace = useSessionWorkspaceStore.getState().sessions["session-a"];
-    expect(workspace.tabs.map((tab) => tab.id)).toEqual([
-      "file:README.md",
-      "file@api:src/index.ts",
-    ]);
-    expect(workspace.activeTabId).toBe("file@api:src/index.ts");
-    expect(workspace.tabs[1].kind).toBe("file");
   });
 
   it("leaves fullscreen when the last tab closes", () => {

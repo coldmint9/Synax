@@ -5,7 +5,7 @@ import { useShellStore } from "../../shared/state/shellStore";
 import { SettingsFrame, type SettingsSection } from "./extensions/SettingsFrame";
 import { ExtensionCenter } from "./extensions/ExtensionCenter";
 import { useExtensionCopy } from "./extensions/extension-copy";
-import { ScrollArea, Spinner, Text } from "@/shared/ui/ui/Display";
+import { ScrollArea, Spinner } from "@/shared/ui/ui/Display";
 import { useConfig } from "./useConfig";
 import { useLocale } from "../../shared/hooks/useLocale";
 import { AppearanceSection } from "./components/AppearanceSection";
@@ -20,6 +20,7 @@ import { McpServersSection } from "./components/McpServersSection";
 import { ComputerUseGlobalSettings } from "./components/ComputerUseGlobalSettings";
 import { AnalyticsSettings } from "./components/AnalyticsSettings";
 import { SubagentSettings } from "./components/SubagentSettings";
+import { SuperModelPoolSection } from "./components/SuperModelPoolSection";
 import { GitLabSettings } from './components/GitLabSettings';
 
 export default function GlobalSettingsPage() {
@@ -54,7 +55,15 @@ export default function GlobalSettingsPage() {
     <ScrollArea className="settings-scroll-viewport">
       <div className="settings-scroll-content">
         <SettingsFrame section={section} onSelect={select} projectId={projectId}>
-          {section === 'gitLab' ? <GitLabSettings config={globalConfig} onUpdate={updateGlobalConfig} /> : section === "subagents" ? <SubagentSettings /> : section === "archive" ? (
+          {section === 'gitLab' ? <GitLabSettings config={globalConfig} onUpdate={updateGlobalConfig} /> : section === "subagents" ? (
+            <div className="space-y-10">
+              <SubagentSettings globalConfig={globalConfig} providers={providers} />
+              <SuperModelPoolSection
+                config={globalConfig}
+                onUpdate={updateGlobalConfig}
+              />
+            </div>
+          ) : section === "archive" ? (
             <SessionArchiveSettings config={globalConfig} onUpdate={updateGlobalConfig} />
           ) : section === "analytics" ? (
             <AnalyticsSettings projectId={projectId} />
@@ -84,34 +93,32 @@ export default function GlobalSettingsPage() {
               onConfigureProvider={goToProviders}
               onUpdate={updateGlobalConfig}
             />
-          ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : <>
-          <div className="mb-8">
-            <Text variant="h5">{t("settingsSystemConfig")}</Text>
-            <Text variant="body-sm" color="muted" className="mt-1">
-              {t("settingsTitle")}
-            </Text>
-          </div>
-
-          <div className="space-y-8">
-            <AppearanceSection config={globalConfig} onUpdate={updateGlobalConfig} />
-            <LayoutSection />
-            <UpdateSettings />
-            <TerminalSettings
-              configuredPath={globalConfig.terminalShellPath}
-              onUpdate={updateGlobalConfig}
-            />
-            <InputOptimizationSettings
-              config={globalConfig}
-              onUpdate={updateGlobalConfig}
-            />
-            <WebSearchSettings
-              config={globalConfig}
-              onUpdate={updateGlobalConfig}
-              onReload={reload}
-            />
-          </div>
-          <OpenConfigFile />
-          </>}
+          ) : section !== "general" ? (projectId ? <ExtensionCenter key={`${projectId}:${section}`} projectId={projectId} section={section} onNavigate={select} /> : <p className="extension-project-hint">{copy.pickProject}</p>) : (
+            <div className="settings-page">
+              <header className="settings-page__head">
+                <h1 className="settings-page__title">{t("settingsSystemConfig")}</h1>
+                <OpenConfigFile />
+              </header>
+              <div className="settings-page__sections">
+                <AppearanceSection config={globalConfig} onUpdate={updateGlobalConfig} />
+                <LayoutSection />
+                <TerminalSettings
+                  configuredPath={globalConfig.terminalShellPath}
+                  onUpdate={updateGlobalConfig}
+                />
+                <InputOptimizationSettings
+                  config={globalConfig}
+                  onUpdate={updateGlobalConfig}
+                />
+                <WebSearchSettings
+                  config={globalConfig}
+                  onUpdate={updateGlobalConfig}
+                  onReload={reload}
+                />
+                <UpdateSettings />
+              </div>
+            </div>
+          )}
         </SettingsFrame>
       </div>
     </ScrollArea>

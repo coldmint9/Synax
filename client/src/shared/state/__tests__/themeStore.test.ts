@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_ACCENT } from "../../lib/appearance";
 import { DEFAULT_THEME } from "../../lib/theme/defaults";
+import { DEFAULT_APP_THEME } from "../../lib/theme/presets";
 import { mergeTheme } from "../../lib/theme/normalize";
 import {
   ensureThemeRuntime,
@@ -67,6 +68,47 @@ afterEach(() => {
 });
 
 describe("theme store", () => {
+  it.each([null, { locale: "zh", defaultHome: "global-home" }])("starts with Synax Default without an explicit saved theme (%j)", (legacy) => {
+    useThemeStore.setState(useThemeStore.getInitialState());
+    if (legacy) localStorage.setItem(legacyKey, JSON.stringify(legacy));
+    hydrateThemePreferences();
+    stopRuntime = startThemeRuntime();
+    expect(useThemeStore.getState()).toMatchObject({
+      mode: "dark", resolvedTheme: "dark", activeTheme: DEFAULT_APP_THEME,
+    });
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("#10141c");
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#296fcb");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+  });
+
+  it("resets to Synax Default while keeping an explicit light mode", () => {
+    useThemeStore.getState().setMode("light");
+    useThemeStore.getState().resetTheme();
+    expect(useThemeStore.getState()).toMatchObject({
+      mode: "light", activeTheme: DEFAULT_APP_THEME, source: "builtin",
+    });
+    expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY)!)).toMatchObject({
+      mode: "light", theme: { id: "synax-default" },
+    });
+  });
+
+  it.each(["builtin", "imported"] as const)("preserves %s preferences while refreshing only the built-in brand", (source) => {
+    const theme = mergeTheme(DEFAULT_THEME, {
+      name: "Synax Default",
+      colors: { dark: { accent: "#b1a2c9" } },
+    });
+    const raw = JSON.stringify({ schemaVersion: 1, mode: "dark", theme, source });
+    localStorage.setItem("synax-theme-preferences", raw);
+    hydrateThemePreferences();
+    expect(THEME_STORAGE_KEY).toBe("synax-theme-preferences");
+    expect(useThemeStore.getState().activeTheme).toMatchObject({
+      id: "synax-default",
+      name: source === "builtin" ? "Synax Default" : "Synax Default",
+      colors: { dark: { accent: "#b1a2c9" } },
+    });
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe(raw);
+  });
+
   it("migrates the old shell appearance preferences once", () => {
     localStorage.setItem(
       legacyKey,

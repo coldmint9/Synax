@@ -228,6 +228,18 @@ describe("workspace session cache", () => {
     expect(agentRuntimeApi.listSessions).not.toHaveBeenCalled();
   });
 
+  it("does not count a side-chat global callback as a new primary conversation", async () => {
+    await openWorkspace("alpha", [row("parent", "alpha")]);
+    const before = useAgentSessionStore.getState();
+    vi.mocked(agentRuntimeApi.getSessionSummary).mockResolvedValue({ session: row("side", "alpha", {
+      parentSessionId: "parent", sessionMetadata: { subagentKind: "side-chat" },
+    }) });
+    await useAgentSessionStore.getState().syncSessionSummary("side");
+    expect(useAgentSessionStore.getState().sessions).toBe(before.sessions);
+    expect(useAgentSessionStore.getState().sessionListTotal).toBe(before.sessionListTotal);
+    expect(useAgentSessionStore.getState().childSessions.parent).toBeUndefined();
+  });
+
   it("updates the remembered row when the callback names another workspace", async () => {
     await openWorkspace("alpha", [row("d1", "alpha")]);
     await openWorkspace("beta", [row("d2", "beta")]);

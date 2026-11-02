@@ -10,6 +10,10 @@ import {
   createGitWorktree,
   attachDetachedGitBranch,
   listGitWorkspaces,
+  listGitRemoteBranches,
+  fetchGitRemote,
+  mergeGitUpstream,
+  mergeGitBranch,
   removeGitWorktree,
   resolveGitWorkspaceSelection,
 } from "../git-workspaces.js";
@@ -63,6 +67,20 @@ describe("git workspace maintenance", () => {
     await createAndSwitchGitBranch(repository, "feature/from-production");
     expect(git(["rev-parse", "HEAD"])).toBe(production);
     expect(fs.existsSync(path.join(repository, "test-only.txt"))).toBe(false);
+  }, gitTestTimeoutMs);
+
+  it("creates and checks out a branch without discarding uncommitted changes", async () => {
+    fs.writeFileSync(path.join(repository, "README.md"), "working copy\n");
+    fs.writeFileSync(path.join(repository, "untracked.txt"), "keep me\n");
+    await createAndSwitchGitBranch(repository, "topic/in-progress");
+    expect(git(["branch", "--show-current"])).toBe("topic/in-progress");
+    expect(git(["rev-parse", "HEAD"])).toBe(git(["rev-parse", "main"]));
+    expect(fs.readFileSync(path.join(repository, "README.md"), "utf8")).toBe(
+      "working copy\n",
+    );
+    expect(fs.readFileSync(path.join(repository, "untracked.txt"), "utf8")).toBe(
+      "keep me\n",
+    );
   }, gitTestTimeoutMs);
 
   it.each([false, true])("preserves the backup and reports partial switching when restore fails (staged: %s)", async (staged) => {
@@ -267,5 +285,187 @@ describe('attach a branch to detached work', () => {
     expect(git(['rev-parse', 'HEAD'])).toBe(base);
     expect(git(['status', '--porcelain', '--untracked-files=all'])).toContain('draft.txt');
     expect(fs.readFileSync(path.join(repository, 'README.md'), 'utf8')).toContain('working');
+  }, gitTestTimeoutMs);
+});
+
+describe('remote branch checkout', () => {
+  it('lists remote refs without local branches and checks one out as a tracking branch', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-git-remote-'));
+    try {
+      execFileSync('git', ['init', '--bare', '-b', 'main', remote]);
+      git(['remote', 'add', 'origin', remote]);
+      git(['push', 'origin', 'main']);
+      git(['push', 'origin', 'main:refs/heads/feature/remote-login']);
+      // Alias refs point at another ref and must never surface as branches.
+      git(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+
+      const refs = await listGitRemoteBranches(repository);
+      expect(refs).toEqual([
+        {
+          name: 'origin/feature/remote-login',
+          remote: 'origin',
+          branch: 'feature/remote-login',
+        },
+        { name: 'origin/main', remote: 'origin', branch: 'main' },
+      ]);
+
+      await expect(
+        switchGitBranch(repository, 'origin/feature/remote-login', { remote: true }),
+      ).resolves.toBe('feature/remote-login');
+      expect(git(['branch', '--show-current'])).toBe('feature/remote-login');
+      expect(
+        git(['rev-parse', '--abbrev-ref', 'feature/remote-login@{upstream}']),
+      ).toBe('origin/feature/remote-login');
+      expect(
+        git(['for-each-ref', '--format=%(upstream:short)', 'refs/heads/feature/remote-login']),
+      ).toBe('origin/feature/remote-login');
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true });
+    }
+  }, gitTestTimeoutMs);
+
+  it('refuses an existing local branch and a missing remote ref without changing HEAD', async () => {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-git-remote-'));
+    try {
+      execFileSync('git', ['init', '--bare', '-b', 'main', remote]);
+      git(['remote', 'add', 'origin', remote]);
+      git(['push', 'origin', 'main']);
+
+      await expect(
+        switchGitBranch(repository, 'origin/main', { remote: true }),
+      ).rejects.toThrow(/already exists/i);
+      await expect(
+        switchGitBranch(repository, 'origin/missing', { remote: true }),
+      ).rejects.toThrow(/does not exist/i);
+      await expect(
+        switchGitBranch(repository, 'main', { remote: true }),
+      ).rejects.toThrow(/invalid/i);
+      expect(git(['branch', '--show-current'])).toBe('main');
+    } finally {
+      fs.rmSync(remote, { recursive: true, force: true });
+    }
+  }, gitTestTimeoutMs);
+});
+
+const gitIn = (cwd: string, args: string[]): string =>
+  execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+
+/** A bare remote this checkout publishes to, plus a second working clone that
+ * stands in for a teammate pushing while the session works. */
+function publishRemote(): { remote: string; other: string } {
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), 'synax-git-remote-'));
+  const other = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'synax-git-peer-')), 'clone');
+  execFileSync('git', ['init', '--bare', '-b', 'main', remote]);
+  git(['remote', 'add', 'origin', remote]);
+  git(['push', '-q', 'origin', 'main']);
+  execFileSync('git', ['clone', '-q', remote, other]);
+  gitIn(other, ['config', 'user.email', 'synax@example.test']);
+  gitIn(other, ['config', 'user.name', 'Synax Peer']);
+  gitIn(other, ['config', 'commit.gpgsign', 'false']);
+  return { remote, other };
+}
+
+describe('remote refresh before checkout and publish', () => {
+  it('fetches the remote before creating the local tracking branch', async () => {
+    const peer = publishRemote();
+    try {
+      git(['push', '-q', 'origin', 'main:refs/heads/topic/fresh']);
+      gitIn(peer.other, ['fetch', '-q', 'origin']);
+      gitIn(peer.other, ['switch', '-q', '-c', 'topic/fresh', 'origin/topic/fresh']);
+      fs.writeFileSync(path.join(peer.other, 'fresh.txt'), 'published later\n');
+      gitIn(peer.other, ['add', '.']);
+      gitIn(peer.other, ['commit', '-qm', 'later']);
+      gitIn(peer.other, ['push', '-q', 'origin', 'topic/fresh']);
+      const latest = gitIn(peer.other, ['rev-parse', 'HEAD']);
+      // The checkout's tracking ref is stale until the checkout itself fetches.
+      expect(git(['rev-parse', 'origin/topic/fresh'])).not.toBe(latest);
+
+      await switchGitBranch(repository, 'origin/topic/fresh', { remote: true });
+
+      expect(git(['rev-parse', 'HEAD'])).toBe(latest);
+      expect(git(['branch', '--show-current'])).toBe('topic/fresh');
+    } finally {
+      fs.rmSync(peer.remote, { recursive: true, force: true });
+      fs.rmSync(path.dirname(peer.other), { recursive: true, force: true });
+    }
+  }, gitTestTimeoutMs);
+
+  it('merges the fetched upstream and treats an unpublished upstream as up to date', async () => {
+    const peer = publishRemote();
+    try {
+      expect(await mergeGitUpstream(repository, 'origin/main')).toEqual({ status: 'up-to-date' });
+      expect(await mergeGitUpstream(repository, 'origin/never-published')).toEqual({ status: 'up-to-date' });
+
+      fs.writeFileSync(path.join(peer.other, 'peer.txt'), 'peer\n');
+      gitIn(peer.other, ['add', '.']);
+      gitIn(peer.other, ['commit', '-qm', 'peer']);
+      gitIn(peer.other, ['push', '-q', 'origin', 'main']);
+      const peerHead = gitIn(peer.other, ['rev-parse', 'HEAD']);
+
+      await fetchGitRemote(repository, 'origin');
+      expect(await mergeGitUpstream(repository, 'origin/main')).toEqual({ status: 'merged' });
+      expect(git(['rev-parse', 'HEAD'])).toBe(peerHead);
+    } finally {
+      fs.rmSync(peer.remote, { recursive: true, force: true });
+      fs.rmSync(path.dirname(peer.other), { recursive: true, force: true });
+    }
+  }, gitTestTimeoutMs);
+
+  it('reports a conflict and keeps the merge in progress for resolution', async () => {
+    const peer = publishRemote();
+    try {
+      fs.appendFileSync(path.join(repository, 'README.md'), 'local edit\n');
+      git(['add', '.']);
+      git(['commit', '-qm', 'local edit']);
+      const localHead = git(['rev-parse', 'HEAD']);
+
+      fs.writeFileSync(path.join(peer.other, 'README.md'), '# test\npeer edit\n');
+      gitIn(peer.other, ['add', '.']);
+      gitIn(peer.other, ['commit', '-qm', 'peer edit']);
+      gitIn(peer.other, ['push', '-q', 'origin', 'main']);
+
+      await fetchGitRemote(repository, 'origin');
+      expect(await mergeGitUpstream(repository, 'origin/main')).toEqual({
+        status: 'conflicted',
+        files: ['README.md'],
+      });
+      // The conflicting merge stays available for resolution; HEAD is unchanged.
+      expect(git(['rev-parse', 'HEAD'])).toBe(localHead);
+      expect(fs.existsSync(path.join(repository, '.git', 'MERGE_HEAD'))).toBe(true);
+      expect(git(['status', '--porcelain'])).toContain('UU README.md');
+    } finally {
+      fs.rmSync(peer.remote, { recursive: true, force: true });
+      fs.rmSync(path.dirname(peer.other), { recursive: true, force: true });
+    }
+  }, gitTestTimeoutMs);
+
+  it('merges a local branch into the checked-out branch and refuses a dirty tree', () => {
+    git(['switch', '-q', '-c', 'feature/merge']);
+    fs.writeFileSync(path.join(repository, 'feature.txt'), 'feature\n');
+    git(['add', '.']);
+    git(['commit', '-qm', 'feature work']);
+    const featureHead = git(['rev-parse', 'HEAD']);
+    git(['switch', '-q', 'main']);
+    fs.writeFileSync(path.join(repository, 'main.txt'), 'main\n');
+    git(['add', '.']);
+    git(['commit', '-qm', 'main work']);
+
+    return mergeGitBranch(repository, 'feature/merge')
+      .then((merged) => {
+        expect(merged).toEqual({ status: 'merged' });
+        expect(git(['rev-parse', 'feature/merge'])).toBe(featureHead);
+        expect(git(['log', '-1', '--format=%P']).split(' ')).toHaveLength(2);
+        return mergeGitBranch(repository, 'feature/merge');
+      })
+      .then(async (again) => {
+        expect(again).toEqual({ status: 'up-to-date' });
+        fs.writeFileSync(path.join(repository, 'dirty.txt'), 'dirty\n');
+        await expect(mergeGitBranch(repository, 'feature/merge')).rejects.toThrow(
+          /uncommitted/i,
+        );
+        await expect(mergeGitBranch(repository, 'missing-branch')).rejects.toThrow(
+          /does not exist/i,
+        );
+      });
   }, gitTestTimeoutMs);
 });

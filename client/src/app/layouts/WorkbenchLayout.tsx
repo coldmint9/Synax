@@ -19,6 +19,7 @@ import { sessionPath } from "../../features/agent-workspace/sessionRoutes";
 import { resolveSessionsEntryPath } from "../../features/agent-workspace/sessionLastVisit";
 import {
   clearLastOpenedWorkspaceId,
+  resolveStartupWorkspaceId,
   saveLastOpenedWorkspaceId,
 } from "../../features/workspace/lastOpenedWorkspace";
 import type { ActivityPanel } from "./ActivityBar";
@@ -102,6 +103,21 @@ function WorkbenchLayoutContent() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const defaultHome = useShellStore((s) => s.preferences.defaultHome);
+  const atHome = location.pathname === "/";
+  const [startupPending, setStartupPending] = useState(atHome);
+  useEffect(() => {
+    if (!startupPending) return;
+    // Startup preference must not hijack deep links or later home navigation.
+    if (!atHome || defaultHome === "global-home") {
+      setStartupPending(false);
+      return;
+    }
+    if (!projectsLoaded) return;
+    setStartupPending(false);
+    const workspaceId = resolveStartupWorkspaceId(projects);
+    if (workspaceId) navigate(resolveSessionsEntryPath(workspaceId), { replace: true });
+  }, [startupPending, atHome, defaultHome, projectsLoaded, projects, navigate]);
   useEffect(() => {
     const sync = () => setSessionDetailsVisible(location.pathname.includes("/sessions") && !document.hidden);
     sync();
@@ -301,9 +317,9 @@ function WorkbenchLayoutContent() {
                 isCachedPanel ? "hidden" : "flex-1 min-h-0 flex flex-col"
               }
             >
-              <Outlet
+              {startupPending && atHome && defaultHome === "last-project" ? <PageLoading /> : <Outlet
                 context={{ onCreateProject: () => setCreateDialogOpen(true), onRemoveProject: handleRemoveProject }}
-              />
+              />}
             </div>
           </div>
         </div>

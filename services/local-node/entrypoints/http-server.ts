@@ -9,11 +9,15 @@ import type { Server } from "node:http";
 import { stopHostProcesses } from "../modules/agent-runtime/process-ownership.js";
 import { randomUUID } from "node:crypto";
 import { businessStore } from "../infrastructure/persistence/business-store.js";
+import { warmupRuntimeCatalog } from "../infrastructure/llm-runtime/catalog.js";
+import { sessionProcessManager } from "../modules/agent-runtime/session-process-manager.js";
+import { codeWorkerPool } from "../modules/agent-runtime/code-mode/worker-pool.js";
 import {
   recoverRuntimeSession,
   needsRuntimeRecovery,
 } from "../modules/agent-runtime/runtime-recovery.js";
 import { SessionRecovery, installSessionRecovery, stopSessionRecovery } from '../modules/agent-runtime/session-recovery.js';
+import { startSessionAutoResume, stopSessionAutoResume } from '../modules/agent-runtime/auto-resume/index.js';
 import { runCoordinator } from "../modules/agent-runtime/run-coordinator.js";
 import path from "node:path";
 import { installRuntimeAccess } from "../transport/http/middleware/runtime-access.js";
@@ -51,12 +55,22 @@ import {
   registerSessionTitleHooks,
 } from "../modules/agent-runtime/session-title-service.js";
 import { startPermissionTimeoutSweeper, stopPermissionTimeoutSweeper } from "../modules/agent-runtime/permission-timeout-sweeper.js";
+import { startAnalyticsBackfill, stopAnalyticsBackfill } from "../modules/agent-runtime/analytics-service.js";
+import { registerAnalyticsRetention } from "../modules/agent-runtime/analytics-retention.js";
 import { startSessionArchiveRetention } from "../modules/agent-runtime/session-archive-retention.js";
 import { closeAllBrowserSessions } from "../modules/agent-runtime/tools/browser/browser-manager.js";
 import { setRuntimeCuaConnection } from "../infrastructure/mcp/runtime-cua-config.js";
 import { mcpClientManager } from "../infrastructure/mcp/mcp-client-manager.js";
 import { startRustRuntimeSidecar, stopRustRuntimeSidecar, type RustRuntimeSidecarHandle } from "../infrastructure/runtime/rust-sidecar.js";
 import { workspaceIndexService } from "../modules/workspace-index-service.js";
+import {
+  onParentMessage,
+  parentChannelAvailable,
+} from "../infrastructure/runtime/parent-channel.js";
+import {
+  SESSION_NOTIFICATION_SETTINGS_MESSAGE,
+  sessionNotificationObserver,
+} from "../modules/agent-runtime/session-notification-observer.js";
 
 export const app = new Hono();
 app.get("/api/agent-node", (c) => c.json({
@@ -81,6 +95,7 @@ installRuntimeAccess(app, {
 });
 
 // Refresh cross-process metadata before requests and commit before returning.
+// Account bootstrap is independent of workspace history/config hydration.
 app.use('/api/*', async (c, next) => {
   // Health/logs remain responsive while history is loading. Other routes only
   // refresh the small policy/configuration cache, never all sessions/assets.
@@ -127,7 +142,17 @@ app.route("/oauth/web-search", webSearchOAuthRoutes);
 // Only the Electron parent may inject a Cua connection. Never expose a public
 // HTTP endpoint or persist its private socket/launch environment.
 function acceptParentMessage(message: unknown): void {
-  if (!message || typeof message !== 'object' || (message as { type?: unknown }).type !== 'synax:cua-connection') return;
+  if (!message || typeof message !== 'object') return;
+  const type = (message as { type?: unknown }).type;
+  if (type === SESSION_NOTIFICATION_SETTINGS_MESSAGE) {
+    const settings = message as { desktop?: unknown; locale?: unknown };
+    sessionNotificationObserver.configure({
+      desktop: typeof settings.desktop === 'boolean' ? settings.desktop : undefined,
+      locale: settings.locale === 'zh' || settings.locale === 'en' ? settings.locale : undefined,
+    });
+    return;
+  }
+  if (type !== 'synax:cua-connection') return;
   try {
     const changed = setRuntimeCuaConnection((message as { connection?: unknown }).connection ?? null);
     if (changed) mcpClientManager.closeCua();
@@ -135,9 +160,7 @@ function acceptParentMessage(message: unknown): void {
     pinoLogger.warn({ error: error instanceof Error ? error.message : String(error) }, '[cua] rejected parent connection');
   }
 }
-process.on('message', acceptParentMessage);
-const electronParentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data: unknown }) => void): void } }).parentPort;
-electronParentPort?.on('message', event => acceptParentMessage(event.data));
+onParentMessage(acceptParentMessage);
 
 // RocksDB holds the exclusive data-root lock for the lifetime of the Rust sidecar.
 const runtimeHost = { hostId: randomUUID() };
@@ -156,9 +179,13 @@ let httpServer: Server | undefined;
 let closeTerminalSockets: (() => void) | undefined;
 let closeObservationSockets: (() => void) | undefined;
 let shuttingDown = false;
+const enterpriseSessionExpiry = setInterval(() => {
+}, 15_000);
+enterpriseSessionExpiry.unref();
 let rustRuntimeSidecar: RustRuntimeSidecarHandle | null = null;
 
 let stopSessionArchiveRetention = () => {};
+let stopAnalyticsRetention = () => {};
 let stopInteractionRecovery: () => Promise<void> = async () => {};
 const startupLifetime = new AbortController();
 let sessionRecovery: SessionRecovery;
@@ -197,10 +224,14 @@ function backgroundSessions(recovery: SessionRecovery): void {
   });
 }
 async function startRuntime(): Promise<void> {
+  warmupRuntimeCatalog();
   process.env.SYNAX_RUNTIME_SIDECAR_SUPERVISOR ??= '1';
   process.env.SYNAX_RUNTIME_SIDECAR_STREAM ??= 'authoritative';
   if (process.env.NODE_ENV !== 'test') process.env.SYNAX_AGENT_LOOP_ENGINE ??= 'rust';
   const recovery = configureSessionRecovery();
+  // A desktop parent outlives its window. Watching sessions here lets a settled
+  // run still reach the user while no renderer exists.
+  if (parentChannelAvailable()) sessionNotificationObserver.start();
   rustRuntimeSidecar = await startupPhase('rust_runtime', () => startRustRuntimeSidecar(async () => {
     await stopSessionRecovery();
     if (!shuttingDown) backgroundSessions(configureSessionRecovery(true));
@@ -214,12 +245,18 @@ async function startRuntime(): Promise<void> {
   if (mediaJobs > 0) pinoLogger.info({ count: mediaJobs }, "recovered media generation jobs");
   await startServer();
   backgroundSessions(recovery);
+  // Restoring interrupted work is deliberately last and delayed: a launch must
+  // stay responsive, and the session index plus runtime recovery own the store
+  // for the first seconds anyway.
+  startSessionAutoResume();
   // Index existing workspace roots after the runtime is ready. The scan is
   // intentionally fire-and-forget so app startup and the first HTTP response
   // never wait for a large repository.
   void workspaceIndexService.start();
   void sweepAssets().catch(error => pinoLogger.warn({error}, "Media cleanup failed"));
   startPermissionTimeoutSweeper();
+  startAnalyticsBackfill();
+  stopAnalyticsRetention = registerAnalyticsRetention();
   stopInteractionRecovery = startInteractionRecovery();
 }
 
@@ -257,9 +294,13 @@ function startServer(): Promise<void> {
 
 async function shutdownRuntime(): Promise<void> {
   stopSessionArchiveRetention();
+  stopAnalyticsRetention();
   if (shuttingDown) return;
   shuttingDown = true;
-  const maintenanceStopped = Promise.all([stopPermissionTimeoutSweeper(), stopInteractionRecovery()]);
+  sessionNotificationObserver.stop();
+  sessionProcessManager.stopWarmups();
+  clearInterval(enterpriseSessionExpiry);
+  const maintenanceStopped = Promise.all([stopPermissionTimeoutSweeper(), stopAnalyticsBackfill(), stopInteractionRecovery()]);
   startupLifetime.abort();
   closeObservationSockets?.();
   closeTerminalSockets?.();
@@ -267,6 +308,9 @@ async function shutdownRuntime(): Promise<void> {
   httpServer?.close();
   await stopSessionRecovery();
   await maintenanceStopped;
+  // Capture the work in flight before it is interrupted so the next launch can
+  // continue it without the user reopening each session.
+  await stopSessionAutoResume();
   let failed = false;
   for (const id of runCoordinator.activeSessionIds()) {
     try {
@@ -282,6 +326,7 @@ async function shutdownRuntime(): Promise<void> {
     failed = true;
     pinoLogger.error({ error }, "terminal shutdown unconfirmed");
   }
+  await codeWorkerPool.close();
   const unresolved = await stopHostProcesses(runtimeHost.hostId);
   if (unresolved.length) {
     failed = true;

@@ -8,6 +8,7 @@
 
 use im::{HashMap, Vector};
 use serde_json::{Map, Value, json};
+use serde::{Serialize, Serializer};
 
 use crate::runtime::actor::{PendingEvent, RuntimeError};
 
@@ -20,6 +21,19 @@ pub enum PValue {
     String(String),
     Array(Vector<PValue>),
     Object(PMap),
+}
+
+impl Serialize for PValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Null => serializer.serialize_unit(),
+            Self::Bool(value) => serializer.serialize_bool(*value),
+            Self::Number(value) => value.serialize(serializer),
+            Self::String(value) => serializer.serialize_str(value),
+            Self::Array(items) => serializer.collect_seq(items.iter()),
+            Self::Object(fields) => serializer.collect_map(fields.iter()),
+        }
+    }
 }
 
 pub type PMap = HashMap<String, PValue>;
@@ -170,13 +184,32 @@ impl Projection {
 
     /// Encode to the canonical bytes, enforcing the transport budget.
     pub fn encode(&self) -> Result<Vec<u8>, RuntimeError> {
-        let json = self.to_json();
-        let bytes = serde_json::to_vec(&json)
+        let bytes = serde_json::to_vec(&self.persistent_value())
             .map_err(|error| RuntimeError::StorageUnavailable(error.to_string()))?;
         if bytes.len() > crate::runtime::projection::MAX_PROJECTION_BYTES {
             return Err(RuntimeError::ProjectionTooLarge);
         }
         Ok(bytes)
+    }
+
+    /// A shallow view keeps every unchanged collection shared for diffing and
+    /// serializes directly without constructing a second JSON object tree.
+    pub fn persistent_value(&self) -> PValue {
+        let mut fields: PMap = [
+            ("session".into(), self.session.clone()),
+            ("run".into(), self.run.clone()),
+            ("cursor".into(), PValue::Number(self.cursor.into())),
+            ("liveChunks".into(), PValue::Array(self.live_chunks.clone())),
+            ("completedStepIds".into(), PValue::Array(self.completed_step_ids.iter().cloned().map(PValue::String).collect())),
+            ("queuedInputs".into(), PValue::Array(self.queued_inputs.clone())),
+            ("forceInjectItemId".into(), self.force_inject_item_id.clone().map_or(PValue::Null, PValue::String)),
+            ("queueRevision".into(), PValue::Number(self.queue_revision.into())),
+            ("pendingQueueInput".into(), self.pending_queue_input.clone().unwrap_or(PValue::Null)),
+        ].into_iter().collect();
+        if let Some(message) = &self.pending_partial_message {
+            fields.insert("pendingPartialMessage".into(), message.clone());
+        }
+        PValue::Object(fields)
     }
 
     pub fn to_json(&self) -> Value {

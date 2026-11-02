@@ -18,7 +18,15 @@ vi.mock("../../../infrastructure/llm-runtime/gateway.js", () => ({
   },
 }));
 
-import { INPUT_OPTIMIZATION_TIMEOUT_MS, optimizeInput } from "../input-optimization.js";
+import {
+  INPUT_OPTIMIZATION_TIMEOUT_MS,
+  optimizeInput,
+} from "../input-optimization.js";
+import {
+  INPUT_OPTIMIZATION_SYSTEM_PROMPT,
+  classifyDraft,
+  detectRewriteStructure,
+} from "../input-optimization-policy.js";
 
 const input = {
   projectId: "p1",
@@ -45,12 +53,15 @@ it("uses the selected API model without tools and expands intent directly in the
   expect(await optimizeInput(input)).toEqual({
     text: "我希望把当前的需求梳理清楚，明确需要完成的事情和最终想达到的效果。",
     status: "optimized",
+    intent: "task",
+    structure: "prose",
   });
   const [request, signal] = mocks.generate.mock.calls[0];
   expect(request).toMatchObject({
     projectId: "p1",
     model: "openai/current",
     purpose: "input-optimization",
+    temperature: 0.3,
     maxTokens: 4_096,
     maxRetries: 0,
   });
@@ -59,16 +70,28 @@ it("uses the selected API model without tools and expands intent directly in the
     "intent-expanding editor",
   );
   expect(request.messages[0].content).toContain(
-    "Expand the intent already implied by the draft",
+    "Turn a wish into an executable request",
   );
   expect(request.messages[0].content).toContain(
-    "Output only the rewritten user message",
+    "Never return a draft that asks for work or asks a question unchanged",
   );
   expect(request.messages[0].content).toContain(
-    "instead of asking questions or requesting more information",
+    "Use bullets only when the draft asks for several distinct pieces of work",
   );
   expect(request.messages[0].content).toContain(
-    "never claim that any work has been changed, fixed, or completed",
+    "Reply with the rewritten message only",
+  );
+  expect(request.messages[0].content).toContain(
+    "say once, in one line, that this detail should be confirmed before starting",
+  );
+  expect(request.messages[0].content).toContain(
+    "never state or imply that any work was changed, fixed, or completed",
+  );
+  expect(request.messages[0].content).toContain(
+    "no trailing commentary, follow-up questions, or summary",
+  );
+  expect(request.messages[0].content).toContain(
+    "copy a literal exactly as written",
   );
   expect(request.messages[1]).toEqual({ role: "user", content: input.text });
   expect(signal).toBeInstanceOf(AbortSignal);
@@ -83,11 +106,37 @@ it.each([
   expect(await optimizeInput({ ...input, text: draft })).toEqual({
     text: rewritten,
     status: "optimized",
+    intent: "task",
+    structure: "prose",
   });
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(
-    "Expand its implied goal and work into a concise user request",
+    "The draft is a request.",
   );
+});
+
+it.each([
+  { draft: "npm install 报错怎么办", focus: "The draft is a request." },
+  { draft: "继续", focus: "The draft is a short control message." },
+  {
+    draft: "为什么登录后一直跳回首页",
+    focus: "The draft asks a question.",
+  },
+  {
+    draft: "跑一下\ncd app\nnpm test",
+    focus: "The draft already has structure.",
+  },
+])("matches the rewrite focus to the draft shape: $draft", async ({ draft, focus }) => {
+  mocks.generate.mockResolvedValue({ text: "请排查并反馈。", finishReason: "stop" });
+  await optimizeInput({ ...input, text: draft });
+  expect(mocks.generate.mock.calls[0][0].messages[0].content).toContain(focus);
+});
+
+it("renders the few-shot literals without the template escapes", () => {
+  expect(INPUT_OPTIMIZATION_SYSTEM_PROMPT).toContain(
+    "Draft: 修复 `src/login.ts`，并运行 `npm test`。",
+  );
+  expect(INPUT_OPTIMIZATION_SYSTEM_PROMPT).not.toContain("\\`");
 });
 
 it("keeps structured drafts and protected literals intact", async () => {
@@ -111,8 +160,10 @@ it("keeps structured drafts and protected literals intact", async () => {
     finishReason: "stop",
   });
 
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
+  expect(await optimizeInput({ ...input, text: draft })).toMatchObject({
     status: "optimized",
+    intent: "structured",
+    structure: "bulleted",
     text: [
       "请修复登录流程：",
       "- 保留接口 `POST /api/login`",
@@ -124,91 +175,73 @@ it("keeps structured drafts and protected literals intact", async () => {
   });
 });
 
-it("preserves the draft without retrying when protected content is missing", async () => {
-  const draft = "修复 `src/login.ts`，并运行 `npm test`。";
-  const repaired = "请修复 `src/login.ts`，完成后运行 `npm test`。";
-  mocks.generate
-    .mockResolvedValueOnce({
-      text: "请修复登录问题。",
-      finishReason: "stop",
-    })
-    .mockResolvedValueOnce({ text: repaired, finishReason: "stop" });
+it.each([
+  {
+    reason: "dropped protected literals",
+    draft: "修复 `src/login.ts`，并运行 `npm test`。",
+    rewritten: "请修复登录问题。",
+  },
+  {
+    reason: "an assistant-style preamble",
+    draft: "帮我检查下",
+    rewritten: "当然可以，以下是检查结果：未发现问题。",
+  },
+  {
+    reason: "an inferred-goal report with missing-information prompts",
+    draft: "帮我检查下",
+    rewritten:
+      "**目标（推断）**：你希望我对某个对象做一次检查/审阅。\n\n**需要你补充的信息（当前缺失）**：\n- 检查对象：哪段代码或文件路径。",
+  },
+  {
+    reason: "a claimed execution",
+    draft: "修复 `src/login.ts` 的报错。",
+    rewritten: "我已经修复了 `src/login.ts` 的报错。",
+  },
+  {
+    reason: "a question rewritten as a statement",
+    draft: "这个接口能加缓存吗？",
+    rewritten: "请说明该接口的缓存情况。",
+  },
+])(
+  "applies the rewrite verbatim even when it contains $reason",
+  async ({ draft, rewritten }) => {
+    mocks.generate.mockResolvedValue({ text: rewritten, finishReason: "stop" });
+    expect(await optimizeInput({ ...input, text: draft })).toMatchObject({
+      text: rewritten,
+      status: "optimized",
+    });
+    expect(mocks.generate).toHaveBeenCalledTimes(1);
+  },
+);
 
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: draft,
-    status: "preserved",
-  });
-  expect(mocks.generate).toHaveBeenCalledTimes(1);
-});
-
-it("falls back to the original draft when the provider keeps violating the contract", async () => {
-  const draft = "修复 `src/login.ts`，并运行 `npm test`。";
-  mocks.generate.mockResolvedValue({
-    text: "以下是一个完整的登录修复方案：\n1. 修改代码",
-    finishReason: "stop",
-  });
-
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: draft,
-    status: "preserved",
-  });
-  expect(mocks.generate).toHaveBeenCalledTimes(1);
-});
 
 it.each([
-  "**目标（推断）**：你希望我对某个对象做一次检查/审阅。\n\n**需要你补充的信息（当前缺失）**：\n- 检查对象：哪段代码或文件路径。",
-  "请帮我检查一下。\n\n**需要你补充的信息（当前缺失）**：\n- 检查对象和关注点。",
-  "目标：检查某个对象。\n\n待确认：\n- 需要检查的内容。",
-  "你希望我检查某个对象，但草稿未指明具体对象。",
-  "**Missing information**:\n- Please provide the code to review.",
-  "You want to review something, but the subject is unspecified.",
-])("keeps the original when the model returns analysis or clarification: %s", async (text) => {
-  const draft = "  帮我检查下  ";
-  mocks.generate.mockResolvedValue({ text, finishReason: "stop" });
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: draft,
-    status: "preserved",
-  });
-  expect(mocks.generate).toHaveBeenCalledTimes(1);
+  { draft: "继续", intent: "meta" },
+  { draft: "好的！", intent: "meta" },
+  { draft: "继续把剩下的接口写完", intent: "task" },
+  { draft: "为什么登录后一直跳回首页", intent: "question" },
+  { draft: "can you check this", intent: "question" },
+  { draft: "怎么优化这个函数的性能，并加测试", intent: "task" },
+  { draft: "做个登录页", intent: "task" },
+  {
+    draft: "修复登录流程：\n- 保留接口 `POST /api/login`",
+    intent: "structured",
+  },
+  { draft: "跑一下\ncd app\nnpm test", intent: "structured" },
+] as const)("classifies $draft as a $intent draft", ({ draft, intent }) => {
+  expect(classifyDraft(draft)).toBe(intent);
 });
 
-it("preserves the draft without retrying when the model claims completion", async () => {
-  const draft = "修复 `src/login.ts` 的报错。";
-  const repaired = "请修复 `src/login.ts` 的报错，并确认报错信息与复现路径。";
-  mocks.generate
-    .mockResolvedValueOnce({
-      text: "我已经修复了 `src/login.ts` 的报错。",
-      finishReason: "stop",
-    })
-    .mockResolvedValueOnce({ text: repaired, finishReason: "stop" });
-
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: draft,
-    status: "preserved",
-  });
-  expect(mocks.generate).toHaveBeenCalledTimes(1);
-});
-
-it("preserves confirmation content that was already in the draft", async () => {
-  const draft = "做成可交互页面，数据源待确认。";
-  mocks.generate.mockResolvedValue({
-    text: "做成一个可交互的页面，数据源待确认。",
-    finishReason: "stop",
-  });
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: "做成一个可交互的页面，数据源待确认。",
-    status: "optimized",
-  });
-});
-
-it("allows report sections when they were already part of the user's draft", async () => {
-  const draft = "做成交互页面。\n\n待确认：\n- 数据来源";
-  const rewritten = "请做成一个可交互的页面。\n\n待确认：\n- 数据来源";
-  mocks.generate.mockResolvedValue({ text: rewritten, finishReason: "stop" });
-  expect(await optimizeInput({ ...input, text: draft })).toEqual({
-    text: rewritten,
-    status: "optimized",
-  });
+it("reads the returned structure back instead of trusting it", () => {
+  expect(
+    detectRewriteStructure("- 目标：完成登录页。\n- 范围：仅登录页。", "task"),
+  ).toBe("bulleted");
+  expect(
+    detectRewriteStructure("请实现一个登录页，风格与现有页面保持一致。", "task"),
+  ).toBe("prose");
+  expect(detectRewriteStructure("```ts\nconst a = 1;\n```", "structured")).toBe(
+    "preserved",
+  );
 });
 
 it("uses the saved override for the native backend", async () => {
@@ -259,7 +292,12 @@ it("delivers deltas before the final validated result", async () => {
   const chunks: string[] = [];
   const result = await optimizeInput(input, undefined, (text) => { chunks.push(text); });
   expect(chunks).toEqual(["- 整理", "我的需求。"]);
-  expect(result).toEqual({ text: "- 整理我的需求。", status: "optimized" });
+  expect(result).toEqual({
+    text: "- 整理我的需求。",
+    status: "optimized",
+    intent: "task",
+    structure: "bulleted",
+  });
   expect(mocks.generate).toHaveBeenCalledTimes(1);
   expect(mocks.generate.mock.calls[0][0].reasoningEffort).toBe("none");
 });

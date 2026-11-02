@@ -677,7 +677,8 @@ impl FileStore {
                 ("objectId", text(&root)),
                 ("metadata", metadata),
             ]))
-        })().map(Some)
+        })()
+        .map(Some)
     }
 
     pub fn begin(

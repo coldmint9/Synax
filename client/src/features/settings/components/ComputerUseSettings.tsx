@@ -88,7 +88,6 @@ export function ComputerUseSettings({ value, onSave, locale, globalEnabled = fal
           <div className="computer-use-panel__header">
             <div>
               <h3 id="computer-use-project-heading">{zh ? '项目设置' : 'Project settings'}</h3>
-              <p>{zh ? '仅影响当前项目，不会改变其他项目的默认值。' : 'Only affects this project and does not change the global defaults.'}</p>
             </div>
             <ShieldCheck size={18} aria-hidden="true" />
           </div>
@@ -98,8 +97,8 @@ export function ComputerUseSettings({ value, onSave, locale, globalEnabled = fal
               <span className="computer-use-control"><input className="computer-use-switch" type="checkbox" checked={globalEnabled && current.enabled} disabled={saving || !globalEnabled} onChange={e => void save({ ...current, enabled: e.target.checked })} /></span>
             </label>
             <label className="computer-use-row">
-              <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '策略' : 'Strategy'}</span><span className="computer-use-field-description">{zh ? '自动模式默认直接使用 Cua。' : 'Auto mode uses Direct Cua by default.'}</span></span>
-              <span className="computer-use-control"><select className="computer-use-select" aria-label={zh ? '电脑操作策略' : 'Computer Use strategy'} value={current.strategy} disabled={saving || !globalEnabled || !current.enabled} onChange={e => void save({ ...current, strategy: e.target.value as Config['strategy'] })}><option value="auto">{zh ? '自动' : 'Auto'}</option><option value="direct">Direct Cua</option><option value="jev" disabled={!current.jev?.enabled}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option></select></span>
+              <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '策略' : 'Strategy'}</span></span>
+              <span className="computer-use-control"><select className="computer-use-select" aria-label={zh ? '电脑操作策略' : 'Computer Use strategy'} value={current.strategy} disabled={saving || !globalEnabled || !current.enabled} onChange={e => void save({ ...current, strategy: e.target.value as Config['strategy'] })}><option value="auto">{zh ? '自动（Direct Cua）' : 'Auto (Direct Cua)'}</option><option value="direct">Direct Cua</option><option value="jev" disabled={!current.jev?.enabled}>{zh ? 'Jev 辅助' : 'Jev assisted'}</option></select></span>
             </label>
           </div>
         </section>
@@ -115,7 +114,7 @@ export function ComputerUseSettings({ value, onSave, locale, globalEnabled = fal
           {current.jev?.enabled ? (
             <div className="computer-use-rows">
               <label className="computer-use-row">
-                <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '失败时的处理' : 'Failure behavior'}</span><span className="computer-use-field-description">{zh ? '安全默认会停止操作。' : 'The safe default stops desktop actions.'}</span></span>
+                <span className="computer-use-field-copy"><span className="computer-use-field-title">{zh ? '失败时的处理' : 'Failure behavior'}</span></span>
                 <span className="computer-use-control"><select className="computer-use-select" aria-label={zh ? 'Jev 失败策略' : 'Jev failure policy'} value={current.jev.fallback} disabled={saving} onChange={e => void save({ ...current, jev: { ...current.jev!, fallback: e.target.value as 'direct' | 'fail_closed' } })}><option value="fail_closed">{zh ? '停止操作' : 'Stop actions'}</option><option value="direct">{zh ? '允许直接使用 Cua' : 'Allow Direct Cua'}</option></select></span>
               </label>
             </div>

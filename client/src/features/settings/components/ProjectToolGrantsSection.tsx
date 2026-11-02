@@ -39,6 +39,7 @@ export function ProjectToolGrantsSection({ projectId }: { projectId: string }) {
   return (
     <SettingsCard
       title={zh ? "始终允许的工具" : "Always-allowed tools"}
+      descriptionMode="inline"
       description={zh ? "仅对本项目有效；撤销不会停止已经启动的操作。" : "Only for this project. Revoking does not stop running operations."}
       icon={ShieldCheck}
     >

@@ -19,7 +19,9 @@ export async function* executeBackendSession(
   input: StreamTurnRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentRunStreamChunk> {
-  await agentRuntimeStore.hydrateSession(sessionId);
+  // Execution needs the bounded working set. Replaying sealed history here
+  // duplicates admission/worker hydration and delays the first provider call.
+  await agentRuntimeStore.hydrateExecutionSession(sessionId);
   const binding = resolveSessionBackend(sessionId);
   const model = resolveBackendModel(sessionId, input);
   if (binding.id !== "native")

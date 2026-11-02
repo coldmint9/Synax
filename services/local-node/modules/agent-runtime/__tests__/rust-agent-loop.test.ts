@@ -565,7 +565,16 @@ async function crashAndRestartSidecar() {
   await supervisor.waitUntilReady();
 }
 
-it.each(protocols)("%s resumes a durable tool checkpoint after a sidecar crash", async protocol => {
+async function expectInterrupted(response: Promise<Response>) {
+  const result = await response;
+  expect(result.status).toBe(409);
+  expect(await result.json()).toMatchObject({ code: "RUN_INTERRUPTED" });
+}
+
+// The process-local execution contract introduced in 4d172e77 deliberately
+// fences old loops after a restart. Durable conversation history and explicit
+// continuation are covered by rust-native-backend.test.ts through the host.
+it.each(protocols)("%s fences pending tool results after a sidecar crash and accepts a new run", async protocol => {
   respond = (_request, response) => {
     begin(protocol, response);
     if (requests.length === 1) {
@@ -583,36 +592,39 @@ it.each(protocols)("%s resumes a durable tool checkpoint after a sidecar crash",
   }
   const first = { loopId: id, toolCallId: "call_1", result: "saved before crash" };
   expect((await post("/agent-loop/tool-result", first)).status).toBe(200);
-  await crashAndRestartSidecar();
-  // Result acceptance itself survives restart, even before execution resumes.
+  // Idempotent delivery is available only while the execution still exists.
   expect((await post("/agent-loop/tool-result", first)).status).toBe(200);
   expect((await post("/agent-loop/tool-result", { ...first, result: "changed" })).status).toBe(409);
-  expect((await post("/agent-loop/resume", { ...input(protocol, 1), loopId: id })).status).toBe(200);
-  expect((await post("/agent-loop/tool-result", { loopId: id, toolCallId: "call_0", result: "after crash" })).status).toBe(200);
-  const rest = await collect(observe(id, cursor));
+  await crashAndRestartSidecar();
+  await expectInterrupted(post("/agent-loop/check", { loopId: id }));
+  await expectInterrupted(post("/agent-loop/tool-result", first));
+  await expectInterrupted(post("/agent-loop/resume", { ...input(protocol, 1), loopId: id }));
+  await expectInterrupted(post("/agent-loop/tool-result", { loopId: id, toolCallId: "call_0", result: "after crash" }));
+  await expect(collect(observe(id, cursor))).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
+  expect(requests).toHaveLength(1);
+
+  const next = await start(protocol);
+  expect(next).not.toBe(id);
+  const rest = await collect(observe(next));
   expect(rest.at(-1)?.type).toBe("done");
+  expect(rest.filter(event => event.type === "text-delta").map(event => event.delta).join("")).toBe("Recovered.");
   expect(requests).toHaveLength(2);
   const history = JSON.stringify(requests[1].body);
-  expect(history).toContain("Before crash.");
-  expect(history).toContain("saved before crash");
-  expect(history).toContain("after crash");
-  if (protocol === "anthropic") expect(history).toContain("signed-fixture");
-  if (protocol === "openai-responses") expect(history).toContain("opaque-fixture");
-  const all = await collect(observe(id));
-  expect(all.filter(e => e.type === "tool-call")).toHaveLength(2);
-  expect(all.map(e => e.sequence)).toEqual(all.map((_, i) => i + 1));
+  for (const discarded of ["Before crash.", "saved before crash", "after crash", "signed-fixture", "opaque-fixture"])
+    expect(history).not.toContain(discarded);
 }, 15_000);
 
-it("replays terminal events after restart without restarting the provider", async () => {
+it("rejects replay of expired terminal events after restart without restarting the provider", async () => {
   respond = (_request, response) => { begin("openai", response); text("openai", response, "Completed"); end("openai", response); };
   const id = await start("openai");
   const completed = await collect(observe(id));
+  expect(completed.at(-1)?.type).toBe("done");
   await crashAndRestartSidecar();
-  expect(await collect(observe(id))).toEqual(completed);
+  await expect(collect(observe(id))).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
   expect(requests).toHaveLength(1);
 }, 15_000);
 
-it("retries an interrupted model step with an explicit reset event", async () => {
+it("rejects resuming an interrupted model step without retrying the provider", async () => {
   respond = (_request, response) => {
     begin("openai", response);
     text("openai", response, requests.length === 1 ? "Incomplete attempt" : "Recovered answer");
@@ -625,15 +637,12 @@ it("retries an interrupted model step with an explicit reset event", async () =>
     if (e.type === "text-delta") break;
   }
   await crashAndRestartSidecar();
-  expect((await post("/agent-loop/resume", { ...input("openai"), loopId: id })).status).toBe(200);
-  const recovered = await collect(observe(id, cursor));
-  expect(recovered[0]).toMatchObject({ type: "step-restarted", step: 1 });
-  expect(recovered.filter(e => e.type === "text-delta").map(e => e.delta).join("")).toBe("Recovered answer");
-  expect(recovered.at(-1)?.type).toBe("done");
-  expect(requests).toHaveLength(2);
+  await expectInterrupted(post("/agent-loop/resume", { ...input("openai"), loopId: id }));
+  await expect(collect(observe(id, cursor))).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
+  expect(requests).toHaveLength(1);
 }, 15_000);
 
-it("deduplicates concurrent starts and replays the same identity after restart", async () => {
+it("deduplicates concurrent starts and prevents re-executing the same request after restart", async () => {
   respond = (_request, response) => { begin("openai", response); text("openai", response, "One execution"); end("openai", response); };
   const request = { ...input("openai"), requestId: `start-${crypto.randomUUID()}` };
   const responses = await Promise.all([post("/agent-loop/start", request), post("/agent-loop/start", request)]);
@@ -645,15 +654,16 @@ it("deduplicates concurrent starts and replays the same identity after restart",
   expect(completed.at(-1)?.type).toBe("done");
   expect(requests).toHaveLength(1);
   expect((await post("/agent-loop/start", { ...request, model: "changed" })).status).toBe(400);
+  const duplicate = await post("/agent-loop/start", request);
+  expect(duplicate.status).toBe(200);
+  expect(await duplicate.json()).toEqual({ loopId: a.loopId });
   await crashAndRestartSidecar();
-  const replayed = await post("/agent-loop/start", request);
-  expect(replayed.status).toBe(200);
-  expect(await replayed.json()).toEqual({ loopId: a.loopId });
-  expect(await collect(observe(a.loopId))).toEqual(completed);
+  await expectInterrupted(post("/agent-loop/start", request));
+  await expect(collect(observe(a.loopId))).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
   expect(requests).toHaveLength(1);
 }, 15_000);
 
-it("automatically reconnects an owned stream at the same provider port", async () => {
+it("reports an interrupted owned stream even when the provider port survives restart", async () => {
   respond = (_request, response) => {
     begin("openai", response);
     text("openai", response, requests.length === 1 ? "Interrupted prefix" : "Recovered automatically");
@@ -662,19 +672,21 @@ it("automatically reconnects an owned stream at the same provider port", async (
   const originalPort = process.env.SYNAX_RUNTIME_PROVIDER_PORT;
   const events: RustAgentLoopEvent[] = [];
   let killed = false;
-  for await (const event of streamRustAgentLoop(input("openai"), AbortSignal.timeout(10_000), id => { loops.push(id); })) {
-    events.push(event);
-    if (!killed && event.type === "text-delta") {
-      killed = true;
-      await crashAndRestartSidecar();
-      expect(process.env.SYNAX_RUNTIME_PROVIDER_PORT).toBe(originalPort);
+  const consume = async () => {
+    for await (const event of streamRustAgentLoop(input("openai"), AbortSignal.timeout(10_000), id => { loops.push(id); })) {
+      events.push(event);
+      if (!killed && event.type === "text-delta") {
+        killed = true;
+        await crashAndRestartSidecar();
+        expect(process.env.SYNAX_RUNTIME_PROVIDER_PORT).toBe(originalPort);
+      }
     }
-  }
-  expect(events.at(-1)?.type).toBe("done");
-  expect(events.filter(event => event.type === "step-restarted")).toHaveLength(1);
-  expect(events.filter(event => event.type === "text-delta").map(event => event.delta)).toEqual(["Interrupted prefix", "Recovered automatically"]);
+  };
+  await expect(consume()).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
+  expect(events.some(event => ["done", "step-restarted"].includes(event.type))).toBe(false);
+  expect(events.filter(event => event.type === "text-delta").map(event => event.delta)).toEqual(["Interrupted prefix"]);
   expect(events.map(event => event.sequence)).toEqual(events.map((_, i) => i + 1));
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(1);
 }, 15_000);
 
 function largeHistory() {
@@ -733,19 +745,23 @@ it("blocks required context that cannot fit before any upstream request", async 
   expect(requests).toHaveLength(0);
 });
 
-it("does not substitute an empty or truncated summary for retained history", async () => {
-  respond = (_request, response) => { begin("openai", response); end("openai", response); };
+it.each(["empty", "truncated"])("retains history when the compaction summary is %s", async kind => {
+  respond = (_request, response) => {
+    begin("openai", response);
+    if (kind === "truncated") text("openai", response, "Incomplete summary");
+    boundedEnd("openai", response, kind === "truncated");
+  };
   const response = await post("/agent-loop/start", { ...input("openai"), prompt: largeHistory(),
     contextPolicy: { contextLimit: 3000, outputReserve: 128, keepRecentMessages: 2 } });
   const { loopId } = await response.json() as { loopId: string };
   loops.push(loopId);
   const events = await collect(observe(loopId));
-  expect(events.at(-1)).toMatchObject({ type: "error", error: expect.stringContaining("complete checkpoint") });
+  expect(events.at(-1)).toMatchObject({ type: "error", error: expect.stringContaining("context compaction did not produce a complete execution") });
   expect(events.some(event => event.type === "context-compacted" || event.type === "done")).toBe(false);
   expect(requests).toHaveLength(1);
 });
 
-it("resumes compaction from the last committed summary chunk after a crash", async () => {
+it("interrupts compaction after a crash without replaying summary chunks or continuing the model", async () => {
   let recover = false;
   let summaryCalls = 0;
   respond = (request, response) => {
@@ -759,20 +775,23 @@ it("resumes compaction from the last committed summary chunk after a crash", asy
   const events: RustAgentLoopEvent[] = [];
   const request = { ...input("openai"), prompt: largeHistory(),
     contextPolicy: { contextLimit: 3000, outputReserve: 128, keepRecentMessages: 2 } };
-  for await (const event of streamRustAgentLoop(request, AbortSignal.timeout(15_000), id => { loops.push(id); })) {
-    events.push(event);
-    if (!recover && event.type === "compaction-call-finished") {
-      recover = true;
-      await crashAndRestartSidecar();
+  let callsAtCrash = 0;
+  const consume = async () => {
+    for await (const event of streamRustAgentLoop(request, AbortSignal.timeout(15_000), id => { loops.push(id); })) {
+      events.push(event);
+      if (!recover && event.type === "compaction-call-finished") {
+        await crashAndRestartSidecar();
+        callsAtCrash = requests.length;
+        recover = true;
+      }
     }
-  }
-  expect(events.at(-1)?.type, JSON.stringify(events.at(-1))).toBe("done");
-  expect(events.filter(event => event.type === "context-compacted")).toHaveLength(1);
+  };
+  await expect(consume()).rejects.toMatchObject({ code: "RUN_INTERRUPTED" });
+  expect(recover).toBe(true);
+  expect(events.some(event => ["done", "context-compacted", "text-delta"].includes(event.type))).toBe(false);
   expect(events.filter(event => event.type === "compaction-call-finished" && event.chunk === 1)).toHaveLength(1);
-  const completed = events.filter(event => event.type === "compaction-call-finished");
-  expect(new Set(completed.map(event => event.requestId)).size).toBe(completed.length);
-  expect(events.filter(event => event.type === "text-delta").map(event => event.delta)).toEqual(["Recovered final answer."]);
-  expect(JSON.stringify(requests.at(-1)!.body)).toContain("USER_REQUIREMENT");
+  expect(requests).toHaveLength(callsAtCrash);
+  expect(requests.every(request => JSON.stringify(request.body).includes("You maintain a conversation checkpoint."))).toBe(true);
   expect(events.map(event => event.sequence)).toEqual(events.map((_, index) => index + 1));
 }, 20_000);
 

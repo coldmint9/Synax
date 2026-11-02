@@ -4,7 +4,7 @@ import type { SessionDetailCacheEntry } from "./agentSessionStore";
 /**
  * Last-known-good transcript cache for the session panel.
  *
- * The store keeps a shallow in-memory LRU (a few sessions, minutes of TTL), so
+ * The store keeps a shallow in-memory LRU (a few sessions), so
  * every process restart paid for a full `history-window` read plus one
  * `messages/:id/content` request per omitted message. This module persists the
  * already-rendered, already-hydrated entry so the first paint after a restart
@@ -16,9 +16,8 @@ import type { SessionDetailCacheEntry } from "./agentSessionStore";
  *   restored cursor is always revalidated by the runtime (`HISTORY_STALE`).
  * - The persisted shape is a render snapshot, never store state: transport
  *   state, streaming buffers and profile collections stay out.
- * - Timeline index arrays are deliberately not persisted. They are rebuilt from
- *   the window by `seedTimelineIndex`, and a half-restored index would disagree
- *   with the transcript it indexes.
+ * - The complete lightweight navigation index shares the window's generation
+ *   and sync cursor. Body eviction must not remove its historical turn markers.
  */
 
 const DB_NAME = "synax-session-cache";
@@ -52,12 +51,19 @@ export type PersistedDetailEntry = Pick<
   | "toolCalls"
   | "permissions"
   | "cachedAt"
+  | "invalidated"
   | "lastVisitedAt"
   | "sessionStats"
   | "sessionTodos"
   | "sessionInvocationUsage"
   | "historyWindow"
   | "historyPagesLoaded"
+  | "historyViewportRetain"
+  | "timelineMessages"
+  | "timelineRuns"
+  | "timelineSteps"
+  | "timelineToolCalls"
+  | "timelineIndexLoaded"
   | "removed"
   | "historyDeleted"
 > & {
@@ -216,12 +222,21 @@ export function toPersistedEntry(
       toolCalls: entry.toolCalls,
       permissions: entry.permissions,
       cachedAt: entry.cachedAt,
+      invalidated: entry.invalidated,
       lastVisitedAt: entry.lastVisitedAt,
       sessionStats: entry.sessionStats,
       sessionTodos: entry.sessionTodos,
       sessionInvocationUsage: entry.sessionInvocationUsage,
       historyWindow: window,
       historyPagesLoaded: entry.historyPagesLoaded,
+      historyViewportRetain: entry.historyViewportRetain,
+      ...(entry.timelineIndexLoaded ? {
+        timelineMessages: entry.timelineMessages,
+        timelineRuns: entry.timelineRuns,
+        timelineSteps: entry.timelineSteps,
+        timelineToolCalls: entry.timelineToolCalls,
+        timelineIndexLoaded: true,
+      } : {}),
       removed: entry.removed,
       historyDeleted: entry.historyDeleted,
       status,
@@ -419,6 +434,9 @@ export async function readPersistedDetail(
   if (!idb) return null;
   const db = await openDatabase(idb);
   if (!db) return null;
+  // A mutation may have queued deletion immediately before this selection.
+  // Never restore that obsolete disk page while its deletion is still pending.
+  await queue;
   let record: DetailRecord | undefined;
   try {
     record = await requestResult(
@@ -453,9 +471,18 @@ export async function readPersistedDetail(
     sessionTodos: entry.sessionTodos ?? [],
     sessionInvocationUsage: entry.sessionInvocationUsage ?? null,
     cachedAt: record.savedAt,
+    invalidated: entry.invalidated,
     lastVisitedAt: Date.now(),
     historyWindow: window,
     historyPagesLoaded: entry.historyPagesLoaded,
+    historyViewportRetain: entry.historyViewportRetain,
+    ...(entry.timelineIndexLoaded ? {
+      timelineMessages: entry.timelineMessages,
+      timelineRuns: entry.timelineRuns,
+      timelineSteps: entry.timelineSteps,
+      timelineToolCalls: entry.timelineToolCalls,
+      timelineIndexLoaded: true,
+    } : {}),
     removed: entry.removed,
     historyDeleted: entry.historyDeleted,
     // How fresh this copy is depends on the status it was captured under.

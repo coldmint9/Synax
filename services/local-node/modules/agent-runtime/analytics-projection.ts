@@ -2,9 +2,12 @@ import { normalizeUsage } from "../../infrastructure/llm-runtime/usage.js";
 import type {
   AgentRun,
   AgentRunStep,
+  AgentRuntimeMessage,
   AgentSession,
 } from "./contracts.js";
 import type { ContextComposition } from "./context-composition.js";
+import { normalizeIntentCategory } from "./session-classification.js";
+import { stepExecutionDurationMs } from "./step-execution-time.js";
 
 /**
  * Derived, incrementally maintained runtime statistics.
@@ -13,15 +16,18 @@ import type { ContextComposition } from "./context-composition.js";
  * persisted on the session record so widgets and the analytics page never have
  * to re-read every run/step/tool call just to show token totals.
  */
-export const RUNTIME_ANALYTICS_VERSION = 1;
+export const RUNTIME_ANALYTICS_VERSION = 3;
 export const CONTEXT_USAGE_VERSION = 1;
 
 export interface ContextUsageSnapshot {
   version: 1;
+  /** Only provider-reported request usage is ever displayed. */
+  source: "provider";
   stepId: string;
-  /** Locally measured request context, including every classified category. */
+  /** Provider-reported inclusive input tokens for the answered request. */
   total: number;
   limit: number | null;
+  /** Category split of `total`, taken from the local request estimate. */
   composition: ContextComposition;
   measuredAt: string;
 }
@@ -47,7 +53,9 @@ export interface AnalyticsUsage {
 }
 
 export interface SessionAnalytics {
-  version: 1;
+  version: 3;
+  /** Set while a v1 projection is waiting for its bounded legacy backfill. */
+  requiresBackfill?: boolean;
   updatedAt: string;
   /** Terminal steps (the former "execution rounds" counter). */
   steps: number;
@@ -57,15 +65,35 @@ export interface SessionAnalytics {
   toolCounts: Record<string, number>;
   usage: AnalyticsUsage;
   models: Record<string, AnalyticsModelUsage>;
+  /**
+   * Union of settled agent-step execution spans. Parked time (waiting for a
+   * human, a permission reply or child sessions) and restart downtime are
+   * excluded, and concurrent steps are counted once.
+   */
+  durationMs: number;
+  userInputCount: number;
+  /** Last counted message id makes projection updates idempotent across retries. */
+  lastUserInputId: string | null;
   lastStepId: string | null;
   lastCompletedRunId: string | null;
+  /**
+   * Last 128 distinct terminal IDs, in first-observed order. Retained across
+   * reloads to deduplicate out-of-order retries. Optional for older v2 data.
+   */
+  recentStepIds?: string[];
+  recentCompletedRunIds?: string[];
 }
 
 export interface ProjectAnalyticsSession {
   id: string;
   parentSessionId: string | null;
+  sessionGroup: string | null;
   title: string;
   status: AgentSession["status"];
+  createdAt: string;
+  completedAt: string | null;
+  durationMs: number;
+  userInputCount: number;
   updatedAt: string;
   model: string | null;
   context: {
@@ -78,6 +106,18 @@ export interface ProjectAnalyticsSession {
   analytics: SessionAnalytics | null;
 }
 
+export interface ProjectAnalyticsGroup {
+  sessionGroup: string | null;
+  sessions: number;
+  activeSessions: number;
+  steps: number;
+  completedRuns: number;
+  toolCalls: number;
+  userInputs: number;
+  durationMs: number;
+  tokens: { input: number; output: number; total: number };
+}
+
 export interface ProjectAnalytics {
   projectId: string;
   generatedAt: string;
@@ -86,9 +126,15 @@ export interface ProjectAnalytics {
   totals: {
     sessions: number;
     activeSessions: number;
+    /** Sessions counted from an archived record that is still readable. */
+    archivedSessions: number;
+    /** Sessions counted from the retained ledger after a permanent delete. */
+    deletedSessions: number;
     steps: number;
     completedRuns: number;
     toolCalls: number;
+    userInputs: number;
+    durationMs: number;
     tokens: { input: number; output: number; total: number };
     cache: {
       inputTokens: number;
@@ -112,6 +158,7 @@ export interface ProjectAnalytics {
   };
   models: Array<AnalyticsModelUsage & { model: string; sessions: number }>;
   tools: Array<{ toolId: string; calls: number }>;
+  groups: ProjectAnalyticsGroup[];
 }
 
 const terminalStatuses = new Set([
@@ -120,6 +167,16 @@ const terminalStatuses = new Set([
   "cancelled",
   "interrupted",
 ]);
+/**
+ * Statuses whose step is closed and may be folded into the projection. A step
+ * parked on a permission reply records its end when it parks, so its execution
+ * time and token usage must not wait for a resume that may never come.
+ */
+const settledStepStatuses = new Set([
+  ...terminalStatuses,
+  "waiting_permission",
+  "blocked",
+]);
 const activeStatuses = new Set([
   "queued",
   "running",
@@ -127,6 +184,9 @@ const activeStatuses = new Set([
   "waiting_input",
   "stopping",
 ]);
+// This is a bounded retry window, not a history index. Retries older than the
+// window need authoritative reconciliation; never retain every ID on a session.
+const MAX_RECENT_DEDUPE_IDS = 128;
 
 const number = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value >= 0
@@ -137,6 +197,25 @@ const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+
+function recentIds(value: unknown, fallback: string | null): string[] {
+  // The legacy last ID is already counted, even when no window was persisted.
+  const ids: string[] = fallback ? [fallback] : [];
+  const seen = new Set(ids);
+  const candidates = Array.isArray(value) ? value : [];
+  for (let i = candidates.length - 1; i >= 0 && ids.length < MAX_RECENT_DEDUPE_IDS; i--) {
+    const candidate = candidates[i];
+    if (typeof candidate === "string" && candidate && !seen.has(candidate)) {
+      seen.add(candidate);
+      ids.push(candidate);
+    }
+  }
+  return ids.reverse();
+}
+
+function rememberId(current: readonly string[], id: string): string[] {
+  return [...current, id].slice(-MAX_RECENT_DEDUPE_IDS);
+}
 
 export function emptySessionAnalytics(): SessionAnalytics {
   return {
@@ -159,16 +238,54 @@ export function emptySessionAnalytics(): SessionAnalytics {
       missing: 0,
     },
     models: {},
+    durationMs: 0,
+    userInputCount: 0,
+    lastUserInputId: null,
     lastStepId: null,
     lastCompletedRunId: null,
   };
+}
+
+/**
+ * Old v1 projections remain readable for list/status callers. The analytics
+ * service separately recognizes them as incomplete and backfills them once.
+ */
+export function needsSessionAnalyticsBackfill(value: unknown): boolean {
+  const raw = record(value);
+  return (
+    raw.version !== RUNTIME_ANALYTICS_VERSION ||
+    raw.requiresBackfill === true ||
+    typeof raw.durationMs !== "number" ||
+    typeof raw.userInputCount !== "number"
+  );
 }
 
 export function readSessionAnalytics(
   value: unknown,
 ): SessionAnalytics | null {
   const raw = record(value);
-  if (raw.version !== RUNTIME_ANALYTICS_VERSION) return null;
+  // Older mirrors stay readable; the analytics service replaces them in the
+  // background with a faithful recomputation.
+  if (
+    raw.version !== 1 &&
+    raw.version !== 2 &&
+    raw.version !== RUNTIME_ANALYTICS_VERSION
+  )
+    return null;
+  const recentStepIds = Array.isArray(raw.recentStepIds)
+    ? recentIds(
+        raw.recentStepIds,
+        typeof raw.lastStepId === "string" ? raw.lastStepId : null,
+      )
+    : undefined;
+  const recentCompletedRunIds = Array.isArray(raw.recentCompletedRunIds)
+    ? recentIds(
+        raw.recentCompletedRunIds,
+        typeof raw.lastCompletedRunId === "string"
+          ? raw.lastCompletedRunId
+          : null,
+      )
+    : undefined;
   const usage = record(raw.usage);
   const toolCounts = Object.fromEntries(
     Object.entries(record(raw.toolCounts))
@@ -189,6 +306,9 @@ export function readSessionAnalytics(
   );
   return {
     version: RUNTIME_ANALYTICS_VERSION,
+    ...(needsSessionAnalyticsBackfill(value) ? { requiresBackfill: true } : {}),
+    ...(recentStepIds ? { recentStepIds } : {}),
+    ...(recentCompletedRunIds ? { recentCompletedRunIds } : {}),
     updatedAt:
       typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
     steps: count(raw.steps),
@@ -208,12 +328,43 @@ export function readSessionAnalytics(
       missing: count(usage.missing),
     },
     models,
+    durationMs: count(raw.durationMs),
+    userInputCount: count(raw.userInputCount),
+    lastUserInputId:
+      typeof raw.lastUserInputId === "string" ? raw.lastUserInputId : null,
     lastStepId:
       typeof raw.lastStepId === "string" ? raw.lastStepId : null,
     lastCompletedRunId:
       typeof raw.lastCompletedRunId === "string"
         ? raw.lastCompletedRunId
         : null,
+  };
+}
+
+export function isUserInputMessage(message: AgentRuntimeMessage): boolean {
+  return message.role === "user" && message.metadata?.source !== "system_injection";
+}
+
+export function countUserInputs(messages: readonly AgentRuntimeMessage[]): number {
+  return messages.reduce(
+    (count, message) => count + (isUserInputMessage(message) ? 1 : 0),
+    0,
+  );
+}
+
+export function withUserInputAnalytics(
+  current: SessionAnalytics | null,
+  messageId: string,
+  now = new Date().toISOString(),
+): SessionAnalytics {
+  const base = current ?? emptySessionAnalytics();
+  if (!messageId || base.lastUserInputId === messageId) return base;
+  return {
+    ...base,
+    version: RUNTIME_ANALYTICS_VERSION,
+    updatedAt: now,
+    userInputCount: base.userInputCount + 1,
+    lastUserInputId: messageId,
   };
 }
 
@@ -241,68 +392,62 @@ function sanitizeComposition(value: unknown): ContextComposition | null {
   };
 }
 
-export function contextUsageSnapshot(
+/**
+ * The measured request context.
+ *
+ * `total` is exactly the provider's billed input for this request, so displayed
+ * occupancy never drifts from the provider's own usage. The local composition
+ * is not a second measurement: it only splits that total into categories,
+ * rescaled so the parts keep summing to the measured total.
+ */
+export function measuredContextUsageSnapshot(
   composition: unknown,
-  stepId: string,
-  limit?: number | null,
-): ContextUsageSnapshot | null {
-  const sanitized = sanitizeComposition(composition);
-  if (!sanitized || !stepId) return null;
-  return {
-    version: CONTEXT_USAGE_VERSION,
-    stepId,
-    total: sanitized.total,
-    limit:
-      typeof limit === "number" && Number.isFinite(limit) && limit > 0
-        ? Math.trunc(limit)
-        : null,
-    composition: sanitized,
-    measuredAt: sanitized.measuredAt,
-  };
-}
-
-/** Build an immediate post-compaction snapshot from the last measured
- * composition. Compaction changes the total request size before the next
- * provider call, so preserve the previous category proportions until the next
- * exact composition measurement arrives. */
-export function compactedContextUsageSnapshot(
-  previous: ContextUsageSnapshot | null,
-  compressedTokens: number,
+  inputTokens: number,
   stepId: string,
   limit?: number | null,
   measuredAt = new Date().toISOString(),
 ): ContextUsageSnapshot | null {
-  if (!Number.isSafeInteger(compressedTokens) || compressedTokens <= 0 || !stepId)
-    return null;
-  const total = compressedTokens;
-  const source = previous?.composition;
-  const sourceTotal = previous?.total ?? source?.total ?? 0;
+  if (!stepId) return null;
+  if (!Number.isSafeInteger(inputTokens) || inputTokens <= 0) return null;
+  const source = sanitizeComposition(composition);
   const categories = ["messages", "tools", "mcp", "skills", "system"] as const;
-  const composition = {
+  const split = {
     version: 2 as const,
     messages: 0,
     tools: 0,
     mcp: 0,
     skills: 0,
     system: 0,
-    total,
+    total: inputTokens,
     measuredAt,
   };
-  if (source && sourceTotal > 0) {
+  if (source && source.total > 0) {
     let assigned = 0;
     for (const category of categories) {
-      const value = Math.max(0, Math.trunc(Number(source[category] ?? 0)));
-      const scaled = Math.round((value / sourceTotal) * total);
-      composition[category] = scaled;
+      const value = Math.max(0, Math.trunc(number(source[category])));
+      const scaled = Math.round((value / source.total) * inputTokens);
+      split[category] = scaled;
       assigned += scaled;
     }
-    // Keep the rounded buckets lossless. Put the correction in messages,
-    // which is the category most affected by a context checkpoint.
-    composition.messages = Math.max(0, composition.messages + total - assigned);
+    // Rounded buckets must stay lossless; messages carries the correction.
+    split.messages = Math.max(0, split.messages + inputTokens - assigned);
   } else {
-    composition.messages = total;
+    // No request estimate for this step: keep the measured total without
+    // inventing a category split.
+    split.messages = inputTokens;
   }
-  return contextUsageSnapshot(composition, stepId, limit);
+  return {
+    version: CONTEXT_USAGE_VERSION,
+    source: "provider",
+    stepId,
+    total: inputTokens,
+    limit:
+      typeof limit === "number" && Number.isFinite(limit) && limit > 0
+        ? Math.trunc(limit)
+        : null,
+    composition: split,
+    measuredAt,
+  };
 }
 
 export function readContextUsage(
@@ -310,6 +455,10 @@ export function readContextUsage(
 ): ContextUsageSnapshot | null {
   const raw = record(value);
   if (raw.version !== CONTEXT_USAGE_VERSION) return null;
+  // Older snapshots were local estimates; never present one as usage. A
+  // snapshot that recorded its provider measurement is still usable.
+  const measured = count(raw.measured);
+  if (raw.source !== "provider" && measured <= 0) return null;
   const composition = sanitizeComposition(raw.composition);
   const total = count(raw.total) || composition?.total || 0;
   if (!composition || total <= 0) return null;
@@ -319,6 +468,7 @@ export function readContextUsage(
       : null;
   return {
     version: CONTEXT_USAGE_VERSION,
+    source: "provider",
     stepId: typeof raw.stepId === "string" ? raw.stepId : "",
     total,
     limit,
@@ -331,17 +481,18 @@ export function readContextUsage(
 }
 
 /**
- * Folds one terminal step into the aggregate. `lastStepId` makes repeated
- * updates of the same step (thought/tool metadata) idempotent.
+ * Folds each terminal step once within the persisted recent-ID window. Later
+ * metadata-only updates, even after another step, must not count it again.
  */
 export function withStepAnalytics(
   current: SessionAnalytics | null,
   step: AgentRunStep,
   now = new Date().toISOString(),
 ): SessionAnalytics | null {
-  if (!terminalStatuses.has(step.status)) return current;
+  if (!settledStepStatuses.has(step.status)) return current;
   const base = current ?? emptySessionAnalytics();
-  if (base.lastStepId === step.id) return current;
+  const recentStepIds = recentIds(base.recentStepIds, base.lastStepId);
+  if (!step.id || recentStepIds.includes(step.id)) return current;
   const metadata = record(step.metadata);
   const normalized = normalizeUsage(metadata.usage, {
     providerMetadata: metadata.providerMetadata,
@@ -379,7 +530,9 @@ export function withStepAnalytics(
           }),
     },
     models: { ...base.models },
+    durationMs: base.durationMs + stepExecutionDurationMs(step),
     lastStepId: step.id,
+    recentStepIds: rememberId(recentStepIds, step.id),
   };
   if (known) {
     next.usage.total = next.usage.input + next.usage.output;
@@ -412,7 +565,11 @@ export function withCompletedRunAnalytics(
 ): SessionAnalytics | null {
   if (run.status !== "completed") return current;
   const base = current ?? emptySessionAnalytics();
-  if (base.lastCompletedRunId === run.id) return current;
+  const recentCompletedRunIds = recentIds(
+    base.recentCompletedRunIds,
+    base.lastCompletedRunId,
+  );
+  if (!run.id || recentCompletedRunIds.includes(run.id)) return current;
   return {
     ...base,
     version: RUNTIME_ANALYTICS_VERSION,
@@ -420,6 +577,7 @@ export function withCompletedRunAnalytics(
     completedRuns: base.completedRuns + 1,
     completedRunSteps: base.completedRunSteps + Math.max(0, count(runStepCount)),
     lastCompletedRunId: run.id,
+    recentCompletedRunIds: rememberId(recentCompletedRunIds, run.id),
   };
 }
 
@@ -483,6 +641,9 @@ export function analyticsFromStats(stats: Record<string, unknown>): SessionAnaly
       missing: count(coverage.missing),
     },
     models,
+    durationMs: count(stats.runningDuration),
+    userInputCount: count(stats.userInputCount),
+    lastUserInputId: null,
     lastStepId:
       typeof stats.lastStepId === "string" ? stats.lastStepId : null,
     lastCompletedRunId:
@@ -505,8 +666,29 @@ export function compositionTotals(
   };
 }
 
+/**
+ * The fields a statistics row needs. A permanently deleted session has no full
+ * record left, so its row is built from the retained ledger entry instead.
+ */
+export type ProjectAnalyticsSessionInput = Pick<
+  AgentSession,
+  | "id"
+  | "parentSessionId"
+  | "status"
+  | "createdAt"
+  | "completedAt"
+  | "updatedAt"
+  | "sessionMetadata"
+> & { title: string | null; prompt?: string };
+
+/** A session counted in the totals but not listed as a live detail row. */
+export interface ProjectAnalyticsRetainedSession {
+  row: ProjectAnalyticsSession;
+  retiredReason: "archived" | "deleted";
+}
+
 export function projectAnalyticsSession(
-  session: AgentSession,
+  session: ProjectAnalyticsSessionInput,
   analytics: SessionAnalytics | null,
   contextUsage: ContextUsageSnapshot | null,
 ): ProjectAnalyticsSession {
@@ -519,8 +701,13 @@ export function projectAnalyticsSession(
   return {
     id: session.id,
     parentSessionId: session.parentSessionId,
-    title: session.title?.trim() || session.prompt.slice(0, 120) || session.id,
+    sessionGroup: normalizeIntentCategory(session.sessionMetadata?.intentCategory),
+    title: session.title?.trim() || session.prompt?.slice(0, 120) || session.id,
     status: session.status,
+    createdAt: session.createdAt,
+    completedAt: session.completedAt,
+    durationMs: analytics?.durationMs ?? 0,
+    userInputCount: analytics?.userInputCount ?? 0,
     updatedAt: session.updatedAt,
     model: dominantModel,
     context: contextUsage
@@ -553,18 +740,32 @@ export function buildProjectAnalytics(
   }>,
   pendingBackfill: number,
   now = new Date().toISOString(),
+  retained: readonly ProjectAnalyticsRetainedSession[] = [],
 ): ProjectAnalytics {
   const rows = sessions
     .map(({ session, analytics, contextUsage }) =>
       projectAnalyticsSession(session, analytics, contextUsage),
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  // Archiving keeps the record and a permanent delete keeps only its ledger
+  // entry, but either way the contribution it already made stays in the
+  // totals; only live sessions keep a detail row.
+  const counted = [...rows, ...retained.map((entry) => entry.row)];
   const totals = {
-    sessions: rows.length,
-    activeSessions: rows.filter((row) => activeStatuses.has(row.status)).length,
+    sessions: counted.length,
+    activeSessions: counted.filter((row) => activeStatuses.has(row.status))
+      .length,
+    archivedSessions: retained.filter(
+      (entry) => entry.retiredReason === "archived",
+    ).length,
+    deletedSessions: retained.filter(
+      (entry) => entry.retiredReason === "deleted",
+    ).length,
     steps: 0,
     completedRuns: 0,
     toolCalls: 0,
+    userInputs: 0,
+    durationMs: 0,
     tokens: { input: 0, output: 0, total: 0 },
     cache: { inputTokens: 0, cacheReadTokens: 0, ratio: null as number | null },
     context: {
@@ -587,12 +788,36 @@ export function buildProjectAnalytics(
     AnalyticsModelUsage & { model: string; sessions: number }
   >();
   const tools = new Map<string, number>();
-  for (const row of rows) {
+  const groups = new Map<string, ProjectAnalyticsGroup>();
+  for (const row of counted) {
+    const groupKey = row.sessionGroup ?? "";
+    const group = groups.get(groupKey) ?? {
+      sessionGroup: row.sessionGroup,
+      sessions: 0,
+      activeSessions: 0,
+      steps: 0,
+      completedRuns: 0,
+      toolCalls: 0,
+      userInputs: 0,
+      durationMs: 0,
+      tokens: { input: 0, output: 0, total: 0 },
+    };
+    group.sessions += 1;
+    if (activeStatuses.has(row.status)) group.activeSessions += 1;
+    group.userInputs += row.userInputCount;
+    group.durationMs += row.durationMs;
     const analytics = row.analytics;
     if (analytics) {
       totals.steps += analytics.steps;
       totals.completedRuns += analytics.completedRuns;
       totals.toolCalls += analytics.toolCalls;
+      totals.userInputs += analytics.userInputCount;
+      totals.durationMs += analytics.durationMs;
+      group.steps += analytics.steps;
+      group.completedRuns += analytics.completedRuns;
+      group.toolCalls += analytics.toolCalls;
+      group.tokens.input += analytics.usage.input;
+      group.tokens.output += analytics.usage.output;
       totals.tokens.input += analytics.usage.input;
       totals.tokens.output += analytics.usage.output;
       totals.cache.inputTokens += analytics.usage.input;
@@ -616,6 +841,8 @@ export function buildProjectAnalytics(
       for (const [toolId, calls] of Object.entries(analytics.toolCounts))
         tools.set(toolId, (tools.get(toolId) ?? 0) + calls);
     }
+    group.tokens.total = group.tokens.input + group.tokens.output;
+    groups.set(groupKey, group);
     if (row.context) {
       totals.context.totalTokens += row.context.total;
       totals.context.measuredSessions += 1;
@@ -654,5 +881,8 @@ export function buildProjectAnalytics(
       .map(([toolId, calls]) => ({ toolId, calls }))
       .sort((a, b) => b.calls - a.calls)
       .slice(0, 24),
+    groups: [...groups.values()].sort(
+      (a, b) => b.sessions - a.sessions || b.durationMs - a.durationMs,
+    ),
   };
 }

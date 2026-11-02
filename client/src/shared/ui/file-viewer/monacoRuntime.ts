@@ -1,5 +1,8 @@
 import * as monaco from "monaco-editor/editor/editor.api.js";
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
+// editor.api.js ships without the codicon font; diff gutter markers (+/-) are
+// codicon glyphs and fall back to tofu boxes when the font is missing.
+import "monaco-editor/features/codicon/register.js";
 import "monaco-editor/features/find/register.js";
 import "monaco-editor/features/clipboard/register.js";
 import "monaco-editor/features/folding/register.js";

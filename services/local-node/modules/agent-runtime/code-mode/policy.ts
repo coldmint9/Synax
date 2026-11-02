@@ -11,6 +11,9 @@ const LOCAL_COMPOSITION_TOOLS = new Set([
   "rg",
   "diff.read",
   "context.read",
+  "session.list",
+  "session.status",
+  "session.search",
   "file.write",
   "file.patch",
 ]);

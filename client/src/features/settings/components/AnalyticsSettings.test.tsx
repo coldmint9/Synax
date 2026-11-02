@@ -21,6 +21,8 @@ const analytics: ProjectAnalytics = {
     steps: 5,
     completedRuns: 2,
     toolCalls: 7,
+    userInputs: 2,
+    durationMs: 120_000,
     tokens: { input: 10_000, output: 2_000, total: 12_000 },
     cache: { inputTokens: 10_000, cacheReadTokens: 4_000, ratio: 0.4 },
     context: {
@@ -53,8 +55,13 @@ const analytics: ProjectAnalytics = {
     {
       id: "session-1",
       parentSessionId: null,
+      sessionGroup: "功能需求",
       title: "Investigate composer",
       status: "completed",
+      createdAt: now,
+      completedAt: now,
+      durationMs: 120_000,
+      userInputCount: 1,
       updatedAt: now,
       model: "deepseek-v4-flash",
       context: {
@@ -100,6 +107,9 @@ const analytics: ProjectAnalytics = {
             total: 12_000,
           },
         },
+        durationMs: 120_000,
+        userInputCount: 1,
+        lastUserInputId: "input-1",
         lastStepId: "step-5",
         lastCompletedRunId: "run-2",
       },
@@ -107,12 +117,41 @@ const analytics: ProjectAnalytics = {
     {
       id: "session-2",
       parentSessionId: null,
+      sessionGroup: null,
       title: "Legacy session",
       status: "running",
+      createdAt: now,
+      completedAt: null,
+      durationMs: 0,
+      userInputCount: 1,
       updatedAt: now,
       model: null,
       context: null,
       analytics: null,
+    },
+  ],
+  groups: [
+    {
+      sessionGroup: "功能需求",
+      sessions: 1,
+      activeSessions: 0,
+      steps: 5,
+      completedRuns: 2,
+      toolCalls: 7,
+      userInputs: 1,
+      durationMs: 120_000,
+      tokens: { input: 10_000, output: 2_000, total: 12_000 },
+    },
+    {
+      sessionGroup: null,
+      sessions: 1,
+      activeSessions: 1,
+      steps: 0,
+      completedRuns: 0,
+      toolCalls: 0,
+      userInputs: 1,
+      durationMs: 0,
+      tokens: { input: 0, output: 0, total: 0 },
     },
   ],
 };
@@ -160,6 +199,9 @@ describe("AnalyticsSettings", () => {
     expect(screen.getAllByText("deepseek-v4-flash").length).toBeGreaterThan(0);
     expect(screen.getByText("Investigate composer")).toBeInTheDocument();
     expect(screen.getByText("Legacy session")).toBeInTheDocument();
+    expect(screen.getByText("会话分组")).toBeInTheDocument();
+    expect(screen.getAllByText("功能需求").length).toBeGreaterThan(0);
+    expect(screen.getByText("用户输入")).toBeInTheDocument();
     expect(screen.getAllByText("30.0%").length).toBeGreaterThan(0);
     expect(agentRuntimeApi.getProjectAnalytics).toHaveBeenCalledWith(
       "project-1",
@@ -182,5 +224,27 @@ describe("AnalyticsSettings", () => {
   it("asks for a project when none is selected", () => {
     render(<AnalyticsSettings projectId={null} />);
     expect(screen.getByText(/请先在左侧选择一个项目/)).toBeInTheDocument();
+  });
+
+  it("names the archived and deleted partitions of the session total", async () => {
+    vi.spyOn(agentRuntimeApi, "getProjectAnalytics").mockResolvedValue({
+      ...analytics,
+      totals: {
+        ...analytics.totals,
+        sessions: 5,
+        activeSessions: 2,
+        archivedSessions: 2,
+        deletedSessions: 1,
+      },
+    });
+    render(<AnalyticsSettings projectId="project-1" />);
+    expect(
+      await screen.findByText("2 进行中 · 2 已归档 · 1 已删除"),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the live count when an older server omits the partitions", async () => {
+    render(<AnalyticsSettings projectId="project-1" />);
+    expect(await screen.findByText("1 进行中")).toBeInTheDocument();
   });
 });

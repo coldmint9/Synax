@@ -19,11 +19,11 @@ import { outsideExecutionContext } from "../../infrastructure/runtime/execution-
 import { businessStore } from "../../infrastructure/persistence/business-store.js";
 import { skillSourceService } from "../skills/skill-source-service.js";
 import fs from "node:fs";
-import path from "node:path";
 import { runtimeAsset } from "../../infrastructure/runtime/runtime-paths.js";
 import {
   isAgentSessionChildMessage,
   forwardChunkToLiveBus,
+  type AgentSessionChildMessage,
   type AgentSessionChildInit,
   type AgentSessionStreamMode,
 } from "../../infrastructure/runtime/ipc/agent-session-protocol.js";
@@ -36,7 +36,7 @@ import { resolveSessionWorkDir } from "./tools/workspace.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import { nowIso } from "./runtime-ids.js";
 import { patchRuntime } from "./sidecar/runtime-repository.js";
-import type { AgentRunStreamChunk, StreamTurnRequest } from "./contracts.js";
+import type { AgentRunStreamChunk, AgentSession, StreamTurnRequest } from "./contracts.js";
 import { AgentRuntimeError } from "./runtime-errors.js";
 import { agentRuntimeStore } from "./session-store.js";
 import {
@@ -46,6 +46,7 @@ import {
 } from "./manual-context-compaction.js";
 import { sessionLiveBus } from "./session-live-bus.js";
 import { runtimeBus, type RuntimeBusEvent } from "./runtime-bus.js";
+import { announcesWorkerSettle } from "./session-projection.js";
 import { setRuntimeWorkerNotifier } from "./runtime-bus-bridge.js";
 import { finalizeStoppedSessions } from "./stopped-session-cleanup.js";
 import {
@@ -78,6 +79,12 @@ const RECONCILIATION_GRACE_MS = 2_000;
 const CHILD_READY_TIMEOUT_MS = AGENT_SESSION_CHILD_READY_TIMEOUT_MS;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 5 * 60_000;
 let preparingWorkerMetadata: Promise<void> | undefined;
+
+function canWarmSession(session: AgentSession): boolean {
+  const backend = session.sessionMetadata?.backend as { id?: string } | undefined;
+  return !session.parentSessionId && !session.activeRunId && !session.sessionMetadata?.runtimeControl &&
+    !session.sessionMetadata?.archivedAt && !session.sessionMetadata?.deletedAt && (!backend?.id || backend.id === "native");
+}
 
 function prepareWorkerMetadata(): Promise<void> {
   if (!process.env.SYNAX_RUNTIME_PROVIDER_PORT) return Promise.resolve();
@@ -185,6 +192,8 @@ export class SessionProcessManager {
     }
   }
   private readonly children = new Map<string, SessionChildState>();
+  private readonly warmups = new Map<string, { controller: AbortController; task: Promise<void> }>();
+  private warmupsStopped = false;
   private readonly activeMainStreams = new Set<string>();
   /** Sessions whose children we are intentionally tearing down (idle release / interrupt). */
   private readonly releasingChildren = new Set<string>();
@@ -205,6 +214,44 @@ export class SessionProcessManager {
 
   isSessionStreaming(sessionId: string): boolean {
     return this.activeMainStreams.has(sessionId);
+  }
+
+  /** Speculative session startup never queues ahead of a real user turn. */
+  warmSession(sessionId: string): void {
+    if (this.warmupsStopped || agentSessionsRunInProcess() || this.warmups.has(sessionId) ||
+        this.children.has(sessionId) || this.activeMainStreams.has(sessionId) || this.pendingCompactions.has(sessionId) ||
+        this.pendingStarts.length || !this.canSpawnChild(sessionId) || this.warmups.size >= this.admission.idleLimit) return;
+    const session = agentRuntimeStore.tryGetSession(sessionId);
+    if (session && !canWarmSession(session)) return;
+    const idle = this.admission.lifecycle.idleLeases();
+    if (this.warmups.size + idle.length >= this.admission.idleLimit) {
+      const oldest = idle.find(lease => lease.evictable !== false);
+      if (!oldest) return;
+      this.releaseChild(oldest.sessionId, "Warming a more recently viewed session.", { idle: true });
+    }
+    const controller = new AbortController();
+    const task = outsideExecutionContext(async () => {
+      // Let the current HTTP response and any real submission run first.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      if (controller.signal.aborted || this.pendingStarts.length || this.activeMainStreams.has(sessionId) || this.pendingCompactions.has(sessionId) ||
+          !this.canSpawnChild(sessionId)) return;
+      if (!agentRuntimeStore.tryGetSession(sessionId)) await agentRuntimeStore.hydrateSessionSummary(sessionId);
+      const current = agentRuntimeStore.tryGetSession(sessionId);
+      if (!current || !canWarmSession(current)) return;
+      await agentRuntimeStore.flushSession(sessionId);
+      controller.signal.throwIfAborted();
+      if (this.pendingStarts.length || this.activeMainStreams.has(sessionId) || this.pendingCompactions.has(sessionId) || !this.canSpawnChild(sessionId)) return;
+      const state = await this.ensureChild(sessionId, controller.signal);
+      this.retainOrRelease(state);
+    }).catch(error => {
+      if (!controller.signal.aborted) logger.warn({ sessionId, error: String(error) }, "[agent-session] background warm-up failed");
+    }).finally(() => { this.warmups.delete(sessionId); this.pendingStarts.notify(); });
+    this.warmups.set(sessionId, { controller, task });
+  }
+
+  stopWarmups(): void {
+    this.warmupsStopped = true;
+    for (const { controller } of this.warmups.values()) controller.abort(new Error("Runtime is shutting down."));
   }
 
   canSpawnChild(sessionId?: string): boolean {
@@ -264,6 +311,13 @@ export class SessionProcessManager {
     let onAbort: (() => void) | undefined;
 
     try {
+      // A send arriving during speculative startup adopts the same worker.
+      const cancelWarmup = () => this.warmups.get(sessionId)?.controller.abort(abortSignal.reason);
+      abortSignal.addEventListener("abort", cancelWarmup, { once: true });
+      if (abortSignal.aborted) cancelWarmup();
+      await this.warmups.get(sessionId)?.task;
+      abortSignal.removeEventListener("abort", cancelWarmup);
+      abortSignal.throwIfAborted();
       this.pendingStarts.push(sessionId);
       const queuedAt = nowIso();
       const deadline = Date.now() + 300_000;
@@ -378,6 +432,7 @@ export class SessionProcessManager {
     const ownerId = randomUUID();
     this.pendingCompactions.add(sessionId);
     try {
+      await this.warmups.get(sessionId)?.task;
       // A completed run can still be releasing its worker. Wait for that
       // teardown instead of reporting a misleading capacity error to the UI.
       const teardownDeadline = Date.now() + 10_000;
@@ -451,6 +506,7 @@ export class SessionProcessManager {
     reason = "Agent runtime session deleted by user.",
   ): void {
     for (const sessionId of sessionIds) {
+      this.warmups.get(sessionId)?.controller.abort(new Error(reason));
       this.compactionControllers.get(sessionId)?.abort(new Error(reason));
       this.streamControllers.get(sessionId)?.abort(new Error(reason));
       for (const [child, id] of this.terminatingChildren) {
@@ -525,6 +581,7 @@ export class SessionProcessManager {
     while (
       ids.some(
         (sessionId) =>
+          (!allowRetainedIdle && this.warmups.has(sessionId)) ||
           this.activeMainStreams.has(sessionId) ||
           (this.children.has(sessionId) && !(allowRetainedIdle && this.admission.lifecycle.phase(sessionId) === "idle")) ||
           [...this.terminatingChildren.values()].includes(sessionId),
@@ -741,14 +798,16 @@ export class SessionProcessManager {
       });
 
       child.on("message", (message: unknown) => {
-        if (this.children.get(sessionId) !== state || !this.admission.lifecycle.current(lease) || lease.phase === "releasing") return;
         if (
           isAgentSessionChildMessage(message) &&
           message.type === "session:booted"
         ) {
-          child.send?.({ type: "session:initialize" });
+          if (this.children.get(sessionId) === state && this.admission.lifecycle.current(lease) && lease.phase !== "releasing")
+            child.send?.({ type: "session:initialize" });
           return;
         }
+        if (!isAgentSessionChildMessage(message)) return;
+        if (!this.acceptsChildMessage(sessionId, message, state)) return;
         void this.handleChildMessage(sessionId, message, state).catch(error => logger.error({sessionId,error}, "Worker message handling failed"));
       });
 
@@ -943,9 +1002,37 @@ export class SessionProcessManager {
     });
   }
 
+  /**
+   * May this worker's message still change state?
+   *
+   * A worker being released still owns the run it was executing, and
+   * `releaseChild` drops the child before that worker's terminal report lands.
+   * The previous gate discarded exactly the message saying the run finished, so
+   * every list kept animating a finished run until a client happened to read
+   * the row again. A released worker may therefore deliver its terminal
+   * lifecycle report — and nothing else. A superseded worker, whose session a
+   * newer child already owns, stays silent.
+   */
+  private acceptsChildMessage(
+    sessionId: string,
+    message: AgentSessionChildMessage,
+    source: SessionChildState,
+  ): boolean {
+    if (this.children.get(sessionId) === source)
+      return (
+        this.admission.lifecycle.current(source.lease) &&
+        source.lease.phase !== "releasing"
+      );
+    if (this.children.has(sessionId)) return false;
+    return (
+      this.releasingChildren.has(sessionId) &&
+      announcesWorkerSettle(message, agentRuntimeStore.tryGetSession(sessionId))
+    );
+  }
+
   private async handleChildMessage(sessionId: string, message: unknown, source?: SessionChildState): Promise<void> {
-    if (source && (this.children.get(sessionId) !== source || !this.admission.lifecycle.current(source.lease) || source.lease.phase === "releasing")) return;
     if (!isAgentSessionChildMessage(message)) return;
+    if (source && !this.acceptsChildMessage(sessionId, message, source)) return;
 
     if (message.type === "session:live") {
       sessionLiveBus.emit(message.sessionId, message.event);
@@ -965,7 +1052,7 @@ export class SessionProcessManager {
         owner.compactions.size === 0 &&
         !hasLocalBackgroundProcesses(sessionId)
       ) {
-        this.releaseChild(sessionId, "All background services have exited.", { idle: true });
+        this.retainOrRelease(owner);
       }
       return;
     }

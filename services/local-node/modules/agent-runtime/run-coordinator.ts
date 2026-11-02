@@ -1,5 +1,6 @@
 import { runtimeTransaction } from "./runtime-transaction.js";
 import { randomUUID } from "node:crypto";
+import { setTimeout as waitForCleanup } from "node:timers/promises";
 import {
   runWithExecutionContext,
   withinExecutionContext,
@@ -244,7 +245,7 @@ export class RunCoordinator {
           if (
             (!forced && session.status !== "completed") ||
             session.activeRunId ||
-            session.parentSessionId ||
+            (session.parentSessionId && session.sessionMetadata?.subagentKind !== "side-chat") ||
             session.sessionMetadata?.runtimeControl ||
             (!forced && latestRun?.status !== "completed") ||
             (!forced &&
@@ -265,6 +266,7 @@ export class RunCoordinator {
           sessionId,
           {
             message: candidate.message,
+            messageSource: candidate.messageSource,
             contentParts: candidate.contentParts,
             references: candidate.references,
             referenceContext: candidate.referenceContext,
@@ -974,6 +976,10 @@ export class RunCoordinator {
         ...owners.map((owner) => owner.stopTask ?? owner.task),
         ...this.queueDispatches.values(),
       ]);
+      // A parent stop retains descendant owners until the shared cleanup is
+      // acknowledged. Their execution promises can already be settled; looping
+      // only through microtasks would starve the I/O and timers that remove them.
+      if (this.owners.size || this.queueDispatches.size) await waitForCleanup(10);
     }
   }
   async waitForSessionIdle(sessionId: string): Promise<void> {
@@ -991,6 +997,8 @@ export class RunCoordinator {
           ? [this.queueDispatches.get(sessionId)!]
           : []),
       ]);
+      if (this.owners.has(sessionId) || this.queueDispatches.has(sessionId))
+        await waitForCleanup(10);
     }
   }
   async *observeRun(

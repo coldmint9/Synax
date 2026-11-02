@@ -4,7 +4,7 @@ use crate::llm::contract::ProviderRequest;
 use rig_core::message::{AssistantContent, Message, ToolName};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -16,14 +16,8 @@ pub(crate) fn valid(name: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
-fn wire_name(name: &str) -> Result<String, Error> {
-    if name.is_empty() {
-        return Err("function tool name is empty".into());
-    }
-    if valid(name) {
-        return Ok(name.into());
-    }
-    let prefix: String = name
+fn sanitized(name: &str) -> String {
+    let mapped: String = name
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
@@ -34,19 +28,93 @@ fn wire_name(name: &str) -> Result<String, Error> {
         })
         .take(40)
         .collect();
+    if mapped.is_empty() {
+        "tool".into()
+    } else {
+        mapped
+    }
+}
+
+fn hashed(name: &str) -> String {
     let hash = format!("{:x}", Sha256::digest(name.as_bytes()));
-    Ok(format!("{prefix}__{}", &hash[..16]))
+    format!("{}__{}", sanitized(name), &hash[..16])
+}
+
+/// Unknown/historical names must never collide with a live wire name, so they
+/// keep the hash suffix. Live tools prefer the readable spelling instead.
+fn wire_name(name: &str) -> Result<String, Error> {
+    if name.is_empty() {
+        return Err("function tool name is empty".into());
+    }
+    Ok(if valid(name) {
+        name.into()
+    } else {
+        hashed(name)
+    })
+}
+
+/// Canonical, provider-independent form of a tool name: separators collapse,
+/// camelCase splits, and a `__<hash>` wire suffix is dropped.
+fn normalize(name: &str) -> String {
+    let base = without_wire_hash(name.trim());
+    let mut normalized = String::new();
+    let mut previous: Option<char> = None;
+    for ch in base.chars() {
+        if let Some(prev) = previous {
+            if prev.is_ascii_lowercase() && ch.is_ascii_uppercase() {
+                normalized.push('_');
+            }
+        }
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else if !normalized.is_empty() && !normalized.ends_with('_') {
+            normalized.push('_');
+        }
+        previous = Some(ch);
+    }
+    while normalized.ends_with('_') {
+        normalized.pop();
+    }
+    normalized
+}
+
+fn without_wire_hash(name: &str) -> &str {
+    match name.rsplit_once("__") {
+        Some((prefix, hash))
+            if hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            prefix
+        }
+        _ => name,
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct ToolNames {
     aliases: HashMap<String, String>,
     runtime: HashMap<String, String>,
+    normalized: HashMap<String, String>,
+    ambiguous: HashSet<String>,
 }
 
 impl ToolNames {
     pub(crate) fn prepare(mut input: ProviderRequest) -> Result<(ProviderRequest, Self), Error> {
         let mut names = Self::default();
+        // Names that are already valid keep their spelling; reserve them first
+        // so a sanitized sibling can never take the exact name a model knows.
+        let mut reserved = HashSet::new();
+        for tool in &input.tools {
+            if tool["type"] == "provider" {
+                continue;
+            }
+            let original = tool["name"]
+                .as_str()
+                .ok_or("function tool name is missing")?;
+            if valid(original) {
+                reserved.insert(original.to_owned());
+            }
+        }
+        let mut used = HashSet::new();
         for tool in &mut input.tools {
             if tool["type"] == "provider" {
                 continue;
@@ -55,7 +123,18 @@ impl ToolNames {
                 .as_str()
                 .ok_or("function tool name is missing")?
                 .to_owned();
-            let wire = wire_name(&original)?;
+            // A readable name is what the model can echo back unchanged; the
+            // hash only disambiguates real collisions.
+            let wire = if valid(&original) {
+                original.clone()
+            } else {
+                let candidate = sanitized(&original);
+                if reserved.contains(&candidate) || used.contains(&candidate) {
+                    hashed(&original)
+                } else {
+                    candidate
+                }
+            };
             let runtime = tool["runtimeName"].as_str().unwrap_or(&original).to_owned();
             if names
                 .runtime
@@ -66,6 +145,9 @@ impl ToolNames {
                     format!("duplicate or colliding function tool name '{original}'").into(),
                 );
             }
+            used.insert(wire.clone());
+            names.note_normalized(&runtime, &runtime);
+            names.note_normalized(&wire, &runtime);
             names.aliases.insert(original, wire.clone());
             // A runtime ID can also appear in older assistant messages.
             names.aliases.entry(runtime).or_insert_with(|| wire.clone());
@@ -99,7 +181,32 @@ impl ToolNames {
     }
 
     pub(crate) fn runtime_name<'a>(&'a self, wire: &'a str) -> &'a str {
-        self.runtime.get(wire).map(String::as_str).unwrap_or(wire)
+        if let Some(runtime) = self.runtime.get(wire) {
+            return runtime;
+        }
+        // A model may drop the hash suffix or rewrite separators even though
+        // the tool exists. Normalized aliases keep that call resolvable.
+        if let Some(runtime) = self.normalized.get(&normalize(wire)) {
+            return runtime;
+        }
+        wire
+    }
+
+    fn note_normalized(&mut self, name: &str, runtime: &str) {
+        let key = normalize(name);
+        if key.is_empty() || self.ambiguous.contains(&key) {
+            return;
+        }
+        match self.normalized.get(&key) {
+            None => {
+                self.normalized.insert(key, runtime.to_owned());
+            }
+            Some(existing) if existing == runtime => {}
+            Some(_) => {
+                self.normalized.remove(&key);
+                self.ambiguous.insert(key);
+            }
+        }
     }
 
     fn rewrite_message(&self, message: &mut Value) -> Result<(), Error> {
@@ -188,6 +295,53 @@ mod tests {
         assert_eq!(encoded.tool_choice.unwrap()["toolName"], values[0]);
         assert_eq!(encoded.prompt[0]["content"][0]["toolName"], values[0]);
         assert_eq!(values[2], "file_read");
+    }
+    #[test]
+    fn keeps_readable_wire_names_when_nothing_collides() {
+        let original: ProviderRequest = serde_json::from_value(json!({
+        "apiFormat":"openai-responses","model":"fixture",
+        "tools":[
+            {"name":"file.write","runtimeName":"file.write"},
+            {"name":"file.read","runtimeName":"file.read"}
+        ]}))
+        .unwrap();
+        let (encoded, names) = ToolNames::prepare(original).unwrap();
+        let values: Vec<_> = encoded
+            .tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        // A model can only echo a name it can read; hashes stay a collision fallback.
+        assert_eq!(values, vec!["file_write", "file_read"]);
+        assert_eq!(names.runtime_name("file_write"), "file.write");
+        assert_eq!(
+            names.runtime_name("file_write__0123456789abcdef"),
+            "file.write"
+        );
+        assert_eq!(names.runtime_name("File.Write"), "file.write");
+        // Unknown vocabulary stays raw here; the host owns the alias table.
+        assert_eq!(names.runtime_name("write"), "write");
+    }
+    #[test]
+    fn hashes_only_the_colliding_sanitized_name() {
+        let original: ProviderRequest = serde_json::from_value(json!({
+        "apiFormat":"openai-responses","model":"fixture",
+        "tools":[
+            {"name":"file/read","runtimeName":"file/read"},
+            {"name":"file.read","runtimeName":"file.read"}
+        ]}))
+        .unwrap();
+        let (encoded, names) = ToolNames::prepare(original).unwrap();
+        let values: Vec<_> = encoded
+            .tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(values[0], "file_read");
+        assert!(values[1].starts_with("file_read__"));
+        assert!(valid(values[1]));
+        assert_eq!(names.runtime_name(values[0]), "file/read");
+        assert_eq!(names.runtime_name(values[1]), "file.read");
     }
     #[test]
     fn validates_all_three_serialized_tool_shapes() {

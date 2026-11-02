@@ -26,8 +26,13 @@ it("counts down without announcing each timer tick and hides immediately on reco
   expect(screen.getByRole("status").textContent).toBe(announcement);
 
   rerender(<RetryIndicator retry={{ ...retry, phase: "retrying" }} />);
-  expect(screen.getByText("第 1/10 次重试 · 正在重试…")).toBeVisible();
-  expect(vi.getTimerCount()).toBe(0);
+  expect(screen.getByText("第 1/10 次重试 · 正在重试 · 已等待 0 秒")).toBeVisible();
+  // A running attempt reports real elapsed wait instead of a fabricated
+  // countdown, so its clock has to keep ticking.
+  const retryingAnnouncement = screen.getByRole("status").textContent;
+  act(() => vi.advanceTimersByTime(3000));
+  expect(screen.getByText("第 1/10 次重试 · 正在重试 · 已等待 3 秒")).toBeVisible();
+  expect(screen.getByRole("status").textContent).toBe(retryingAnnouncement);
   rerender(<RetryIndicator retry={{ ...retry, phase: "recovered" }} />);
   expect(screen.queryByTestId("retry-indicator")).not.toBeInTheDocument();
   expect(vi.getTimerCount()).toBe(0);
@@ -36,7 +41,7 @@ it("counts down without announcing each timer tick and hides immediately on reco
 it("describes a network retry without an empty retry budget or a fictional countdown", () => {
   render(<RetryIndicator retry={{ ...retry, reason: "network", maxRetries: 0 }} />);
   expect(screen.getByRole("status")).toHaveTextContent("网络连接异常");
-  expect(screen.getByText("第 1 次重试 · 正在重试…")).toBeVisible();
+  expect(screen.getByText("第 1 次重试 · 正在重试 · 已等待 0 秒")).toBeVisible();
   expect(screen.queryByText(/0 秒后|1\/0|第 1 组/)).not.toBeInTheDocument();
 });
 

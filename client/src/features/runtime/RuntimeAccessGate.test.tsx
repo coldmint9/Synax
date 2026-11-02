@@ -77,7 +77,7 @@ it("offers retry for a connection failure without asking for a token", async () 
   await screen.findByRole("alert");
   expect(screen.queryByLabelText("Runtime access token")).toBeNull();
   auth.ensureRuntimeAuthentication.mockResolvedValueOnce(undefined);
-  fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
   await screen.findByText("Workspace");
 });
 
@@ -90,7 +90,7 @@ it("uses automatic desktop credentials on retry, including authentication failur
   await screen.findByRole("alert");
   expect(screen.queryByLabelText("Runtime access token")).toBeNull();
   auth.ensureRuntimeAuthentication.mockResolvedValueOnce(undefined);
-  fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
   await screen.findByText("Workspace");
 });
 
@@ -103,7 +103,7 @@ it("asks for a token only after the browser runtime explicitly requires authenti
     target: { value: "test-token" },
   });
   auth.ensureRuntimeAuthentication.mockResolvedValueOnce(undefined);
-  fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "连接" }));
   await screen.findByText("Workspace");
   expect(auth.setRuntimeAccessToken).toHaveBeenCalledWith("test-token");
 });
@@ -140,7 +140,7 @@ it("allows retry when desktop startup fails, showing only the skeleton during re
   desktopWindow.electronAPI = { getApiPort, getRuntimeToken: vi.fn() };
   const { container } = render(workspace);
   await screen.findByRole("alert");
-  fireEvent.click(screen.getByRole("button", { name: "连接 / 重试" }));
+  fireEvent.click(screen.getByRole("button", { name: "重新连接" }));
   expect(container.textContent).toBe("");
   expect(container.querySelector(".runtime-skeleton")).not.toBeNull();
   await act(async () => bound(54322));

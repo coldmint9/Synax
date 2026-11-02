@@ -113,7 +113,7 @@ describe("workspace session activity", () => {
     });
     view.rerender({ current: "workspace" });
     view.rerender({ current: "current" });
-    await act(async () => resolve({ items: [row("done", "completed"), row("running", "running")] }));
+    await act(async () => { await Promise.resolve(); resolve({ items: [row("done", "completed"), row("running", "running")] }); });
     expect(view.result.current.badges.workspace.total).toBe(0);
   });
 

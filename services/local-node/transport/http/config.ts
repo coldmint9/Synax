@@ -14,7 +14,6 @@ import {
   getEffectiveConfigForDisplay,
   getGlobalConfig,
   getGlobalConfigFilePath,
-  getGlobalConfigForRuntime,
   getProjectConfig,
   listAvailableProviders,
   updateGlobalConfig,
@@ -22,17 +21,34 @@ import {
 } from "../../infrastructure/runtime/config/config-store.js";
 import { logger } from "../../infrastructure/runtime/logger.js";
 import {
+  discoverAiApiModels,
+  normalizeJevBaseUrl,
+  resolveAiApiKey,
+  validationError,
+} from "../../infrastructure/llm-runtime/ai-api-models.js";
+import {
   workspaceLocationHostPath,
   type WorkspaceLocation,
 } from "../../modules/workspace-location.js";
 import type {
-  AiApiModelsDiscoverResponse,
   ApiFormat,
   UpdateGlobalConfigRequest,
 } from "../../infrastructure/runtime/config/config-types.js";
 import { mergeMediaModelsIntoProviders } from "../../modules/media/catalog.js";
+import { readCcSwitchProviders } from "../../infrastructure/cc-switch/cc-switch-source.js";
+import { mapCcSwitchRecords } from "../../modules/llm-providers/cc-switch-mapping.js";
+import {
+  buildPreview,
+  importCcSwitchProviders,
+} from "../../modules/llm-providers/cc-switch-import.js";
+import {
+  SUPER_MAX_CONCURRENT,
+  SUPER_MAX_MAX_NODES,
+  SUPER_MIN_MAX_NODES,
+  SUPER_MODEL_TAGS,
+  SUPER_TASK_TYPES,
+} from "../../../../packages/contracts/super-coding.js";
 import { beginWebSearchOAuth } from "../../modules/web-search/oauth.js";
-import { getRuntimeCatalog } from "../../infrastructure/llm-runtime/catalog.js";
 import { gitLabHost, validateGitLabAccount } from '../../modules/remote-pr/gitlab-api.js';
 import { GitMrError } from '../../modules/git-mr/errors.js';
 
@@ -261,6 +277,43 @@ const globalConfigPatchSchema = z
       .optional(),
     gitLab: gitLabConfigSchema.optional(),
     webSearch: webSearchConfigSchema.optional(),
+    superCoding: z
+      .object({
+        models: z
+          .array(
+            z
+              .object({
+                id: z.string().trim().min(1).max(512),
+                label: z.string().trim().min(1).max(512),
+                enabled: z.boolean(),
+                tags: z
+                  .array(z.enum(SUPER_MODEL_TAGS))
+                  .max(SUPER_MODEL_TAGS.length),
+                effort: z.enum(["high", "xhigh", "max"]).optional(),
+              })
+              .strict(),
+          )
+          .max(64),
+        routes: z
+          .array(
+            z
+              .object({
+                taskTypes: z.array(z.enum(SUPER_TASK_TYPES)).min(1),
+                model: z.string().trim().min(1).max(512),
+              })
+              .strict(),
+          )
+          .max(32),
+        defaultModel: z.string().trim().max(512),
+        maxNodes: z
+          .number()
+          .int()
+          .min(SUPER_MIN_MAX_NODES)
+          .max(SUPER_MAX_MAX_NODES),
+        maxConcurrent: z.number().int().min(1).max(SUPER_MAX_CONCURRENT),
+      })
+      .strict()
+      .optional(),
     sessionArchiveRetentionDays: z
       .union([z.number().int().min(1).max(3650), z.null()])
       .optional(),
@@ -354,6 +407,93 @@ configRoutes.get("/global/providers", (c) => {
       models: provider.models,
     })),
   });
+});
+
+const ccSwitchImportSchema = z
+  .object({
+    keys: z.array(z.string().trim().min(1).max(256)).min(1).max(64),
+    onConflict: z.enum(["skip", "replace", "copy"]).optional(),
+    validate: z.boolean().optional(),
+  })
+  .strict();
+
+/**
+ * Preview CC Switch providers. Reads the local CC Switch database only: no
+ * network calls, and API keys stay on this side of the wire (masked values).
+ */
+configRoutes.get("/providers/cc-switch", async (c) => {
+  const source = await readCcSwitchProviders();
+  const { candidates, skipped, unsupported } = mapCcSwitchRecords(source.records);
+  return c.json({
+    available: source.available,
+    sourcePath: source.dbPath,
+    items: source.available ? buildPreview(getGlobalConfig(), candidates) : [],
+    unsupported,
+    skipped,
+    warnings: [...source.warnings, ...(source.error ? [source.error] : [])],
+  });
+});
+
+configRoutes.post("/providers/cc-switch/import", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const parsed = ccSwitchImportSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: "Validation failed", details: parsed.error.flatten() }, 400);
+  }
+
+  const updatedBy =
+    c.req.header("X-User-Name") ?? c.req.header("X-User-Id") ?? "cc-switch-import";
+
+  try {
+    const source = await readCcSwitchProviders();
+    if (!source.available) {
+      return c.json({ error: source.error ?? "未找到 CC Switch 数据库" }, 400);
+    }
+
+    const config = getGlobalConfig();
+    const result = await importCcSwitchProviders({
+      config,
+      records: source.records,
+      keys: parsed.data.keys,
+      ...(parsed.data.onConflict ? { policy: parsed.data.onConflict } : {}),
+      ...(parsed.data.validate === undefined ? {} : { validate: parsed.data.validate }),
+    });
+
+    if (result.imported.length === 0) {
+      return c.json({
+        config,
+        imported: [],
+        skipped: result.skipped,
+        warnings: [...source.warnings, ...result.warnings],
+      });
+    }
+
+    const next = updateGlobalConfig(result.patch, updatedBy);
+    logger.info(
+      {
+        updatedBy,
+        imported: result.imported.map((item) => item.providerId),
+        skipped: result.skipped.length,
+      },
+      "[config] cc-switch providers imported",
+    );
+    return c.json({
+      config: next,
+      imported: result.imported,
+      skipped: result.skipped,
+      warnings: [...source.warnings, ...result.warnings],
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error({ err: message }, "[config] cc-switch import failed");
+    return c.json({ error: message }, 500);
+  }
 });
 
 
@@ -804,10 +944,6 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-function normalizeJevBaseUrl(value: string): string {
-  return value.replace(/\/+$/, "").replace(/\/v1$/i, "");
-}
-
 async function tryValidateOnce(
   baseUrl: string,
   format: ApiFormat,
@@ -971,222 +1107,4 @@ async function validateAiApi(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function discoverAiApiModels(
-  input: z.infer<typeof aiApiModelsDiscoverSchema>,
-): Promise<AiApiModelsDiscoverResponse> {
-  const baseUrl = input.format === "jev"
-    ? normalizeJevBaseUrl(input.baseUrl)
-    : input.baseUrl.replace(/\/+$/, "");
-  const apiKey = resolveAiApiKey(input.providerId, input.apiKey);
-  if (!apiKey) {
-    return {
-      ok: false,
-      models: [],
-      source: modelDiscoverySource(input.format),
-      error: "请先配置 API Key",
-    };
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-
-  try {
-    const result = await tryDiscoverModels(
-      baseUrl,
-      input.format,
-      apiKey,
-      controller.signal,
-    );
-    if (result.ok)
-      return withCatalogMetadata(result, input.providerId, modelDiscoverySource(input.format));
-
-    if (result.status === 404 && !baseUrl.endsWith("/v1")) {
-      const altUrl = `${baseUrl}/v1`;
-      const retry = await tryDiscoverModels(
-        altUrl,
-        input.format,
-        apiKey,
-        controller.signal,
-      );
-      if (retry.ok)
-        return withCatalogMetadata(
-          retry,
-          input.providerId,
-          modelDiscoverySource(input.format),
-          altUrl,
-        );
-    }
-
-    return { ...result, source: modelDiscoverySource(input.format) };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      ok: false,
-      models: [],
-      source: modelDiscoverySource(input.format),
-      error: message,
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function withCatalogMetadata(
-  result: { ok: boolean; models: string[]; error?: string },
-  providerId: string | undefined,
-  source: string,
-  resolvedBaseUrl?: string,
-): Promise<AiApiModelsDiscoverResponse> {
-  const catalog = await getRuntimeCatalog();
-  const preferred = providerId
-    ? catalog.providers.find((provider) => provider.id === providerId)
-    : undefined;
-  const modelMetadata: NonNullable<AiApiModelsDiscoverResponse["modelMetadata"]> = {};
-  for (const modelId of result.models) {
-    const model = preferred?.models.find((item) => item.id === modelId)
-      ?? catalog.providers.flatMap((provider) => provider.models).find((item) => item.id === modelId);
-    if (!model) continue;
-    modelMetadata[modelId] = {
-      contextLimit: model.contextLimit,
-      inputLimit: model.inputLimit,
-      outputLimit: model.maxTokens,
-      inputModalities: model.inputModalities,
-      outputModalities: model.outputModalities,
-      reasoning: model.reasoning,
-      toolCall: model.toolCall,
-    };
-  }
-  return {
-    ...result,
-    source,
-    ...(resolvedBaseUrl ? { resolvedBaseUrl } : {}),
-    ...(Object.keys(modelMetadata).length ? { modelMetadata } : {}),
-  };
-}
-
-function buildModelDiscoveryHeaders(
-  format: ApiFormat,
-  apiKey: string,
-): Record<string, string> {
-  if (format === "anthropic") {
-    return {
-      Accept: "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    };
-  }
-
-  return {
-    Accept: "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
-async function tryDiscoverModels(
-  baseUrl: string,
-  format: ApiFormat,
-  apiKey: string,
-  signal: AbortSignal,
-): Promise<{
-  ok: boolean;
-  status: number;
-  models: string[];
-  error?: string;
-  resolvedBaseUrl?: string;
-}> {
-  const endpoint = format === "jev"
-    ? `${normalizeJevBaseUrl(baseUrl)}/v1/models`
-    : `${baseUrl}/models`;
-  const resp = await fetch(endpoint, {
-    method: "GET",
-    headers: buildModelDiscoveryHeaders(format, apiKey),
-    signal,
-  });
-  if (!resp.ok) {
-    return {
-      ok: false,
-      status: resp.status,
-      models: [],
-      error: await validationError(resp),
-    };
-  }
-  const payload = await resp.json().catch(() => ({}));
-  const models = extractModelIds(payload);
-  return {
-    ok: true,
-    status: resp.status,
-    models,
-    ...(models.length === 0 ? { error: "模型接口未返回可识别的模型 ID" } : {}),
-  };
-}
-
-function modelDiscoverySource(format: ApiFormat): string {
-  if (format === "anthropic") return "anthropic/models";
-  if (format === "jev") return "typesafe/models";
-  return "openai/models";
-}
-
-function resolveAiApiKey(
-  providerId: string | undefined,
-  apiKey: string | undefined,
-): string {
-  const direct = apiKey?.trim();
-  if (direct) return direct;
-  if (!providerId) return "";
-
-  const global = getGlobalConfigForRuntime();
-  const provider = global.providers.find((item) => item.id === providerId);
-  const connection = global.providerConnections[providerId];
-  if (!provider || provider.kind !== "api" || !connection) return "";
-  return connection.apiKey?.trim() ?? "";
-}
-
-function extractModelIds(payload: unknown): string[] {
-  const candidates: string[] = [];
-
-  if (payload && typeof payload === "object") {
-    const data = (payload as { data?: unknown }).data;
-    if (Array.isArray(data)) {
-      for (const item of data) {
-        if (typeof item === "string") candidates.push(item);
-        if (
-          item &&
-          typeof item === "object" &&
-          typeof (item as { id?: unknown }).id === "string"
-        ) {
-          candidates.push((item as { id: string }).id);
-        }
-      }
-    }
-
-    const models = (payload as { models?: unknown }).models;
-    if (Array.isArray(models)) {
-      for (const item of models) {
-        if (typeof item === "string") candidates.push(item);
-        if (
-          item &&
-          typeof item === "object" &&
-          typeof (item as { id?: unknown }).id === "string"
-        ) {
-          candidates.push((item as { id: string }).id);
-        }
-      }
-    }
-  }
-
-  return Array.from(
-    new Set(candidates.filter((item) => item.trim().length > 0)),
-  );
-}
-
-async function validationError(resp: Response): Promise<string> {
-  const text = await resp.text().catch(() => "");
-  if (resp.status === 401 || resp.status === 403)
-    return `认证失败 (${resp.status})`;
-  if (resp.status === 404) return `接口路径不存在 (${resp.status})`;
-  if (resp.status === 400)
-    return `请求被拒绝 (${resp.status}): ${text.slice(0, 240)}`;
-  return `请求失败 (${resp.status}): ${text.slice(0, 240) || resp.statusText}`;
 }

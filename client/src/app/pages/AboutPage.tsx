@@ -2,18 +2,18 @@ import { ScrollArea, Surface, Text, Badge, Separator } from "@/shared/ui/ui/Disp
 import { ExternalLink } from "lucide-react";
 import { IconSurface } from "../../shared/ui/IconSurface";
 
-const VERSION = "2.26.0";
+const VERSION = "2.27.0";
 const REPO_URL = "https://github.com/coldmint9/Synax";
 const AUTHOR_URL = "https://github.com/coldmint9";
 
 const techStack = [
-  { label: "TypeScript 5.7", color: "accent" as const },
-  { label: "React 19", color: "default" as const },
+  { label: "TypeScript", color: "accent" as const },
+  { label: "React", color: "default" as const },
   { label: "Hono", color: "success" as const },
-  { label: "SQLite + Drizzle", color: "warning" as const },
-  { label: "Electron 42", color: "default" as const },
+  { label: "Rust Runtime Sidecar", color: "success" as const },
+  { label: "RocksDB", color: "warning" as const },
+  { label: "Electron", color: "default" as const },
   { label: "Vite", color: "default" as const },
-  { label: "Vercel AI SDK", color: "accent" as const },
 ];
 
 export default function AboutPage() {
@@ -23,7 +23,7 @@ export default function AboutPage() {
         <div className="mx-auto max-w-2xl px-6 pt-8 pb-12">
           <div className="mb-8 flex items-start gap-4">
             <IconSurface tone="primary" size="xl" className="rounded-2xl">
-              <span className="text-2xl font-bold">S</span>
+              <img src="/synax-icon.svg" alt="" className="h-10 w-10" />
             </IconSurface>
             <div>
               <Text variant="h4">Synax</Text>
@@ -85,7 +85,7 @@ export default function AboutPage() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
               >
-                GitHub Repository
+                Synax Repository
                 <ExternalLink size={13} />
               </a>
             </section>
@@ -97,7 +97,7 @@ export default function AboutPage() {
                 Author
               </Text>
               <Text variant="body-sm" color="muted" className="mb-2">
-                coldmint9
+                Synax Team
               </Text>
               <a
                 href={AUTHOR_URL}
@@ -117,10 +117,13 @@ export default function AboutPage() {
                 License
               </Text>
               <Text variant="body-sm" color="muted" className="mb-2">
-                Copyright (c) 2026 Synax contributors
+                Copyright (c) 2026 Synax contributors · Synax Team
               </Text>
               <Text variant="body-sm" color="muted">
                 Apache License 2.0
+              </Text>
+              <Text variant="body-sm" color="muted">
+                Licensed from coldmint9&apos;s Synax open-source project
               </Text>
             </section>
           </div>

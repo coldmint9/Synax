@@ -1,15 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  GitMerge,
   GitFork,
-  ChevronRight,
+
   GitCommitHorizontal,
   FolderGit2,
-  SlidersHorizontal,
-  Plus,
+  ArrowLeftRight,
   RefreshCw,
-  Play,
-  Trash2,
 } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -17,29 +13,20 @@ import {
   type GitWorkspaceSummary,
   type ProjectWorkspaceRoot,
 } from "../../adapters/transport/project";
-import {
-  gitMrApi,
-  type MergePreset,
-  type MergeRequest,
-  type MergeRequestInput,
-} from "../../adapters/transport/gitMr";
-import { MergeRequestForm } from "./MergeRequestForm";
 import { Tab, TabGroup, TabList } from "../../shared/ui/ui/Tabs";
 import { IslandSelection } from "../../app/layouts/IslandSelection";
 import { GitToolbarContent } from "./GitToolbarPortal";
 import { MergeRequestDetail } from "./MergeRequestDetail";
 import GitHistoryTree from "./GitHistoryTree";
 import { GitWorktreesView } from "./GitWorktreesView";
+import { QuickMergeBoardView } from "./QuickMergeBoard";
 import { Button } from "../../shared/ui/ui/Button";
-import { isTerminal, statusLabels } from "./mergeUi";
 import { fetchStaleResource, readStaleResource, writeStaleResource } from "../../shared/lib/staleResource";
 import "./gitWorkbench.css";
 import "./gitHistory.css";
 import "./mergeRequest.css";
-type View = "requests" | "branches" | "presets" | "worktrees";
+type View = "branches" | "worktrees" | "quick";
 type GitWorkbenchIndex = {
-  requests: MergeRequest[];
-  presets: MergePreset[];
   roots: ProjectWorkspaceRoot[];
 };
 
@@ -64,7 +51,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedView = searchParams.get("view");
   const view: View =
-    requestedView === "requests" || requestedView === "presets" || requestedView === "worktrees"
+    requestedView === "quick" || requestedView === "worktrees"
       ? requestedView
       : "branches";
   const setView = (next: View) =>
@@ -77,8 +64,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       { replace: true },
     );
   const cachedIndex = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
-  const [requests, setRequests] = useState<MergeRequest[]>(() => cachedIndex?.requests ?? []);
-  const [presets, setPresets] = useState<MergePreset[]>(() => cachedIndex?.presets ?? []);
   const [roots, setRoots] = useState<ProjectWorkspaceRoot[]>(() => cachedIndex?.roots ?? []);
   const [rootId, setRootId] = useState<string | null>(() => {
     const available = cachedIndex?.roots.filter((root) => root.status === "available") ?? [];
@@ -103,37 +88,17 @@ function GitWorkbench({ projectId }: { projectId: string }) {
   const [branchLoading, setBranchLoading] = useState(() =>
     rootId !== null && readStaleResource<GitWorkspaceSummary>(gitWorkspaceKey(projectId, rootId, "inventory")) === undefined,
   );
-  const [busy, setBusy] = useState(false);
-  const [createOpen, setCreateOpen] = useState(false);
   const openRequest = (id: string) =>
     navigate(
       `/projects/${encodeURIComponent(projectId)}/git/mr/${encodeURIComponent(id)}`,
     );
-  const load = useCallback(async () => {
-    const [nextRequests, nextPresets, nextWorkspace] = await Promise.all([
-      gitMrApi.list(projectId),
-      gitMrApi.presets(projectId),
-      projectApi.getWorkspace(projectId),
-    ]);
-    const nextIndex = { requests: nextRequests, presets: nextPresets, roots: nextWorkspace.roots };
-    writeStaleResource(gitWorkbenchIndexKey(projectId), nextIndex);
-    setRequests(nextRequests);
-    setPresets(nextPresets);
-    setRoots(nextWorkspace.roots);
-    setRootId((current) => {
-      if (current && nextWorkspace.roots.some((root) => root.id === current && root.status === "available")) return current;
-      return nextWorkspace.roots.find((root) => root.role === "primary" && root.status === "available")?.id ??
-        nextWorkspace.roots.find((root) => root.status === "available")?.id ?? null;
-    });
-  }, [projectId]);
   useEffect(() => {
     let active = true;
     // Unblock repository views as soon as roots arrive, independently of MR I/O.
     projectApi.getWorkspace(projectId)
       .then(nextWorkspace => {
         if (!active) return;
-        const cached = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
-        writeStaleResource(gitWorkbenchIndexKey(projectId), { requests: cached?.requests ?? [], presets: cached?.presets ?? [], roots: nextWorkspace.roots });
+        writeStaleResource(gitWorkbenchIndexKey(projectId), { roots: nextWorkspace.roots });
         setRoots(nextWorkspace.roots);
         setRootId(current => {
           if (current && nextWorkspace.roots.some(root => root.id === current && root.status === "available")) return current;
@@ -142,14 +107,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       })
       .catch(err => { if (active) setError(String(err.message ?? err)); })
       .finally(() => { if (active) setLoading(false); });
-    Promise.all([gitMrApi.list(projectId), gitMrApi.presets(projectId)])
-      .then(([nextRequests, nextPresets]) => {
-        if (!active) return;
-        const cached = readStaleResource<GitWorkbenchIndex>(gitWorkbenchIndexKey(projectId));
-        writeStaleResource(gitWorkbenchIndexKey(projectId), { requests: nextRequests, presets: nextPresets, roots: cached?.roots ?? [] });
-        setRequests(nextRequests); setPresets(nextPresets);
-      })
-      .catch(err => { if (active) setError(String(err.message ?? err)); });
     return () => { active = false; };
   }, [projectId]);
   useEffect(() => {
@@ -195,45 +152,6 @@ function GitWorkbench({ projectId }: { projectId: string }) {
       .catch(err => { if (active) setBranchError(String(err.message ?? err)); });
     return () => { active = false; };
   }, [view, projectId, rootId, workspaceRevision, inventoryReady]);
-  async function perform(action: () => Promise<unknown>) {
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function create(input: MergeRequestInput, presetName?: string) {
-    // Save structured policy before running it; manual requests never silently finalize.
-    if (presetName) await gitMrApi.savePreset(projectId, presetName, input);
-    const mr = await gitMrApi.create(projectId, {
-      ...input,
-      autoFinalize: false,
-    });
-    try {
-      await gitMrApi.action(projectId, mr.id, "prepare", mr.version);
-    } finally {
-      openRequest(mr.id);
-    }
-  }
-  const filteredRequests = requests.filter(
-    (mr) =>
-      !rootId ||
-      mr.rootId === rootId ||
-      (!mr.rootId &&
-        roots.find((root) => root.id === rootId)?.role === "primary"),
-  );
-  const filteredPresets = presets.filter(
-    (preset) =>
-      !rootId ||
-      preset.input.rootId === rootId ||
-      (!preset.input.rootId &&
-        roots.find((root) => root.id === rootId)?.role === "primary"),
-  );
   return (
     <main
       className={`git-workbench git-workbench-modern mr-modern-index ${view === "branches" ? "git-history-page" : ""}`}
@@ -243,10 +161,9 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           <IslandSelection activeKey={view}>
             {(
               [
-                ["requests", "合并请求"],
                 ["branches", "历史树"],
                 ["worktrees", "工作树"],
-                ["presets", "预设"],
+                ["quick", "快捷合并"],
               ] as [View, string][]
             ).map(([id, label]) => (
               <button
@@ -270,24 +187,10 @@ function GitWorkbench({ projectId }: { projectId: string }) {
           disabled={worktreeBusy}
           onChange={(event) => setView(event.target.value as View)}
         >
-          <option value="requests">合并请求</option>
           <option value="branches">历史树</option>
           <option value="worktrees">工作树</option>
-          <option value="presets">预设</option>
+          <option value="quick">快捷合并</option>
         </select>
-        {view !== "worktrees" && <>
-        <button
-          type="button"
-          className="wh-pill-btn wh-pill-btn--primary"
-          disabled={loading || branchLoading || !workspace}
-          onClick={() => setCreateOpen(true)}
-          aria-label="新建 MR"
-          title="新建 MR"
-        >
-          <Plus size={15} aria-hidden="true" />
-          <span className="git-island-action-label">新建 MR</span>
-        </button>
-        </>}
       </GitToolbarContent>
       <header className="git-page-heading flex shrink-0 items-center justify-between gap-5">
         <div className="flex min-w-0 items-center gap-3.5">
@@ -299,19 +202,15 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               <GitCommitHorizontal size={22} strokeWidth={1.5} />
             ) : view === "worktrees" ? (
               <GitFork size={21} strokeWidth={1.5} />
-            ) : view === "requests" ? (
-              <GitMerge size={21} strokeWidth={1.5} />
             ) : (
-              <SlidersHorizontal size={21} strokeWidth={1.5} />
+              <ArrowLeftRight size={21} strokeWidth={1.5} />
             )}
           </span>
           <div className="min-w-0">
             <h1>
               {view === "branches"
                 ? "历史树"
-                : view === "requests"
-                  ? "合并请求"
-                  : view === "worktrees" ? "工作树" : "合并预设"}
+                : view === "worktrees" ? "工作树" : "快捷合并"}
             </h1>
             <span
               className="mt-1.5 block truncate font-mono text-[11px] text-[var(--ui-subtle)]"
@@ -387,102 +286,14 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               }} onBusy={setWorktreeBusy}
               onHistory={item => setSearchParams(current => { const next = new URLSearchParams(current); next.set("view", "branches"); if (rootId) next.set("rootId", rootId); next.set("commit", item.head); return next; })} />
           )}
-          {view === "requests" && (
-            <div className="mr-index-content">
-              {!filteredRequests.length ? (
-                <div className="mr-empty mr-index-empty">
-                  <span className="mr-index-empty-icon">
-                    <GitMerge size={28} strokeWidth={1.5} />
-                  </span>
-                  <h2>还没有本地合并请求</h2>
-                  <p>选择源分支与目标分支，在更新目标前审阅合并结果。</p>
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    className="git-control !rounded-xl"
-                    disabled={!workspace}
-                    onClick={() => setCreateOpen(true)}
-                  >
-                    <Plus size={14} aria-hidden="true" />
-                    创建第一个 MR
-                  </Button>
-                </div>
-              ) : (
-                [
-                  {
-                    label: "需要处理",
-                    items: filteredRequests.filter(
-                      (mr) => mr.status !== "draft" && !isTerminal(mr.status),
-                    ),
-                  },
-                  {
-                    label: "草稿",
-                    items: filteredRequests.filter(
-                      (mr) => mr.status === "draft",
-                    ),
-                  },
-                  {
-                    label: "已完成",
-                    items: filteredRequests.filter((mr) =>
-                      isTerminal(mr.status),
-                    ),
-                  },
-                ]
-                  .filter((group) => group.items.length)
-                  .map((group) => (
-                    <section key={group.label} className="mr-request-group">
-                      <h2>
-                        {group.label}{" "}
-                        <span className="mr-muted">{group.items.length}</span>
-                      </h2>
-                      <div className="mr-request-list">
-                        {group.items.map((mr) => (
-                          <button
-                            className="mr-request-card"
-                            key={mr.id}
-                            onClick={() => openRequest(mr.id)}
-                          >
-                            <span
-                              className="mr-request-icon"
-                              data-status={mr.status}
-                            >
-                              <GitMerge
-                                size={17}
-                                strokeWidth={1.6}
-                                aria-hidden="true"
-                              />
-                            </span>
-                            <div className="mr-request-text">
-                              <strong>{mr.title}</strong>
-                              <span>
-                                {mr.steps
-                                  .map((step) => step.branch)
-                                  .join(" → ")}{" "}
-                                → {mr.target}
-                              </span>
-                            </div>
-                            <div className="mr-request-meta">
-                              <span
-                                className={`mr-status mr-status-${mr.status}`}
-                              >
-                                {statusLabels[mr.status]}
-                              </span>
-                              <time dateTime={mr.updatedAt}>
-                                {new Date(mr.updatedAt).toLocaleString()}
-                              </time>
-                            </div>
-                            <ChevronRight
-                              size={15}
-                              className="mr-request-chevron"
-                              aria-hidden="true"
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </section>
-                  ))
-              )}
-            </div>
+          {view === "quick" && (
+            <QuickMergeBoardView
+              projectId={projectId}
+              rootId={rootId ?? undefined}
+              primaryRoot={roots.find((root) => root.id === rootId)?.role === "primary"}
+              branches={workspace?.branches.map((branch) => branch.name) ?? []}
+              onOpenMerge={openRequest}
+            />
           )}
           {view === "branches" && (
             <section className="mr-history-card flex min-h-0 flex-1 flex-col">
@@ -510,81 +321,7 @@ function GitWorkbench({ projectId }: { projectId: string }) {
               )}
             </section>
           )}
-          {view === "presets" && (
-            <section className="mr-card">
-              <h2>一键预设</h2>
-              <p className="mr-muted">
-                预设保留源分支顺序、合并策略和检查配置。运行时重新读取分支快照。
-              </p>
-              {!filteredPresets.length ? (
-                <p className="mr-empty">
-                  暂无预设。在新建 MR 时可保存当前配置。
-                </p>
-              ) : (
-                filteredPresets.map((preset) => (
-                  <article key={preset.id} className="mr-preset">
-                    <div>
-                      <h3>{preset.name}</h3>
-                      <p>
-                        {preset.input.sources.join(" → ")} →{" "}
-                        <strong>{preset.input.target}</strong>
-                      </p>
-                      <p className="mr-muted">
-                        {preset.input.strategy} ·{" "}
-                        {preset.input.checks?.length ?? 0} 项检查 ·{" "}
-                        {preset.input.autoFinalize
-                          ? "检查通过后自动更新本地目标"
-                          : "人工确认更新目标"}
-                        {preset.input.allowCheckedOutTarget
-                          ? " · 允许更新检出目标"
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="mr-actions">
-                      <button
-                        className="mr-primary"
-                        disabled={busy}
-                        onClick={() =>
-                          void perform(async () =>
-                            openRequest(
-                              (await gitMrApi.runPreset(projectId, preset.id))
-                                .id,
-                            ),
-                          )
-                        }
-                      >
-                        <Play size={14} />
-                        运行
-                      </button>
-                      <button
-                        disabled={busy}
-                        aria-label={`删除预设 ${preset.name}`}
-                        onClick={() =>
-                          void perform(() =>
-                            gitMrApi.deletePreset(projectId, preset.id),
-                          )
-                        }
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </section>
-          )}
         </>
-      )}
-      {createOpen && (
-        <MergeRequestForm
-          projectId={projectId}
-          roots={roots}
-          rootId={rootId ?? ""}
-          workspace={workspace}
-          onRootChange={setRootId}
-          onClose={() => setCreateOpen(false)}
-          onSubmit={create}
-        />
       )}
     </main>
   );

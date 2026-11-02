@@ -336,4 +336,39 @@ describe("buildConversationTimeline work logs", () => {
       "step-3",
     ]);
   });
+
+  it("reports the time the agent ran, not the time a form waited for the user", () => {
+    const steps = [
+      {
+        ...makeStep(1),
+        startedAt: "2026-01-01T00:01:00.000Z",
+        completedAt: "2026-01-01T00:11:00.000Z",
+        metadata: { analyticsUserWaitMs: 9 * 60_000 },
+      },
+      {
+        ...makeStep(2),
+        startedAt: "2026-01-01T00:11:00.000Z",
+        completedAt: "2026-01-01T00:11:30.000Z",
+      },
+    ];
+    const timeline = build(
+      steps,
+      [thinking(1), thinking(2), answer(2)],
+      [toolCall(1), toolCall(2)],
+    );
+
+    expect(timeline.map((entry) => entry.kind)).toEqual(["work_log", "agent"]);
+    // 10.5 minutes of wall time, 9 of which belonged to the reader.
+    expect(timeline[0]).toMatchObject({ stats: { elapsedMs: 90_000 } });
+  });
+
+  it("bounds a recorded wait by the step that recorded it", () => {
+    const timeline = build(
+      [{ ...makeStep(1), metadata: { analyticsUserWaitMs: 10 * 60_000 } }],
+      [thinking(1)],
+      [],
+    );
+
+    expect(timeline[0]).toMatchObject({ stats: { elapsedMs: 0 } });
+  });
 });

@@ -60,6 +60,18 @@ export function resolveProviderModelRef(
   };
 }
 
+/**
+ * True when this exact `provider/model` ref would resolve for these inputs.
+ * Callers that must offer a deterministic choice enumerate configured refs
+ * through this instead of discovering an unusable one at run time.
+ */
+export function isModelRefResolvable(
+  input: ResolveLlmSelectionInput,
+  ref: string,
+): boolean {
+  return Boolean(tryResolveCandidate(input.catalog, input, ref));
+}
+
 export function mergeProviderConfig(
   providerId: string,
   globalConnection?: ProviderConnection,
@@ -593,6 +605,38 @@ function resolveModelIdFromConnection(
   return typeof model === "string" && model.trim() ? model.trim() : undefined;
 }
 
+/** Effort names the settings UI and the native policy both understand. */
+const KNOWN_REASONING_EFFORTS = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+/**
+ * A connection may declare which effort values its endpoint accepts. The list
+ * is stored verbatim by the settings UI and by provider import, so it has to
+ * reach the runtime model instead of staying a display-only field.
+ */
+function connectionReasoningEfforts(
+  connection?: ProviderConnection | null,
+): string[] | undefined {
+  const raw = toRecord(connection?.extra)?.reasoningEfforts;
+  if (!Array.isArray(raw)) return undefined;
+  const efforts = [
+    ...new Set(
+      raw.filter(
+        (item): item is string =>
+          typeof item === "string" &&
+          (KNOWN_REASONING_EFFORTS as readonly string[]).includes(item),
+      ),
+    ),
+  ];
+  return efforts.length > 0 ? efforts : undefined;
+}
+
 function normalizeModelRef(
   value: string | undefined | null,
   fallbackProviderId: string,
@@ -628,6 +672,7 @@ function normalizeConnection(
   const whitelist = toStringArray(extra?.whitelist);
   const blacklist = toStringArray(extra?.blacklist);
   const models = toModelOverrideMap(extra?.models);
+  const supportedReasoningEfforts = connectionReasoningEfforts(connection);
   // Only an explicitly stored protocol is carried here: the provider-id default is applied later.
   const storedApiFormat = extra?.apiFormat;
   const maxOutputTokens = extra?.maxOutputTokens;
@@ -641,6 +686,7 @@ function normalizeConnection(
   return {
     ...(apiFormat ? { apiFormat } : {}),
     ...(typeof maxOutputTokens === "number" && Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 && maxOutputTokens <= 10_000_000 ? { maxOutputTokens } : {}),
+    ...(supportedReasoningEfforts ? { supportedReasoningEfforts } : {}),
     ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
     ...(connection.apiKey ? { apiKey: connection.apiKey } : {}),
     ...(connection.apiKeyMasked

@@ -1,0 +1,49 @@
+/* Confirmation for the copy that runs as soon as a transcript selection ends.
+   Mounted by the transcript viewport, anchored under the selection's last line.
+   It never takes pointer events, so it can not interrupt a second drag. */
+.selection-copy-pill {
+  --selection-copy-x: 50%;
+  position: absolute;
+  z-index: 22;
+  /* The half-width inset keeps the centred pill inside the transcript even when
+     the selection ends at either edge. */
+  left: clamp(64px, var(--selection-copy-x), calc(100% - 64px));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 6px;
+  border: 1px solid rgb(var(--theme-highlight-rgb) / 0.09);
+  border-radius: 9px;
+  background: var(--theme-tooltip);
+  color: var(--theme-tooltip-foreground);
+  box-shadow: 0 8px 20px rgb(var(--theme-shadow-rgb) / 0.2);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+.selection-copy-pill[data-placement="above"] {
+  transform: translate(-50%, 3px);
+}
+.selection-copy-pill[data-visible="true"] {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.selection-copy-pill svg {
+  flex: none;
+  color: #6ee7b7;
+}
+.dark .selection-copy-pill svg {
+  color: #0f7a4d;
+}
+@media (prefers-reduced-motion: reduce) {
+  .selection-copy-pill {
+    transition: none;
+  }
+}

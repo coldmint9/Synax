@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowLeft,
   List,
+  Layers,
   PanelLeftClose,
   Search,
   SquarePen,
@@ -49,7 +50,15 @@ export function SessionListHeader({
   const setDisplayMode = useShellStore(
     (state) => state.setSessionListDisplayMode,
   );
+  const clusterByIntent = useShellStore(
+    (state) => state.preferences.sessionListClusterByIntent,
+  );
+  const setClusterByIntent = useShellStore(
+    (state) => state.setSessionListClusterByIntent,
+  );
   const isWorkflowView = listView === "workflow";
+  // A search result is a hit list, not a timeline, so clustering pauses there.
+  const clusteringPaused = searchQuery.trim().length > 0;
 
   return (
     <div
@@ -126,6 +135,9 @@ export function SessionListHeader({
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
+            aria-label={
+              locale === "zh" ? "搜索会话关键词" : "Search conversation keywords"
+            }
             placeholder={
               locale === "zh"
                 ? "搜索当前工作区会话全文…"
@@ -135,6 +147,25 @@ export function SessionListHeader({
             className="w-full h-7 pl-7 pr-2.5 text-[11px] bg-secondary/40 border border-border/30 rounded-md text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-accent/40 focus:bg-secondary/60 transition-colors"
           />
         </div>
+        {isWorkflowView ? null : (
+          <div
+            className="session-list-display-mode shrink-0"
+            role="group"
+            aria-label={t("sessionClusterByIntent")}
+          >
+            <button
+              type="button"
+              className="session-list-display-mode-button"
+              aria-pressed={clusterByIntent}
+              aria-label={t("sessionClusterByIntent")}
+              title={t("sessionClusterByIntent")}
+              disabled={clusteringPaused}
+              onClick={() => setClusterByIntent(!clusterByIntent)}
+            >
+              <Layers size={14} />
+            </button>
+          </div>
+        )}
         <div
           className="session-list-display-mode shrink-0"
           role="group"

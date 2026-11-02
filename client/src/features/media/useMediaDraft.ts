@@ -309,24 +309,12 @@ export function useMediaDraft(
   const addText = useCallback(
     (text: string, filename = `粘贴文本 · ${new Date().toISOString().replace(/[:.]/g, "-")}.txt`) => {
       if (!text) return;
-      const item: DraftMedia = {
-        id: crypto.randomUUID(),
-        file: new File([text], filename, { type: "text/plain" }),
-        text,
-        uploading: false,
-        controller: new AbortController(),
-      };
-      const all = [...readItems(), item];
-      if (all.length > 10 || all.reduce((sum, entry) => sum + entry.file.size, 0) > 100 * 1024 * 1024) {
-        setError(
-          "最多 10 个文件，合计 100 MiB / Attachment limit exceeded",
-        );
-        return;
-      }
-      setError(null);
-      setItems(all);
+      // A paste uploads as a real text file instead of an inline text part, so
+      // the bytes travel as a file reference and never become the message
+      // content the user is shown to have typed.
+      add([new File([text], filename, { type: "text/plain" })]);
     },
-    [readItems, setError, setItems],
+    [add],
   );
   const remove = useCallback(
     (id: string) => {

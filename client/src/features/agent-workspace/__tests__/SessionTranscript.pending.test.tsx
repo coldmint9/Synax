@@ -106,7 +106,7 @@ it("does not show thinking while a session detail snapshot is refreshing", () =>
   expect(screen.queryByTestId("thinking-indicator")).not.toBeInTheDocument();
 });
 
-it("holds cached history behind a quiet transition until all change pages settle", async () => {
+it("shows cached history immediately while change pages reconcile in the background", async () => {
   useAgentSessionStore.setState({
     sessions: [{ id: "s1", status: "running", activeRunId: run.id } as AgentSession],
     detailLoading: false, detailRefreshing: true,
@@ -115,15 +115,15 @@ it("holds cached history behind a quiet transition until all change pages settle
   const { container } = render(<SessionTranscript />);
   const viewport = container.querySelector('.session-chat-scroll');
   const cached = screen.getByText('Cached answer');
-  expect(viewport).toHaveAttribute('data-preparing', 'true');
-  expect(viewport).toHaveAttribute('aria-hidden', 'true');
-  expect(screen.getByRole('status')).toHaveTextContent('正在同步最新消息');
+  expect(viewport).toHaveAttribute('data-preparing', 'false');
+  expect(viewport).toHaveAttribute('aria-hidden', 'false');
+  expect(screen.queryByText('正在同步最新消息')).not.toBeInTheDocument();
   expect(container.querySelector('.session-transcript-skeleton')).toBeNull();
   act(() => useAgentSessionStore.setState({
     messages: [...useAgentSessionStore.getState().messages, { id: 'new', sessionId: 's1', role: 'assistant', content: 'New answer', metadata: {}, runId: null, stepId: null, createdAt: '' }],
   }));
   expect(screen.getByText('Cached answer')).toBe(cached);
-  expect(viewport).toHaveAttribute('data-preparing', 'true');
+  expect(viewport).toHaveAttribute('data-preparing', 'false');
   expect(useAgentSessionStore.getState().detailRefreshing).toBe(true);
   act(() => useAgentSessionStore.setState({ detailRefreshing: false }));
   await waitFor(() => expect(viewport).toHaveAttribute('data-preparing', 'false'));
@@ -152,12 +152,12 @@ it("cancels the previous reveal when switching again during reconciliation", asy
   useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: true });
   const { container } = render(<SessionTranscript />);
   act(() => useAgentSessionStore.setState({ selectedSessionId: 's2', detailRefreshing: false }));
-  act(() => useAgentSessionStore.setState({ selectedSessionId: 's3', detailRefreshing: true }));
+  act(() => useAgentSessionStore.setState({ selectedSessionId: 's3', detailLoading: true, detailRefreshing: true }));
   const viewport = container.querySelector('.session-chat-scroll');
-  // Let an obsolete layout-reveal frame run; it must not expose s3 early.
+  // A cold destination must stay hidden even after the previous cache was shown.
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 200)); });
   expect(viewport).toHaveAttribute('data-preparing', 'true');
-  act(() => useAgentSessionStore.setState({ detailRefreshing: false }));
+  act(() => useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: false }));
   await waitFor(() => expect(viewport).toHaveAttribute('data-preparing', 'false'));
 });
 
@@ -243,8 +243,7 @@ it("holds partial history until the initial snapshot is ready, then preserves it
   expect(container.querySelector(".session-transcript-skeleton")).not.toBeNull();
   act(() => useAgentSessionStore.setState({ detailLoading: false, detailRefreshing: false }));
   const answer = screen.getByText(message.content);
-  expect(container.querySelector(".session-transcript-skeleton")).not.toBeNull();
-  await waitFor(() => expect(container.querySelector(".session-transcript-skeleton")).toBeNull());
+  expect(container.querySelector(".session-transcript-skeleton")).toBeNull();
   act(() => useAgentSessionStore.setState({ detailRefreshing: true }));
   expect(screen.getByText(message.content)).toBe(answer);
 });

@@ -4,10 +4,13 @@ import {
   type SessionSearchResponse,
 } from "../../adapters/transport/agentRuntime";
 import { AppError } from "../../shared/lib/appError";
-import { isSideChatSession } from "./sessionBuckets";
 
-type SearchState = SessionSearchResponse & {
+type SearchState = {
   key: string;
+  items: SessionSearchResponse["items"];
+  hasMore: boolean;
+  terms: string[];
+  indexing: SessionSearchResponse["indexing"] | null;
   loading: boolean;
   offset: number;
   error: string | null;
@@ -16,12 +19,19 @@ const empty: SearchState = {
   key: "",
   items: [],
   hasMore: false,
+  terms: [],
+  indexing: null,
   loading: false,
   offset: 0,
   error: null,
 };
 
 const RETRY_DELAYS_MS = [120, 360] as const;
+/** Transcripts are indexed in the background; refresh until the backlog drains. */
+const INDEX_REFRESH_DELAY_MS = 700;
+const MAX_INDEX_REFRESHES = 8;
+/** Two polls without progress mean the remaining sessions are not queued now. */
+const MAX_STAGNANT_REFRESHES = 2;
 
 function isTransientServerError(error: unknown): boolean {
   return (
@@ -54,13 +64,12 @@ async function searchWithRetry(
 ): Promise<SessionSearchResponse> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const result = await agentRuntimeApi.searchSessions(
+      return await agentRuntimeApi.searchSessions(
         projectId,
         query,
         offset,
         signal,
       );
-      return { ...result, items: result.items.filter((item) => !isSideChatSession(item.session)) };
     } catch (error) {
       if (
         signal.aborted ||
@@ -85,24 +94,51 @@ export function useSessionSearch(projectId: string, query: string) {
     const request = new AbortController();
     controller.current = request;
     pending.current = false;
-    setState({ ...empty, key, loading: enabled });
+    // A revalidation of the same query keeps the rows on screen instead of
+    // flashing a skeleton, so typing and index refreshes never blink the list.
+    setState((previous) =>
+      previous.key === key && enabled
+        ? { ...previous, loading: true, error: null }
+        : { ...empty, key, loading: enabled },
+    );
     if (!enabled) return () => request.abort();
     const timer = setTimeout(async () => {
+      const commit = (result: SessionSearchResponse) => {
+        if (request.signal.aborted) return;
+        setState({
+          items: result.items,
+          hasMore: result.hasMore,
+          terms: result.terms ?? [q],
+          indexing: result.indexing ?? null,
+          key,
+          offset: result.items.length,
+          loading: false,
+          error: null,
+        });
+      };
       try {
-        const result = await searchWithRetry(projectId, q, 0, request.signal);
-        if (!request.signal.aborted)
-          setState({
-            ...result,
-            key,
-            offset: result.items.length,
-            loading: false,
-            error: null,
-          });
+        let result = await searchWithRetry(projectId, q, 0, request.signal);
+        commit(result);
+        // The first search answers from the session projection while the
+        // transcripts are indexed. Follow the backlog so content hits appear
+        // without the user retyping, and stop as soon as it stops shrinking.
+        let stagnant = 0;
+        let backlog = result.indexing?.pending ?? 0;
+        for (let poll = 0; poll < MAX_INDEX_REFRESHES && backlog > 0; poll += 1) {
+          await waitForRetry(INDEX_REFRESH_DELAY_MS, request.signal);
+          result = await searchWithRetry(projectId, q, 0, request.signal);
+          commit(result);
+          const next = result.indexing?.pending ?? 0;
+          stagnant = next >= backlog ? stagnant + 1 : 0;
+          backlog = next;
+          if (stagnant >= MAX_STAGNANT_REFRESHES) break;
+        }
       } catch (error) {
         if (!request.signal.aborted)
           setState({
             ...empty,
             key,
+            terms: [q],
             error: error instanceof Error ? error.message : String(error),
           });
       }
@@ -161,7 +197,7 @@ export function useSessionSearch(projectId: string, query: string) {
   }, [enabled, state, key, projectId, q]);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   return {
-    ...(state.key === key ? state : { ...empty, loading: enabled }),
+    ...(state.key === key ? state : { ...empty, loading: enabled, terms: [q] }),
     enabled,
     query: q,
     loadMore,

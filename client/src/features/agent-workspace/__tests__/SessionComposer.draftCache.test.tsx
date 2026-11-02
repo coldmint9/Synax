@@ -131,6 +131,7 @@ const asset: RuntimeAsset = {
 const cachedContext = {
   parts: [{ type: "image" as const, assetId: ASSET_ID }],
   references: [{ kind: "skill" as const, id: "sk1", label: "Skill" }],
+  quickAction: null,
 };
 
 beforeEach(() => {
@@ -207,6 +208,27 @@ describe("SessionComposer draft cache", () => {
     expect(loadDraftComposer("p1")).toBe("Keep me");
   });
 
+  it("restores an attached quick action after the in-memory draft is gone", async () => {
+    const centered = () =>
+      render(
+        <MemoryRouter>
+          <SessionComposer projectId="p1" layout="centered" />
+        </MemoryRouter>,
+      );
+    const first = centered();
+    fireEvent.click(screen.getByRole("button", { name: /Investigate a bug/ }));
+    await waitFor(() =>
+      expect(loadDraftComposerContext("p1").quickAction?.actionId).toBe("diagnose"),
+    );
+    first.unmount();
+    resetSessionComposerDrafts();
+
+    centered();
+    expect(
+      await screen.findByRole("button", { name: /Remove quick action: Investigate a bug/ }),
+    ).toBeInTheDocument();
+  });
+
   it("restores cached attachments and references without re-uploading", async () => {
     saveDraftComposerContext("p1", cachedContext);
     const metadata = vi
@@ -263,6 +285,7 @@ describe("SessionComposer draft cache", () => {
       expect(loadDraftComposerContext("p1")).toEqual({
         parts: [],
         references: [],
+        quickAction: null,
       }),
     );
     expect(loadDraftComposer("p1")).toBe("");

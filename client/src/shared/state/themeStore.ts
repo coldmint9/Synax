@@ -5,6 +5,7 @@ import {
   systemTheme,
 } from "../lib/appearance";
 import { DEFAULT_THEME } from "../lib/theme/defaults";
+import { DEFAULT_APP_THEME } from "../lib/theme/presets";
 import type {
   NormalizedTheme,
   PortableTheme,
@@ -103,6 +104,10 @@ function parsePersistedPayload(raw: string): {
     if (parsed.source !== "builtin" && parsed.source !== "imported") return null;
     // The original Task 3 shape is a read-only fallback, never a write format.
     const activeTheme = normalizeTheme(isCanonical ? parsed.theme : parsed.activeTheme);
+    // Refresh only the former built-in display name; keep imported names and all saved tokens.
+    if (parsed.source === "builtin" && activeTheme.id === DEFAULT_THEME.id && activeTheme.name === "Synax Default") {
+      activeTheme.name = DEFAULT_THEME.name;
+    }
     const mode = parsed.mode;
     const source = parsed.source;
     return { mode, activeTheme, source };
@@ -115,6 +120,8 @@ function parseLegacyPayload(raw: string): { mode: ThemeMode; activeTheme: Normal
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed)) return null;
+    // Locale/layout preferences alone are not an explicit theme choice.
+    if (!validMode(parsed.theme) && !normalizeAccent(parsed.accentColor)) return null;
     const mode = validMode(parsed.theme) ? parsed.theme : "system";
     const accentColor = normalizeAccent(parsed.accentColor) ?? DEFAULT_ACCENT;
     const activeTheme = normalizeTheme({
@@ -151,8 +158,8 @@ function applyRawStorageValue(raw: string, persist = false): boolean {
 
 function resetToDefault(persist = false): void {
   const next = {
-    mode: "system" as const,
-    activeTheme: DEFAULT_THEME,
+    mode: "dark" as const,
+    activeTheme: DEFAULT_APP_THEME,
     source: "builtin" as const,
   };
   applyPersistedState(next);
@@ -160,10 +167,10 @@ function resetToDefault(persist = false): void {
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
-  mode: "system",
-  activeTheme: DEFAULT_THEME,
+  mode: "dark",
+  activeTheme: DEFAULT_APP_THEME,
   source: "builtin",
-  ...stateProjection("system", DEFAULT_THEME),
+  ...stateProjection("dark", DEFAULT_APP_THEME),
   setMode: (mode) => {
     if (!validMode(mode)) return;
     set((state) => ({ ...stateProjection(mode, state.activeTheme), mode }));
@@ -202,8 +209,8 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   },
   resetTheme: () => {
     set((state) => ({
-      ...stateProjection(state.mode, DEFAULT_THEME),
-      activeTheme: DEFAULT_THEME,
+      ...stateProjection(state.mode, DEFAULT_APP_THEME),
+      activeTheme: DEFAULT_APP_THEME,
       source: "builtin",
     }));
     persistState(get());

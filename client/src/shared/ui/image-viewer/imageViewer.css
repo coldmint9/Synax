@@ -1,0 +1,161 @@
+/* Full-screen image preview shared by attachments, tool results and Markdown. */
+.image-viewer-root {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.image-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(8 10 14 / 0.88);
+  backdrop-filter: blur(3px);
+}
+
+.image-viewer-panel {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: rgb(255 255 255 / 0.92);
+  outline: none;
+}
+
+.image-viewer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(8 10 14 / 0.72);
+}
+
+.image-viewer-title {
+  min-width: 0;
+  overflow: hidden;
+  color: rgb(255 255 255 / 0.76);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.image-viewer-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.image-viewer-control:is(:hover, :focus-visible) {
+  background: rgb(255 255 255 / 0.12);
+  color: #fff;
+}
+
+.image-viewer-control:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 0.55);
+  outline-offset: 1px;
+}
+
+.image-viewer-control:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+}
+
+.image-viewer-zoom {
+  min-width: 54px;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.06);
+  color: rgb(255 255 255 / 0.8);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: pointer;
+}
+
+.image-viewer-zoom:is(:hover, :focus-visible) {
+  background: rgb(255 255 255 / 0.14);
+  color: #fff;
+}
+
+.image-viewer-zoom:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 0.55);
+  outline-offset: 1px;
+}
+
+.image-viewer-stage {
+  display: flex;
+  flex: 1;
+  align-items: safe center;
+  justify-content: safe center;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+}
+
+.image-viewer-stage[data-zoomed] {
+  cursor: grab;
+}
+
+.image-viewer-panel[data-dragging] .image-viewer-stage {
+  cursor: grabbing;
+}
+
+.image-viewer-image {
+  display: block;
+  flex: 0 0 auto;
+  max-width: none;
+  max-height: none;
+  border-radius: 6px;
+  box-shadow: 0 24px 70px rgb(0 0 0 / 0.55);
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-viewer-control,
+  .image-viewer-zoom {
+    transition: none;
+  }
+}
+
+/* Desktop windows own the title area while the viewer is open: the macOS
+   traffic lights stay native and the viewer toolbar becomes the drag handle. */
+.electron-macos .image-viewer-toolbar {
+  /* Hidden-inset lights sit at x 14..66, centred in the app's 48px toolbar. */
+  min-height: 48px;
+  padding-left: 88px;
+  -webkit-app-region: drag;
+}
+
+.electron-macos .image-viewer-controls {
+  -webkit-app-region: no-drag;
+}
+
+/* Windows window buttons are renderer-owned in the workbench toolbar. */
+.electron-windows :is(.image-viewer-backdrop, .image-viewer-panel) {
+  top: var(--window-toolbar-height);
+}

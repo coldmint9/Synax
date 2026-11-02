@@ -36,9 +36,15 @@ export interface AsyncCommandOptions {
   shell?: boolean;
   /** Wait for descendant cleanup before returning (e.g. workspace handoff). */
   waitForCleanup?: boolean;
+  /** Validate local Bash inside its existing process group before exec. */
+  validateBash?: boolean;
+  onStarted?: () => void;
 }
 
 export interface AsyncCommandResult {
+  syntaxError?: boolean;
+  setupTimedOut?: boolean;
+  timings?: { gateMs: number; syntaxMs: number; processMs: number; cleanupMs: number; totalMs: number };
   stoppedEarly?: boolean;
   status: number | null;
   stdout: string;
@@ -148,6 +154,23 @@ export function runCommand(
     let stopping = false;
     const decoder = new TextDecoder();
     let killTimer: ReturnType<typeof setTimeout> | null = null;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = performance.now();
+    let gateAt = startedAt;
+    let readyAt = startedAt;
+    let syntaxError = false;
+    let syntaxChecked = false;
+    const armTimeout = (ms: number | undefined) => {
+      if (timeout) clearTimeout(timeout);
+      if (!ms || ms <= 0) return;
+      timeout = setTimeout(() => {
+        timedOut = true;
+        stopOwned("SIGTERM");
+        killTimer = setTimeout(() => stopOwned("SIGKILL"), KILL_GRACE_MS);
+        killTimer.unref?.();
+      }, ms);
+      timeout.unref?.();
+    };
 
     const child = spawnOwnedProcess(command, args, {
       cwd: options.cwd,
@@ -155,6 +178,21 @@ export function runCommand(
       inheritEnv: options.inheritEnv,
       shell: options.shell ?? false,
       stdin: options.stdin === undefined ? "ignore" : "pipe",
+      validateBash: options.validateBash,
+      onGateReleased: () => {
+        gateAt = performance.now();
+        readyAt = gateAt;
+        if (!options.validateBash) options.onStarted?.();
+      },
+      onSyntaxChecked: valid => {
+        syntaxChecked = true;
+        syntaxError = !valid;
+        readyAt = performance.now();
+        if (valid && !timedOut && !aborted && !settled) {
+          armTimeout(options.timeoutMs);
+          options.onStarted?.();
+        }
+      },
     });
 
     const wsl = options.cwd ? parseWslUncPath(options.cwd) : null;
@@ -216,16 +254,8 @@ export function runCommand(
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
 
-    if (options.timeoutMs && options.timeoutMs > 0) {
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        stopOwned("SIGTERM");
-        killTimer = setTimeout(() => stopOwned("SIGKILL"), KILL_GRACE_MS);
-        killTimer.unref?.();
-      }, options.timeoutMs);
-      timeout.unref?.();
-      child.once("close", () => clearTimeout(timeout));
-    }
+    armTimeout(options.validateBash ? 10_000 : options.timeoutMs);
+    child.once("close", () => { if (timeout) clearTimeout(timeout); });
 
     child.stdout?.on("data", (chunk: Buffer) => {
       captureChunk(stdout, chunk, maxBufferBytes);
@@ -269,6 +299,7 @@ export function runCommand(
     });
 
     child.on("close", async (code, exitSignal) => {
+      const closedAt = performance.now();
       if (timedOut || aborted || stoppedEarly) killTree("SIGKILL");
       if (settled) return;
       settled = true;
@@ -293,6 +324,15 @@ export function runCommand(
         stderrTruncated: stderr.truncated,
         stdoutBytes: stdout.total,
         stderrBytes: stderr.total,
+        syntaxError: syntaxError || (options.validateBash === true && !syntaxChecked && !timedOut && !aborted && code === 2),
+        setupTimedOut: options.validateBash === true && !syntaxChecked && timedOut,
+        timings: {
+          gateMs: Math.round(gateAt - startedAt),
+          syntaxMs: options.validateBash ? Math.round(readyAt - gateAt) : 0,
+          processMs: Math.round(closedAt - readyAt),
+          cleanupMs: Math.round(performance.now() - closedAt),
+          totalMs: Math.round(performance.now() - startedAt),
+        },
       });
     });
   });

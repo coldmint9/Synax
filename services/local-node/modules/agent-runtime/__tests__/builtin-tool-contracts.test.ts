@@ -22,6 +22,20 @@ const specialist = {
 };
 
 describe('model-visible builtin tool contracts', () => {
+  it('explains patch source baselines, anchors, ordering and first-failure recovery', async () => {
+    const exposed = await definition('file.patch');
+    for (const requirement of [
+      'pre-edit file', 'non-overlapping context', 'merge adjacent edits',
+      'not earlier hunk results', 'Unified-diff line-number headers are not supported',
+      'do not repeat it in the hunk', 'truncated search previews',
+      'read the suggested range', 'do not retry the same patch unchanged',
+      'if that line repeats, the hunk body decides',
+    ]) expect(exposed.description).toContain(requirement);
+    expect(exposed.schema).toMatchObject({ properties: {
+      patch: { description: expect.stringContaining('Ordered, non-overlapping hunks') },
+    } });
+  });
+
   it('exports every registered builtin and keeps the inventory complete', async () => {
     const inventory = fs.readFileSync(new URL('../../../../../docs/builtin-tool-contracts.md', import.meta.url), 'utf8');
     for (const tool of toolRegistry.list()) {
@@ -122,7 +136,7 @@ describe('model-visible builtin tool contracts', () => {
     expect(image.schema).toMatchObject({ properties: {
       api: { description: expect.stringContaining('responses requires n=1') },
       size: { description: expect.stringContaining('655360-8294400') },
-      partialImages: { description: expect.stringContaining('rejected by SDK adapters') },
+      partialImages: { description: expect.stringContaining('rejected by Native adapters or stream=false') },
       aspectRatio: { description: expect.stringContaining('Images/Responses reject') },
     } });
     expect(image.description).toContain('smaller than 50 MB');

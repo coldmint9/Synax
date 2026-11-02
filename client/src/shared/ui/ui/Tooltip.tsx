@@ -5,6 +5,7 @@ import {
   offset,
   shift,
   useDismiss,
+  useClick,
   useFloating,
   useFocus,
   useHover,
@@ -31,6 +32,7 @@ export interface TooltipProps {
   delay?: number;
   placement?: Placement;
   openOnFocus?: boolean;
+  openOnClick?: boolean;
 }
 
 /** One real trigger, no layout wrapper, and a portal that only exists while visible. */
@@ -40,6 +42,7 @@ export function Tooltip({
   delay = 350,
   placement = "top",
   openOnFocus = true,
+  openOnClick = false,
 }: TooltipProps) {
   const [open, setOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({
@@ -55,11 +58,13 @@ export function Tooltip({
     delay: { open: delay, close: 80 },
   });
   const focus = useFocus(context, { enabled: openOnFocus });
-  const dismiss = useDismiss(context, { escapeKey: true, referencePress: true });
+  const click = useClick(context, { enabled: openOnClick, toggle: false });
+  const dismiss = useDismiss(context, { escapeKey: true, referencePress: !openOnClick });
   const role = useRole(context, { role: "tooltip" });
   const { getReferenceProps, getFloatingProps } = useInteractions([
     hover,
     focus,
+    click,
     dismiss,
     role,
   ]);

@@ -10,11 +10,11 @@ pub mod load;
 mod replay;
 pub mod state;
 pub use state::Tx;
+#[cfg(test)]
+mod process_lease_tests;
 pub mod sync;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod process_lease_tests;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
@@ -23,6 +23,7 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use super::error::JsonlResult;
+use super::segment::PValue;
 use super::file::AppendFile;
 use super::layout;
 use super::record::{Coverage, IndexRecord, LineWriter, ListRecord, Record, SnapshotCond};
@@ -60,7 +61,7 @@ pub struct CommittedEvent {
 /// The immutable value readers observe.
 pub struct Lake {
     pub state: SnapshotCond,
-    pub header: Arc<serde_json::Value>,
+    pub header: Arc<PValue>,
     pub projection: Arc<super::segment::Projection>,
     pub projection_ready: bool,
     pub queue: Arc<crate::runtime::input_queue::QueueState>,
@@ -92,7 +93,7 @@ impl Lake {
 pub struct SessionActor {
     pub id: String,
     pub state: SnapshotCond,
-    pub header: serde_json::Value,
+    pub header: PValue,
     pub queue: crate::runtime::input_queue::QueueState,
     pub control: ControlState,
     pub projection: Option<super::segment::Projection>,
@@ -101,6 +102,10 @@ pub struct SessionActor {
     pub subscribers: Vec<tokio::sync::mpsc::Sender<Arc<StreamEvent>>>,
     pub files: Publisher,
     pub commit: u64,
+    /// Current state may be appended before its caller finishes the ACK barrier.
+    pub durable_commit: u64,
+    /// Last commit captured in this actor's disposable list summary.
+    pub summary_commit: u64,
     pub checkpoint_commit: u64,
     pub checkpoint_at: std::time::Instant,
     pub ui_gen: u64,
@@ -338,7 +343,7 @@ pub fn index_row(actor: &SessionActor) -> IndexRecord {
         so: actor.files.extent.offsets[Kind::Seal as usize],
         sf: actor.files.extent.frames[Kind::Seal as usize],
         u: updated_at(actor),
-        h: actor.header.clone(),
+        h: actor.header.to_json(),
         m: actor.files.extent.offsets.iter().sum::<u64>(),
         state: actor.state.clone(),
         deleted: false,
@@ -346,7 +351,7 @@ pub fn index_row(actor: &SessionActor) -> IndexRecord {
 }
 
 pub fn list_row(actor: &SessionActor) -> ListRecord {
-    let mut header = actor.header.clone();
+    let mut header = super::store::list_projection::persistent_summary(&actor.header);
     if let Some(header) = header.as_object_mut() {
         let pending = actor
             .control
@@ -372,18 +377,25 @@ pub fn list_row(actor: &SessionActor) -> ListRecord {
 
 pub fn recovery_required(actor: &SessionActor) -> bool {
     actor.state.active_run_id.is_some()
-        || actor.header["activeRunId"].is_string()
-        || matches!(actor.header["status"].as_str(), Some("running" | "stopping" | "queued"))
+        || actor.header.get("activeRunId").and_then(PValue::as_str).is_some()
+        || matches!(
+            actor.header.get("status").and_then(PValue::as_str),
+            Some("running" | "stopping" | "queued")
+        )
         || actor.control.runtime_control.is_some()
         || !actor.control.process_leases.is_empty()
-        || actor.control.execution_lease.as_ref().is_some_and(|lease| !lease.closed)
+        || actor
+            .control
+            .execution_lease
+            .as_ref()
+            .is_some_and(|lease| !lease.closed)
 }
 
 fn updated_at(actor: &SessionActor) -> String {
     actor
         .header
         .get("updatedAt")
-        .and_then(serde_json::Value::as_str)
+        .and_then(PValue::as_str)
         .unwrap_or_default()
         .to_owned()
 }
@@ -415,7 +427,7 @@ impl SessionActor {
         Self {
             id: String::new(),
             state: loaded.state,
-            header: loaded.header,
+            header: loaded.projection.session.clone(),
             queue: loaded.queue,
             control: loaded.control,
             projection: if projection_ready {
@@ -428,6 +440,8 @@ impl SessionActor {
             subscribers: Vec::new(),
             files: loaded.files,
             commit: loaded.commit,
+            durable_commit: loaded.commit,
+            summary_commit: 0,
             checkpoint_commit: loaded.checkpoint_commit,
             checkpoint_at: std::time::Instant::now(),
             ui_gen: 0,

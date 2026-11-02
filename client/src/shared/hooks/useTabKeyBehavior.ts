@@ -65,6 +65,10 @@ function insertIndent(el: HTMLElement): void {
  * Tab never moves focus between elements in Synax. Inside editable elements
  * (text inputs, textareas, contentEditable) it inserts a four-space indent
  * instead. The xterm helper textarea keeps native shell Tab completion.
+ *
+ * A composer that shows a next-input suggestion marks its editor with
+ * `data-composer-suggestion`: Tab there belongs to the suggestion handler, so
+ * this hook still suppresses the focus move but leaves the event propagating.
  */
 export function useTabKeyBehavior(): void {
   useEffect(() => {
@@ -75,6 +79,16 @@ export function useTabKeyBehavior(): void {
       const target = event.target;
       // Terminal pane: Tab belongs to the shell (completion).
       if (target instanceof Element && target.closest(".xterm")) return;
+      // A pre-filled composer owns Tab; its handler accepts the suggestion.
+      // Only the default focus move is suppressed, so a Tab that arrives just
+      // after the suggestion disappeared does nothing instead of indenting.
+      if (
+        target instanceof Element &&
+        target.closest("[data-composer-suggestion]")
+      ) {
+        event.preventDefault();
+        return;
+      }
       // Stop Tab focus navigation everywhere, including dialog focus traps.
       event.preventDefault();
       event.stopPropagation();

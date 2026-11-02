@@ -146,6 +146,28 @@ describe("SessionCommitDialog", () => {
     );
   });
 
+  it("keeps a degraded message and explains why it is plain", async () => {
+    streamCommitMessage.mockImplementation(async (_id, _body, onEvent) => {
+      onEvent({
+        type: "final",
+        message: "chore(repo): 更新 3 个文件，+8 −2",
+        warning: "模型未能完成生成，已按变更文件清单生成提交信息，请检查后修改。",
+      });
+    });
+    renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("提交信息")).toHaveValue(
+        "chore(repo): 更新 3 个文件，+8 −2",
+      ),
+    );
+    // A fallback message stays usable, so it is announced as a notice.
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "模型未能完成生成",
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("restores the original content when generation fails", async () => {
     streamCommitMessage.mockImplementation(async (_id, _body, onEvent) => {
       onEvent({ type: "delta", text: "partial" });
@@ -162,7 +184,7 @@ describe("SessionCommitDialog", () => {
     expect(screen.getByLabelText("提交信息")).toHaveValue("keep me");
   });
 
-  it("cancels generation and restores the prior message", async () => {
+  it("turns the generate control into loading and interrupts from a tiny hover control", async () => {
     let deliver!: (event: { type: "delta"; text: string }) => void;
     let pendingSignal!: AbortSignal;
     streamCommitMessage.mockImplementation((_id, _body, callback, signal) => {
@@ -176,7 +198,15 @@ describe("SessionCommitDialog", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "生成提交信息" }));
     act(() => deliver({ type: "delta", text: "partial" }));
-    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    const generate = screen.getByRole("button", { name: "生成提交信息" });
+    expect(generate).toHaveAttribute("aria-busy", "true");
+    expect(generate).toBeDisabled();
+    const abort = screen.getByRole("button", { name: "强制中断生成" });
+    // Hidden until the loading control is hovered; focus keeps it reachable.
+    expect(abort.className).toContain("opacity-0");
+    expect(abort.className).toContain("size-3.5");
+    expect(abort.className).toContain("group-hover/generate:opacity-100");
+    fireEvent.click(abort);
     expect(pendingSignal.aborted).toBe(true);
     expect(screen.getByLabelText("提交信息")).toHaveValue("original");
     act(() => deliver({ type: "delta", text: "late" }));

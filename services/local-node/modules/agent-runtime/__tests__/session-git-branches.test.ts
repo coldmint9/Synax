@@ -116,7 +116,7 @@ it('reports the active checkout dirty-file count, including untracked files', as
   expect(result.status).toBe(200);
   expect((await result.json()).dirtyFileCount).toBe(2);
 });
-it('creates and checks out a branch from the current HEAD', async () => {
+it('creates and checks out a feature branch from production even when another feature is checked out', async () => {
   const owner = session(one, false);
   git(one, 'branch', '-m', 'feature', 'feature/existing');
   git(one, 'switch', 'feature/existing');
@@ -125,17 +125,23 @@ it('creates and checks out a branch from the current HEAD', async () => {
   const result = await createBranch(owner.id, 'feature/new-ui');
   expect(result.status).toBe(200);
   expect((await result.json()).current).toBe('feature/new-ui');
-  expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'feature/existing'));
+  expect(git(one, 'rev-parse', 'HEAD')).toBe(git(one, 'rev-parse', 'main'));
+  expect(git(one, 'rev-parse', 'HEAD')).not.toBe(git(one, 'rev-parse', 'feature/existing'));
+  expect(fs.readFileSync(path.join(one, 'file.txt'), 'utf8')).toBe('initial');
   expect(git(one, 'branch', '--show-current')).toBe('feature/new-ui');
 });
-it('never creates a branch when changes or invalid names block checkout', async () => {
-  // The branch router rejects non-empty checkouts for create as well.
+it('creates and checks out a branch from a running session with uncommitted changes', async () => {
   const owner = session(one, false);
+  agentRuntimeStore.updateSession(owner.id, { status: 'running', activeRunId: 'run-1' });
   fs.writeFileSync(path.join(one, 'untracked.txt'), 'keep');
-  expect((await createBranch(owner.id, 'feature/keep')).status).toBe(409);
-  expect(fs.existsSync(path.join(one, 'untracked.txt'))).toBe(true);
-  expect(git(one, 'branch', '--list', 'feature/keep')).toBe('');
-  fs.unlinkSync(path.join(one, 'untracked.txt'));
+  const result = await createBranch(owner.id, 'hotfix/keep');
+  expect(result.status, await result.clone().text()).toBe(200);
+  expect((await result.json()).current).toBe('hotfix/keep');
+  expect(git(one, 'branch', '--show-current')).toBe('hotfix/keep');
+  expect(fs.readFileSync(path.join(one, 'untracked.txt'), 'utf8')).toBe('keep');
+});
+it('still rejects invalid or duplicate branch names', async () => {
+  const owner = session(one, false);
   expect((await createBranch(owner.id, 'invalid name')).status).toBe(400);
   expect((await createBranch(owner.id, 'feature')).status).toBe(409);
   // A running sibling session no longer blocks a hot branch creation, so only
@@ -212,4 +218,48 @@ it('keeps the Git facts of checkouts the branch switch did not touch', async () 
   expect(after.unchanged).toBe(true);
   expect(after.repositories).toEqual([]);
   expect(before.repositories.find(root => root.role === 'primary')?.branch).toBe('main');
+});
+
+it('lists remote-only refs and checks one out as a local tracking branch', async () => {
+  const remote = path.join(dir, 'remote.git');
+  git(dir, 'init', '--bare', '-b', 'main', remote);
+  git(one, 'remote', 'add', 'origin', remote);
+  git(one, 'push', 'origin', 'main');
+  git(one, 'push', 'origin', 'main:refs/heads/topic/remote-only');
+  const owner = session(one, false);
+  const listed = await agentRuntimeRoutes.request(
+    `/sessions/${owner.id}/git/branches?rootId=primary`,
+  );
+  const payload = (await listed.json()) as any;
+  // origin/main is omitted: the local main already covers that checkout.
+  expect(payload.remoteBranches).toEqual([
+    {
+      name: 'origin/topic/remote-only',
+      remote: 'origin',
+      branch: 'topic/remote-only',
+    },
+  ]);
+  const result = await agentRuntimeRoutes.request(
+    `/sessions/${owner.id}/git/branches/switch`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        branch: 'origin/topic/remote-only',
+        rootId: 'primary',
+        remote: true,
+      }),
+    },
+  );
+  expect(result.status).toBe(200);
+  const body = (await result.json()) as any;
+  expect(body.current).toBe('topic/remote-only');
+  expect(
+    body.branches.find((branch: any) => branch.name === 'topic/remote-only'),
+  ).toMatchObject({ current: true });
+  expect(body.remoteBranches).toEqual([]);
+  expect(
+    git(one, 'rev-parse', '--abbrev-ref', 'topic/remote-only@{upstream}'),
+  ).toBe('origin/topic/remote-only');
+  expect(git(one, 'branch', '--show-current')).toBe('topic/remote-only');
 });

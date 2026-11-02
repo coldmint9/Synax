@@ -187,9 +187,12 @@ describe("SessionTreeItem", () => {
     expect(container.querySelector(".session-list-dot")).not.toBeNull();
   });
 
-  it("renders a red dot for a session that ended with an error", () => {
+  it("renders a red dot for an unread error and clears it once read", () => {
     const session = makeSession({ status: "completed" });
-    useAgentSessionStore.setState({ sessions: [session] });
+    useAgentSessionStore.setState({
+      sessions: [session],
+      readSessionMarkers: { [session.id]: session.updatedAt },
+    });
     const { container, rerender } = render(
       <SessionTreeItem
         node={makeNode(session)}
@@ -198,7 +201,15 @@ describe("SessionTreeItem", () => {
         onToggleExpand={noop}
       />,
     );
+    // A read result has no news left.
     expect(container.querySelector(".session-list-dot")).toBeNull();
+
+    // An older read marker makes the next result unread again.
+    act(() =>
+      useAgentSessionStore.setState({
+        readSessionMarkers: { [session.id]: "2026-01-01T00:00:00Z" },
+      }),
+    );
 
     rerender(
       <SessionTreeItem
@@ -211,6 +222,13 @@ describe("SessionTreeItem", () => {
     const dot = container.querySelector(".session-list-dot");
     expect(dot).not.toBeNull();
     expect(dot?.classList.contains("bg-destructive")).toBe(true);
+
+    act(() =>
+      useAgentSessionStore.setState({
+        readSessionMarkers: { [session.id]: session.updatedAt },
+      }),
+    );
+    expect(container.querySelector(".session-list-dot")).toBeNull();
   });
 
   it("keeps the running indicator after selection", () => {

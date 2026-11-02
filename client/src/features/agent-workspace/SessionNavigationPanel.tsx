@@ -1,5 +1,5 @@
 import { scrollToVirtualEntry, virtualEntryOffset } from "./TimelineVirtualWindow";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useLocale } from "../../shared/hooks/useLocale";
 import {
@@ -117,10 +117,6 @@ export function groupTimelineIntoTurns(
 ): RailTurn[] {
   const turns: RailTurn[] = [];
   for (const entry of entries) {
-    // App-composed system prompts remain visible in the transcript, but they
-    // are scaffolding rather than a conversation turn and must not get a rail
-    // anchor of their own.
-    if (entry.kind === "user" && entry.injected) continue;
     if (entry.kind === "user" || turns.length === 0) {
       turns.push({ id: entry.id, members: [entry] });
       continue;
@@ -154,9 +150,6 @@ export function turnPreview(
 ): { title: string; body: string } {
   const head = turn.members[0];
   const title = head.label || emptyLabel;
-  // Injected scaffolding is summarised everywhere — never echo the payload.
-  if (head.kind === "user" && head.injected) return { title, body: "" };
-
   const answers = turn.members
     .filter((member) => member.kind !== "user")
     .map((member) => {
@@ -226,8 +219,7 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
     })),
   );
 
-  // Navigation follows the pages the reader has loaded. Mounting the rail
-  // must not walk the entire transcript behind a bounded first-page request.
+  // The initialized index covers the whole session, independently of body paging.
   const indexReady = Boolean(timelineIndexLoaded || !historyWindow?.hasEarlier);
   const timelineRunsSource = indexReady ? (timelineRuns ?? runs) : runs;
   const timelineStepsSource = indexReady ? (timelineSteps ?? steps) : steps;
@@ -334,12 +326,19 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
 
   const jump = useCallback(
     async (entryId: string) => {
-      if (indexReady) await loadHistoryUntil(entryId);
-      const scroll = () => scrollToEntry(scrollRootRef.current, entryId);
+      try {
+        if (indexReady && !await loadHistoryUntil(entryId)) return;
+      } catch {
+        return; // Keep the current position when loading a remote anchor fails.
+      }
+      const scroll = () => {
+        if (useAgentSessionStore.getState().selectedSessionId === selectedSessionId)
+          scrollToEntry(scrollRootRef.current, entryId);
+      };
       scroll();
       window.requestAnimationFrame(scroll);
     },
-    [indexReady, loadHistoryUntil, scrollRootRef],
+    [indexReady, loadHistoryUntil, scrollRootRef, selectedSessionId],
   );
 
   if (turns.length === 0) return null;
@@ -352,6 +351,7 @@ export const SessionNavigationPanel = memo(function SessionNavigationPanel({
   return (
     <nav
       className="session-nav-float"
+      style={{ "--session-nav-turns": turns.length } as CSSProperties}
       aria-label={t("sessionNavTitle")}
       data-hovered={railHovered ? "true" : undefined}
       onMouseEnter={() => setRailHovered(true)}

@@ -31,6 +31,8 @@ import { isRuntimeResourceGone } from "../../shared/lib/runtimeResourceRegistry"
 import { useLocale } from "../../shared/hooks/useLocale";
 import { useNotificationStore } from "../../shared/state/notificationStore";
 import { useAgentSessionStore } from "./state/agentSessionStore";
+import { useNavigate } from "react-router-dom";
+import { sessionPath } from "./sessionRoutes";
 
 interface ContextValue {
   canEditMessages: boolean;
@@ -128,6 +130,7 @@ export function SessionHistoryProvider({
 }) {
   const { locale } = useLocale(),
     zh = locale === "zh";
+  const navigate = useNavigate();
   const [summary, setSummary] = useState<HistorySummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
@@ -235,6 +238,14 @@ export function SessionHistoryProvider({
     resolver.current?.(ok);
     resolver.current = null;
   }, []);
+  // A refused history action has to say why. Returning false on its own left
+  // the click without any visible effect: the fork pop has no dialog of its
+  // own, and the inline error only renders inside the rollback dialog.
+  const reportProblem = useCallback((message: string): false => {
+    setError(message);
+    useNotificationStore.getState().push({ type: "error", message });
+    return false;
+  }, []);
   const historyRequest = useCallback(
     async (
       action: HistoryAction,
@@ -282,6 +293,14 @@ export function SessionHistoryProvider({
           await store.refreshSessions();
           if (epoch !== requestEpoch.current) return false;
           store.openPanel(result.sessionId);
+          // Opening the panel alone leaves the route on the source session, so
+          // the route sync reopens the source and the fork looks like a no-op.
+          // Move the route with the panel to make the reveal stick.
+          const forkProjectId =
+            store.sessions.find((entry) => entry.id === result.sessionId)
+              ?.projectId ?? session?.projectId;
+          if (forkProjectId)
+            navigate(sessionPath(forkProjectId, result.sessionId));
           void refresh();
           return true;
         } catch (e) {
@@ -349,7 +368,7 @@ export function SessionHistoryProvider({
       })();
       return result;
     },
-    [sessionId, session, executing, zh, close, refresh],
+    [sessionId, session, executing, zh, close, refresh, navigate],
   );
   const editReason = useCallback((messageId?: string): string | null => {
     if (session?.parentSessionId)
@@ -415,9 +434,26 @@ export function SessionHistoryProvider({
       message?: string,
       workspaceMode?: ForkWorkspaceMode,
     ): Promise<boolean> => {
-      const current = summary?.sessionId === sessionId ? summary : await loadSummary?.();
-      if (!current) return false;
-      if (current.readOnlyMessageIds?.includes(checkpoint.messageId)) return false;
+      let current = summary?.sessionId === sessionId ? summary : null;
+      if (!current) {
+        try {
+          current = (await loadSummary?.()) ?? null;
+        } catch (e) {
+          return reportProblem((e as Error).message);
+        }
+      }
+      if (!current)
+        return reportProblem(
+          zh
+            ? "无法读取这段会话的历史，请稍后重试"
+            : "This conversation's history is unavailable. Retry in a moment.",
+        );
+      if (current.readOnlyMessageIds?.includes(checkpoint.messageId))
+        return reportProblem(
+          zh
+            ? "这段历史已被压缩，只能查看，不能分叉或回滚"
+            : "This history was compacted and is read-only",
+        );
       const resolved = findCheckpoint(
         current,
         messages,
@@ -426,14 +462,14 @@ export function SessionHistoryProvider({
         zh,
       );
       if (!resolved)
-        throw new Error(
+        return reportProblem(
           zh
             ? "此消息没有可用的会话检查点"
             : "No conversation checkpoint for this message",
         );
       return historyRequest(action, { ...checkpoint, ...resolved, transcriptOnly: checkpoint.transcriptOnly ?? resolved.transcriptOnly, destructive: checkpoint.destructive ?? resolved.destructive }, message, workspaceMode);
     },
-    [historyRequest, loadSummary, messages, summary, sessionId, zh],
+    [historyRequest, loadSummary, messages, summary, sessionId, zh, reportProblem],
   );
   const changeFilePolicy = (value: boolean) => {
     if (!pending || executing || pending.checkpoint.transcriptOnly) return;
@@ -622,7 +658,7 @@ export function SessionHistoryProvider({
                 </label>
               </fieldset>}
               {truncateMode === "session_and_workspace" && !pending?.checkpoint.transcriptOnly && (
-                <p data-testid="workspace-overwrite-warning" role="alert" className="rounded-xl bg-danger/5 p-3 text-xs text-danger">
+                <p data-testid="workspace-overwrite-warning" role="alert" data-error-toast="off" className="rounded-xl bg-danger/5 p-3 text-xs text-danger">
                   {zh ? "工作区模式会强制覆盖当前工作区文件，未提交的本地修改可能丢失。" : "Workspace mode forcibly overwrites workspace files; uncommitted local changes may be lost."}
                 </p>
               )}

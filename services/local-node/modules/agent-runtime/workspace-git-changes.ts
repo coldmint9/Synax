@@ -58,7 +58,10 @@ export interface WorkspaceRepositoryGit {
   workspacePath: string;
   branch: string;
   headCommitSha: string;
+  /** Commits on the checked-out branch that its upstream does not contain. */
   unpushedCommitCount: number;
+  /** Committer time of the oldest unpushed commit; null when nothing is ahead. */
+  unpushedSince: string | null;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -85,6 +88,7 @@ interface RepositoryGitFacts {
   branch: string;
   headCommitSha: string;
   unpushedCommitCount: number;
+  unpushedSince: string | null;
   dirty: boolean;
   additions: number;
   deletions: number;
@@ -250,6 +254,7 @@ function hashFacts(facts: RepositoryGitFacts): string {
         facts.branch,
         facts.headCommitSha,
         facts.unpushedCommitCount,
+        facts.unpushedSince,
         facts.changedFiles.map((file) => [
           file.path,
           file.status,
@@ -269,6 +274,7 @@ const EMPTY_FACTS: RepositoryGitFacts = {
   branch: "",
   headCommitSha: "",
   unpushedCommitCount: 0,
+  unpushedSince: null,
   dirty: false,
   additions: 0,
   deletions: 0,
@@ -367,45 +373,92 @@ async function computeRepositoryFacts(
     });
   }
 
-  let unpushedCommitCount = Number(
-    statusRaw.match(
-      /(?:^|\0)## [^\0]*\[ahead (\d+)(?:, behind \d+)?\]/,
-    )?.[1] ?? 0,
-  );
-  if (
-    branchRaw.trim() &&
-    headCommitShaRaw &&
-    !/(?:^|\0)## [^\0]*\[ahead /.test(statusRaw) &&
-      (await readWorkspaceGit(workspacePath, ["remote"])).trim()
-  ) {
-    const fallback = Number(
-      (
-        await readWorkspaceGit(workspacePath, [
-          "rev-list",
-          "--count",
-          "HEAD",
-          "--not",
-          "--remotes",
-        ])
-      ).trim(),
-    );
-    unpushedCommitCount =
-      Number.isSafeInteger(fallback) && fallback > 0 ? fallback : 0;
-  }
+  // Pending work is defined by the branch's own upstream: commits are "待推送"
+  // only when the remote branch this checkout publishes to still misses them.
+  const upstream = branchRaw.trim()
+    ? await readBranchUpstream(workspacePath)
+    : null;
+  const unpushedCommitCount = upstream
+    ? await countCommitsAhead(workspacePath, upstream)
+    : 0;
+
+  const unpushedSince =
+    upstream && unpushedCommitCount > 0
+      ? await readOldestUnpushedCommitTime(workspacePath, upstream)
+      : null;
 
   return {
     status: "ready",
     branch: branchRaw.trim() || "HEAD",
     headCommitSha: headCommitShaRaw.trim(),
-    unpushedCommitCount:
-      Number.isSafeInteger(unpushedCommitCount) && unpushedCommitCount > 0
-        ? unpushedCommitCount
-        : 0,
+    unpushedCommitCount,
+    unpushedSince,
     dirty: changedFiles.length > 0,
     additions: changedFiles.reduce((sum, file) => sum + file.additions, 0),
     deletions: changedFiles.reduce((sum, file) => sum + file.deletions, 0),
     changedFiles,
   };
+}
+
+/** Remote-tracking branch configured for the checked-out branch, if any. */
+async function readBranchUpstream(workspacePath: string): Promise<string | null> {
+  try {
+    const upstream = (
+      await readWorkspaceGit(workspacePath, [
+        "rev-parse",
+        "--abbrev-ref",
+        "--symbolic-full-name",
+        "@{upstream}",
+      ])
+    ).trim();
+    return upstream || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Commits reachable from HEAD that the branch upstream does not contain. */
+async function countCommitsAhead(
+  workspacePath: string,
+  upstream: string,
+): Promise<number> {
+  try {
+    const count = Number(
+      (
+        await readWorkspaceGit(workspacePath, [
+          "rev-list",
+          "--count",
+          `${upstream}..HEAD`,
+        ])
+      ).trim(),
+    );
+    return Number.isSafeInteger(count) && count > 0 ? count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * When pending commits exist, report when the oldest one began waiting.
+ * `git log` lists newest first, so the last line is the oldest one.
+ */
+async function readOldestUnpushedCommitTime(
+  workspacePath: string,
+  upstream: string,
+): Promise<string | null> {
+  try {
+    const log = (
+      await readWorkspaceGit(workspacePath, [
+        "log",
+        "--format=%cI",
+        `${upstream}..HEAD`,
+      ])
+    ).trim();
+    if (!log) return null;
+    return log.split("\n").pop()?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadRepositoryFacts(
@@ -500,6 +553,7 @@ export async function getWorkspaceGitChanges({
           branch: "",
           headCommitSha: "",
           unpushedCommitCount: 0,
+          unpushedSince: null,
           dirty: false,
           additions: 0,
           deletions: 0,
@@ -518,6 +572,7 @@ export async function getWorkspaceGitChanges({
           branch: "",
           headCommitSha: "",
           unpushedCommitCount: 0,
+          unpushedSince: null,
           dirty: false,
           additions: 0,
           deletions: 0,

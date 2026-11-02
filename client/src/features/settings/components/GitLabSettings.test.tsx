@@ -61,6 +61,20 @@ it("verifies, saves, clears the token input, tests saved credentials and logs ou
   expect(update).toHaveBeenLastCalledWith({ gitLab: { accounts: [] } });
   expect(screen.queryByRole("list", { name: 'GitLab 账号' })).toBeNull();
 });
+it("strips a pasted scheme, trailing slash and path before verifying", async () => {
+  render(<Settings />);
+  const host = screen.getByLabelText("GitLab 主机");
+  const token = screen.getByLabelText("个人访问令牌（Personal Access Token）");
+  await userEvent.clear(host);
+  await userEvent.type(host, "https://GitLab.Example.com/group/app/");
+  await userEvent.type(token, "glpat-test-token");
+  await userEvent.click(screen.getByRole("button", { name: "验证并保存登录" }));
+  expect(configApi.validateGitLab).toHaveBeenCalledWith({
+    host: "gitlab.example.com",
+    token: "glpat-test-token",
+  });
+  await waitFor(() => expect(host).toHaveValue("gitlab.example.com"));
+});
 it("keeps a failed draft without saving and prevents duplicate submissions while checking", async () => {
   let reject!: (error: Error) => void;
   vi.mocked(configApi.validateGitLab).mockReturnValue(

@@ -1,5 +1,6 @@
 import type { SessionDetailCacheEntry } from "./agentSessionStore";
 import { resumeHistoryCursor, type HistoryBoundary } from "../../../shared/lib/historyWindowCursor";
+import { seedTimelineIndex } from "./timelineHistoryIndex";
 
 export const SESSION_TAIL_RETAIN = 100;
 export const SESSION_TAIL_HIGH_WATER = 160;
@@ -7,13 +8,15 @@ const collections = ["messages", "runs", "steps", "toolCalls", "events", "permis
 
 /** Hysteresis: append into the buffer, then evict a batch. Never shift per message. */
 export function compactSessionTail<T extends Pick<SessionDetailCacheEntry,
-  typeof collections[number] | "historyWindow" | "historyPagesLoaded"
+  typeof collections[number] | "historyWindow" | "historyPagesLoaded" | "historyViewportRetain" |
+  "timelineMessages" | "timelineRuns" | "timelineSteps" | "timelineToolCalls" | "timelineIndexLoaded"
 >>(entry: T, force = false): T {
   // Only generation-aware windows support identity-based resume after eviction.
   const window = entry.historyWindow;
   if (window?.generation === undefined) return entry;
-  const threshold = force ? SESSION_TAIL_RETAIN : SESSION_TAIL_HIGH_WATER;
-  if (collections.every(name => entry[name].length <= threshold)) return entry;
+  const retain = (name: typeof collections[number]) => Math.max(SESSION_TAIL_RETAIN, entry.historyViewportRetain?.[name] ?? 0);
+  const threshold = (name: typeof collections[number]) => retain(name) + (force ? 0 : SESSION_TAIL_HIGH_WATER - SESSION_TAIL_RETAIN);
+  if (collections.every(name => entry[name].length <= threshold(name))) return entry;
   const next = { ...entry };
   const rows: HistoryBoundary["rows"] = {};
   // Trim leaves before their parents, retaining the contiguous parent suffix
@@ -22,7 +25,7 @@ export function compactSessionTail<T extends Pick<SessionDetailCacheEntry,
   const runIds = new Set<string>();
   for (const name of ["messages", "toolCalls", "steps", "runs", "events", "permissions"] as const) {
     const items = entry[name];
-    let start = items.length > threshold ? items.length - SESSION_TAIL_RETAIN : 0;
+    let start = items.length > threshold(name) ? items.length - retain(name) : 0;
     if (name === "toolCalls" || name === "steps" || name === "runs" || name === "permissions") {
       const needed = name === "steps" ? stepIds : runIds;
       const firstNeeded = items.findIndex(item => needed.has(item.id) ||
@@ -40,6 +43,7 @@ export function compactSessionTail<T extends Pick<SessionDetailCacheEntry,
     }
   }
   if (!Object.keys(rows).length) return entry;
+  const index = seedTimelineIndex(entry);
   return {
     ...next,
     historyPagesLoaded: false,
@@ -47,10 +51,13 @@ export function compactSessionTail<T extends Pick<SessionDetailCacheEntry,
       ...window, hasEarlier: true,
       olderCursor: resumeHistoryCursor(window.olderCursor, { generation: window.generation, rows }),
     },
-    // Rebuild navigation from the retained window. Old index arrays would keep
-    // evicted payloads alive and offer anchors no longer in the transcript.
-    timelineMessages: undefined, timelineRuns: undefined, timelineSteps: undefined,
-    timelineToolCalls: undefined, timelineIndexLoaded: false,
+    // The rail owns lightweight previews independently of the transcript window.
+    // Clicking an evicted anchor loads its body through loadHistoryUntil.
+    timelineMessages: entry.timelineMessages ?? index.timelineMessages,
+    timelineRuns: entry.timelineRuns ?? index.timelineRuns,
+    timelineSteps: entry.timelineSteps ?? index.timelineSteps,
+    timelineToolCalls: entry.timelineToolCalls ?? index.timelineToolCalls,
+    timelineIndexLoaded: entry.timelineIndexLoaded || !window.hasEarlier,
   };
 }
 

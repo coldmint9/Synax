@@ -4,6 +4,7 @@ import type { InlineVisualizationReference } from "./visualizationTranscript";
 import type { RuntimeContentPart } from "../../adapters/transport/runtimeMedia";
 import { hasDisplayableReasoning } from "./activityText";
 import { toolCallRecordToView } from "./toolCallUtils";
+import { childForSubagentCall } from "./subagentCallMatch";
 import type {
   AgentRunStep,
   AgentRuntimeMessage,
@@ -14,6 +15,10 @@ import type {
 export interface ToolCallView {
   execution?: ToolCallRecord["execution"];
   outputRef?: unknown;
+  /** Delegation calls only: the child session this record names, if resolved. */
+  childSessionId?: string;
+  /** Call start, so a delegation without an id can still find its child. */
+  startedAt?: string;
   contentParts?: RuntimeContentPart[];
   id: string;
   toolId: string;
@@ -99,46 +104,6 @@ function groupParallelToolCalls(
   return result;
 }
 
-function readSubagentSessionId(value: unknown, seen = new Set<unknown>()): string | null {
-  if (!value || typeof value !== "object" || seen.has(value)) return null;
-  seen.add(value);
-  const record = value as Record<string, unknown>;
-  for (const key of ["childSessionId", "taskId"]) {
-    if (typeof record[key] === "string" && record[key].trim()) return record[key].trim();
-  }
-  if (record.session && typeof record.session === "object") {
-    const id = (record.session as Record<string, unknown>).id;
-    if (typeof id === "string" && id.trim()) return id.trim();
-  }
-  for (const key of ["result", "output", "data", "payload"]) {
-    const nested = readSubagentSessionId(record[key], seen);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function childForTaskCall(
-  toolCall: ToolCallRecord,
-  parentSessionId: string,
-  childSessions: AgentSession[],
-  usedChildIds: Set<string>,
-  renderedChildIds: Set<string>,
-): AgentSession | undefined {
-  if (toolCall.toolId !== "subagent.delegate" && toolCall.toolId !== "subagent.lifecycle") return undefined;
-  const explicitId = readSubagentSessionId(toolCall.inputRef) ?? readSubagentSessionId(toolCall.outputRef);
-  if (explicitId) {
-    if (usedChildIds.has(explicitId) || renderedChildIds.has(explicitId)) return undefined;
-    const explicit = childSessions.find((child) => child.id === explicitId && child.parentSessionId === parentSessionId);
-    if (explicit) return explicit;
-  }
-  return childSessions
-    .filter((child) => child.parentSessionId === parentSessionId && !usedChildIds.has(child.id) && !renderedChildIds.has(child.id))
-    .sort((a, b) =>
-      Math.abs(Date.parse(a.createdAt) - Date.parse(toolCall.startedAt)) -
-      Math.abs(Date.parse(b.createdAt) - Date.parse(toolCall.startedAt)),
-    )[0];
-}
-
 function mergeConsecutiveBlocks(
   blocks: TurnContentBlock[],
 ): TurnContentBlock[] {
@@ -220,7 +185,6 @@ export function buildInterleavedTurns(
 
   return sorted.map((step) => {
     const items: Array<{ timestamp: number; block: TurnContentBlock }> = [];
-    const usedChildIds = new Set<string>();
 
     const stepMessages = messagesByStep.get(step.id) ?? [];
     for (const original of stepMessages) {
@@ -300,9 +264,13 @@ export function buildInterleavedTurns(
       });
 
       if (tc.mutability === "task" && childSessions) {
-        const child = childForTaskCall(tc, step.sessionId, childSessions, usedChildIds, renderedChildIds);
+        const child = childForSubagentCall(
+          tc,
+          step.sessionId,
+          childSessions,
+          renderedChildIds,
+        );
         if (child) {
-          usedChildIds.add(child.id);
           renderedChildIds.add(child.id);
           items.push({
             timestamp: new Date(child.createdAt).getTime(),

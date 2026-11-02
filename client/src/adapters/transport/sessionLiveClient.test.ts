@@ -1,9 +1,42 @@
 import { describe, expect, it, vi } from 'vitest'
 const mock = vi.hoisted(() => ({ stream: vi.fn() }))
 vi.mock('./sessionLive', () => ({ sessionLiveStream: mock.stream }))
-import { addSessionLiveListener } from './sessionLiveClient'
+import { addSessionLiveListener, ensureSessionLiveSubscription, releaseSessionLiveSubscription } from './sessionLiveClient'
 
 describe('shared stream snapshots', () => {
+  it('hydrates a new child transcript independently without closing the existing dock reader', () => {
+    mock.stream.mockClear()
+    const dockClose = vi.fn(), transcriptClose = vi.fn()
+    mock.stream.mockReturnValueOnce(dockClose).mockReturnValueOnce(transcriptClose)
+    const releaseDock = addSessionLiveListener('child-snapshot', vi.fn())
+    const receive = vi.fn()
+    const releaseTranscript = addSessionLiveListener('child-snapshot', receive, { replaySnapshot: true })
+    expect(mock.stream).toHaveBeenLastCalledWith('child-snapshot', receive)
+    expect(dockClose).not.toHaveBeenCalled()
+    releaseTranscript()
+    expect(transcriptClose).toHaveBeenCalledOnce()
+    expect(dockClose).not.toHaveBeenCalled()
+    releaseDock()
+    expect(dockClose).toHaveBeenCalledOnce()
+    mock.stream.mockClear()
+  })
+  it('catches up a cached transcript independently when a dock kept the shared reader ahead', () => {
+    mock.stream.mockClear()
+    const dockClose = vi.fn(), transcriptClose = vi.fn()
+    mock.stream.mockReturnValueOnce(dockClose).mockReturnValueOnce(transcriptClose)
+    const releaseDock = addSessionLiveListener('dock-resume', vi.fn())
+    const checkpoint = { sessionId: 'dock-resume', runId: 'r', projection: { cursor: 20, stepId: 'step', completedSteps: [], stateKey: '' } }
+    const receive = vi.fn()
+    ensureSessionLiveSubscription('dock-resume', receive, checkpoint)
+    expect(mock.stream).toHaveBeenLastCalledWith('dock-resume', receive, undefined, checkpoint)
+    expect(dockClose).not.toHaveBeenCalled()
+    releaseSessionLiveSubscription()
+    expect(transcriptClose).toHaveBeenCalledOnce()
+    expect(dockClose).not.toHaveBeenCalled()
+    releaseDock()
+    expect(dockClose).toHaveBeenCalledOnce()
+    mock.stream.mockClear()
+  })
   it('joins concurrent listeners onto the live connection without reconnecting', () => {
     const close = vi.fn(); mock.stream.mockReturnValue(close)
     const a = vi.fn(), b = vi.fn()

@@ -8,11 +8,13 @@ const SCROLL_PX_PER_SECOND = 25;
 export function SessionListTitle({
   title,
   query,
+  terms,
   prefix,
   suffix,
 }: {
   title: string;
   query?: string;
+  terms?: readonly string[];
   prefix?: ReactNode;
   suffix?: ReactNode;
 }) {
@@ -20,6 +22,8 @@ export function SessionListTitle({
   const viewportRef = useRef<HTMLSpanElement>(null);
   const textRef = useRef<HTMLSpanElement>(null);
   const blurRef = useRef<HTMLSpanElement>(null);
+  // The clone for the overflow blur must rebuild when the hit markup changes.
+  const termsKey = terms?.join("\u0000") ?? "";
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -151,7 +155,7 @@ export function SessionListTitle({
       window.removeEventListener("resize", remeasure);
       document.fonts?.removeEventListener("loadingdone", remeasure);
     };
-  }, [title, query]);
+  }, [title, query, termsKey]);
 
   return (
     <span ref={rootRef} className="session-list-title" title={title}>
@@ -159,7 +163,7 @@ export function SessionListTitle({
       <span ref={viewportRef} className="session-list-title-viewport">
         <span className="session-list-title-sharp">
           <span ref={textRef} className="session-list-title-text">
-            <SearchHighlight text={title} query={query} />
+            <SearchHighlight text={title} query={query} terms={terms} />
           </span>
         </span>
         <span ref={blurRef} className="session-list-title-blur" aria-hidden="true" />

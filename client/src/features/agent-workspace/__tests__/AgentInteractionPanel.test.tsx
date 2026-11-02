@@ -15,7 +15,8 @@ import {
 } from "../../../adapters/transport/agentRuntime";
 import type { Subscription } from "../../../adapters/transport/runtimeEventBus";
 import { useAgentSessionStore } from "../state/agentSessionStore";
-import { AgentInteractionPanel } from "../AgentInteractionPanel";
+import { AgentInteractionPanel, InteractionSessionProvider } from "../AgentInteractionPanel";
+import { ConversationController } from "../state/conversationController";
 
 const bus = vi.hoisted(() => ({ subscription: null as Subscription | null }));
 vi.mock("../../../adapters/transport/runtimeEventBus", () => ({
@@ -951,4 +952,48 @@ describe("AgentInteractionPanel", () => {
     act(() => useAgentSessionStore.setState({ selectedSessionId: session.id }));
     expect(await screen.findByRole("textbox", { name: "Name" })).toBeVisible();
   });
+
+  it("asks one question at a time when the durable list repeats the same form", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [clarification, { ...clarification }],
+    });
+    const { container } = render(<AgentInteractionPanel session={session} dock />);
+    await screen.findByRole("textbox", { name: "Name" });
+    expect(container.querySelectorAll(".session-inline-interaction")).toHaveLength(
+      1,
+    );
+    expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(1);
+  });
+
+  it("does not stack two answerable requests in the composer", async () => {
+    vi.mocked(agentRuntimeApi.listInteractions).mockResolvedValue({
+      interactions: [clarification, { ...clarification, id: "i2" }],
+    });
+    render(<AgentInteractionPanel session={session} dock />);
+    await screen.findByRole("textbox", { name: "Name" });
+    expect(screen.getAllByRole("textbox", { name: "Name" })).toHaveLength(1);
+  });
+});
+
+
+it("answers a side conversation form without replacing the selected parent form", async () => {
+  const child = { ...session, id: "side", parentSessionId: session.id };
+  const question: AgentInteraction = { ...clarification, id: "side-question", sessionId: child.id,
+    request: { title: "Side question", questions: [{ id: "answer", type: "text", label: "Side answer", required: true }] } };
+  const controller = new ConversationController(child.id);
+  controller.seedSession(child);
+  controller.store.setState({ interactions: [question] });
+  const reply = vi.spyOn(controller, "replyInteraction").mockResolvedValue();
+  const refresh = vi.spyOn(controller, "refreshInteractions").mockResolvedValue();
+  const parentState = { sessionId: session.id, items: [clarification], loading: false, error: null };
+  useAgentSessionStore.setState({ interactionState: parentState });
+  render(<InteractionSessionProvider controller={controller}><AgentInteractionPanel session={child} dock /></InteractionSessionProvider>);
+  fireEvent.change(screen.getByRole("textbox", { name: "Side answer" }), { target: { value: "Keep parent untouched" } });
+  fireEvent.click(screen.getByRole("button", { name: /Submit/ }));
+  await waitFor(() => expect(reply).toHaveBeenCalledWith("side-question", {
+    revision: 3, action: "submit", answers: { answer: "Keep parent untouched" },
+  }));
+  expect(refresh).not.toHaveBeenCalled();
+  expect(useAgentSessionStore.getState().interactionState).toBe(parentState);
+  expect(useAgentSessionStore.getState().selectedSessionId).toBe(session.id);
 });

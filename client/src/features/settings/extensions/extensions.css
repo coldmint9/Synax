@@ -90,6 +90,30 @@
   gap: 6px;
   flex-shrink: 0;
 }
+.extension-market-empty {
+  min-height: 320px;
+  padding: 56px 24px;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 14px;
+  color: hsl(var(--muted-foreground));
+}
+.extension-market-empty h2 {
+  margin-top: 16px;
+  color: var(--foreground);
+  font-size: 15px;
+  font-weight: 600;
+}
+.extension-market-empty p {
+  max-width: 360px;
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.7;
+}
 .extension-toolbar {
   display: flex;
   align-items: center;
@@ -99,6 +123,9 @@
 .extension-search {
   flex: 1;
   min-width: 120px;
+}
+.extension-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
 .extension-filter {
   width: 140px;
@@ -118,6 +145,37 @@
   color: hsl(var(--muted-foreground));
   padding: 0 0 10px;
   border-bottom: 1px solid var(--border);
+}
+.extension-views {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+.extension-discovery-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.extension-discovery-heading p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: hsl(var(--muted-foreground));
+}
+.extension-success {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  font-size: 12px;
 }
 .extension-row {
   display: flex;
@@ -287,7 +345,9 @@
   border-radius: 10px;
   background: hsl(var(--muted-foreground) / 0.08);
 }
-.mcp-config-panel { padding-top: 16px; }
+.mcp-config-panel {
+  padding-top: 16px;
+}
 .extension-form .mcp-config-json {
   min-height: 224px;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -295,7 +355,9 @@
   line-height: 1.65;
   tab-size: 2;
 }
-.mcp-config-description { margin-top: 16px; }
+.mcp-config-description {
+  margin-top: 16px;
+}
 .extension-form details {
   border-top: 1px solid var(--border);
   padding-top: 14px;
@@ -341,9 +403,6 @@
   }
   .extension-toolbar {
     flex-wrap: wrap;
-  }
-  .extension-toolbar.is-market .extension-search {
-    flex-basis: 100%;
   }
   .extension-row-state {
     display: none;

@@ -47,6 +47,69 @@ function send(socket: net.Socket, envelope: SidecarEnvelope): void {
 }
 
 describe('RuntimeSidecarClient', () => {
+  it("reuses one capability handshake and sends one compact RPC for every record-state read", async () => {
+    let handshakes = 0;
+    const operations: string[] = [];
+    const state = new TextEncoder().encode(
+      JSON.stringify({
+        status: "running",
+        activeRunId: "r",
+        pendingResumeToken: null,
+        blockedReason: null,
+        updatedAt: "now",
+      }),
+    );
+    const bound = await startServer((socket, envelope) => {
+      if (envelope.body.type === "hello") {
+        handshakes++;
+        send(socket, {
+          requestId: "",
+          sessionId: "",
+          epoch: 0,
+          revision: 0,
+          body: {
+            type: "ready",
+            protocol: "synax.runtime.v2",
+            transport: "unix",
+            capabilities: ["record_state_v1"],
+          },
+        });
+      } else {
+        operations.push(envelope.body.type);
+        send(socket, {
+          ...envelope,
+          body:
+            envelope.body.type === "record_state"
+              ? { type: "record_state_response", stateJson: state }
+              : {
+                  type: "error",
+                  code: "INVALID_COMMAND",
+                  message: "only compact reads are expected",
+                },
+        });
+      }
+    });
+    const client = new RuntimeSidecarClient({
+      socketPath: bound.path,
+      token: "token",
+    });
+    try {
+      for (let index = 0; index < 3; index++) {
+        expect((await client.connect()).capabilities).toContain(
+          "record_state_v1",
+        );
+        expect(Array.from(await client.recordState("s"))).toEqual(Array.from(state));
+      }
+      expect(handshakes).toBe(1);
+      expect(operations).toEqual([
+        "record_state",
+        "record_state",
+        "record_state",
+      ]);
+    } finally {
+      client.close();
+    }
+  });
   it('uses a separate connection and request budget for critical controls under ordinary saturation', async () => {
     const ordinary = new Set<net.Socket>();
     const critical = new Set<net.Socket>();

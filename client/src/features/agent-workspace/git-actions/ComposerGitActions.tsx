@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   GitCommitHorizontal,
+  GitMerge,
   GitPullRequest,
   Upload,
   LoaderCircle,
@@ -13,17 +14,28 @@ import type {
 import { useWorkspaceGit } from "../workspaceGitStore";
 import { SessionCommitDialog } from "../SessionCommitDialog";
 import { SessionPushDialog } from "../SessionPushDialog";
+import {
+  remotePrApi,
+  type PrProvider,
+} from "../../../adapters/transport/remotePr";
+import { mergeRequestTerms } from "./mrTerms";
 import "./gitActions.css";
 const GitActionDialog = lazy(() => import("./GitActionDialog"));
+/** The merge-request entry beside the composer input is hidden for now. The Git
+ * workbench still owns the full MR surface, so only this button is gated. */
+export const COMPOSER_MR_ENTRY_VISIBLE = false;
 export default function ComposerGitActions({
   session,
   projectId,
+  inline = false,
   disabled = false,
   ensureSession,
   onOpenConversation,
 }: {
   session?: AgentSession;
   projectId: string;
+  /** Rendered beside another action in one row; the row owns the spacing. */
+  inline?: boolean;
   disabled?: boolean;
   ensureSession: () => Promise<AgentSession>;
   onOpenConversation: (sessionId: string) => void;
@@ -39,8 +51,11 @@ export default function ComposerGitActions({
       (repository.unpushedCommitCount ?? 0) > 0,
   );
   const showPush = pushRepositories.length > 0;
-  const showPr = showPush;
-  const [intent, setIntent] = useState<"pr" | null>(null);
+  // Pending commits surface Push only while the MR entry stays hidden.
+  const showPr = COMPOSER_MR_ENTRY_VISIBLE && showPush;
+  const [intent, setIntent] = useState<"mr" | null>(null);
+  const [provider, setProvider] = useState<PrProvider | null>(null);
+  const terms = mergeRequestTerms(provider ?? undefined);
   const [owner, setOwner] = useState<AgentSession | null>(null);
   const [commitTarget, setCommitTarget] = useState<WorkspaceRepositoryGit | null>(
     null,
@@ -62,12 +77,34 @@ export default function ComposerGitActions({
     setOwner(null);
     setLoading(false);
     setError("");
+    setProvider(null);
     creating.current = null;
     return () => {
       generation.current++;
     };
   }, [projectId, session?.id]);
-  const open = async (mode: "commit" | "pr" | "push") => {
+  // The MR button must name the platform this checkout publishes to.
+  useEffect(() => {
+    if (!showPr || !session) return;
+    let active = true;
+    void remotePrApi
+      .discover(session.id)
+      .then((data) => {
+        if (!active) return;
+        const first =
+          data.remotes.find(
+            (remote) => remote.name === "origin" && remote.provider,
+          ) ?? data.remotes.find((remote) => remote.provider);
+        setProvider(first?.provider ?? null);
+      })
+      .catch(() => {
+        /* The dialog resolves the provider when it opens. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [showPr, session?.id]);
+  const open = async (mode: "commit" | "mr" | "push") => {
     if (disabled || loading) return;
     const version = generation.current;
     setLoading(true);
@@ -105,8 +142,12 @@ export default function ComposerGitActions({
   if (!showCommit && !showPr && !showPush && !intent && !commitOpen && !pushOpen && !loading && !error)
     return null;
   return (
-    <div className="composer-git-actions-wrap">
-      {(showCommit || showPr || loading) && (
+    <div
+      className={
+        inline ? "composer-git-actions-wrap is-inline" : "composer-git-actions-wrap"
+      }
+    >
+      {(showCommit || showPush || loading) && (
         <div
           className="composer-git-actions"
           role="group"
@@ -141,11 +182,15 @@ export default function ComposerGitActions({
               variant="ghost"
               size="sm"
               disabled={disabled || loading}
-              onClick={() => void open("pr")}
-              title="GitHub PR / GitLab MR 与远程同步"
+              onClick={() => void open("mr")}
+              title={`${terms.full} · 合并与远程同步`}
             >
-              <GitPullRequest size={14} />
-              <span>PR</span>
+              {terms.short === "MR" ? (
+                <GitMerge size={14} />
+              ) : (
+                <GitPullRequest size={14} />
+              )}
+              <span>{terms.short}</span>
             </Button>
           )}
           {loading && (

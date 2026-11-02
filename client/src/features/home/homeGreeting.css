@@ -1,0 +1,84 @@
+/* Home hero: clock-anchored greeting plus the plugin slot under it. */
+.home-greeting {
+  /* The dot and the corner light carry the time of day; text stays on theme colours. */
+  --greeting-dot: var(--accent);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 0 0;
+}
+/* A blurred glow instead of a filled box: the colour reaches zero inside its
+   own ellipse, so no edge can read as a panel. */
+.home-greeting::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -12px 16% -8px -24px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--greeting-dot) 17%, transparent),
+    transparent
+  );
+  filter: blur(18px);
+  pointer-events: none;
+}
+.home-greeting[data-phase="dawn"] { --greeting-dot: #d98a2b; }
+.home-greeting[data-phase="morning"] { --greeting-dot: #2f6fe0; }
+.home-greeting[data-phase="noon"] { --greeting-dot: #cf9c1c; }
+.home-greeting[data-phase="afternoon"] { --greeting-dot: #0f847e; }
+.home-greeting[data-phase="evening"] { --greeting-dot: #7154cb; }
+.home-greeting[data-phase="late"] { --greeting-dot: #4758ab; }
+
+.home-greeting__meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--ui-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.home-greeting__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--greeting-dot);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--greeting-dot) 14%, transparent);
+}
+.home-greeting__title {
+  max-width: 100%;
+  margin: 0;
+  font-family: inherit;
+  font-size: clamp(23px, 4.2cqi, 32px);
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: -.03em;
+  color: var(--ui-text);
+  text-wrap: balance;
+}
+.home-greeting__guide {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ui-subtle);
+}
+/* Reserved for smart reminders: empty in this version, so it takes no space. */
+.home-greeting__slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 2px;
+}
+@media (max-height: 620px) {
+  .home-greeting { gap: 6px; }
+  .home-greeting__title { font-size: clamp(20px, 3.6cqi, 26px); }
+}

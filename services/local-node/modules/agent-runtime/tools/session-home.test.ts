@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   SESSION_HOME_NAME_MAX_LENGTH,
   sessionHomeDir,
   sessionHomeName,
+  sessionCommandEnvironment,
 } from "./session-home.js";
 
 /** The id shape real agent sessions use (`ars_` + 32 hex chars). */
@@ -42,6 +43,22 @@ describe("sessionHomeName", () => {
       expect(name.length).toBeLessThanOrEqual(SESSION_HOME_NAME_MAX_LENGTH);
     }
   });
+});
+
+it("retains existing Rust toolchains and caches while isolating the session HOME", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "synax-toolchain-home-"));
+  try {
+    await mkdir(path.join(root, ".cargo"));
+    await mkdir(path.join(root, ".rustup"));
+    const inherited = { HOME: root, PATH: "/bin" };
+    const env = sessionCommandEnvironment(path.join(root, "session"), inherited);
+    expect(env).toMatchObject({ HOME: path.join(root, "session"), CARGO_HOME: path.join(root, ".cargo"), RUSTUP_HOME: path.join(root, ".rustup"), PATH: "/bin" });
+    expect(inherited).toEqual({ HOME: root, PATH: "/bin" });
+    expect(sessionCommandEnvironment("/session", inherited, false)).toEqual({ HOME: "/session", PATH: "/bin" });
+    expect(sessionCommandEnvironment("/session", { ...inherited, CARGO_HOME: "/custom/cargo", RUSTUP_HOME: "/custom/rustup" }))
+      .toMatchObject({ HOME: "/session", CARGO_HOME: "/custom/cargo", RUSTUP_HOME: "/custom/rustup" });
+    expect(sessionCommandEnvironment("/session", { HOME: path.join(root, "missing") })).toEqual({ HOME: "/session" });
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 describe("session home leaves room for the Cua driver socket", () => {

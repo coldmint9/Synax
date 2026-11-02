@@ -197,6 +197,35 @@ describe("resolveLlmSelection", () => {
     ).toBe("jev");
   });
 
+  it("surfaces the connection's reasoning efforts on the runtime model", () => {
+    const globalConfig = createGlobalConfig();
+    const id = "custom-api:gateway";
+    globalConfig.providers.push({
+      id,
+      label: "Gateway",
+      status: "live",
+      kind: "api",
+      caps: { canFollowUp: true, canCancel: true },
+      models: [{ id: "deepseek-flash", label: "DeepSeek" }],
+    });
+    globalConfig.providerConnections[id] = {
+      providerId: id,
+      baseUrl: "https://gateway.example/v1",
+      extra: {
+        apiFormat: "openai-responses",
+        // An endpoint publishes what it accepts; unknown names are dropped.
+        reasoningEfforts: ["none", "low", "bogus"],
+      },
+    };
+    const result = resolveLlmSelection({
+      catalog,
+      globalConfig,
+      purpose: "commit-message",
+      modelOverride: `${id}/deepseek-flash`,
+    });
+    expect(result.config.supportedReasoningEfforts).toEqual(["none", "low"]);
+  });
+
   it("keeps an explicitly selected Kiro model on Kiro while OpenAI remains the default", () => {
     const current = createGlobalConfig();
     const providerId = "custom-api:kiro-local";

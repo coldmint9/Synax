@@ -1,7 +1,7 @@
 import "../../features/agent-workspace/sessionPerformance.css";
 import "../../features/agent-workspace/workPage.css";
-import { memo, useCallback, useEffect, useId, useState } from "react";
-import { Plus } from "lucide-react";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
+import { Compass, Plus } from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useAgentSessionStore } from "../../features/agent-workspace/state/agentSessionStore";
@@ -17,10 +17,16 @@ import { SessionWorkspacePanel } from "../../features/agent-workspace/SessionWor
 import { WorkspaceWidgetDock } from "../../features/agent-workspace/WorkspaceWidgetDock";
 import { SubagentConversationPanel } from "../../features/agent-workspace/SubagentConversationPanel";
 import { SideChatPanel } from "../../features/agent-workspace/SideChatPanel";
+import { SideChatPill } from "../../features/agent-workspace/SideChatPill";
+import { discoverSideChatSession } from "../../features/agent-workspace/sideChatDiscovery";
 import { SessionListPanel } from "../../features/agent-workspace/SessionListPanel";
 import { SessionComposer } from "../../features/agent-workspace/SessionComposer";
 import { useSessionRouteSync } from "../../features/agent-workspace/useSessionRouteSync";
+import { loadSessionLastVisit } from "../../features/agent-workspace/sessionLastVisit";
+import { useSwitchTransition } from "../../features/agent-workspace/useSwitchTransition";
+import { useWorkspaceSwitchReadiness } from "../../features/agent-workspace/useWorkspaceSwitchReadiness";
 import {
+  isBareSessionsPath,
   isNewSessionPath,
   newSessionPath,
 } from "../../features/agent-workspace/sessionRoutes";
@@ -38,7 +44,6 @@ import {
   useResizablePanel,
 } from "../../features/agent-workspace/useResizablePanel";
 import { useMediaQuery } from "../../shared/hooks/useMediaQuery";
-import { useSideChatStore } from "../../features/agent-workspace/state/sideChatStore";
 
 const LEFT_PANEL_DEFAULT = 260;
 const LEFT_PANEL_MIN = 210;
@@ -118,6 +123,37 @@ export default memo(function SessionsPage() {
 
   useSessionRouteSync(listView, projectId);
 
+  // The workspace view is the page root: a switch blurs the list and the
+  // conversation together until the new workspace is actually readable.
+  const pageRootRef = useRef<HTMLDivElement>(null);
+  const routeSessionId = new URLSearchParams(location.search).get("session");
+  // Only the bare session list replays a remembered visit; every other view is
+  // already at its final route and must not wait for that replay.
+  const awaitingReplay =
+    listView === "sessions" &&
+    !routeSessionId &&
+    isBareSessionsPath(location.pathname, projectId) &&
+    Boolean(loadSessionLastVisit(projectId));
+  const routeSettled = !awaitingReplay;
+  const workspaceReady = useWorkspaceSwitchReadiness(
+    pageRootRef,
+    projectId,
+    routeSessionId,
+    routeSettled,
+  );
+  const workspaceSwitching = useSwitchTransition(
+    projectId || null,
+    Boolean(projectId),
+    workspaceReady,
+  );
+  // The blur covers the conversation surface only: the session list and the
+  // side panel stay readable while the new workspace loads.
+  const conversationSwitchProps = {
+    "data-conversation-switch": workspaceSwitching ? "true" : undefined,
+    inert: workspaceSwitching,
+    "aria-busy": workspaceSwitching || undefined,
+  };
+
   const [historyReading, setHistoryReading] = useState(false);
   const agentSessionId = useAgentSessionStore((s) => s.selectedSessionId);
   const agentPanelOpen = useAgentSessionStore((s) => s.panelOpen);
@@ -134,11 +170,13 @@ export default memo(function SessionsPage() {
   const workspaceState = useSessionWorkspace(agentSessionId);
   const selectedSubagent = workspaceState.subagent;
   const subagentFullscreen = Boolean(selectedSubagent?.fullscreen);
+  const sideChatState = workspaceState.sideChat;
+  const sideChatOpen = Boolean(sideChatState?.open);
+  const sideChatSessionId = sideChatState?.sessionId ?? null;
   const [layoutElement, setLayoutElement] = useState<HTMLDivElement | null>(
     null,
   );
   const [layoutWidth, setLayoutWidth] = useState(0);
-  const sideChat = useSideChatStore((s) => agentSessionId ? s.chats[agentSessionId] : undefined);
   useEffect(() => {
     if (!layoutElement) return;
     const measure = () => setLayoutWidth(layoutElement.clientWidth);
@@ -170,6 +208,7 @@ export default memo(function SessionsPage() {
   useEffect(() => {
     if (narrowWorkspace) leftPanel.setCollapsed(true);
   }, [narrowWorkspace, leftPanel.setCollapsed]);
+
   // A terminal session patch can arrive before the durable stream's final
   // message record. Keep that stream attached until it clears its realtime
   // ownership, then let the status-driven cleanup release it.
@@ -192,16 +231,62 @@ export default memo(function SessionsPage() {
     hasWorkspaceContent &&
     workspaceState.presentation === "focus";
   const canCreateSession = listView === "sessions" && Boolean(projectId);
+
+  useEffect(() => {
+    if (selectedSubagent && agentSessionId)
+      useSessionWorkspaceStore.getState().collapseSideChat(agentSessionId);
+  }, [agentSessionId, selectedSubagent?.sessionId]);
+
+  // A conversation that already has a side chat shows its pill after a reload
+  // or a fresh workspace visit; the lookup never creates one.
+  useEffect(() => {
+    if (!showTranscript || !agentSessionId || sideChatState) return;
+    discoverSideChatSession(agentSessionId);
+  }, [agentSessionId, showTranscript, sideChatState]);
+
   const sideChatVisible = Boolean(
     showTranscript &&
-    sideChat &&
+    sideChatOpen &&
     agentSession &&
     !workspaceFullscreen &&
     !selectedSubagent,
   );
+  const sideChatPillVisible = Boolean(
+    showTranscript &&
+      sideChatSessionId &&
+      !sideChatOpen &&
+      agentSession &&
+      !workspaceFullscreen &&
+      !selectedSubagent,
+  );
   const openSideChat = useCallback(() => {
-    if (agentSession) useSideChatStore.getState().start(agentSession);
-  }, [agentSession]);
+    if (!agentSessionId || !agentSession) return;
+    useSessionWorkspaceStore.getState().openSideChat(agentSessionId);
+  }, [agentSession, agentSessionId]);
+  const collapseSideChat = useCallback(() => {
+    if (!agentSessionId) return;
+    useSessionWorkspaceStore.getState().collapseSideChat(agentSessionId);
+    // The pill replaces the panel, so keyboard focus follows it instead of
+    // falling back to the document.
+    requestAnimationFrame(() => {
+      pageRootRef.current
+        ?.querySelector<HTMLElement>('[data-side-chat-pill="true"]')
+        ?.focus({ preventScroll: true });
+    });
+  }, [agentSessionId]);
+  const sideChatReady = useCallback(
+    (sessionId: string) => {
+      if (agentSessionId)
+        useSessionWorkspaceStore
+          .getState()
+          .attachSideChat(agentSessionId, sessionId);
+    },
+    [agentSessionId],
+  );
+  const sideChatMissing = useCallback(() => {
+    if (agentSessionId)
+      useSessionWorkspaceStore.getState().forgetSideChat(agentSessionId);
+  }, [agentSessionId]);
 
   const sidePanelViews: SessionSidePanelView[] = [
     {
@@ -214,7 +299,10 @@ export default memo(function SessionsPage() {
       onResize: widgetPanel.startResize,
       onResizeKeyDown: widgetPanel.resizeWithKeyboard,
       content: (
-        <WorkspaceWidgetDock sessionId={agentSessionId} scope={projectId} />
+        <WorkspaceWidgetDock
+          sessionId={agentSessionId}
+          scope={projectId}
+        />
       ),
     },
   ];
@@ -235,7 +323,7 @@ export default memo(function SessionsPage() {
         />
       ),
     });
-  if (sideChat && agentSessionId)
+  if (sideChatOpen && agentSession)
     sidePanelViews.push({
       id: "side-chat",
       label: t("sideChatTitle"),
@@ -245,8 +333,13 @@ export default memo(function SessionsPage() {
       onResizeKeyDown: sideChatPanel.resizeWithKeyboard,
       content: (
         <SideChatPanel
-          key={sideChat.requestId}
-          ownerSessionId={agentSessionId}
+          key={agentSession.id}
+          parentSession={agentSession}
+          sideChatId={sideChatSessionId}
+          onCollapse={collapseSideChat}
+          onSessionReady={sideChatReady}
+          onSessionMissing={sideChatMissing}
+          onDeleted={sideChatMissing}
         />
       ),
     });
@@ -271,6 +364,7 @@ export default memo(function SessionsPage() {
 
   return (
     <div
+      ref={pageRootRef}
       className="agent-page-shell work-page relative flex h-full min-h-0"
       data-subagent={showTranscript && selectedSubagent ? "true" : undefined}
       data-side-panel={activeSidePanel ? "true" : undefined}
@@ -323,6 +417,7 @@ export default memo(function SessionsPage() {
             }
           >
             <div
+              {...conversationSwitchProps}
               className={`work-content-layout min-w-0 flex-1 flex-col overflow-hidden ${sidePanelFullscreen ? "hidden" : "flex"}`}
             >
               <div
@@ -344,6 +439,9 @@ export default memo(function SessionsPage() {
                   mode="content"
                 />
               )}
+              {sideChatPillVisible ? (
+                <SideChatPill onOpen={openSideChat} />
+              ) : null}
             </div>
             <SessionSidePanel
               id={sidePanelId}
@@ -354,11 +452,17 @@ export default memo(function SessionsPage() {
             />
           </div>
         ) : isNewDraft ? (
-          <div className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div
+            {...conversationSwitchProps}
+            className="work-content-layout flex min-w-0 flex-1 flex-col overflow-hidden"
+          >
             <SessionComposer projectId={projectId} layout="centered" />
           </div>
         ) : (
-          <div className="work-content-layout flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <div
+            {...conversationSwitchProps}
+            className="work-content-layout flex min-w-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center"
+          >
             <p className="text-sm text-muted-foreground">
               {canCreateSession
                 ? t("sessionSelectOrCreate")
@@ -399,9 +503,9 @@ export default memo(function SessionsPage() {
           readingHistory={historyReading}
           projectId={projectId}
           focus={false}
-          onOpenSideChat={openSideChat}
           insetLeft={commandRailLeft}
           insetRight={commandRailRight}
+          onOpenSideChat={openSideChat}
         />
       ) : null}
     </div>

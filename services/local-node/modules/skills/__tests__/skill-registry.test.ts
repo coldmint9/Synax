@@ -24,6 +24,26 @@ describe("skillRegistry", () => {
     ).toBe(false);
   });
 
+  it("offers every quick-action skill to the executor profile", () => {
+    const ids = new Set(
+      skillRegistry
+        .listSummaries({ profileId: "executor", projectId: "project-alpha" })
+        .map((skill) => skill.id),
+    );
+    for (const name of [
+      "project-onboarding",
+      "systematic-debugging",
+      "test-augmentation",
+      "change-digest",
+      "requirement-breakdown",
+      "release-readiness",
+      "session-handoff",
+      "verification-before-completion",
+    ]) {
+      expect(ids.has(`synax-builtin/${name}`), name).toBe(true);
+    }
+  });
+
   it("loads skill content through the agent bridge", async () => {
     await resetAgentRuntimeFixtures();
     const session = agentSessionRuntime.create(explorerSessionInput);
@@ -134,6 +154,40 @@ describe("matchesProfile — profileIds precedence", () => {
     const remote = sources.find((source) => source.id === "default-remote");
     expect(remote).toMatchObject({ id: "default-remote", label: "skills.sh", type: "skills-sh", priority: 60 });
     expect(sources.every((source) => typeof source.label === "string")).toBe(true);
+  });
+});
+
+describe("skillAgentBridge — account scopes", () => {
+  const installPath = fileURLToPath(
+    new URL("./fixtures/sample-skill/SKILL.md", import.meta.url),
+  );
+
+  function idsFor(signedInAccounts?: string[]): string[] {
+    const spy = vi.spyOn(skillRegistry, "listSummaries").mockReturnValue([
+      summary({ id: "portal-skill", installPath }),
+      summary({ id: "account-skill", installPath, requiresAccounts: ["enterprise"] }),
+    ]);
+    try {
+      return skillAgentBridge
+        .listForPrompt({
+          profileId: "explorer",
+          projectId: "project-alpha",
+          activeSkillIds: [],
+          signedInAccounts,
+        })
+        .map((skill) => skill.id);
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("hides account-scoped skills while the account is signed out", () => {
+    expect(idsFor()).toEqual(["portal-skill"]);
+    expect(idsFor([])).toEqual(["portal-skill"]);
+  });
+
+  it("offers account-scoped skills once the account is signed in", () => {
+    expect(idsFor(["enterprise"])).toEqual(["account-skill", "portal-skill"]);
   });
 });
 

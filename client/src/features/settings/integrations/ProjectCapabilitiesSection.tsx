@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { McpServerConfig } from '../../../shared/contracts/config'
 import { ExtensionCenter } from '../extensions/ExtensionCenter'
 import { SettingsFrame, type SettingsSection } from '../extensions/SettingsFrame'
-/** Compatibility for embedded settings consumers; discovery is now a marketplace source. */
+/** Compatibility for embedded settings consumers; each capability section owns its local discovery. */
 export function ProjectCapabilitiesSection({ projectId }: { projectId: string; servers?: McpServerConfig[]; onSave?: (servers: McpServerConfig[]) => Promise<void> }) {
   const [section, setSection] = useState<SettingsSection>('skill')
   const selected =

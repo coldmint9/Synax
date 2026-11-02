@@ -1,8 +1,14 @@
 import { useSessionSearch } from "./useSessionSearch";
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useAgentSessionStore } from "./state/agentSessionStore";
+import {
+  isSessionUnread,
+  useAgentSessionStore,
+} from "./state/agentSessionStore";
 import { peekSessionList } from "./state/sessionListCache";
+import { useShellStore } from "../../shared/state/shellStore";
+import { buildIntentSessionGroups } from "./sessionIntentGroups";
+import type { SessionStatusCounts } from "./sessionStatusDot";
 import { agentRuntimeApi } from "../../adapters/transport/agentRuntime";
 import type {
   AgentSession,
@@ -10,7 +16,6 @@ import type {
 } from "../../adapters/transport/agentRuntime";
 import {
   isAgentWorkspaceSession,
-  isSideChatSession,
   isWorkflowSession,
   listRootSessions,
   type SessionListView,
@@ -33,12 +38,18 @@ export interface SessionTreeNode {
   hasNextSibling?: boolean;
   searchSnippet?: string;
   searchQuery?: string;
+  /** Keywords the server matched; highlights exactly these. */
+  searchTerms?: string[];
 }
 
 export interface SessionGroup {
   key: string;
   label: string;
   sessions: SessionTreeNode[];
+  /** Sections that own a disclosure toggle; a plain heading ignores the flag. */
+  collapsible?: boolean;
+  /** Run-state mix of the rows inside the group, for an at-a-glance dot row. */
+  statusCounts?: SessionStatusCounts;
   collapsed: boolean;
   count: number;
 }
@@ -62,6 +73,8 @@ export function useSessionList(
   const [searchParams] = useSearchParams();
   const storeProjectId = useAgentSessionStore((s) => s.projectId);
   const storeSessions = useAgentSessionStore((s) => s.sessions);
+  // Group headings mirror the row badges, so reading a session must clear its dot.
+  const readSessionMarkers = useAgentSessionStore((s) => s.readSessionMarkers);
   const storeRefresh = useAgentSessionStore((s) => s.refreshSessions);
   const storeEnsureLoaded = useAgentSessionStore((s) => s.ensureSessionsLoaded);
   const deleteSession = useAgentSessionStore((s) => s.deleteSession);
@@ -77,9 +90,7 @@ export function useSessionList(
 
   const projectSessions = useMemo(() => {
     if (!routeProjectId) return [];
-    return sessions.filter(
-      (s) => s.projectId === routeProjectId && !isSideChatSession(s),
-    );
+    return sessions.filter((s) => s.projectId === routeProjectId);
   }, [routeProjectId, sessions]);
 
   const storeTotal = useAgentSessionStore((s) => s.sessionListTotal);
@@ -100,6 +111,9 @@ export function useSessionList(
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(
     new Set(),
+  );
+  const clusterByIntent = useShellStore(
+    (state) => state.preferences.sessionListClusterByIntent,
   );
   const nodeCache = useMemo(
     () => new WeakMap<AgentSession, SessionTreeNode>(),
@@ -124,16 +138,14 @@ export function useSessionList(
   // The memo below buckets sessions on a local calendar-day boundary; keying it
   // on the day string re-splits the list when the app is left open past midnight.
   const dayKey = new Date().toDateString();
-  const grouped = useMemo(() => {
+  const grouped = useMemo<SessionGroup[]>(() => {
     const roots = listRootSessions(projectSessions).filter((s) =>
       listView === "workflow"
         ? isWorkflowSession(s)
         : isAgentWorkspaceSession(s),
     );
     if (search.enabled) {
-      const list = search.items
-        .filter((item) => !isSideChatSession(item.session))
-        .map((item) => item.session);
+      const list = search.items.map((item) => item.session);
       const tree = list
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
         .map((session) => ({
@@ -145,6 +157,7 @@ export function useSessionList(
             (item) => item.session.id === session.id,
           )?.snippet,
           searchQuery: search.query,
+          searchTerms: search.terms,
         }));
       return [{
         key: listView,
@@ -209,7 +222,9 @@ export function useSessionList(
     const pinnedVisible = pinned;
     // Sessions are already sorted newest-first, so the two buckets stay ordered.
     // Search hits bypass bucketing: a result set is a hit list, not a timeline.
-    const bucketByDay = listView === "sessions" && !search.enabled;
+    const clusterable = listView === "sessions" && !search.enabled;
+    const bucketByIntent = clusterable && clusterByIntent;
+    const bucketByDay = clusterable && !clusterByIntent;
     const dayStart = startOfLocalDay(Date.now());
     const isToday = (node: SessionTreeNode) =>
       Date.parse(node.session.updatedAt) >= dayStart;
@@ -217,40 +232,51 @@ export function useSessionList(
     const earlier = bucketByDay
       ? regular.filter((node) => !isToday(node))
       : [];
-    const regularGroups: SessionGroup[] = bucketByDay
-      ? [
-          {
-            key: "today",
-            label: locale === "zh" ? "今天" : "Today",
-            sessions: today,
-            collapsed: false,
-            count: today.length,
-          },
-          {
-            key: "earlier",
-            label: locale === "zh" ? "之前" : "Earlier",
-            sessions: earlier,
-            collapsed: false,
-            count: earlier.length,
-          },
-        ].filter((group) => group.count > 0)
-      : [
-          {
-            key: listView,
-            label: hasPinned
+    let regularGroups: SessionGroup[];
+    if (bucketByIntent) {
+      regularGroups = buildIntentSessionGroups(regular, {
+        uncategorized: locale === "zh" ? "未分类" : "Uncategorized",
+        isUnread: (session) => isSessionUnread(session, readSessionMarkers),
+      }).map((group) => ({
+        ...group,
+        collapsed: collapsedGroups.has(group.key),
+      }));
+    } else if (bucketByDay) {
+      regularGroups = [
+        {
+          key: "today",
+          label: locale === "zh" ? "今天" : "Today",
+          sessions: today,
+          collapsed: false,
+          count: today.length,
+        },
+        {
+          key: "earlier",
+          label: locale === "zh" ? "之前" : "Earlier",
+          sessions: earlier,
+          collapsed: false,
+          count: earlier.length,
+        },
+      ].filter((group) => group.count > 0);
+    } else {
+      regularGroups = [
+        {
+          key: listView,
+          label: hasPinned
+            ? locale === "zh"
+              ? "会话"
+              : "sessions"
+            : listView === "sessions"
               ? locale === "zh"
                 ? "会话"
-                : "sessions"
-              : listView === "sessions"
-                ? locale === "zh"
-                  ? "会话"
-                  : "Sessions"
-                : "Workflows",
-            sessions: regular,
-            collapsed: false,
-            count: regular.length,
-          },
-        ];
+                : "Sessions"
+              : "Workflows",
+          sessions: regular,
+          collapsed: false,
+          count: regular.length,
+        },
+      ];
+    }
     return [
       ...(hasPinned
         ? [
@@ -258,6 +284,7 @@ export function useSessionList(
               key: `pinned:${listView}`,
               label: locale === "zh" ? "置顶" : "Pinned",
               sessions: pinnedVisible,
+              collapsible: true,
               collapsed: collapsedGroups.has(`pinned:${listView}`),
               count: pinnedVisible.length,
             },
@@ -270,10 +297,13 @@ export function useSessionList(
     search.enabled,
     search.items,
     search.query,
+    search.terms,
     collapsedGroups,
     collapsedSessions,
     locale,
     listView,
+    clusterByIntent,
+    readSessionMarkers,
     nodeCache,
     dayKey,
   ]);
@@ -354,16 +384,27 @@ export function useSessionList(
     }
   }, [routeProjectId, isProjectReady, hasMore, storeLoadMore]);
 
+  /** Only a group that owns a disclosure toggle may report one. */
+  const collapsibleGroupKeys = useMemo(
+    () =>
+      new Set(
+        grouped
+          .filter((group) => group.collapsible)
+          .map((group) => group.key),
+      ),
+    [grouped],
+  );
+
   const toggleGroup = useCallback(
     (key: string) => {
-      if (!key.startsWith("pinned:")) return;
+      if (!collapsibleGroupKeys.has(key)) return;
       setCollapsedGroups((p) => {
         const n = new Set(p);
         n.has(key) ? n.delete(key) : n.add(key);
         return n;
       });
     },
-    [],
+    [collapsibleGroupKeys],
   );
 
   const toggleExpand = useCallback((id: string) => {
@@ -404,6 +445,10 @@ export function useSessionList(
   return {
     groups: grouped,
     hasPinned: grouped.some((group) => group.key.startsWith("pinned:")),
+    /** How the rows are bucketed right now; a search always reads as a hit list. */
+    groupMode: clusterByIntent && listView === "sessions" && !search.enabled
+      ? ("intent" as const)
+      : ("time" as const),
     togglePin,
     listView,
     viewCounts,
@@ -414,6 +459,8 @@ export function useSessionList(
       : isLoadingMore,
     searchQuery,
     setSearchQuery,
+    /** Content hits stream in while transcripts are indexed in the background. */
+    searchPending: search.enabled ? (search.indexing?.pending ?? 0) : 0,
     selectedId: isDraftOpen ? null : selectedIdFromUrl,
     select,
     openNewDraft,

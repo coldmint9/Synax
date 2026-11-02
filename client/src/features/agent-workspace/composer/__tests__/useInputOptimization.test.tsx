@@ -50,7 +50,6 @@ afterEach(() => vi.restoreAllMocks());
 
 it.each([
   { status: "unchanged", notice: "无需修改" },
-  { status: "preserved", notice: "已保留原文" },
   { status: "optimized", notice: "无需修改" },
   { status: undefined, notice: "无需修改" },
 ])("shows $status without creating an undo for identical content", async ({ status, notice }) => {
@@ -64,17 +63,17 @@ it.each([
   expect(result.current.error).toBeNull();
 });
 
-it.each(["unchanged", "preserved"])("does not apply response text with status %s", async (status) => {
-  mocks.optimize.mockResolvedValue({ text: "不应覆盖草稿", status });
+it("does not apply a rewrite the server reports as unchanged", async () => {
+  mocks.optimize.mockResolvedValue({ text: "不应覆盖草稿", status: "unchanged" });
   const { result } = setup();
   await act(async () => { await result.current.optimize(); });
   expect(result.current.content).toBe("原始需求");
   expect(result.current.canUndo).toBe(false);
 });
 
-it.each(["unchanged", "preserved"])("retains the last real undo after %s", async (status) => {
+it("retains the last real undo after an unchanged result", async () => {
   mocks.optimize.mockResolvedValueOnce({ text: "优化后的需求", status: "optimized" })
-    .mockResolvedValueOnce({ text: "优化后的需求", status });
+    .mockResolvedValueOnce({ text: "优化后的需求", status: "unchanged" });
   const { result } = setup();
   await act(async () => { await result.current.optimize(); });
   await act(async () => { await result.current.optimize(); });

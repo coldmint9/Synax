@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Pencil, Plus, Trash2, WandSparkles } from "lucide-react";
+import { InfoTooltip } from "@/shared/ui/ui/InfoTooltip";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Bot, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui/ui/Button";
 import { Dialog, DialogContainer, DialogPanel, DialogHeader, DialogTitle, DialogBody, DialogFooter } from "@/shared/ui/ui/Dialog";
 import { Description, Field, FieldError, Input, Label, TextArea } from "@/shared/ui/ui/Field";
@@ -7,8 +8,14 @@ import { Select } from "@/shared/ui/ui/Select";
 import { Switch } from "@/shared/ui/ui/Toggle";
 import { subagentsApi, type CustomSubagent, type CustomSubagentInput } from "../../../adapters/transport/subagents";
 import { useLocale } from "../../../shared/hooks/useLocale";
+import type { GlobalConfig, ProviderDef } from "../../../shared/contracts/config";
+import { buildAgentModelOptions } from "../../agent-workspace/composer/modelSelection";
+import { modelOptionLabel } from "../lib/providerPresets";
 
-export function SubagentSettings() {
+export function SubagentSettings({ globalConfig = null, providers = [] }: {
+  globalConfig?: GlobalConfig | null;
+  providers?: ProviderDef[];
+}) {
   const zh = useLocale().locale === "zh";
   const [items, setItems] = useState<CustomSubagent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,21 +48,16 @@ export function SubagentSettings() {
   };
   return <div className="space-y-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div><h1 className="text-lg font-semibold">{zh ? "子代理" : "Subagents"}</h1>
-        <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">{zh ? "保存常用的角色和工作方式，在输入框中选择后交给主代理委派。" : "Save reusable roles and instructions, then select them in the composer for the primary agent to delegate."}</p></div>
+      <div className="flex items-center gap-1"><h1 className="text-lg font-semibold">{zh ? "子代理" : "Subagents"}</h1>
+        <InfoTooltip label={zh ? "子代理说明" : "About subagents"}>{zh ? "在输入框中选择角色后由主代理委派；未选择时自动配置，并继承会话授权。" : "Select a role in the composer to delegate. Otherwise agents are configured automatically with session permissions."}</InfoTooltip></div>
       <Button variant="primary" onClick={() => { setError(""); setEditor("new"); }}><Plus size={15} aria-hidden="true" />{zh ? "新建子代理" : "New subagent"}</Button>
     </header>
-    <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4">
-      <WandSparkles size={18} className="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
-      <div><h2 className="text-sm font-medium">{zh ? "默认由主代理自动配置" : "Configured automatically by default"}</h2>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{zh ? "未选择自定义子代理时，主代理会按任务配置通用子代理，并继承当前会话授权。选择后会保留你设置的指令和权限范围。" : "Without a custom selection, the primary agent configures a general-purpose subagent with the session’s permissions. Selected profiles preserve your instructions and access limits."}</p></div>
-    </div>
     {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
     {error && <div role="alert" className="flex items-center gap-3 text-sm text-destructive">{error}<Button size="sm" onClick={() => void load()}>{zh ? "重试" : "Retry"}</Button></div>}
     {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">{zh ? "正在加载…" : "Loading…"}</p> : !items.length ?
       <div className="rounded-xl border border-dashed border-border px-6 py-12 text-center"><Bot size={28} className="mx-auto mb-3 text-muted-foreground" aria-hidden="true" />
         <h2 className="text-sm font-medium">{zh ? "还没有自定义子代理" : "No custom subagents yet"}</h2>
-        <p className="mt-2 text-xs text-muted-foreground">{zh ? "例如代码审查、测试编写或文档整理。自动委派始终可用。" : "Try a code reviewer, test writer or documentation assistant. Automatic delegation remains available."}</p></div> :
+</div> :
       <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">{items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
         <div className="flex min-w-0 flex-1 items-start gap-3"><Bot size={18} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" /><div className="min-w-0">
           <h2 className="break-words text-sm font-medium">{item.name}{!item.enabled && <span className="ml-2 text-xs text-muted-foreground">{zh ? "已停用" : "Disabled"}</span>}</h2>
@@ -65,7 +67,7 @@ export function SubagentSettings() {
         <div className="flex shrink-0 gap-1"><Button variant="ghost" iconOnly aria-label={`${zh ? "编辑" : "Edit"} ${item.name}`} onClick={() => setEditor(item)}><Pencil size={15} /></Button>
           <Button variant="ghost" iconOnly aria-label={`${zh ? "删除" : "Delete"} ${item.name}`} onClick={() => { setError(""); setRemoving(item); }}><Trash2 size={15} /></Button></div>
       </li>)}</ul>}
-    {editor && <SubagentEditor key={editor === "new" ? "new" : editor.id} value={editor === "new" ? undefined : editor} onSave={save} onClose={() => setEditor(null)} />}
+    {editor && <SubagentEditor key={editor === "new" ? "new" : editor.id} value={editor === "new" ? undefined : editor} globalConfig={globalConfig} providers={providers} onSave={save} onClose={() => setEditor(null)} />}
     <Dialog open={Boolean(removing)} onClose={() => { if (!busy) setRemoving(null); }}><DialogContainer size="sm"><DialogPanel>
       <DialogHeader><DialogTitle>{zh ? "删除子代理？" : "Delete subagent?"}</DialogTitle></DialogHeader>
       <DialogBody><p className="text-sm text-muted-foreground">{zh ? `删除“${removing?.name ?? ""}”后，它将不再出现在输入框选项中。已启动的任务保留原配置。` : `“${removing?.name ?? ""}” will no longer be available in the composer. Running tasks keep their saved configuration.`}</p>{error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}</DialogBody>
@@ -74,7 +76,13 @@ export function SubagentSettings() {
   </div>;
 }
 
-function SubagentEditor({ value, onSave, onClose }: { value?: CustomSubagent; onSave: (input: CustomSubagentInput) => Promise<void>; onClose: () => void }) {
+function SubagentEditor({ value, globalConfig, providers, onSave, onClose }: {
+  value?: CustomSubagent;
+  globalConfig: GlobalConfig | null;
+  providers: ProviderDef[];
+  onSave: (input: CustomSubagentInput) => Promise<void>;
+  onClose: () => void;
+}) {
   const zh = useLocale().locale === "zh";
   const [form, setForm] = useState<CustomSubagentInput>(() => ({ name: value?.name ?? "", description: value?.description ?? "", instructions: value?.instructions ?? "",
     access: value?.access ?? "inherit", enabled: value?.enabled ?? true, model: value?.model, thinkingMode: value?.thinkingMode }));
@@ -86,6 +94,17 @@ function SubagentEditor({ value, onSave, onClose }: { value?: CustomSubagent; on
   const [saving, setSaving] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
+  // Exactly the models a session can start on: `profile.model` can never name
+  // a ref the runtime would reject later.
+  const modelOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const model of buildAgentModelOptions(globalConfig, providers).apiModels) {
+      const ref = `${model.providerId}/${model.modelId}`;
+      if (!seen.has(ref)) seen.set(ref, modelOptionLabel(providers, model.providerId, model.label));
+    }
+    if (form.model && !seen.has(form.model)) seen.set(form.model, `${form.model} (${zh ? "不可用" : "unavailable"})`);
+    return [...seen].map(([ref, label]) => ({ value: ref, label }));
+  }, [form.model, globalConfig, providers, zh]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   const lines = (text: string) => text.trim() ? [...new Set(text.split(/[\n,]/).map(item => item.trim()).filter(Boolean))] : undefined;
   const submit = async (event: React.FormEvent) => {
@@ -109,7 +128,9 @@ function SubagentEditor({ value, onSave, onClose }: { value?: CustomSubagent; on
         <Select label={zh ? "权限范围" : "Access"} value={form.access ?? "inherit"} disabled={saving} onChange={value => setForm(current => ({ ...current, access: value ?? "inherit" }))}
           options={[{ value: "inherit", label: zh ? "继承当前会话授权" : "Inherit session permissions" }, { value: "read-only", label: zh ? "只读分析" : "Read-only analysis" }]} />
         <details className="rounded-lg border border-border p-3"><summary className="cursor-pointer text-xs font-medium">{zh ? "高级配置（可选）" : "Advanced configuration (optional)"}</summary><div className="mt-4 space-y-4">
-          <Field><Label>{zh ? "模型" : "Model"}</Label><Input disabled={saving} value={form.model ?? ""} maxLength={256} placeholder={zh ? "留空继承主代理模型" : "Inherit the primary agent’s model"} onChange={event => setForm(current => ({ ...current, model: event.target.value }))} /><Description>{zh ? "填写已配置供应商的 provider/model 标识。" : "Use a provider/model ID from a configured provider."}</Description></Field>
+          {modelOptions.length > 0 && <Select label={zh ? "模型" : "Model"} value={form.model ?? ""} disabled={saving}
+            onChange={model => setForm(current => ({ ...current, model: model || undefined }))}
+            options={[{ value: "", label: zh ? "继承主代理模型" : "Inherit the primary agent’s model" }, ...modelOptions]} />}
           <Select label={zh ? "思考模式" : "Thinking mode"} value={form.thinkingMode ?? "inherit"} disabled={saving} onChange={value => setForm(current => ({ ...current, thinkingMode: value === "inherit" || !value ? undefined : value }))}
             options={[{ value: "inherit", label: zh ? "继承主代理" : "Inherit" }, { value: "fast", label: zh ? "快速" : "Fast" }, { value: "standard", label: zh ? "标准" : "Standard" }, { value: "deep", label: zh ? "深入" : "Deep" }]} />
           {([{ label: zh ? "工具 ID" : "Tool IDs", value: capabilities, set: setCapabilities, hint: zh ? "每行一个；留空由主代理自动分配。" : "One per line; leave empty for automatic configuration." },

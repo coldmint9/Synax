@@ -1,38 +1,64 @@
 import { Buffer } from "node:buffer";
-import { setImmediate } from "node:timers";
-// Trusted worker bootstrap. Model code is evaluated ONLY inside QuickJS WASM,
-// never by Node eval/vm. No Node objects, loaders, I/O or credentials enter it.
-import { parentPort, workerData } from "node:worker_threads";
+import { setImmediate, clearImmediate } from "node:timers";
+import { parentPort } from "node:worker_threads";
+// Only the trusted bootstrap persists. Every run owns a fresh QuickJS runtime
+// and context; no guest globals, handles or callbacks survive the cleanup ACK.
 import variant from "@jitl/quickjs-singlefile-cjs-release-sync";
 import { newQuickJSWASMModuleFromVariant } from "quickjs-emscripten-core";
 
-async function main() {
-  const { code, limits } = workerData;
-  const deadline = Date.now() + limits.timeoutMs;
-  const QuickJS = await newQuickJSWASMModuleFromVariant(variant);
+let modulePromise;
+let current;
+const failure = error => ({ status: "failed", error, stdout: "", truncated: false });
+
+async function execute({ runId, code, limits }, owner) {
+  const QuickJS = await (modulePromise ??= newQuickJSWASMModuleFromVariant(variant));
+  const deadline = performance.now() + limits.timeoutMs;
   const runtime = QuickJS.newRuntime();
   runtime.setMemoryLimit(limits.memoryBytes);
   runtime.setMaxStackSize(512 * 1024);
-  runtime.setInterruptHandler(() => Date.now() >= deadline);
+  let interrupted = false;
+  runtime.setInterruptHandler(() => {
+    interrupted ||= performance.now() >= deadline;
+    return interrupted;
+  });
   const vm = runtime.newContext();
   const pending = new Map();
   let sequence = 0;
   let completed = false;
   let evaluation;
-  const sendFailure = (message) => {
+  let pumpTick;
+
+  const finish = (result, successful = false) => {
     if (completed) return;
+    if (interrupted || performance.now() >= deadline) {
+      result = { ...failure("Code Mode execution deadline exceeded."), status: "timed_out" };
+      successful = false;
+    }
     completed = true;
-    parentPort.postMessage({
-      type: "result",
-      json: JSON.stringify({
-        status: "failed",
-        error: message,
-        stdout: "",
-        truncated: false,
-      }),
+    clearImmediate(pumpTick);
+    owner.reply = undefined;
+    // Cleanup runs outside evalCode/callFunction/executePendingJobs stacks.
+    setImmediate(() => {
+      let reusable = successful && pending.size === 0 && !runtime.hasPendingJob();
+      try {
+        for (const deferred of pending.values()) deferred.dispose();
+        pending.clear();
+        evaluation?.value?.dispose();
+        vm.dispose();
+        runtime.dispose();
+      } catch {
+        // A cleanup assertion or OOM poisons this module. The host retires the
+        // entire thread even when the user's completed result is still valid.
+        reusable = false;
+      }
+      current = undefined;
+      parentPort.postMessage({ type: "result", runId, json: JSON.stringify(result),
+        reusable, wasmBytes: QuickJS.getWasmMemory().buffer.byteLength });
     });
   };
+  const sendFailure = message => finish(failure(message));
   const hostCall = vm.newFunction("hostCall", (id, args) => {
+    if (completed) return { error: vm.newError("Execution already ended.") };
     if (vm.typeof(id) !== "string" || vm.typeof(args) !== "string")
       return { error: vm.newError("Invalid tool call.") };
     const toolId = vm.getString(id);
@@ -42,7 +68,7 @@ async function main() {
     const deferred = vm.newPromise();
     const callId = ++sequence;
     pending.set(callId, deferred);
-    parentPort.postMessage({ type: "call", id: callId, toolId, json });
+    parentPort.postMessage({ type: "call", runId, id: callId, toolId, json });
     return deferred.handle;
   });
   vm.setProp(vm.global, "__hostCall", hostCall);
@@ -85,14 +111,11 @@ async function main() {
     sendFailure("Cannot initialize Code Mode sandbox.");
   } else {
     const fn = vm.evalCode(
-      `(async function(tools, console) {\n"use strict";\n${code}\n})`,
-      "code-mode.js",
+      `(async function(tools, console) {\n"use strict";\n${code}\n})`, "code-mode.js",
     );
     if (fn.error) {
       fn.error.dispose();
-      sendFailure(
-        "Invalid JavaScript. Provide an async function body, not TypeScript or a module.",
-      );
+      sendFailure("Invalid JavaScript. Provide an async function body, not TypeScript or a module.");
     } else {
       evaluation = vm.callFunction(setup.value, vm.undefined, fn.value);
       fn.value.dispose();
@@ -104,72 +127,73 @@ async function main() {
     }
     setup.value.dispose();
   }
+
   function pump() {
+    clearImmediate(pumpTick);
+    pumpTick = undefined;
     if (completed || !evaluation?.value) return;
-    const jobs = runtime.executePendingJobs(100);
-    if (jobs.error) {
-      jobs.error.dispose();
-      sendFailure("Code Mode job failed or resource limit exceeded.");
-      return;
-    }
-    const state = vm.getPromiseState(evaluation.value);
-    if (state.type === "fulfilled") {
-      if (vm.typeof(state.value) !== "string") {
+    try {
+      const jobs = runtime.executePendingJobs(100);
+      if (jobs.error) {
+        jobs.error.dispose();
+        sendFailure("Code Mode job failed or resource limit exceeded.");
+        return;
+      }
+      const state = vm.getPromiseState(evaluation.value);
+      if (state.type === "fulfilled") {
+        if (vm.typeof(state.value) !== "string") {
+          state.value.dispose();
+          sendFailure("Invalid execution result.");
+          return;
+        }
+        const json = vm.getString(state.value);
         state.value.dispose();
-        sendFailure("Invalid execution result.");
-        return;
-      }
-      let json = vm.getString(state.value);
-      state.value.dispose();
-      // UTF-8 enforcement after guest-side character limits, still bounded.
-      const result = JSON.parse(json);
-      if (
-        Buffer.byteLength(JSON.stringify(result.value ?? null)) >
-        limits.maxOutputBytes
-      ) {
-        sendFailure(`Final return exceeds the ${limits.maxOutputBytes}-byte storage ceiling. Completed tool operations are not rolled back; do not replay writes.`);
-        return;
-      }
-      if (Buffer.byteLength(result.stdout) > limits.maxLogBytes) {
-        result.stdout = Buffer.from(result.stdout)
-          .subarray(0, limits.maxLogBytes)
-          .toString("utf8")
-          .replace(/\uFFFD$/, "");
-        result.truncated = true;
-        json = JSON.stringify(result);
-      }
-      completed = true;
-      parentPort.postMessage({ type: "result", json });
-    } else if (state.type === "rejected") {
-      state.error.dispose();
-      sendFailure("Code Mode promise failed or memory limit exceeded.");
-    } else if (runtime.hasPendingJob()) setImmediate(pump);
+        const result = JSON.parse(json);
+        if (Buffer.byteLength(JSON.stringify(result.value ?? null)) > limits.maxOutputBytes) {
+          sendFailure(`Final return exceeds the ${limits.maxOutputBytes}-byte storage ceiling. Completed tool operations are not rolled back; do not replay writes.`);
+          return;
+        }
+        if (Buffer.byteLength(result.stdout) > limits.maxLogBytes) {
+          result.stdout = Buffer.from(result.stdout).subarray(0, limits.maxLogBytes).toString("utf8").replace(/\uFFFD$/, "");
+          result.truncated = true;
+        }
+        finish(result, result.status === "completed");
+      } else if (state.type === "rejected") {
+        state.error.dispose();
+        sendFailure("Code Mode promise failed or memory limit exceeded.");
+      } else if (runtime.hasPendingJob()) pumpTick = setImmediate(pump);
+    } catch {
+      sendFailure("Code Mode job failed or resource limit exceeded.");
+    }
   }
-  parentPort.on("message", (message) => {
-    if (completed || message.type !== "reply") return;
+  owner.reply = message => {
+    if (completed) return;
     const deferred = pending.get(message.id);
     if (!deferred) return;
     pending.delete(message.id);
-    const value = message.error
-      ? vm.newError(message.error)
-      : vm.newString(message.json);
-    if (message.error) deferred.reject(value);
-    else deferred.resolve(value);
-    value.dispose();
-    pump();
-  });
+    try {
+      const value = message.error ? vm.newError(message.error) : vm.newString(message.json);
+      try {
+        if (message.error) deferred.reject(value);
+        else deferred.resolve(value);
+      } finally { value.dispose(); deferred.dispose(); }
+      pump();
+    } catch { sendFailure("Could not deliver the tool result to Code Mode."); }
+  };
   pump();
-  // The host terminates this one-shot worker on every terminal path, releasing the
-  // complete WASM heap, deferred handles and context even after guest OOM/errors.
 }
-void main().catch(() => {
-  parentPort.postMessage({
-    type: "result",
-    json: JSON.stringify({
-      status: "failed",
-      error: "Sandbox initialization or resource limit failure.",
-      stdout: "",
-      truncated: false,
-    }),
+
+parentPort.on("message", message => {
+  if (message?.type === "reply") {
+    if (message.runId === current?.runId) current.reply?.(message);
+    return;
+  }
+  if (message?.type !== "run" || current || !Number.isSafeInteger(message.runId)) return;
+  const owner = { runId: message.runId, reply: undefined };
+  current = owner;
+  void execute(message, owner).catch(() => {
+    current = undefined;
+    parentPort.postMessage({ type: "result", runId: message.runId, reusable: false,
+      json: JSON.stringify(failure("Sandbox initialization or resource limit failure.")) });
   });
 });

@@ -67,6 +67,10 @@ impl HotOps {
         }
     }
 
+    pub fn record_state(&self, session_id: &str) -> Result<Vec<u8>, RuntimeError> {
+        self.handle(session_id)?.record_state()
+    }
+
     pub fn replay(
         &self,
         session_id: &str,
@@ -223,8 +227,10 @@ impl HotOps {
         // Process bookkeeping and reads do not change a session-list row.
         if operation == "lease_update" {
             let actor = handle.actor.lock();
-            self.store.list().write().set_recovery_required(session_id,
-                crate::storage::jsonl::session::recovery_required(&actor));
+            self.store.list().write().set_recovery_required(
+                session_id,
+                crate::storage::jsonl::session::recovery_required(&actor),
+            );
         } else if !control::RECEIPT_FREE.contains(&operation) {
             self.refresh_list(&handle)?;
         }

@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import * as z from 'zod/v4';
-import type { RegisteredTool, SessionToolProvider, ToolExecutionInput, ToolExecutionResult } from '../contracts.js';
+import type { AgentSession, RegisteredTool, SessionToolProvider, ToolExecutionInput, ToolExecutionResult } from '../contracts.js';
 import { agentRuntimeStore } from '../session-store.js';
 import { agentSessionRuntime } from '../session-runtime.js';
 import { profileService } from '../profile-service.js';
 import { runCoordinator } from '../run-coordinator.js';
 import { toolRegistry } from '../tool-registry.js';
 import { outsideExecutionContext } from '../../../infrastructure/runtime/execution-context.js';
+import { logger } from '../../../infrastructure/runtime/logger.js';
 import { ensureSessionRecovered } from '../session-recovery.js';
 import { conversationGitService } from './service.js';
 import type { ConversationGitActionName, ConversationGitSnapshot } from './contracts.js';
@@ -14,6 +15,7 @@ import { GitMrError } from '../../git-mr/errors.js';
 import { mergeWorkerWatchdog, MERGE_WORKER_PROGRESS_TIMEOUT_MS } from './worker-watchdog.js';
 import { withDeadline } from '../managed-process.js';
 import { advanceMergeWorker } from './worker-flow.js';
+import { parentFenceEvidence, parentStopReason, type ParentStopReason } from './parent-fence.js';
 import { packetInput, resolveBatchInput, repairReadInput, repairInput } from './worker-schemas.js';
 import { mergeProgressIdentity } from './worker-progress.js';
 import { emitRuntimeBusEvent } from '../runtime-bus-bridge.js';
@@ -270,10 +272,10 @@ async function startWorker(parentSessionId: string, objectId: string, replaceMis
   ensureConversationMergeWorkerRegistered();
   await agentRuntimeStore.hydrateSessionSummary(parentSessionId, true);
   const parent = agentRuntimeStore.getSession(parentSessionId);
-  if (parent.sessionMetadata?.manualStop || parent.sessionMetadata?.runtimeControl || ['paused', 'stopping', 'cancelled', 'interrupted', 'failed'].includes(parent.status))
-    throw new GitMrError('Continue the parent conversation before starting its merge worker.', 'PARENT_STOPPED', 409);
   const joinMode = parent.status === 'completed' ? 'async' as const : 'blocking' as const;
   const current = await conversationGitService.get(parentSessionId, objectId);
+  const fence = parentStopReason(parent);
+  if (fence) throw new GitMrError(await reportParentFence(parentSessionId, objectId, parent, fence, 'starting', !current.execution), 'PARENT_STOPPED', 409);
   if (['merged', 'noop', 'cancelled'].includes(current.mr.status)) return current;
   if (current.execution && !replaceMissing) {
     if (!current.execution.stopRequested && ['failed', 'recovery_required'].includes(current.execution.status)) return resumeWorker(parentSessionId, objectId, instructions);
@@ -373,8 +375,8 @@ async function resumeWorker(parentSessionId: string, objectId: string, instructi
   if (snapshot.execution?.stopRequested === 'cancel') return cancelConversationMergeWorker(parentSessionId, objectId);
   await agentRuntimeStore.hydrateSessionSummary(parentSessionId, true);
   const parent = agentRuntimeStore.getSession(parentSessionId);
-  if (parent.sessionMetadata?.manualStop || parent.sessionMetadata?.runtimeControl || ['paused', 'stopping', 'cancelled', 'interrupted', 'failed'].includes(parent.status))
-    throw new GitMrError('Continue the parent conversation before resuming its merge worker.', 'PARENT_STOPPED', 409);
+  const fence = parentStopReason(parent);
+  if (fence) throw new GitMrError(await reportParentFence(parentSessionId, objectId, parent, fence, 'resuming', !snapshot.execution), 'PARENT_STOPPED', 409);
   const joinMode = parent.status === 'completed' ? 'async' as const : 'blocking' as const;
   const childId = snapshot.execution?.childSessionId; if (!childId) return startWorker(parentSessionId, objectId, true, instructions);
   await ensureSessionRecovered(childId);
@@ -411,4 +413,28 @@ async function cancelWorker(parentSessionId: string, objectId: string): Promise<
     catch (error) { await conversationGitService.setWorkerExecution(parentSessionId, objectId, { status: 'recovery_required', phase: 'settled', error: error instanceof Error ? error.message : String(error) }); throw error; }
   }
   await conversationGitService.cancelWorkerMr(parentSessionId, objectId); return conversationGitService.get(parentSessionId, objectId);
+}
+
+/**
+ * Report a launch that the owning conversation's stop state refused.
+ *
+ * The evidence is logged because that state lives on another session record and
+ * is otherwise invisible from the merge card. A task that never received an
+ * execution record is left recoverable instead of dead: the card then shows why
+ * the worker is not running and can be continued once the conversation is.
+ */
+async function reportParentFence(parentSessionId: string, objectId: string, parent: AgentSession, fence: ParentStopReason,
+  phase: 'starting' | 'resuming', recordUnlaunched: boolean): Promise<string> {
+  const error = phase === 'starting'
+    ? 'Continue the parent conversation before starting its merge worker.'
+    : 'Continue the parent conversation before resuming its merge worker.';
+  logger.warn({ parentSessionId, objectId, fence, phase, ...parentFenceEvidence(parent) },
+    'Conversation merge worker fenced by the owning session stop state');
+  if (!recordUnlaunched) return error;
+  await conversationGitService.setWorkerExecution(parentSessionId, objectId, {
+    status: 'failed', phase: 'settled', error,
+    summary: '合并执行器未启动：所属会话已停止，请在该会话中继续对话后重试。',
+  }).catch(catchError => logger.warn({ objectId, catchError: String(catchError) },
+    'Could not record the fenced merge worker launch'));
+  return error;
 }

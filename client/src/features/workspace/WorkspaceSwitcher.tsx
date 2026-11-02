@@ -1,7 +1,6 @@
-import { useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useId, useState, type MouseEvent, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft,
   Check,
   ChevronDown,
   Ellipsis,
@@ -13,7 +12,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { Popover, PopoverButton, PopoverPanel } from "@/shared/ui/ui/Popover";
-import { MenuOpenObserver } from "@/shared/ui/ui/Menu";
+import {
+  Menu,
+  MenuAction,
+  MenuButton,
+  MenuItems,
+  MenuOpenObserver,
+} from "@/shared/ui/ui/Menu";
 import { Button } from "@/shared/ui/ui/Button";
 import { Input } from "@/shared/ui/ui/Field";
 import { Tooltip } from "@/shared/ui/ui/Tooltip";
@@ -56,13 +61,9 @@ export function WorkspaceSwitcher({
   const navigate = useNavigate();
   const location = useLocation();
   const [search, setSearch] = useState("");
-  const [targetId, setTargetId] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<ProjectSummary | null>(null);
   const [notice, setNotice] = useState("");
   const activityDescriptionId = useId();
-  const actionButtons = useRef(new Map<string, HTMLButtonElement>());
-  const backRef = useRef<HTMLButtonElement>(null);
-  const target = projects.find((project) => project.id === targetId);
   const filtered = projects.filter((project) =>
     project.name
       .toLocaleLowerCase()
@@ -78,13 +79,32 @@ export function WorkspaceSwitcher({
   const activityDescription = otherActivity
     ? activityLabels[otherActivity.status].replace("{count}", String(otherActivity.count))
     : c.noActivityElsewhere;
-  const back = () => {
-    const id = targetId;
-    setTargetId(null);
-    requestAnimationFrame(() => {
-      if (id) actionButtons.current.get(id)?.focus();
+  /** Management is a route, so the popover closes before navigating. */
+  const openManagement = (project: ProjectSummary) => {
+    navigate(`/workspaces/${encodeURIComponent(project.id)}/manage`, {
+      state: {
+        workspaceReturnTo: location.pathname + location.search,
+      },
     });
   };
+  if (projects.length === 0) {
+    return (
+      <Tooltip content={c.title}>
+        <button
+          type="button"
+          className={`wh-project-trigger ${iconOnly ? "wh-project-trigger--icon" : ""}`}
+          aria-label={c.title}
+          onClick={() => {
+            onOpen?.();
+            onCreateProject();
+          }}
+        >
+          <Plus size={15} aria-hidden="true" />
+          {!iconOnly && <span className="wh-project-label">{c.title}</span>}
+        </button>
+      </Tooltip>
+    );
+  }
   return (
     <>
       <Popover>
@@ -94,7 +114,6 @@ export function WorkspaceSwitcher({
               open={open}
               onOpen={() => {
                 setSearch("");
-                setTargetId(null);
                 onOpen?.();
               }}
             />
@@ -124,17 +143,9 @@ export function WorkspaceSwitcher({
               </PopoverButton>
             </Tooltip>
             <PopoverPanel
-              focus
               anchor={{ to: "bottom start", gap: 8, padding: 8 }}
               className="workspace-switcher"
               aria-label={c.switchWorkspace}
-              onKeyDownCapture={(event) => {
-                if (event.key === "Escape" && target) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  back();
-                }
-              }}
               onKeyDown={(event) => {
                 if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
                   return;
@@ -160,163 +171,109 @@ export function WorkspaceSwitcher({
                 buttons[next]?.focus();
               }}
             >
-              {target ? (
-                <>
-                  <Button
-                    ref={backRef}
-                    variant="ghost"
-                    className="workspace-switcher-action"
-                    onClick={back}
-                  >
-                    <ArrowLeft size={15} />
-                    {c.backWorkspaceList}
-                  </Button>
-                  <div className="workspace-switcher-target">
-                    <Folder size={18} aria-hidden="true" />
-                    <span title={target.name}>{target.name}</span>
-                    {target.id === currentProjectId && (
-                      <Check size={15} aria-label={c.currentWorkspace} />
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    className="workspace-switcher-action"
-                    onClick={() => {
-                      close();
-                      navigate(
-                        `/workspaces/${encodeURIComponent(target.id)}/manage`,
-                        {
-                          state: {
-                            workspaceReturnTo:
-                              location.pathname + location.search,
-                          },
-                        },
-                      );
-                    }}
-                  >
-                    <Settings2 size={15} />
-                    {c.manageWorkspace}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="workspace-switcher-action"
-                    onClick={() => {
-                      close();
-                      setRenameTarget(target);
-                    }}
-                  >
-                    <Pencil size={15} />
-                    {c.renameWorkspace}
-                  </Button>
-                  <div className="workspace-switcher-separator" />
-                  <Button
-                    variant="ghost"
-                    className="workspace-switcher-action"
-                    data-danger
-                    aria-label={`${t("appRemoveProject")}: ${target.name}`}
-                    onClick={(event) => {
-                      close();
-                      onRemoveRequest(event, target);
-                    }}
-                  >
-                    <Trash2 size={15} />
-                    {t("appRemoveProject")}
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <div className="workspace-switcher-heading">
-                    {c.workspaces}
-                  </div>
-                  <div className="workspace-switcher-search">
-                    <Search size={14} aria-hidden="true" />
-                    <Input
-                      autoFocus
-                      value={search}
-                      onChange={(event) => setSearch(event.target.value)}
-                      aria-label={c.searchWorkspaces}
-                      placeholder={c.searchWorkspaces}
-                    />
-                  </div>
+              <div className="workspace-switcher-heading">{c.workspaces}</div>
+              <div className="workspace-switcher-search">
+                <Search size={14} aria-hidden="true" />
+                <Input
+                  autoFocus
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  aria-label={c.searchWorkspaces}
+                  placeholder={c.searchWorkspaces}
+                />
+              </div>
+              <div
+                className="workspace-switcher-list"
+                role="group"
+                aria-label={c.workspaces}
+              >
+                {filtered.map((project) => (
                   <div
-                    className="workspace-switcher-list"
-                    role="group"
-                    aria-label={c.workspaces}
+                    key={project.id}
+                    className="workspace-switcher-row"
+                    data-current={project.id === currentProjectId || undefined}
                   >
-                    {filtered.map((project) => (
-                      <div
-                        key={project.id}
-                        className="workspace-switcher-row"
-                        data-current={
-                          project.id === currentProjectId || undefined
-                        }
+                    <Button
+                      variant="ghost"
+                      className="workspace-switcher-action"
+                      aria-current={
+                        project.id === currentProjectId ? "true" : undefined
+                      }
+                      onClick={() => {
+                        close();
+                        onProjectSwitch(project.id);
+                      }}
+                    >
+                      <Folder size={16} aria-hidden="true" />
+                      <span className="workspace-switcher-name" title={project.name}>
+                        {project.name}
+                      </span>
+                      {renderBadge(project.id)}
+                      {project.id === currentProjectId && (
+                        <Check size={14} aria-label={c.currentWorkspace} />
+                      )}
+                    </Button>
+                    <Menu>
+                      <MenuButton
+                        className="workspace-switcher-more"
+                        aria-label={`${c.workspaceMore}: ${project.name}`}
                       >
-                        <Button
-                          variant="ghost"
-                          className="workspace-switcher-action"
-                          aria-current={
-                            project.id === currentProjectId ? "true" : undefined
-                          }
+                        <Ellipsis size={16} aria-hidden="true" />
+                      </MenuButton>
+                      {/* The row menu lives inside the already-open switcher; making it
+                          modal would inert the workspace list behind it. */}
+                      <MenuItems modal={false}>
+                        <MenuAction
                           onClick={() => {
                             close();
-                            onProjectSwitch(project.id);
+                            openManagement(project);
                           }}
                         >
-                          <Folder size={16} aria-hidden="true" />
-                          <span
-                            className="workspace-switcher-name"
-                            title={project.name}
-                          >
-                            {project.name}
-                          </span>
-                          {renderBadge(project.id)}
-                          {project.id === currentProjectId && (
-                            <Check size={14} aria-label={c.currentWorkspace} />
-                          )}
-                        </Button>
-                        <Button
-                          ref={(element) => {
-                            if (element)
-                              actionButtons.current.set(project.id, element);
-                            else actionButtons.current.delete(project.id);
-                          }}
-                          className="workspace-switcher-more"
-                          iconOnly
-                          variant="ghost"
-                          aria-label={`${c.workspaceMore}: ${project.name}`}
+                          <Settings2 size={14} aria-hidden="true" />
+                          {c.manageWorkspace}
+                        </MenuAction>
+                        <MenuAction
                           onClick={() => {
-                            setTargetId(project.id);
-                            requestAnimationFrame(() =>
-                              backRef.current?.focus(),
-                            );
+                            close();
+                            setRenameTarget(project);
                           }}
                         >
-                          <Ellipsis size={16} />
-                        </Button>
-                      </div>
-                    ))}
-                    {!filtered.length && (
-                      <p className="workspace-switcher-empty" role="status">
-                        {projects.length
-                          ? c.noWorkspaceMatches
-                          : c.noWorkspaces}
-                      </p>
-                    )}
+                          <Pencil size={14} aria-hidden="true" />
+                          {c.renameWorkspace}
+                        </MenuAction>
+                        <MenuAction
+                          danger
+                          aria-label={`${t("appRemoveProject")}: ${project.name}`}
+                          onClick={(event) => {
+                            close();
+                            onRemoveRequest(event, project);
+                          }}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                          {t("appRemoveProject")}
+                        </MenuAction>
+                      </MenuItems>
+                    </Menu>
                   </div>
-                  <div className="workspace-switcher-separator" />
-                  <Button
-                    variant="ghost"
-                    className="workspace-switcher-action"
-                    onClick={() => {
-                      close();
-                      onCreateProject();
-                    }}
-                  >
-                    <Plus size={16} />
-                    {c.title}
-                  </Button>
-                </>
-              )}
+                ))}
+                {!filtered.length && (
+                  <p className="workspace-switcher-empty" role="status">
+                    {projects.length ? c.noWorkspaceMatches : c.noWorkspaces}
+                  </p>
+                )}
+              </div>
+              <div className="workspace-switcher-separator" />
+              <Button
+                variant="ghost"
+                className="workspace-switcher-action"
+                onClick={() => {
+                  close();
+                  onCreateProject();
+                }}
+              >
+                <Plus size={16} aria-hidden="true" />
+                {c.title}
+              </Button>
             </PopoverPanel>
           </>
         )}

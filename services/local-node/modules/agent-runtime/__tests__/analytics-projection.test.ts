@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { AgentRun, AgentRunStep, AgentSession } from "../contracts.js";
 import {
   analyticsFromStats,
-  compactedContextUsageSnapshot,
   buildProjectAnalytics,
-  contextUsageSnapshot,
+  emptySessionAnalytics,
+  measuredContextUsageSnapshot,
   readContextUsage,
   readSessionAnalytics,
   withCompletedRunAnalytics,
   withStepAnalytics,
   withToolCallAnalytics,
+  withUserInputAnalytics,
 } from "../analytics-projection.js";
 
 const now = "2026-10-22T10:00:00.000Z";
@@ -27,6 +28,21 @@ function step(overrides: Partial<AgentRunStep> = {}): AgentRunStep {
     finishReason: null,
     metadata: {},
     ...overrides,
+  };
+}
+
+function completedRun(id: string): AgentRun {
+  return {
+    id,
+    sessionId: "session-1",
+    status: "completed",
+    startedAt: now,
+    completedAt: now,
+    triggerMessageId: null,
+    currentStep: 1,
+    stopReason: null,
+    model: null,
+    metadata: {},
   };
 }
 
@@ -94,6 +110,127 @@ describe("incremental analytics projection", () => {
     expect(withStepAnalytics(first, completed, now)).toBe(first);
   });
 
+  it("deduplicates out-of-order step retries after serialization without losing new late steps", () => {
+    const a = step({
+      id: "step-a",
+      status: "completed",
+      completedAt: "2026-10-22T10:00:01.000Z",
+      metadata: { usage: usage(1000, 200, 400) },
+    });
+    const b = step({
+      id: "step-b",
+      status: "failed",
+      completedAt: "2026-10-22T10:00:02.000Z",
+    });
+    const first = withStepAnalytics(null, a, now)!;
+    const second = withStepAnalytics(first, b, now)!;
+    const restored = readSessionAnalytics(JSON.parse(JSON.stringify(second)))!;
+    expect(restored).toEqual(second);
+    // A -> B -> late A must not increment tokens, requests, time or model use.
+    expect(withStepAnalytics(restored, {
+      ...a, metadata: { ...a.metadata, thought: "arrived after step-b" },
+    }, now)).toBe(restored);
+    expect(restored).toMatchObject({ steps: 2, durationMs: 3000, lastStepId: "step-b" });
+    expect(restored.usage).toMatchObject({
+      requests: 2, recorded: 1, missing: 1,
+      input: 1000, output: 200, total: 1200, cacheRead: 400,
+    });
+    expect(restored.models["deepseek-v4-flash"]).toEqual({
+      steps: 1, input: 1000, output: 200, total: 1200,
+    });
+    const late = step({
+      id: "step-late",
+      status: "interrupted",
+      startedAt: "2026-10-22T09:00:00.000Z",
+      completedAt: "2026-10-22T09:00:01.000Z",
+    });
+    const withLate = withStepAnalytics(restored, late, now)!;
+    expect(withLate).toMatchObject({ steps: 3, durationMs: 4000 });
+    expect(withStepAnalytics(withLate, b, now)).toBe(withLate);
+    expect(withStepAnalytics(withLate, late, now)).toBe(withLate);
+    expect(first.recentStepIds).toEqual(["step-a"]);
+  });
+
+  it("deduplicates completed run retries across other runs and reloads", () => {
+    const first = withCompletedRunAnalytics(null, completedRun("run-a"), 1, now)!;
+    const second = withCompletedRunAnalytics(first, completedRun("run-b"), 2, now)!;
+    const restored = readSessionAnalytics(JSON.parse(JSON.stringify(second)))!;
+    expect(restored).toEqual(second);
+    expect(withCompletedRunAnalytics(restored, {
+      ...completedRun("run-a"), metadata: { summary: "late" },
+    }, 1, now)).toBe(restored);
+    expect(restored).toMatchObject({ completedRuns: 2, completedRunSteps: 3 });
+    const withLate = withCompletedRunAnalytics(restored, {
+      ...completedRun("run-late"),
+      startedAt: "2026-10-22T08:59:00.000Z",
+      completedAt: "2026-10-22T09:00:00.000Z",
+    }, 3, now)!;
+    expect(withLate).toMatchObject({ completedRuns: 3, completedRunSteps: 6 });
+    expect(withCompletedRunAnalytics(withLate, completedRun("run-b"), 2, now)).toBe(withLate);
+    expect(first.recentCompletedRunIds).toEqual(["run-a"]);
+  });
+
+  it.each([1, 2])("seeds dedupe from legacy v%s last IDs without changing existing totals", (version) => {
+    const legacy = readSessionAnalytics({
+      ...analyticsFromStats({
+        roundCount: 1,
+        completedRunCount: 1,
+        completedRunSteps: 2,
+        lastStepId: "step-a",
+        lastCompletedRunId: "run-a",
+      }),
+      version,
+    })!;
+    expect(legacy.recentStepIds).toBeUndefined();
+    expect(legacy.recentCompletedRunIds).toBeUndefined();
+    const a = step({ id: "step-a", status: "completed", completedAt: now });
+    expect(withStepAnalytics(legacy, a, now)).toBe(legacy);
+    expect(withCompletedRunAnalytics(legacy, completedRun("run-a"), 2, now)).toBe(legacy);
+    const next = withCompletedRunAnalytics(
+      withStepAnalytics(legacy, { ...a, id: "step-b" }, now),
+      completedRun("run-b"), 1, now,
+    )!;
+    expect(withStepAnalytics(next, a, now)).toBe(next);
+    expect(withCompletedRunAnalytics(next, completedRun("run-a"), 2, now)).toBe(next);
+    expect(next).toMatchObject({ steps: 2, completedRuns: 2, completedRunSteps: 3 });
+  });
+
+  it("bounds both retry windows without truncating aggregate totals", () => {
+    let analytics = emptySessionAnalytics();
+    for (let index = 0; index < 130; index += 1) {
+      analytics = withCompletedRunAnalytics(
+        withStepAnalytics(analytics, step({
+          id: `step-${index}`, status: "completed", completedAt: now,
+        }), now),
+        completedRun(`run-${index}`), 1, now,
+      )!;
+    }
+    expect(analytics).toMatchObject({ steps: 130, completedRuns: 130, completedRunSteps: 130 });
+    expect(analytics.recentStepIds).toHaveLength(128);
+    expect(analytics.recentCompletedRunIds).toHaveLength(128);
+    expect(analytics.recentStepIds?.[0]).toBe("step-2");
+    expect(analytics.recentCompletedRunIds?.[0]).toBe("run-2");
+    const restored = readSessionAnalytics(JSON.parse(JSON.stringify(analytics)))!;
+    expect(withStepAnalytics(restored, step({
+      id: "step-2", status: "completed", completedAt: now,
+    }), now)).toBe(restored);
+    expect(withCompletedRunAnalytics(restored, completedRun("run-2"), 1, now)).toBe(restored);
+  });
+
+  it("sanitizes and bounds persisted retry windows", () => {
+    const ids = Array.from({ length: 140 }, (_, index) => `id-${index}`);
+    const restored = readSessionAnalytics({
+      ...emptySessionAnalytics(),
+      lastStepId: "step-last",
+      lastCompletedRunId: "run-last",
+      recentStepIds: [...ids, "id-139", null, "", 42],
+      recentCompletedRunIds: [...ids, null, "id-139", "", false],
+    })!;
+    expect(restored.recentStepIds).toEqual([...ids.slice(-127), "step-last"]);
+    expect(restored.recentCompletedRunIds).toEqual([...ids.slice(-127), "run-last"]);
+    expect(readSessionAnalytics(restored)).toEqual(restored);
+  });
+
   it("counts usage-less requests as missing instead of inventing tokens", () => {
     const next = withStepAnalytics(
       null,
@@ -134,8 +271,21 @@ describe("incremental analytics projection", () => {
     expect(withTool.updatedAt).toBe(now);
   });
 
-  it("sanitizes and reads the persisted context snapshot", () => {
-    const snapshot = contextUsageSnapshot(
+  it("counts user inputs and terminal execution time incrementally", () => {
+    const completed = step({
+      status: "completed",
+      startedAt: "2026-10-22T10:00:00.000Z",
+      completedAt: "2026-10-22T10:01:30.000Z",
+    });
+    const withStep = withStepAnalytics(null, completed, now)!;
+    expect(withStep.durationMs).toBe(90_000);
+    const withInput = withUserInputAnalytics(withStep, "input-1", now);
+    expect(withInput.userInputCount).toBe(1);
+    expect(withUserInputAnalytics(withInput, "input-1", now)).toBe(withInput);
+  });
+
+  it("stores the provider's usage as the context total and reads it back", () => {
+    const snapshot = measuredContextUsageSnapshot(
       {
         messages: 600,
         tools: 300,
@@ -145,28 +295,46 @@ describe("incremental analytics projection", () => {
         total: 1200,
         measuredAt: now,
       },
+      900,
       "step-1",
       200_000,
+      now,
     )!;
-    expect(snapshot.total).toBe(1200);
+    expect(snapshot.source).toBe("provider");
+    expect(snapshot.total).toBe(900);
     expect(snapshot.limit).toBe(200_000);
-    expect(snapshot.composition.system).toBe(200);
+    expect(snapshot.measuredAt).toBe(now);
+    // The estimate only splits the measured total.
+    expect(snapshot.composition.total).toBe(900);
+    const parts = [
+      snapshot.composition.messages,
+      snapshot.composition.tools,
+      snapshot.composition.mcp,
+      snapshot.composition.skills,
+      snapshot.composition.system ?? 0,
+    ].reduce((sum, value) => sum + value, 0);
+    expect(parts).toBe(900);
+    // Rounding corrections land on messages, so it stays within one token.
+    expect(snapshot.composition.messages).toBeGreaterThanOrEqual(449);
+    expect(snapshot.composition.messages).toBeLessThanOrEqual(450);
+    expect(snapshot.composition.system).toBe(150);
     expect(readContextUsage(snapshot)).toEqual(snapshot);
+
+    // Legacy snapshots were local estimates and must never read as usage.
+    expect(
+      readContextUsage({ ...snapshot, source: undefined }),
+    ).toBeNull();
     expect(readContextUsage({ ...snapshot, version: 2 })).toBeNull();
-    expect(contextUsageSnapshot({ total: 0 }, "step-1")).toBeNull();
+    expect(measuredContextUsageSnapshot({ total: 0 }, 0, "step-1")).toBeNull();
+    expect(measuredContextUsageSnapshot({ total: 0 }, 900, "")).toBeNull();
   });
 
-  it("scales the last composition for an immediate post-compaction snapshot", () => {
-    const previous = contextUsageSnapshot(
-      { messages: 600, tools: 300, mcp: 50, skills: 50, system: 200, total: 1200, measuredAt: now },
-      "step-1",
-      200_000,
-    )!;
-    const compacted = compactedContextUsageSnapshot(previous, 600, "cmp-step", 200_000, now)!;
-    expect(compacted.total).toBe(600);
-    expect(compacted.composition.total).toBe(600);
-    expect(compacted.composition.messages + compacted.composition.tools + compacted.composition.mcp + compacted.composition.skills + (compacted.composition.system ?? 0)).toBe(600);
-    expect(compacted.stepId).toBe("cmp-step");
+  it("keeps a measured total without inventing a category split", () => {
+    const snapshot = measuredContextUsageSnapshot(null, 5_000, "step-1")!;
+    expect(snapshot.total).toBe(5_000);
+    expect(snapshot.composition.messages).toBe(5_000);
+    expect(snapshot.composition.total).toBe(5_000);
+    expect(snapshot.limit).toBeNull();
   });
 
   it("mirrors authoritative stats into the same incremental shape", () => {
@@ -223,7 +391,7 @@ describe("project analytics aggregation", () => {
     mcpServerIds: [],
     activeRunId: null,
     pendingResumeToken: null,
-    sessionMetadata: {},
+    sessionMetadata: { intentCategory: "功能需求" },
   } as unknown as AgentSession;
 
   it("sums context categories, tokens, cache and model distribution", () => {
@@ -232,8 +400,10 @@ describe("project analytics aggregation", () => {
       step({ status: "completed", completedAt: now, metadata: { usage: usage(1000, 200, 500) } }),
       now,
     )!;
+    const withInput = withUserInputAnalytics(analytics, "input-1", now);
     const contextUsage = {
       version: 1 as const,
+      source: "provider" as const,
       stepId: "step-1",
       total: 1500,
       limit: 10_000,
@@ -251,11 +421,13 @@ describe("project analytics aggregation", () => {
     };
     const result = buildProjectAnalytics(
       "project-1",
-      [{ session, analytics, contextUsage }],
+      [{ session, analytics: withInput, contextUsage }],
       0,
       now,
     );
     expect(result.totals.sessions).toBe(1);
+    expect(result.totals.userInputs).toBe(1);
+    expect(result.totals.durationMs).toBe(0);
     expect(result.totals.tokens).toEqual({
       input: 1000,
       output: 200,
@@ -280,5 +452,57 @@ describe("project analytics aggregation", () => {
     });
     expect(result.tools).toEqual([]);
     expect(result.sessions[0].context?.percent).toBe(15);
+    expect(result.sessions[0].sessionGroup).toBe("功能需求");
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      sessionGroup: "功能需求",
+      sessions: 1,
+      userInputs: 1,
+    });
+  });
+
+  it("keeps retired sessions in every total without listing them as rows", () => {
+    const analytics = withStepAnalytics(
+      null,
+      step({
+        status: "completed",
+        completedAt: now,
+        metadata: { usage: usage(1000, 200, 500) },
+      }),
+      now,
+    )!;
+    const allLive = buildProjectAnalytics(
+      "project-1",
+      [
+        { session, analytics, contextUsage: null },
+        { session: { ...session, id: "session-2" }, analytics, contextUsage: null },
+        { session: { ...session, id: "session-3" }, analytics, contextUsage: null },
+      ],
+      0,
+      now,
+    );
+    const withRetired = buildProjectAnalytics(
+      "project-1",
+      [{ session, analytics, contextUsage: null }],
+      0,
+      now,
+      [
+        { row: allLive.sessions.find((row) => row.id === "session-2")!, retiredReason: "archived" },
+        { row: allLive.sessions.find((row) => row.id === "session-3")!, retiredReason: "deleted" },
+      ],
+    );
+    // One live row plus one archived and one deleted session must total exactly
+    // like the same three sessions while they were all live.
+    expect(withRetired.totals.tokens).toEqual(allLive.totals.tokens);
+    expect(withRetired.totals.cache).toEqual(allLive.totals.cache);
+    expect(withRetired.totals.toolCalls).toBe(allLive.totals.toolCalls);
+    expect(withRetired.totals.durationMs).toBe(allLive.totals.durationMs);
+    expect(withRetired.totals.userInputs).toBe(allLive.totals.userInputs);
+    expect(withRetired.totals.sessions).toBe(allLive.totals.sessions);
+    expect(withRetired.totals.archivedSessions).toBe(1);
+    expect(withRetired.totals.deletedSessions).toBe(1);
+    expect(withRetired.sessions.map((row) => row.id)).toEqual(["session-1"]);
+    expect(allLive.totals.archivedSessions).toBe(0);
+    expect(allLive.totals.deletedSessions).toBe(0);
   });
 });

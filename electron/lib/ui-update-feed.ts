@@ -1,3 +1,4 @@
+import { requireLegacyUpdateSource } from "../updater/update-source.js";
 import {
   compareVersions,
   sha256,
@@ -11,8 +12,6 @@ import {
   updateRedirectUrl,
 } from "./update-network.js";
 
-const REPO = "coldmint9/Synax";
-const API = `https://api.github.com/repos/${REPO}/releases`;
 
 export interface ReleaseAsset {
   name: string;
@@ -38,6 +37,7 @@ export async function fetchGithubResponse(
     signal?: AbortSignal;
   } = {},
 ): Promise<Response> {
+  requireLegacyUpdateSource();
   const range = options.range;
   if (
     range &&
@@ -131,50 +131,7 @@ export async function findUiRelease(
   currentVersion: string | null,
   rejected: string[],
 ): Promise<UiRelease | null> {
-  const releases: Release[] = [];
-  for (let page = 1; page <= 5; page++) {
-    const batch = JSON.parse(
-      (
-        await fetchLimited(`${API}?per_page=100&page=${page}`, 5_000_000)
-      ).toString("utf8"),
-    );
-    if (!Array.isArray(batch))
-      throw new Error("Invalid GitHub release listing");
-    releases.push(...batch);
-    if (batch.length < 100) break;
-  }
-  const candidates = releases.filter(
-    (release) =>
-      !release.draft &&
-      !release.prerelease &&
-      /^ui-v\d+\.\d+\.\d+$/.test(release.tag_name) &&
-      !rejected.includes(release.tag_name.slice(4)) &&
-      (!currentVersion ||
-        compareVersions(release.tag_name.slice(4), currentVersion) > 0),
-  );
-  candidates.sort((a, b) =>
-    compareVersions(b.tag_name.slice(4), a.tag_name.slice(4)),
-  );
-  for (const release of candidates) {
-    const asset = release.assets.find(
-      (item) => item.name === "ui-manifest.json",
-    );
-    if (!asset) continue;
-    const manifest = validateManifest(
-      JSON.parse(
-        (await fetchLimited(asset.browser_download_url, 1_000_000)).toString(
-          "utf8",
-        ),
-      ),
-    );
-    if (
-      manifest.version === release.tag_name.slice(4) &&
-      manifest.appVersion === appVersion &&
-      release.assets.some((item) => item.name === manifest.full.name)
-    ) {
-      return { manifest, assets: release.assets };
-    }
-  }
+  requireLegacyUpdateSource();
   return null;
 }
 

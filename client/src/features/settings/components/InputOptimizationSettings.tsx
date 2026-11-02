@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
+import { WandSparkles } from "lucide-react";
 import type {
   GlobalConfig,
   UpdateGlobalConfigRequest,
@@ -67,7 +67,8 @@ export function InputOptimizationSettings({
   return (
     <SettingsCard
       title={zh ? "输入优化模型" : "Input optimization model"}
-      icon={Sparkles}
+      icon={WandSparkles}
+      description={zh ? "整理输入草稿并预测下一步输入，不会发送或执行任务。默认跟随输入框所选模型。" : "Clarifies the draft and suggests your next message without sending or executing anything. Uses the composer’s model by default."}
     >
       <FormRow label={zh ? "LLM 模型" : "LLM model"}>
         <SettingsSelect
@@ -80,11 +81,6 @@ export function InputOptimizationSettings({
           options={options}
         />
       </FormRow>
-      <p className="px-4 pb-3 text-xs leading-relaxed text-muted-foreground">
-        {zh
-          ? "用于输入框的星星按钮，仅整理输入，不会发送或执行任务。留空时使用输入框当前选择的模型。"
-          : "Used by the sparkle button to clarify drafts without sending or executing them. Leave empty to use the model selected in the composer."}
-      </p>
       {!apiModels.length && (
         <p className="px-4 pb-3 text-xs text-muted-foreground">
           {zh

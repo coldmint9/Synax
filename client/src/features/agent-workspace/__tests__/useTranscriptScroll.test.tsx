@@ -1,8 +1,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { useAgentSessionStore as store } from "../state/agentSessionStore";
 import { useTranscriptScroll } from "../useTranscriptScroll";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); store.setState(store.getInitialState()); });
 
 it("keeps a first visit pinned when layout scroll events precede resize delivery", () => {
   let onResize!: ResizeObserverCallback;
@@ -219,4 +220,29 @@ it("scrollToBottom(force) ends history-reading mode", () => {
   });
   expect(onReading).toHaveBeenLastCalledWith(false);
   expect(element.scrollTop).toBe(2000);
+});
+
+
+it("restores a reading position after the visit prepended cached history", () => {
+  const element = document.createElement("div");
+  element.appendChild(document.createElement("div"));
+  Object.defineProperties(element, {
+    scrollHeight: { value: 3000 }, clientHeight: { value: 500 },
+  });
+  const entry = { messages: [{ id: "recent" }] } as never;
+  store.setState({ selectedSessionId: "prefilled-a", sessionDetailCache: { "prefilled-a": entry } });
+  const ref = { current: element };
+  const { rerender } = renderHook(({ id }) => useTranscriptScroll(ref, id),
+    { initialProps: { id: "prefilled-a" } });
+  act(() => {
+    store.setState({ sessionDetailCache: { "prefilled-a": { messages: [{ id: "older" }, { id: "recent" }] } as never } });
+    element.dispatchEvent(new Event("wheel"));
+    element.scrollTop = 750;
+    element.dispatchEvent(new Event("scroll"));
+    store.setState({ selectedSessionId: "prefilled-b" });
+  });
+  rerender({ id: "prefilled-b" });
+  act(() => store.setState({ selectedSessionId: "prefilled-a" }));
+  rerender({ id: "prefilled-a" });
+  expect(element.scrollTop).toBe(750);
 });

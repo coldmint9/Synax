@@ -61,14 +61,6 @@ export function ProjectImportHint({
       >
         <X size={13} />
       </button>
-      <strong>
-        {locale === "zh" ? "从一个项目开始" : "Start with a project"}
-      </strong>
-      <p>
-        {locale === "zh"
-          ? "点击上方切换项目，导入本地目录。之后也可以在这里切换工作区。"
-          : "Use the switcher above to import a local folder or change your workspace."}
-      </p>
       <button
         type="button"
         className="project-import-hint-action"

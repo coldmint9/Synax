@@ -56,3 +56,8 @@ it('keeps legacy service views out of server reconciliation', async () => {
   await useTerminalStore.getState().hydrate('p');
   expect(useTerminalStore.getState().tabs).toHaveLength(1);
 });
+it('does not reopen a terminal record that no longer has a live PTY', async () => {
+  vi.mocked(terminalApi.list).mockResolvedValue({ items: [{ ...item('stale'), state: 'unconfirmed', endedAt: '2026-01-02T00:00:00.000Z' }] });
+  await useTerminalStore.getState().hydrate('p');
+  expect(useTerminalStore.getState().tabs).toHaveLength(0);
+});

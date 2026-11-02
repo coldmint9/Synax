@@ -32,12 +32,27 @@ export function pickCommitMessageModel(
   rememberedModel: string | null,
 ): AgentModelSelection | null {
   const apiModels = models.filter((option) => option.kind === "api");
-  const find = (ref: string | null) =>
-    ref &&
-    apiModels.find(
-      (option) =>
-        formatModelReference(option.providerId, option.modelId) === ref ||
-        (option.modelId === ref && !ref.includes("/")),
-    );
-  return find(rememberedModel) || find(sessionModel) || apiModels[0] || null;
+  // One model can be listed once per capability, and a commit message is a chat
+  // completion: an image or embedding entry must never win the fallback.
+  const chatModels = apiModels.filter(
+    (option) => option.capability === undefined || option.capability === "chat",
+  );
+  const find = (
+    ref: string | null,
+    pool: AgentModelSelection[],
+  ): AgentModelSelection | null =>
+    (ref &&
+      pool.find(
+        (option) =>
+          formatModelReference(option.providerId, option.modelId) === ref ||
+          (option.modelId === ref && !ref.includes("/")),
+      )) ||
+    null;
+  return (
+    find(rememberedModel, apiModels) ||
+    find(sessionModel, chatModels) ||
+    chatModels[0] ||
+    apiModels[0] ||
+    null
+  );
 }

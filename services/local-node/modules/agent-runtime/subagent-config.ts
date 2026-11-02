@@ -16,8 +16,8 @@ export const subagentProfileSchema = z.object({
     !value.split("/").includes("..") && Boolean(normalizeScope(value)),
   "Use concrete workspace-relative files or directories, without traversal or globs.").transform(normalizeScope))
     .min(1).max(32).optional().describe("Optional file-write boundary, e.g. [\"client/src\"]. Scoped agents use native file tools; shell and external tools are unavailable because their write targets cannot be enforced."),
-  model: z.string().trim().min(1).max(256).optional().describe("Optional provider/model ID. Omit to inherit the parent's model."),
-  thinkingMode: z.enum(["fast", "standard", "deep"]).optional(),
+  model: z.string().trim().min(1).max(256).optional().describe("Optional exact provider/model ref from the configured models listed in this tool's description. Omit to inherit the parent's model."),
+  thinkingMode: z.enum(["fast", "standard", "deep"]).optional().describe("Reasoning presets fast, standard or deep. Not a model selector."),
 }).strict();
 export type SubagentProfileConfig = z.infer<typeof subagentProfileSchema>;
 

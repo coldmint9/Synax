@@ -67,11 +67,29 @@ const LOCAL_CHUNK_TYPES = new Set([
 ])
 
 /** Cursors order transport; authoritative state in the same record prevents stale chunks reopening old Runs. */
+export interface RuntimeProjectionCheckpoint {
+  cursor: number
+  stepId: string | null
+  completedSteps: string[]
+  stateKey: string
+}
+
 export class RuntimeStreamProjector {
   private cursor = 0
   private stepId: string | null = null
   private completedSteps = new Set<string>()
   private stateKey = ''
+
+  checkpoint(): RuntimeProjectionCheckpoint {
+    return { cursor: this.cursor, stepId: this.stepId, completedSteps: [...this.completedSteps], stateKey: this.stateKey }
+  }
+
+  restore(checkpoint: RuntimeProjectionCheckpoint): void {
+    this.cursor = checkpoint.cursor
+    this.stepId = checkpoint.stepId
+    this.completedSteps = new Set(checkpoint.completedSteps)
+    this.stateKey = checkpoint.stateKey
+  }
 
   snapshot(value: RuntimeSnapshot): SessionLiveEvent[] {
     this.cursor = value.cursor

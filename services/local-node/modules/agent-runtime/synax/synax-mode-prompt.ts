@@ -18,6 +18,12 @@ export abstract class SynaxModePromptStrategy {
   abstract readonly mode: SynaxSessionMode;
 
   abstract buildSection(context: SynaxModePromptContext): string | null;
+
+  /**
+   * Volatile per-step state (rev counters, live queues, graph snapshots).
+   * It lands in the tail runtime reminder, never in the cached system prompt.
+   */
+  buildRuntimeState?(context: SynaxModePromptContext): string | null;
 }
 
 class ChatModePromptStrategy extends SynaxModePromptStrategy {
@@ -26,7 +32,7 @@ class ChatModePromptStrategy extends SynaxModePromptStrategy {
   buildSection(context: SynaxModePromptContext): string | null {
     return [
       "Session mode: chat. Use plan.propose for complex or planning requests. Chat ends each turn without structured goal acceptance or automatic continuation.",
-      "With unrestricted permissions, plan.propose saves and executes immediately without confirmation; continue implementation and verification. Other tiers request a decision. Plans remain previewable; deferred execution requires approval or an explicit execution instruction. Execution stays in chat unless goal was selected.",
+      "plan.propose only saves a proposal. If the current user request already authorizes implementation, call plan.execute and continue verification without asking again. If the user asks only for analysis or a plan, return that result. Unrestricted tool permissions do not change task scope. Execution stays in chat unless goal was selected.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -38,7 +44,7 @@ class PlanModePromptStrategy extends SynaxModePromptStrategy {
   buildSection(context: SynaxModePromptContext): string {
     const lines = [
       "Session mode: plan.",
-      "Research only until plan execution: no file edits or shell execution. Use human.ask for material unresolved decisions, then plan.propose for a versioned proposal with acceptance criteria. With unrestricted permissions, the plan executes immediately and returns to chat; continue implementation and verification. Other permission tiers offer a one-time execute/cancel choice that may be deferred.",
+      "Research only until plan execution: no file edits or shell execution. Use human.ask for material unresolved decisions, then plan.propose for a versioned proposal with acceptance criteria. Saving the plan does not authorize execution. Stay read-only until the user requests implementation, regardless of tool permission tier.",
       "When the user explicitly asks to execute a deferred plan, call plan.execute. Execution returns to chat; it does not opt the user into goal mode. Use mode.switch only when the user explicitly asks for a different workflow mode.",
       "Control tools occupy a step alone; child work inherits the read-only constraint.",
     ];
@@ -58,6 +64,7 @@ class GoalModePromptStrategy extends SynaxModePromptStrategy {
       "Completion requires matching evidence for every approved acceptance criterion, referencing completed/successful tool calls or artifacts validated by the server.",
       "Never fabricate evidence or approvals. Subjective acceptance requires human.ask and explicit trusted user approval; a model-written humanApproved flag is not approval.",
       "Do not complete while there are unfinished tasks, active children, or pending interactions. Stop for input, approval, blockers, or cancellation.",
+      "The goal.finish reason becomes the conclusion of the completion report the user reads: state what was delivered and how it was verified, not the process you followed.",
     ];
     return lines.join("\n");
   }
@@ -148,6 +155,14 @@ export class SynaxModePromptRegistry {
     }
   }
 
+  /**
+   * Mode-specific packages register their own strategy from the composition
+   * root, so this file never imports a feature module.
+   */
+  register(strategy: SynaxModePromptStrategy): void {
+    this.strategies.set(strategy.mode, strategy);
+  }
+
   resolve(mode: SynaxSessionMode): SynaxModePromptStrategy {
     return this.strategies.get(mode) ?? new ChatModePromptStrategy();
   }
@@ -187,5 +202,9 @@ export function buildSynaxRuntimeState(
     if (context.prompt.trim())
       lines.push("## Node Task", context.prompt.trim());
   }
+  lines.push(
+    synaxModePromptRegistry.resolve(context.mode).buildRuntimeState?.(context) ??
+      "",
+  );
   return lines.filter(Boolean).join("\n");
 }

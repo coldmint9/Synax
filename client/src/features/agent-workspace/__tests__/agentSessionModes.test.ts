@@ -376,4 +376,125 @@ describe("durable interaction refresh races", () => {
     await refresh;
     expect(useAgentSessionStore.getState().interactionState).toBeNull();
   });
+
+  it("keeps one card per form when the durable list repeats the same request", async () => {
+    useAgentSessionStore.setState({
+      sessions: [{ ...session, status: "waiting_input", activeRunId: "r1" }],
+    });
+    vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+      interactions: [interaction, { ...interaction }],
+    });
+
+    await useAgentSessionStore.getState().refreshInteractions("s1");
+
+    expect(useAgentSessionStore.getState().interactionState?.items).toHaveLength(
+      1,
+    );
+    expect(
+      useAgentSessionStore.getState().interactionState?.items[0].status,
+    ).toBe("pending");
+  });
+
+  it("keeps the resolved copy of a repeated form", async () => {
+    const answered = {
+      ...interaction,
+      status: "answered" as const,
+      response: { revision: 1, action: "submit" as const, answers: {} },
+      resolvedAt: "2026-01-01T00:00:10.000Z",
+    };
+    vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+      interactions: [interaction, answered],
+    });
+
+    await useAgentSessionStore.getState().refreshInteractions("s1");
+
+    expect(useAgentSessionStore.getState().interactionState?.items).toEqual([
+      answered,
+    ]);
+  });
+
+  it("stops advertising input once no request is pending", async () => {
+    useAgentSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          status: "waiting_input",
+          activeRunId: "r1",
+          pendingResumeToken: "interaction:i1",
+          blockedReason: "Clarify scope",
+        },
+      ],
+    });
+    vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+      interactions: [
+        {
+          ...interaction,
+          status: "answered",
+          response: { revision: 1, action: "submit", answers: {} },
+          resolvedAt: "2026-01-01T00:00:10.000Z",
+        },
+      ],
+    });
+
+    await useAgentSessionStore.getState().refreshInteractions("s1");
+
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+      status: "running",
+      activeRunId: "r1",
+      pendingResumeToken: null,
+      blockedReason: null,
+    });
+  });
+
+  it("keeps a parked row parked while its request is unanswered", async () => {
+    useAgentSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          status: "waiting_input",
+          activeRunId: "r1",
+          blockedReason: "Clarify scope",
+        },
+      ],
+    });
+    vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+      interactions: [interaction],
+    });
+
+    await useAgentSessionStore.getState().refreshInteractions("s1");
+
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+      status: "waiting_input",
+      blockedReason: "Clarify scope",
+    });
+  });
+
+  it("leaves a cancelled turn to its own terminal status", async () => {
+    useAgentSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          status: "waiting_input",
+          activeRunId: "r1",
+          blockedReason: "Clarify scope",
+        },
+      ],
+    });
+    vi.spyOn(agentRuntimeApi, "listInteractions").mockResolvedValue({
+      interactions: [
+        {
+          ...interaction,
+          status: "cancelled",
+          response: { revision: 1, action: "cancel" },
+          resolvedAt: "2026-01-01T00:00:10.000Z",
+        },
+      ],
+    });
+
+    await useAgentSessionStore.getState().refreshInteractions("s1");
+
+    expect(useAgentSessionStore.getState().sessions[0]).toMatchObject({
+      status: "waiting_input",
+    });
+  });
 });

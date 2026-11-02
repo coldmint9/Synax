@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallRecord } from "../contracts.js";
 import { buildToolContextReceipt } from "../tool-context-receipt.js";
+import type { PatchDiagnostic } from "../tools/patch-diagnostics.js";
 
 const log = Array.from(
   { length: 1500 },
@@ -53,6 +54,27 @@ function freezeDeep<T>(value: T): T {
 }
 
 describe("buildToolContextReceipt", () => {
+  it("leaves structured patch failures intact instead of clipping their recovery into a receipt", () => {
+    const diagnostic: PatchDiagnostic = {
+      error: true, code: "PATCH_CONTEXT_MISMATCH", applied: false,
+      message: "Failed to find expected lines", path: "source.ts", hunkIndex: 1,
+      expectedExcerpt: { lines: Array.from({ length: 12 }, () => "old source ".repeat(20)), truncated: true },
+      recovery: "Read the current source before correcting the patch.",
+      suggestedRead: { path: "source.ts", startLine: 1, lineCount: 20 },
+    };
+    const serialized = JSON.stringify(diagnostic);
+    // Both current outputRef and a legacy JSON error/summary must stay exact.
+    for (const outputRef of [diagnostic, serialized, null]) {
+      const source = freezeDeep(record({ toolId: "file.patch", status: "failed",
+        outputRef, outputSummary: serialized, error: serialized }));
+      const before = JSON.stringify(source);
+      expect(buildToolContextReceipt(source, 512)).toBeUndefined();
+      expect(buildToolContextReceipt(source, 1800)).toBeUndefined();
+      expect(JSON.stringify(source)).toBe(before);
+      expect(JSON.parse(source.error!)).toEqual(diagnostic);
+    }
+  });
+
   it("projects large logs into a bounded, versioned diagnostic receipt", () => {
     const receipt = buildToolContextReceipt(record())!;
     expect(receipt).toBeDefined();

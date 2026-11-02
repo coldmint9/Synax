@@ -4,10 +4,6 @@ import type { AgentSession } from "../../adapters/transport/agentRuntime";
 /** Primary sessions page vs automation workflow sub-page. */
 export type SessionListView = "sessions" | "workflow";
 
-export function isSideChatSession(session: AgentSession): boolean {
-  return session.sessionMetadata?.sideChat === true;
-}
-
 const WORKFLOW_PROFILE_IDS = new Set([
   "plan-planner",
   "plan-generator",
@@ -56,9 +52,7 @@ export function classifySession(session: AgentSession): SessionListView {
  * from the Sessions page list and never render as nested child items.
  */
 export function listRootSessions(sessions: AgentSession[]): AgentSession[] {
-  return sessions.filter(
-    (session) => !session.parentSessionId && !isSideChatSession(session),
-  );
+  return sessions.filter((session) => !session.parentSessionId);
 }
 
 export const SESSION_LIST_VIEW_LABELS: Record<

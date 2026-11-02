@@ -173,3 +173,102 @@ export function parseFileLink(
   if (raw) return parseCandidate(raw, workspacePath, roots);
   return parseCandidate((label ?? "").trim(), workspacePath, roots);
 }
+
+/**
+ * Walk a relative path against the folder that contains `documentPath`.
+ *
+ * Documents link to their neighbours (`./baseline.md`) far more often than to
+ * repository-root paths, so their own folder is the reference point. Walking
+ * above the repository root is rejected instead of being normalized away.
+ */
+export function resolveDocumentRelativePath(
+  value: string,
+  documentPath?: string | null,
+): string | null {
+  const parts = (documentPath ?? "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .slice(0, -1)
+    .filter(Boolean);
+  for (const part of value.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (!parts.length) return null;
+      parts.pop();
+    } else parts.push(part);
+  }
+  return parts.length ? parts.join("/") : null;
+}
+
+/**
+ * Outcome of a link written inside a rendered workspace document.
+ *
+ * `external` keeps the browser's own behaviour (http, mail or an in-page
+ * anchor); `file` is a workspace target the viewer can open; `unresolved` is a
+ * link the app must intercept anyway, because letting it fall through navigates
+ * the whole window to a path the runtime cannot serve.
+ */
+export type DocumentLink =
+  | { kind: "external" }
+  | { kind: "file"; target: FileLinkTarget }
+  | { kind: "unresolved" };
+
+/** Only these schemes leave the app; anything else is not a web destination. */
+const EXTERNAL_SCHEME = /^(?:https?|mailto|tel|data|blob|javascript|ftp):/i;
+
+/**
+ * Resolve a link inside a workspace document.
+ *
+ * `[基线](./baseline.md)` in `docs/plan.md` points at `docs/baseline.md`, and
+ * `[a](../src/a.ts#L12)` walks out of the document's folder. Absolute paths and
+ * `file:` URIs stay unresolved: the renderer only knows the document's
+ * repository-relative path, so it cannot map a host path to a workspace one.
+ */
+export function resolveDocumentLink(
+  href: string | undefined,
+  documentPath?: string | null,
+  rootId?: string,
+): DocumentLink {
+  const raw = (href ?? "").trim();
+  // An in-page anchor is navigation the reader still expects to work.
+  if (!raw || raw.startsWith("#")) return { kind: "external" };
+  if (raw.startsWith("//") || EXTERNAL_SCHEME.test(raw))
+    return { kind: "external" };
+
+  const match = TRAILING_LINE.exec(raw);
+  let value = match?.[1] ? match[1] : raw;
+  const inlineLine = match?.[1] ? Number(match[2]) : null;
+  if (
+    /^file:/i.test(value) ||
+    value.startsWith("/") ||
+    DRIVE_PATH.test(value)
+  )
+    return { kind: "unresolved" };
+  if (SCHEME.test(value)) return { kind: "external" };
+
+  const hashIndex = value.indexOf("#");
+  const fragment = hashIndex >= 0 ? value.slice(hashIndex + 1) : "";
+  if (hashIndex >= 0) value = value.slice(0, hashIndex);
+  const queryIndex = value.indexOf("?");
+  if (queryIndex >= 0) value = value.slice(0, queryIndex);
+
+  const cleaned = decode(value).replace(/\\/g, "/").trim();
+  if (!cleaned || cleaned === ".") return { kind: "unresolved" };
+  const path = resolveDocumentRelativePath(cleaned, documentPath);
+  if (
+    !path ||
+    !path
+      .split("/")
+      .every((segment) => segment && segment !== "." && segment !== "..")
+  )
+    return { kind: "unresolved" };
+
+  return {
+    kind: "file",
+    target: {
+      path,
+      line: inlineLine ?? (fragment ? fragmentLine(fragment) : null),
+      ...(rootId ? { rootId } : {}),
+    },
+  };
+}
